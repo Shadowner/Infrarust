@@ -112,6 +112,12 @@ Hold a player in a proxy-hosted void world before they reach a backend: show tit
 
 See [Limbo](./limbo).
 
+### Provide bans or permissions
+
+Become the proxy's ban provider or permission provider, the way LibertyBans or LuckPerms do for other proxies: answer login checks and store bans with a `BanProvider`, hand out permission snapshots with a `PermissionProvider`, and change a player's permissions while they are online. The operator selects the plugin with `[ban] provider` or `[permissions] provider` and grants `ban-provider` or `permission-provider`.
+
+See [Bans](./bans) and [Permissions](./permissions).
+
 ### Call host services
 
 Read the player registry, manage servers, query config, and use the ban service through typed accessors. Each accessor maps to a host import gated by a capability. `Players` and `Config` reads are baseline, while `Servers` needs `server-manage` and `Bans` needs `ban`. A call the plugin lacks the capability for returns an `Error` of kind `PermissionDenied`.
@@ -152,6 +158,8 @@ If the plugin traps or runs past its limits, the host replaces its instance with
 | [Commands](./commands) | Registering and handling proxy commands. |
 | [Codec Filters](./codec-filters) | Inspecting and modifying protocol packets. |
 | [Limbo](./limbo) | Holding players in a proxy-hosted void world. |
+| [Permissions](./permissions) | Permission snapshots, the permission provider, live updates. |
+| [Bans](./bans) | Being the proxy's ban provider. |
 | [Host Services](./services) | Player registry, server manager, config, and bans. |
 | [Building](./building) | Compiling to a `wasm32-wasip2` component. |
 | [Deploying](./deploying) | Installing and configuring a plugin on a running proxy. |

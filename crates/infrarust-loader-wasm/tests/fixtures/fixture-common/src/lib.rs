@@ -73,6 +73,55 @@ macro_rules! raw_fixture {
                 _reason: crate::exports::infrarust::plugin::guest::SessionEndReason,
             ) {
             }
+            fn ban_provider_check(
+                _attempt: crate::infrarust::plugin::ban_service::LoginAttempt,
+            ) -> ::core::result::Result<
+                ::core::option::Option<crate::infrarust::plugin::ban_service::BanVerdict>,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_ban(
+                _request: crate::infrarust::plugin::ban_service::BanRequest,
+                _source: crate::infrarust::plugin::ban_service::BanSource,
+            ) -> ::core::result::Result<
+                crate::infrarust::plugin::ban_service::BanRecord,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_unban(
+                _request: crate::infrarust::plugin::ban_service::UnbanRequest,
+            ) -> ::core::result::Result<
+                ::core::option::Option<crate::infrarust::plugin::ban_service::BanRecord>,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_get(
+                _target: crate::infrarust::plugin::ban_service::BanTarget,
+            ) -> ::core::result::Result<
+                ::core::option::Option<crate::infrarust::plugin::ban_service::BanRecord>,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_list(
+                _query: crate::infrarust::plugin::ban_service::BanQuery,
+            ) -> ::core::result::Result<
+                crate::infrarust::plugin::ban_service::BanRecordPage,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn permission_snapshot_for(
+                _subject: crate::infrarust::plugin::permissions::PermissionSubject,
+            ) -> crate::infrarust::plugin::permissions::PermissionSnapshot {
+                crate::infrarust::plugin::permissions::PermissionSnapshot {
+                    rules: ::std::vec::Vec::new(),
+                    admin: false,
+                }
+            }
         }
 
         #[doc(hidden)]

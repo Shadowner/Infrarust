@@ -2,6 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::thread::LocalKey;
 
+use crate::ban_provider::{BanProvider, BanQuery, LoginAttempt, UnbanRequest};
+use crate::bindings::ban_service as wb;
 use crate::bindings::codec_filter::{
     CodecSessionInit as WitSessionInit, ConnectionState, FilterOutput, GuestFilterInstance,
 };
@@ -9,6 +11,7 @@ use crate::bindings::codec_registry::CodecFilterMetadata;
 use crate::bindings::command_manager::CommandSpec;
 use crate::bindings::events::{Event, EventOutcome};
 use crate::bindings::guest as wg;
+use crate::bindings::permissions as wp;
 use crate::codec::{
     CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, FilterConstructor, Injections,
     Packet, Verdict, build_filter_output,
@@ -18,12 +21,16 @@ use crate::command::{
     CompletionClosure,
 };
 use crate::context::{Context, DisableReason, EnableReason};
-use crate::error::Error;
-use crate::event::{EventPriority, GuestEvent};
+use crate::error::{Error, PluginError};
+use crate::event::{BanSource, EventPriority, GuestEvent};
 use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason};
+use crate::permissions::{PermissionProvider, PermissionSnapshot, PermissionSubject};
 use crate::plugin::Plugin;
 use crate::registry::Registry;
+use crate::services::{BanRequest, BanTarget};
 use crate::types::PlayerId;
+
+pub(crate) const NO_BAN_PROVIDER: &str = "this plugin provides no bans";
 
 type EventEntry = RefCell<dyn FnMut(Event) -> EventOutcome>;
 type OnceTask = Box<dyn FnOnce()>;
@@ -57,6 +64,9 @@ thread_local! {
     static PLUGIN: RefCell<Option<Box<dyn Plugin>>> = const { RefCell::new(None) };
     static CODEC_DECLARED: Cell<bool> = const { Cell::new(false) };
     static LIMBO_DECLARED: Cell<bool> = const { Cell::new(false) };
+    static BAN_PROVIDER: RefCell<Option<Rc<dyn BanProvider>>> = const { RefCell::new(None) };
+    static PERMISSION_PROVIDER: RefCell<Option<Rc<dyn PermissionProvider>>> =
+        const { RefCell::new(None) };
 }
 
 fn take_id(counter: &'static LocalKey<Cell<u64>>) -> u64 {
@@ -353,6 +363,80 @@ pub fn limbo_on_session_end(handler: u64, player: u64, reason: wg::SessionEndRea
         || (),
         |hdlr| hdlr.on_session_end(PlayerId::new(player), SessionEndReason::from_wit(reason)),
     );
+}
+
+pub(crate) fn provide_bans(provider: Rc<dyn BanProvider>) -> Result<(), Error> {
+    crate::host::register_ban_provider(&provider.features().to_wit())?;
+    let replaced = BAN_PROVIDER.with(|slot| slot.replace(Some(provider)));
+    drop(replaced);
+    Ok(())
+}
+
+pub(crate) fn provide_permissions(provider: Rc<dyn PermissionProvider>) -> Result<(), Error> {
+    crate::host::register_permission_provider()?;
+    let replaced = PERMISSION_PROVIDER.with(|slot| slot.replace(Some(provider)));
+    drop(replaced);
+    Ok(())
+}
+
+fn with_bans<T>(ask: impl FnOnce(&dyn BanProvider) -> Result<T, PluginError>) -> Result<T, String> {
+    let provider = BAN_PROVIDER.with(|slot| slot.borrow().clone());
+    match provider {
+        Some(provider) => ask(&*provider).map_err(String::from),
+        None => Err(NO_BAN_PROVIDER.to_owned()),
+    }
+}
+
+pub fn ban_provider_check(attempt: wb::LoginAttempt) -> Result<Option<wb::BanVerdict>, String> {
+    let attempt = LoginAttempt::from_wit(attempt);
+    with_bans(|provider| {
+        provider.check(&attempt).map(|verdict| {
+            verdict
+                .as_ref()
+                .map(crate::ban_provider::BanVerdict::to_wit)
+        })
+    })
+}
+
+pub fn ban_provider_ban(
+    request: wb::BanRequest,
+    source: wb::BanSource,
+) -> Result<wb::BanRecord, String> {
+    let request = BanRequest::from_wit(request);
+    let source = BanSource::from_wit(source);
+    with_bans(|provider| provider.ban(request, source).map(|record| record.to_wit()))
+}
+
+pub fn ban_provider_unban(request: wb::UnbanRequest) -> Result<Option<wb::BanRecord>, String> {
+    let request = UnbanRequest::from_wit(request);
+    with_bans(|provider| {
+        provider
+            .unban(request)
+            .map(|record| record.as_ref().map(crate::ban_provider::BanRecord::to_wit))
+    })
+}
+
+pub fn ban_provider_get(target: wb::BanTarget) -> Result<Option<wb::BanRecord>, String> {
+    let target = BanTarget::from_wit(target);
+    with_bans(|provider| {
+        provider
+            .get(&target)
+            .map(|record| record.as_ref().map(crate::ban_provider::BanRecord::to_wit))
+    })
+}
+
+pub fn ban_provider_list(query: wb::BanQuery) -> Result<wb::BanRecordPage, String> {
+    let query = BanQuery::from_wit(query);
+    with_bans(|provider| provider.list(&query).map(|page| page.to_wit()))
+}
+
+pub fn permission_snapshot_for(subject: wp::PermissionSubject) -> wp::PermissionSnapshot {
+    let provider = PERMISSION_PROVIDER.with(|slot| slot.borrow().clone());
+    provider
+        .map_or_else(PermissionSnapshot::new, |provider| {
+            provider.snapshot_for(&PermissionSubject::from_wit(subject))
+        })
+        .to_wit()
 }
 
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: WitSessionInit) -> FilterInstanceProxy {

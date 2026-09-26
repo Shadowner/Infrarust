@@ -2,6 +2,11 @@ interface guest {
     use types.{plugin-metadata, player-id, player-ref, handler-id, listener-handle, component};
     use events.{event, event-outcome};
     use limbo.{limbo-session, handler-result, session-end-reason};
+    use permissions.{permission-subject, permission-snapshot};
+    use ban-service.{
+        login-attempt, ban-verdict, ban-request, ban-source, ban-record, unban-request, ban-target,
+        ban-query, ban-record-page,
+    };
 
     record recovery-info {
         attempt: u32,
@@ -51,4 +56,12 @@ interface guest {
     limbo-on-chat: func(handler: handler-id, session: borrow<limbo-session>, message: string);
     limbo-on-disconnect: func(handler: handler-id, player: player-id);
     limbo-on-session-end: func(handler: handler-id, player: player-id, reason: session-end-reason);
+
+    ban-provider-check: func(attempt: login-attempt) -> result<option<ban-verdict>, string>;
+    ban-provider-ban: func(request: ban-request, source: ban-source) -> result<ban-record, string>;
+    ban-provider-unban: func(request: unban-request) -> result<option<ban-record>, string>;
+    ban-provider-get: func(target: ban-target) -> result<option<ban-record>, string>;
+    ban-provider-list: func(query: ban-query) -> result<ban-record-page, string>;
+
+    permission-snapshot-for: func(subject: permission-subject) -> permission-snapshot;
 }

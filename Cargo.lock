@@ -1989,6 +1989,7 @@ dependencies = [
  "infrarust-plugin-wit",
  "infrarust-test-harness",
  "infrarust_config",
+ "infrarust_protocol",
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",

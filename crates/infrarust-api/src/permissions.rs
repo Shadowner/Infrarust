@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use crate::event::BoxFuture;
 use crate::types::{GameProfile, PlayerId};
@@ -70,6 +70,10 @@ pub trait PermissionChecker: Send + Sync {
     fn has_permission(&self, node: &str) -> bool {
         self.value(node).is_true()
     }
+
+    fn to_snapshot(&self) -> Option<PermissionSnapshot> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -79,6 +83,10 @@ impl PermissionChecker for DefaultPermissionChecker {
     fn value(&self, _node: &str) -> Tristate {
         Tristate::Undefined
     }
+
+    fn to_snapshot(&self) -> Option<PermissionSnapshot> {
+        Some(PermissionSnapshot::new())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -87,6 +95,10 @@ pub struct AllPermissionsChecker;
 impl PermissionChecker for AllPermissionsChecker {
     fn value(&self, _node: &str) -> Tristate {
         Tristate::True
+    }
+
+    fn to_snapshot(&self) -> Option<PermissionSnapshot> {
+        Some(PermissionSnapshot::new().with_admin(true))
     }
 }
 
@@ -165,6 +177,119 @@ impl PermissionMap {
 impl PermissionChecker for PermissionMap {
     fn value(&self, node: &str) -> Tristate {
         self.lookup(node).into()
+    }
+
+    fn to_snapshot(&self) -> Option<PermissionSnapshot> {
+        Some(PermissionSnapshot::from(self.clone()))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PermissionSnapshot {
+    rules: PermissionMap,
+    admin: bool,
+}
+
+impl PermissionSnapshot {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn with(mut self, node: &str, value: bool) -> Self {
+        self.rules.set(node, value);
+        self
+    }
+
+    pub fn set(&mut self, node: &str, value: bool) {
+        self.rules.set(node, value);
+    }
+
+    pub fn unset(&mut self, node: &str) -> Option<bool> {
+        self.rules.unset(node)
+    }
+
+    #[must_use]
+    pub const fn with_admin(mut self, admin: bool) -> Self {
+        self.admin = admin;
+        self
+    }
+
+    pub const fn set_admin(&mut self, admin: bool) {
+        self.admin = admin;
+    }
+
+    #[must_use]
+    pub const fn is_admin(&self) -> bool {
+        self.admin
+    }
+
+    #[must_use]
+    pub const fn rules(&self) -> &PermissionMap {
+        &self.rules
+    }
+}
+
+impl From<PermissionMap> for PermissionSnapshot {
+    fn from(rules: PermissionMap) -> Self {
+        Self {
+            rules,
+            admin: false,
+        }
+    }
+}
+
+impl PermissionChecker for PermissionSnapshot {
+    fn value(&self, node: &str) -> Tristate {
+        if self.admin {
+            Tristate::True
+        } else {
+            self.rules.value(node)
+        }
+    }
+
+    fn to_snapshot(&self) -> Option<PermissionSnapshot> {
+        Some(self.clone())
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SnapshotPermissionChecker {
+    snapshot: RwLock<Arc<PermissionSnapshot>>,
+}
+
+impl SnapshotPermissionChecker {
+    #[must_use]
+    pub fn new(snapshot: PermissionSnapshot) -> Self {
+        Self {
+            snapshot: RwLock::new(Arc::new(snapshot)),
+        }
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> Arc<PermissionSnapshot> {
+        Arc::clone(&self.snapshot.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    pub fn replace(&self, snapshot: PermissionSnapshot) -> Arc<PermissionSnapshot> {
+        std::mem::replace(
+            &mut *self
+                .snapshot
+                .write()
+                .unwrap_or_else(PoisonError::into_inner),
+            Arc::new(snapshot),
+        )
+    }
+}
+
+impl PermissionChecker for SnapshotPermissionChecker {
+    fn value(&self, node: &str) -> Tristate {
+        self.snapshot().value(node)
+    }
+
+    fn to_snapshot(&self) -> Option<PermissionSnapshot> {
+        Some(PermissionSnapshot::clone(&self.snapshot()))
     }
 }
 
@@ -572,6 +697,64 @@ mod tests {
         assert_eq!(map.value("demo.kick"), Tristate::False);
         assert_eq!(map.value("other.node"), Tristate::True);
         assert_eq!(map.value("single"), Tristate::True);
+    }
+
+    #[test]
+    fn a_snapshot_answers_like_its_rules_and_admin_answers_everything() {
+        let snapshot = PermissionSnapshot::new()
+            .with("*", true)
+            .with("demo.*", false)
+            .with("Demo.Use", true);
+        assert_eq!(snapshot.value("demo.use"), Tristate::True);
+        assert_eq!(snapshot.value("demo.kick"), Tristate::False);
+        assert_eq!(snapshot.value("other"), Tristate::True);
+        assert_eq!(
+            PermissionSnapshot::new()
+                .with("demo.use", true)
+                .value("demo"),
+            Tristate::Undefined
+        );
+        let admin = PermissionSnapshot::new()
+            .with("demo.use", false)
+            .with_admin(true);
+        assert!(admin.is_admin());
+        assert_eq!(admin.value("demo.use"), Tristate::True);
+        assert_eq!(admin.value(ADMIN_PERMISSION), Tristate::True);
+        assert_eq!(
+            PermissionSnapshot::new().value(ADMIN_PERMISSION),
+            Tristate::Undefined
+        );
+    }
+
+    #[test]
+    fn a_snapshot_checker_answers_with_the_latest_snapshot() {
+        let checker = SnapshotPermissionChecker::new(PermissionSnapshot::new());
+        assert_eq!(checker.value("demo.use"), Tristate::Undefined);
+        let previous = checker.replace(PermissionSnapshot::new().with("demo.use", true));
+        assert_eq!(*previous, PermissionSnapshot::new());
+        assert!(checker.has_permission("demo.use"));
+        assert_eq!(
+            checker.to_snapshot(),
+            Some(PermissionSnapshot::new().with("demo.use", true))
+        );
+        checker.replace(PermissionSnapshot::new().with_admin(true));
+        assert!(checker.has_permission("anything.at.all"));
+    }
+
+    #[test]
+    fn the_plain_checkers_describe_themselves_as_snapshots() {
+        assert_eq!(
+            DefaultPermissionChecker.to_snapshot(),
+            Some(PermissionSnapshot::new())
+        );
+        assert_eq!(
+            AllPermissionsChecker.to_snapshot(),
+            Some(PermissionSnapshot::new().with_admin(true))
+        );
+        let map = PermissionMap::new().with("demo.*", true);
+        let snapshot = map.to_snapshot().unwrap();
+        assert_eq!(snapshot.rules(), &map);
+        assert!(!snapshot.is_admin());
     }
 
     #[test]

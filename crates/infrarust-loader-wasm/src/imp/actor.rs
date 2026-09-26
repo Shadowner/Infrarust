@@ -19,6 +19,7 @@ use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
 use crate::instance::InstanceFactory;
 use crate::rate_limit::SharedRateLimit;
+use crate::snapshots::PermissionSnapshots;
 use crate::store_state::PluginStoreState;
 use crate::supervisor::Supervisor;
 
@@ -30,6 +31,7 @@ pub(crate) enum CallFailure {
     Quarantined,
     Replaced,
     Expired,
+    TimedOut,
     Trapped(String),
     Abandoned(String),
     Dropped,
@@ -59,6 +61,7 @@ impl fmt::Display for CallFailure {
                 f.write_str("the plugin instance the call was meant for was replaced")
             }
             Self::Expired => f.write_str("the call's deadline passed while it was queued"),
+            Self::TimedOut => f.write_str("the plugin did not answer before the call's deadline"),
             Self::Trapped(reason) => write!(f, "the guest trapped: {reason}"),
             Self::Abandoned(reason) => write!(f, "the call was abandoned: {reason}"),
             Self::Dropped => f.write_str("the call was dropped before it completed"),
@@ -177,10 +180,15 @@ struct ActorInfo {
     next_full_warning_ms: AtomicU64,
     suppressed_full_warnings: AtomicU64,
     guest_warnings: SharedRateLimit,
+    snapshots: Arc<PermissionSnapshots>,
 }
 
 impl ActorInfo {
-    fn new(plugin_id: String, sandbox: &SandboxLimits) -> Self {
+    fn new(
+        plugin_id: String,
+        sandbox: &SandboxLimits,
+        snapshots: Arc<PermissionSnapshots>,
+    ) -> Self {
         Self {
             plugin_id,
             capacity: sandbox.queue_capacity,
@@ -190,6 +198,7 @@ impl ActorInfo {
             next_full_warning_ms: AtomicU64::new(0),
             suppressed_full_warnings: AtomicU64::new(0),
             guest_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
+            snapshots,
         }
     }
 
@@ -241,7 +250,11 @@ impl InstanceRef {
         let (jobs, _) = mpsc::channel(1);
         Self {
             jobs: jobs.downgrade(),
-            info: Arc::new(ActorInfo::new(String::new(), &SandboxLimits::default())),
+            info: Arc::new(ActorInfo::new(
+                String::new(),
+                &SandboxLimits::default(),
+                Arc::default(),
+            )),
             kind: CallKind::Callback,
             generation: None,
         }
@@ -249,6 +262,10 @@ impl InstanceRef {
 
     pub(crate) fn plugin_id(&self) -> &str {
         &self.info.plugin_id
+    }
+
+    pub(crate) fn snapshots(&self) -> &Arc<PermissionSnapshots> {
+        &self.info.snapshots
     }
 
     pub(crate) fn admit_warning(&self) -> Option<u64> {
@@ -339,6 +356,28 @@ impl InstanceRef {
         let answer = self.enqueue(op, call)?;
         answer.await.unwrap_or(Err(CallFailure::Dropped))
     }
+
+    pub(crate) async fn call_bounded<T, F>(
+        &self,
+        op: &'static str,
+        call: F,
+    ) -> Result<T, CallFailure>
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        let budget = self.info.budget(self.kind);
+        let answer = self.enqueue(op, call)?;
+        match tokio::time::timeout(budget, answer).await {
+            Ok(answer) => answer.unwrap_or(Err(CallFailure::Dropped)),
+            Err(_) => Err(CallFailure::TimedOut),
+        }
+    }
 }
 
 pub(crate) struct PluginActor {
@@ -352,7 +391,11 @@ impl PluginActor {
     pub(crate) async fn start(factory: InstanceFactory) -> Result<Arc<Self>, WasmLoaderError> {
         let sandbox = *factory.sandbox();
         let (jobs, queue) = mpsc::channel(sandbox.queue_capacity);
-        let info = Arc::new(ActorInfo::new(factory.plugin_id().to_owned(), &sandbox));
+        let info = Arc::new(ActorInfo::new(
+            factory.plugin_id().to_owned(),
+            &sandbox,
+            Arc::clone(factory.registrations().snapshots()),
+        ));
         let instance = InstanceRef {
             jobs: jobs.downgrade(),
             info: Arc::clone(&info),

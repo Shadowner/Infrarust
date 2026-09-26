@@ -1,0 +1,29 @@
+interface permissions {
+    use types.{player-id, game-profile, socket-address, host-error};
+
+    record permission-rule {
+        node: string,
+        value: bool,
+    }
+
+    record permission-snapshot {
+        rules: list<permission-rule>,
+        admin: bool,
+    }
+
+    record player-subject {
+        id: player-id,
+        profile: game-profile,
+        online-mode: bool,
+        virtual-host: option<string>,
+        remote-addr: socket-address,
+    }
+
+    variant permission-subject {
+        player(player-subject),
+        console,
+    }
+
+    set-snapshot: func(player: player-id, snapshot: permission-snapshot) -> result<_, host-error>;
+    release: func(player: player-id) -> result<_, host-error>;
+}

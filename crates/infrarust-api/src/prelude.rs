@@ -51,7 +51,8 @@ pub use crate::services::{
 pub use crate::permissions::{
     ADMIN_PERMISSION, Capability, CapabilitySet, PermissionChecker, PermissionDefault,
     PermissionMap, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
-    PermissionProviderRejected, PermissionSubject, Tristate,
+    PermissionProviderRejected, PermissionSnapshot, PermissionSubject, SnapshotPermissionChecker,
+    Tristate,
 };
 
 // Limbo

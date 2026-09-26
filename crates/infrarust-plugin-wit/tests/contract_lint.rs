@@ -15,6 +15,8 @@ const GATED: &[&str] = &[
     "limbo",
     "load-balancer",
     "messaging",
+    "permissions",
+    "providers",
 ];
 
 const INFALLIBLE_READS: &[(&str, &str)] = &[

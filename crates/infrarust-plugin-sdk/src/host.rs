@@ -2,12 +2,14 @@ pub(crate) use imp::*;
 
 #[cfg(target_family = "wasm")]
 mod imp {
+    use crate::bindings::ban_service::BanFeatures;
     use crate::bindings::codec_registry::{self, CodecFilterMetadata};
     use crate::bindings::command_manager::{self, CommandRegistration, CommandSpec};
     use crate::bindings::event_bus::PacketFilter;
     use crate::bindings::events::{EventKind, NamedEventResult};
+    use crate::bindings::permissions::PermissionSnapshot;
     use crate::bindings::types::HostError;
-    use crate::bindings::{event_bus, limbo, scheduler};
+    use crate::bindings::{event_bus, limbo, permissions, providers, scheduler};
 
     pub(crate) fn subscribe(kind: EventKind, priority: u8) -> Result<u64, HostError> {
         event_bus::subscribe(kind, priority)
@@ -73,6 +75,25 @@ mod imp {
     pub(crate) fn register_limbo_handler(name: &str, handler: u64) -> Result<(), HostError> {
         limbo::register_limbo_handler(name, handler)
     }
+
+    pub(crate) fn register_ban_provider(features: &BanFeatures) -> Result<(), HostError> {
+        providers::register_ban_provider(*features)
+    }
+
+    pub(crate) fn register_permission_provider() -> Result<(), HostError> {
+        providers::register_permission_provider()
+    }
+
+    pub(crate) fn set_snapshot(
+        player: u64,
+        snapshot: &PermissionSnapshot,
+    ) -> Result<(), HostError> {
+        permissions::set_snapshot(player, snapshot)
+    }
+
+    pub(crate) fn release_snapshot(player: u64) -> Result<(), HostError> {
+        permissions::release(player)
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -80,10 +101,12 @@ mod imp {
     use std::cell::RefCell;
     use std::collections::{HashMap, HashSet};
 
+    use crate::bindings::ban_service::BanFeatures;
     use crate::bindings::codec_registry::CodecFilterMetadata;
     use crate::bindings::command_manager::{CommandRegistration, CommandSpec};
     use crate::bindings::event_bus::PacketFilter;
     use crate::bindings::events::{EventKind, NamedEventResult};
+    use crate::bindings::permissions::PermissionSnapshot;
     use crate::bindings::types::{ErrorKind, HostError};
 
     #[derive(Default)]
@@ -99,6 +122,9 @@ mod imp {
         pub(crate) cancelled: Vec<u64>,
         pub(crate) codec_filters: Vec<(String, u64)>,
         pub(crate) limbo_handlers: Vec<(String, u64)>,
+        pub(crate) ban_providers: Vec<BanFeatures>,
+        pub(crate) permission_providers: usize,
+        pub(crate) snapshots: HashMap<u64, PermissionSnapshot>,
         pub(crate) refused: HashSet<String>,
     }
 
@@ -256,5 +282,39 @@ mod imp {
             host.limbo_handlers.push((name.to_owned(), handler));
             Ok(())
         })
+    }
+
+    pub(crate) fn register_ban_provider(features: &BanFeatures) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse("ban-provider")?;
+            host.ban_providers.push(*features);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn register_permission_provider() -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse("permission-provider")?;
+            host.permission_providers += 1;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn set_snapshot(
+        player: u64,
+        snapshot: &PermissionSnapshot,
+    ) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse("set-snapshot")?;
+            host.snapshots.insert(player, snapshot.clone());
+            Ok(())
+        })
+    }
+
+    pub(crate) fn release_snapshot(player: u64) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.snapshots.remove(&player);
+        });
+        Ok(())
     }
 }

@@ -102,7 +102,7 @@ A handler that only logs is unchanged in behaviour. A handler that called `allow
 | `ConfigReloadEvent` (no fields) | `provider`, `added`, `removed`, `updated` |
 | none | `BackendHealthEvent { address, servers, state }` |
 | `raw-packet` event kind (never delivered) | `RawPacketEvent`, delivered through `ctx.on_packets(filters, priority, handler)` with the `raw-packet` capability |
-| `permissions-setup` `custom(handler-id)` outcome, `permission-level-of`, `check-permission` exports (never wired) | removed; `PermissionsSetupEvent::use_default()` only, custom checkers come with permission snapshots |
+| `permissions-setup` `custom(handler-id)` outcome, `permission-level-of`, `check-permission` exports (never wired) | removed; `PermissionsSetupEvent::provide(PermissionSnapshot)` installs a custom checker, see [Permissions](./permissions) |
 
 Every reason and message argument takes `impl Into<Component>`, so `deny("Banned")` still compiles, and it now means plain text rather than JSON.
 
@@ -208,6 +208,10 @@ let _ = invocation.reply(Component::text(reply));
 | none | `LoadBalancer` (`config-read` to read, `server-manage` to drain and reset) |
 | none | `Messaging` for plugin channels (`plugin-messaging`) |
 | none | `Proxy` (version, limits, granted capabilities) and `Plugins` (loaded plugins), always available |
+| none | `ctx.provide_bans(impl BanProvider)` makes the plugin the ban provider (`ban-provider`, see [Bans](./bans)) |
+| none | `ctx.provide_permissions(impl PermissionProvider)` makes the plugin the permission provider, `Permissions::set_snapshot` and `release` change a player's permissions live (`permission-provider`, see [Permissions](./permissions)) |
+
+The contract gained the `permissions` and `providers` interfaces, the provider records in `ban-service` (`login-attempt`, `ban-record`, `ban-verdict` and their companions), the `custom(permission-snapshot)` case of `permissions-setup-result`, and six guest exports: `ban-provider-check`, `ban-provider-ban`, `ban-provider-unban`, `ban-provider-get`, `ban-provider-list` and `permission-snapshot-for`. The `#[plugin]` macro generates the exports; a plugin that provides nothing answers them with an error or an empty snapshot. A hand-written `Guest` implementation must add them.
 
 ## Limbo
 
@@ -240,6 +244,7 @@ The SDK now exports `PlayerId`, `ServerId`, `PlayerRef`, `GameProfile`, `ServerA
 8. Replace `ServerSwitchEvent` with `ServerPostConnectEvent` and `switched_from()`.
 9. Add `#![forbid(unsafe_code)]` to your crate root.
 10. Grant `plugin-messaging` to a plugin that uses plugin channels, and `chat-intercept` to one that listens to commands.
+11. Grant `ban-provider` or `permission-provider`, and select the plugin in `[ban] provider` or `[permissions] provider`, for a plugin that provides bans or permissions.
 
 ## See also
 

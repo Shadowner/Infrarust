@@ -5,10 +5,14 @@ use infrarust_api::event::ConnectionState;
 use infrarust_api::events::packet::PacketDirection;
 use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
 use infrarust_api::messaging::ChannelId;
+use infrarust_api::permissions::PermissionSubject;
 use infrarust_api::player::{
     ChatMode, ClientSettings, MainHand, ParticleStatus, Player, SkinParts,
 };
-use infrarust_api::services::ban_service::{BanEntry, BanSource, BanTarget, IpNet};
+use infrarust_api::services::ban_service::{
+    BanEntry, BanQuery, BanRequest, BanSource, BanTarget, IpNet, LoginAttempt, LoginStage,
+    UnbanRequest,
+};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::{
@@ -19,6 +23,7 @@ use infrarust_plugin_wit::arena::ArenaError;
 use crate::bindings::infrarust::plugin::ban_service as wb;
 use crate::bindings::infrarust::plugin::config_service as wc;
 use crate::bindings::infrarust::plugin::limbo as wl;
+use crate::bindings::infrarust::plugin::permissions as wp;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
 use crate::host_error::{HostResult, host_error};
@@ -27,6 +32,12 @@ pub(crate) fn system_time_to_millis(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
+}
+
+pub(crate) fn millis_to_system_time(millis: u64) -> SystemTime {
+    UNIX_EPOCH
+        .checked_add(Duration::from_millis(millis))
+        .unwrap_or(UNIX_EPOCH)
 }
 
 pub(crate) fn uuid_to_wit(uuid: uuid::Uuid) -> wt::Uuid {
@@ -204,6 +215,90 @@ pub(crate) fn ban_source_to_wit(source: &BanSource) -> wb::BanSource {
         BanSource::Plugin(id) => wb::BanSource::Plugin(id.clone()),
         BanSource::WebApi { actor } => wb::BanSource::WebApi(actor.clone()),
         _ => wb::BanSource::System,
+    }
+}
+
+pub(crate) fn ban_source_from_wit(source: wb::BanSource) -> BanSource {
+    match source {
+        wb::BanSource::Console => BanSource::Console,
+        wb::BanSource::Player(actor) => BanSource::Player {
+            uuid: uuid_from_wit(actor.uuid),
+            name: actor.name,
+        },
+        wb::BanSource::Plugin(id) => BanSource::Plugin(id),
+        wb::BanSource::WebApi(actor) => BanSource::WebApi { actor },
+        wb::BanSource::System => BanSource::System,
+    }
+}
+
+pub(crate) fn ban_record_from_wit(record: wb::BanRecord) -> HostResult<BanEntry> {
+    let target = ban_target_from_wit(record.target)?;
+    let mut entry = BanEntry::new(record.id, target, ban_source_from_wit(record.source))
+        .created_at(millis_to_system_time(record.created_at));
+    entry.reason = record.reason;
+    entry.expires_at = record.expires_at.map(millis_to_system_time);
+    Ok(entry)
+}
+
+pub(crate) fn login_attempt_to_wit(attempt: &LoginAttempt) -> wb::LoginAttempt {
+    wb::LoginAttempt {
+        stage: match attempt.stage {
+            LoginStage::Status => wb::LoginStage::Status,
+            LoginStage::PreAuth => wb::LoginStage::PreAuth,
+            _ => wb::LoginStage::PostAuth,
+        },
+        ip: ip_to_wit(attempt.ip),
+        username: attempt.username.clone(),
+        uuid: attempt.uuid.map(uuid_to_wit),
+        uuid_verified: attempt.uuid_verified,
+        virtual_host: attempt.virtual_host.clone(),
+        server: attempt.server.as_ref().map(|s| s.as_str().to_owned()),
+    }
+}
+
+pub(crate) fn ban_request_to_wit(request: &BanRequest) -> wb::BanRequest {
+    wb::BanRequest {
+        target: ban_target_to_wit(&request.target),
+        reason: request.reason.clone(),
+        duration_ms: request
+            .duration
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+        kick: request.kick,
+        silent: request.silent,
+    }
+}
+
+pub(crate) fn unban_request_to_wit(request: &UnbanRequest) -> wb::UnbanRequest {
+    wb::UnbanRequest {
+        target: ban_target_to_wit(&request.target),
+        source: ban_source_to_wit(request.source.as_ref().unwrap_or(&BanSource::System)),
+        silent: request.silent,
+    }
+}
+
+pub(crate) fn ban_query_to_wit(query: &BanQuery) -> wb::BanQuery {
+    wb::BanQuery {
+        cursor: query.cursor.clone(),
+        limit: u32::try_from(query.effective_limit()).unwrap_or(u32::MAX),
+    }
+}
+
+pub(crate) fn permission_subject_to_wit(subject: &PermissionSubject) -> wp::PermissionSubject {
+    match (
+        subject.player_id(),
+        subject.profile(),
+        subject.remote_addr(),
+    ) {
+        (Some(id), Some(profile), Some(remote_addr)) => {
+            wp::PermissionSubject::Player(wp::PlayerSubject {
+                id: id.as_u64(),
+                profile: game_profile_to_wit(profile),
+                online_mode: subject.is_online_mode(),
+                virtual_host: subject.virtual_host().map(str::to_owned),
+                remote_addr: socket_to_wit(remote_addr),
+            })
+        }
+        _ => wp::PermissionSubject::Console,
     }
 }
 
@@ -464,6 +559,115 @@ mod tests {
         );
         let err = ban_target_from_wit(wb::BanTarget::IpRange("nope".into())).unwrap_err();
         assert_eq!(err.kind, wt::ErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn a_provider_record_keeps_its_typed_source_and_times() {
+        let record = wb::BanRecord {
+            id: "p1".into(),
+            target: wb::BanTarget::IpRange("::ffff:10.0.0.0/104".into()),
+            reason: Some("proxy abuse".into()),
+            source: wb::BanSource::Player(wb::BanActor {
+                uuid: uuid_to_wit(uuid::Uuid::from_u128(5)),
+                name: "Mod".into(),
+            }),
+            created_at: 1_700_000_000_000,
+            expires_at: Some(1_700_000_060_000),
+        };
+        let entry = ban_record_from_wit(record).unwrap();
+        assert_eq!(
+            entry.source,
+            BanSource::Player {
+                uuid: uuid::Uuid::from_u128(5),
+                name: "Mod".into()
+            }
+        );
+        assert_eq!(system_time_to_millis(entry.created_at), 1_700_000_000_000);
+        assert_eq!(
+            entry.expires_at.map(system_time_to_millis),
+            Some(1_700_000_060_000)
+        );
+        assert_eq!(entry.reason.as_deref(), Some("proxy abuse"));
+
+        let broken = wb::BanRecord {
+            id: "p2".into(),
+            target: wb::BanTarget::IpRange("not a range".into()),
+            reason: None,
+            source: wb::BanSource::System,
+            created_at: 0,
+            expires_at: None,
+        };
+        assert_eq!(
+            ban_record_from_wit(broken).unwrap_err().kind,
+            wt::ErrorKind::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn a_login_attempt_and_its_requests_reach_the_guest_as_given() {
+        let attempt = LoginAttempt::post_auth(
+            "192.0.2.5".parse().unwrap(),
+            "Steve",
+            uuid::Uuid::from_u128(7),
+            true,
+        )
+        .virtual_host("play.example.com")
+        .server(ServerId::new("lobby"));
+        assert_eq!(
+            login_attempt_to_wit(&attempt),
+            wb::LoginAttempt {
+                stage: wb::LoginStage::PostAuth,
+                ip: wt::IpAddress::Ipv4((192, 0, 2, 5)),
+                username: Some("Steve".into()),
+                uuid: Some(uuid_to_wit(uuid::Uuid::from_u128(7))),
+                uuid_verified: true,
+                virtual_host: Some("play.example.com".into()),
+                server: Some("lobby".into()),
+            }
+        );
+        assert_eq!(
+            login_attempt_to_wit(&LoginAttempt::status("192.0.2.5".parse().unwrap())).stage,
+            wb::LoginStage::Status
+        );
+        let unban = unban_request_to_wit(&UnbanRequest::new(BanTarget::Username("Steve".into())));
+        assert_eq!(unban.source, wb::BanSource::System);
+        let query = ban_query_to_wit(&BanQuery::new().limit(usize::MAX).after("c"));
+        assert_eq!(query.limit, 1000);
+        assert_eq!(query.cursor.as_deref(), Some("c"));
+        let ban = ban_request_to_wit(
+            &BanRequest::new(BanTarget::Username("Steve".into()))
+                .duration(Duration::from_secs(2))
+                .silent(true),
+        );
+        assert_eq!(ban.duration_ms, Some(2000));
+        assert!(ban.kick && ban.silent);
+    }
+
+    #[test]
+    fn a_permission_subject_carries_the_player_or_the_console() {
+        let player = PermissionSubject::player(
+            infrarust_api::types::PlayerId::new(3),
+            GameProfile {
+                uuid: uuid::Uuid::from_u128(3),
+                username: "Steve".into(),
+                properties: vec![],
+            },
+            false,
+            "203.0.113.7:4000".parse().unwrap(),
+        )
+        .with_virtual_host("lobby.test");
+        let wp::PermissionSubject::Player(wit) = permission_subject_to_wit(&player) else {
+            panic!("a player subject");
+        };
+        assert_eq!(wit.id, 3);
+        assert_eq!(wit.profile.username, "Steve");
+        assert!(!wit.online_mode);
+        assert_eq!(wit.virtual_host.as_deref(), Some("lobby.test"));
+        assert_eq!(wit.remote_addr.port, 4000);
+        assert_eq!(
+            permission_subject_to_wit(&PermissionSubject::Console),
+            wp::PermissionSubject::Console
+        );
     }
 
     #[test]

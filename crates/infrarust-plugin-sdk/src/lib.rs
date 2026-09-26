@@ -20,6 +20,7 @@
 //! }
 //! ```
 
+pub mod ban_provider;
 pub mod bindings;
 pub mod codec;
 pub mod command;
@@ -30,6 +31,7 @@ pub mod event;
 mod host;
 pub mod limbo;
 pub mod log;
+pub mod permissions;
 pub mod player;
 pub mod plugin;
 mod registry;
@@ -38,6 +40,10 @@ pub mod runtime;
 pub mod services;
 pub mod types;
 
+pub use ban_provider::{
+    BanFeatures, BanProvider, BanQuery, BanRecord, BanRecordPage, BanVerdict, LoginAttempt,
+    LoginStage, UnbanRequest,
+};
 pub use bindings::export;
 pub use codec::{
     CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide, ConnectionState,
@@ -62,6 +68,9 @@ pub use infrarust_plugin_wit::WORLD_VERSION;
 pub use limbo::{
     EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
     SessionHandle, TimeoutOutcome,
+};
+pub use permissions::{
+    PermissionProvider, PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
 };
 pub use player::{
     BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult, Player,
@@ -102,6 +111,10 @@ macro_rules! error {
 }
 
 pub mod prelude {
+    pub use crate::ban_provider::{
+        BanFeatures, BanProvider, BanQuery, BanRecord, BanRecordPage, BanVerdict, LoginAttempt,
+        LoginStage, UnbanRequest,
+    };
     pub use crate::codec::{
         CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide,
         ConnectionState, FilterPriority, Injections, Packet, Verdict,
@@ -120,6 +133,9 @@ pub mod prelude {
     pub use crate::limbo::{
         EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
         SessionHandle, TimeoutOutcome,
+    };
+    pub use crate::permissions::{
+        PermissionProvider, PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
     };
     pub use crate::player::{
         BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult,

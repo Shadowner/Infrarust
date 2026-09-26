@@ -18,6 +18,8 @@ world plugin {
     import messaging;
     import proxy-info;
     import plugin-registry;
+    import permissions;
+    import providers;
 
     export guest;
     export codec-filter;

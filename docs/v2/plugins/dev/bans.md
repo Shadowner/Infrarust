@@ -266,4 +266,4 @@ A plugin that wants to own bans, LibertyBans for example, does four things:
 
 From then on the proxy console, the admin API and every other plugin read and write bans through that plugin. Nothing is copied into `bans.json`.
 
-WASM plugins can use the ban service through the `ban-service` interface (see [WASM services](../wasm/services#bans)) but cannot provide bans yet.
+WASM plugins can use the ban service through the `ban-service` interface (see [WASM services](../wasm/services#bans)), and a WASM plugin can be the provider too: see [WASM bans](../wasm/bans). Its own calls to the ban service answer `unavailable` while it is the provider, so step 4 becomes: store the ban itself and kick with `players.disconnect`.

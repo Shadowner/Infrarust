@@ -58,12 +58,12 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `PluginMessaging` | `plugin-messaging` | Register plugin channels, send plugin messages, and subscribe to `plugin-message` | No |
 | `ServerManage` | `server-manage` | Start/stop servers and read their state; drain and reset load-balanced backends | No |
 | `Ban` | `ban` | Use the ban service | No |
-| `BanProvider` | `ban-provider` | Register a ban provider with `register_ban_provider` (native plugins only, no WASM binding yet) | No |
+| `BanProvider` | `ban-provider` | Become the ban provider named by `[ban] provider` (`providers.register-ban-provider`, see [Bans](./bans)) | No |
 | `CodecFilter` | `codec-filter` | Register codec filters | No |
 | `Limbo` | `limbo` | Provide limbo handlers | No |
 | `TransportFilter` | `transport-filter` | Register transport filters (never grantable via config) | No |
 | `VirtualBackend` | `virtual-backend` | Provide virtual backends (planned, not implemented) | No |
-| `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider` (native plugins only) | No |
+| `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider`, and replace or clear a player's permission snapshot (`providers.register-permission-provider`, `permissions.*`, see [Permissions](./permissions)) | No |
 | `FilesystemExtended` | `filesystem-extended` | Filesystem access beyond the per-plugin data directory (deferred) | No |
 | `Network` | `network` | Outbound network access (deferred) | No |
 
@@ -178,6 +178,9 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 | `scheduler` | `delay`, `interval`, `cancel` | `scheduler` | `permission-denied: "missing capability: scheduler"` |
 | `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | `permission-denied: "missing capability: codec-filter"` |
 | `limbo` | `register-limbo-handler` | `limbo` | `permission-denied: "missing capability: limbo"` |
+| `providers` | `register-ban-provider` | `ban-provider` | `permission-denied: "missing capability: ban-provider"` |
+| `providers` | `register-permission-provider` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
+| `permissions` | `set-snapshot`, `release` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
 
 The five player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info` and `plugin-registry` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds.
 

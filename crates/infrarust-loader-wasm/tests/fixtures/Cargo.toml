@@ -17,6 +17,7 @@ members = [
     "slow-handler",
     "deadline-probe",
     "old-world",
+    "provider",
 ]
 
 [workspace.dependencies]

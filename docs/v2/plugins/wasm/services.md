@@ -36,6 +36,9 @@ The service functions need no handle, so you can call them from a command, a sch
 | `Player::send_packet` | on the `Player` handle | `raw-packet` | opt-in |
 | Servers | `Servers::*` | `server-manage` | opt-in |
 | Bans | `Bans::*` | `ban` | opt-in |
+| Ban provider | `ctx.provide_bans` | `ban-provider` | opt-in |
+| Permission provider | `ctx.provide_permissions` | `permission-provider` | opt-in |
+| Permission snapshots | `Permissions::set_snapshot`, `release` | `permission-provider` | opt-in |
 | Config reads | `Config::get`, `server`, `servers`, `server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` | `config-read` | baseline |
 | Config write | `Config::write_proxy_document` | `config-write` | opt-in |
 | Load balancer reads | `LoadBalancer::strategy`, `backends` | `config-read` | baseline |
@@ -246,6 +249,8 @@ use std::time::Duration;
 let target = BanTarget::Username("Griefer".into());
 Bans::ban(BanRequest::new(target).reason("griefing").duration(Duration::from_secs(86_400)))?;
 ```
+
+A plugin can also be the ban provider itself, the one these calls reach; see [Bans](./bans). While it is, its own `Bans` calls answer `Unavailable` at once, since the host cannot call back into the instance that is making the call.
 
 ## Slow services and deadlines
 

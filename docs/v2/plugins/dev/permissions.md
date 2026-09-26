@@ -120,7 +120,7 @@ ctx.register_permission_provider(Arc::new(MyProvider::new(store)))?;
 
 See [Permissions configuration](../../configuration/security/permissions) for the operator side.
 
-Registering needs the `permission-provider` capability, which compiled-in plugins hold by default. Only the plugin whose id matches `provider` is accepted; any other gets `PermissionProviderRejected::NotSelected { selected }` and the proxy logs a warning. Without the capability the call returns `PermissionProviderRejected::MissingCapability`. WASM plugins cannot register a provider.
+Registering needs the `permission-provider` capability, which compiled-in plugins hold by default. Only the plugin whose id matches `provider` is accepted; any other gets `PermissionProviderRejected::NotSelected { selected }` and the proxy logs a warning. Without the capability the call returns `PermissionProviderRejected::MissingCapability`. A WASM plugin can be the provider too, with permission snapshots: see [WASM permissions](../wasm/permissions).
 
 When a provider registers while players are online, and when the provider plugin is disabled, the proxy refreshes every online player so they move to the new answers.
 
@@ -222,7 +222,7 @@ if player.has_permission(ADMIN_PERMISSION) {
 }
 ```
 
-For WASM plugins, the host's `permission-level` function answers `admin` when the player holds `infrarust.admin` and `player` otherwise.
+For WASM plugins, `players.has-permission` (`Player::has_permission` in the SDK) resolves a node the same way, `infrarust.admin` included.
 
 ## The console
 

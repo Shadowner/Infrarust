@@ -16,7 +16,7 @@ The contract is `infrarust:plugin@0.3.0`. `WORLD_VERSION` in `infrarust-plugin-w
 
 ## Package and world
 
-The contract is one package split across files under `crates/infrarust-plugin-wit/wit/`: `world.wit`, `types.wit`, `events.wit` (types only), `event-bus.wit`, `players.wit`, `text.wit`, `services.wit`, `limbo.wit`, `codec-filter.wit` and `guest.wit`.
+The contract is one package split across files under `crates/infrarust-plugin-wit/wit/`: `world.wit`, `types.wit`, `events.wit` (types only), `event-bus.wit`, `players.wit`, `text.wit`, `services.wit`, `permissions.wit`, `providers.wit`, `limbo.wit`, `codec-filter.wit` and `guest.wit`.
 
 ```wit
 package infrarust:plugin@0.3.0;
@@ -39,6 +39,8 @@ world plugin {
     import messaging;
     import proxy-info;
     import plugin-registry;
+    import permissions;
+    import providers;
 
     export guest;
     export codec-filter;
@@ -66,6 +68,8 @@ world plugin {
 | `scheduler` | `scheduler` | Schedule one-shot and repeating callbacks. |
 | `limbo` | `limbo` for `register-limbo-handler` | Register limbo handlers and act on the session resources. |
 | `codec-registry` | `codec-filter` | Register and unregister codec filters. |
+| `permissions` | `permission-provider` | Replace or clear the permission snapshot the host holds for a player. |
+| `providers` | `ban-provider` for `register-ban-provider`, `permission-provider` for `register-permission-provider` | Become the proxy's ban provider or permission provider. |
 
 Every interface is linked for every plugin. A call the plugin lacks the capability for is refused when it is made: it returns a `host-error` of kind `permission-denied`, or a neutral value for the few infallible reads listed under [Players](#players). See [Capabilities](./capabilities).
 
@@ -441,6 +445,7 @@ interface events {
 
     variant permissions-setup-result {
         use-default,
+        custom(permission-snapshot),
     }
 
     record player-choose-initial-server-event {
@@ -877,7 +882,7 @@ interface events {
 }
 ```
 
-`permissions-setup-result` carries only `use-default` in 0.3.0. `proxy-ping-result` is the whole response: returning it replaces the response, and a description that comes back unchanged keeps the native component untouched. `game-profile-request-result` wraps the profile the player gets, and the record's `original` is the profile the proxy started from. `named-event-result` is the pair the listeners leave behind, `cancelled` and `response`, and returning it replaces both. `raw-packet-event` carries only the player id, like the native `RawPacketEvent`.
+`permissions-setup-result` is `use-default` or `custom(permission-snapshot)`: a custom snapshot becomes the player's checker, held by the host so that `permissions.set-snapshot` can change it later (see [Permissions](./permissions)). A custom checker set by a native plugin reaches the guest as `custom` with the snapshot it describes, or an empty one when the native checker cannot describe itself. `proxy-ping-result` is the whole response: returning it replaces the response, and a description that comes back unchanged keeps the native component untouched. `game-profile-request-result` wraps the profile the player gets, and the record's `original` is the profile the proxy started from. `named-event-result` is the pair the listeners leave behind, `cancelled` and `response`, and returning it replaces both. `raw-packet-event` carries only the player id, like the native `RawPacketEvent`.
 
 `ban-issued` and `ban-revoked` reuse `ban-entry` and `ban-source` from `ban-service`, and `limbo-enter` reuses `limbo-entry-context` from `limbo`. A plugin that only reads those events imports the types, not the functions, so it needs neither `ban` nor `limbo`.
 
@@ -1057,7 +1062,7 @@ interface server-manager {
 }
 
 interface ban-service {
-    use types.{uuid, ip-address, duration-ms, timestamp-ms, host-error};
+    use types.{uuid, ip-address, duration-ms, timestamp-ms, host-error, server-id, component};
 
     variant ban-target {
         ip(ip-address),
@@ -1099,6 +1104,57 @@ interface ban-service {
         plugin(string),
         web-api(option<string>),
         system,
+    }
+
+    enum login-stage {
+        status,
+        pre-auth,
+        post-auth,
+    }
+
+    record login-attempt {
+        stage: login-stage,
+        ip: ip-address,
+        username: option<string>,
+        uuid: option<uuid>,
+        uuid-verified: bool,
+        virtual-host: option<string>,
+        server: option<server-id>,
+    }
+
+    record ban-features {
+        ip-ranges: bool,
+        pagination: bool,
+    }
+
+    record ban-record {
+        id: string,
+        target: ban-target,
+        reason: option<string>,
+        source: ban-source,
+        created-at: timestamp-ms,
+        expires-at: option<timestamp-ms>,
+    }
+
+    record ban-verdict {
+        entry: ban-record,
+        kick-message: option<component>,
+    }
+
+    record unban-request {
+        target: ban-target,
+        source: ban-source,
+        silent: bool,
+    }
+
+    record ban-query {
+        cursor: option<string>,
+        limit: u32,
+    }
+
+    record ban-record-page {
+        entries: list<ban-record>,
+        next-cursor: option<string>,
     }
 
     ban: func(request: ban-request) -> result<ban-entry, host-error>;
@@ -1280,6 +1336,44 @@ interface plugin-registry {
     %list: func() -> list<plugin-info>;
     get: func(id: string) -> option<plugin-info>;
 }
+
+interface permissions {
+    use types.{player-id, game-profile, socket-address, host-error};
+
+    record permission-rule {
+        node: string,
+        value: bool,
+    }
+
+    record permission-snapshot {
+        rules: list<permission-rule>,
+        admin: bool,
+    }
+
+    record player-subject {
+        id: player-id,
+        profile: game-profile,
+        online-mode: bool,
+        virtual-host: option<string>,
+        remote-addr: socket-address,
+    }
+
+    variant permission-subject {
+        player(player-subject),
+        console,
+    }
+
+    set-snapshot: func(player: player-id, snapshot: permission-snapshot) -> result<_, host-error>;
+    release: func(player: player-id) -> result<_, host-error>;
+}
+
+interface providers {
+    use types.{host-error};
+    use ban-service.{ban-features};
+
+    register-ban-provider: func(features: ban-features) -> result<_, host-error>;
+    register-permission-provider: func() -> result<_, host-error>;
+}
 ```
 
 - `ban-service.ban` records the plugin as the ban's source. `unban` answers the removed entry. `list` pages through bans with the cursor from the previous page.
@@ -1290,6 +1384,9 @@ interface plugin-registry {
 - `load-balancer` mirrors the native `LoadBalancerService`; an unknown server or address answers `not-found`.
 - `messaging` takes a `channel-id` with a modern id, a legacy name or both, validated by the host (`invalid-argument` otherwise). `send-to-server` answers how many players could carry the message and `unavailable` when none could.
 - `proxy-info` and `plugin-registry` are always linked and never refuse: `granted-capabilities` lists what the plugin holds.
+- The `ban-service` records from `login-stage` to `ban-record-page` are the provider side of bans: what the host hands a ban provider and what it answers. `ban-record` carries a typed `ban-source` where the consumer-side `ban-entry` carries its display string. See [Bans](./bans).
+- `permissions.set-snapshot` replaces the snapshot of a player who holds one from this plugin (answered `not-found` otherwise, `player-gone` when the player is offline, `invalid-argument` above 65,536 rules) and refreshes the player's command tree. `release` clears it back to the node defaults and forgets it; releasing a player the plugin holds nothing for succeeds. See [Permissions](./permissions).
+- `providers.register-*` register the plugin as the provider named by `[ban] provider` or `[permissions] provider`. A plugin that is not the selected one is answered `conflict`. Registering again, for example from a recovered instance, keeps the first registration and succeeds.
 
 ## Limbo
 
@@ -1368,6 +1465,11 @@ interface guest {
     use types.{plugin-metadata, player-id, player-ref, handler-id, listener-handle, component};
     use events.{event, event-outcome};
     use limbo.{limbo-session, handler-result, session-end-reason};
+    use permissions.{permission-subject, permission-snapshot};
+    use ban-service.{
+        login-attempt, ban-verdict, ban-request, ban-source, ban-record, unban-request, ban-target,
+        ban-query, ban-record-page,
+    };
 
     record recovery-info {
         attempt: u32,
@@ -1417,6 +1519,14 @@ interface guest {
     limbo-on-chat: func(handler: handler-id, session: borrow<limbo-session>, message: string);
     limbo-on-disconnect: func(handler: handler-id, player: player-id);
     limbo-on-session-end: func(handler: handler-id, player: player-id, reason: session-end-reason);
+
+    ban-provider-check: func(attempt: login-attempt) -> result<option<ban-verdict>, string>;
+    ban-provider-ban: func(request: ban-request, source: ban-source) -> result<ban-record, string>;
+    ban-provider-unban: func(request: unban-request) -> result<option<ban-record>, string>;
+    ban-provider-get: func(target: ban-target) -> result<option<ban-record>, string>;
+    ban-provider-list: func(query: ban-query) -> result<ban-record-page, string>;
+
+    permission-snapshot-for: func(subject: permission-subject) -> permission-snapshot;
 }
 ```
 
@@ -1424,6 +1534,8 @@ interface guest {
 - `on-disable` receives `shutdown` when the proxy stops and `unload` when the plugin alone is disabled. `quarantine` is reserved: a quarantined plugin has no live instance, so the host skips `on-disable` for it.
 - `handle-event` receives the `listener-handle` from `subscribe` and answers an `event-outcome`.
 - `handle-command` and `tab-complete` receive the command `handler-id` given to `register`; `tab-complete` answers suggestions with optional tooltips.
+- The `ban-provider-*` exports answer the host once the plugin registered a ban provider. `ban-provider-ban` receives who issued the ban as a second argument. An `err` answer, a trap or a missed deadline fails the call; for `ban-provider-check` that refuses the login. The SDK answers `err("this plugin provides no bans")` when the plugin provides none.
+- `permission-snapshot-for` answers the snapshot for a player or the console once the plugin registered a permission provider. A trap or a missed deadline leaves the subject with the node defaults. The SDK answers an empty snapshot when the plugin provides none.
 
 ## The codec-filter export
 

@@ -28,6 +28,7 @@ use infrarust_core::services::command_manager::{CommandManagerImpl, DispatchOutc
 use infrarust_loader_wasm::WasmPluginLoader;
 use tracing::instrument::WithSubscriber;
 
+use support::log_capture::LogCapture;
 use support::mock_services::{
     CountingPlayerRegistry, Gate, GatedBanService, MapConfigService, RecordingPlayerRegistry,
 };
@@ -580,58 +581,6 @@ async fn fire_post_login_past_timeout(env: &TestEnv) {
         elapsed >= SLOW_HANDLER_TIMEOUT && elapsed < PROMPTLY,
         "fire returned after {elapsed:?}, expected about {SLOW_HANDLER_TIMEOUT:?}"
     );
-}
-
-#[derive(Clone)]
-struct LogCapture {
-    level: tracing::Level,
-    lines: Arc<Mutex<Vec<String>>>,
-}
-
-impl LogCapture {
-    fn at(level: tracing::Level) -> Self {
-        Self {
-            level,
-            lines: Arc::default(),
-        }
-    }
-
-    fn lines(&self) -> Vec<String> {
-        self.lines.lock().unwrap().clone()
-    }
-
-    fn matching(&self, needle: &str) -> Vec<String> {
-        self.lines()
-            .into_iter()
-            .filter(|line| line.contains(needle))
-            .collect()
-    }
-}
-
-struct EventText(String);
-
-impl tracing::field::Visit for EventText {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.0.push_str(&format!("{}={value:?} ", field.name()));
-    }
-}
-
-impl tracing::Subscriber for LogCapture {
-    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-        *metadata.level() <= self.level
-    }
-    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        let mut text = EventText(format!("{} ", event.metadata().level()));
-        event.record(&mut text);
-        self.lines.lock().unwrap().push(text.0);
-    }
-    fn enter(&self, _: &tracing::span::Id) {}
-    fn exit(&self, _: &tracing::span::Id) {}
 }
 
 #[tokio::test(flavor = "multi_thread")]

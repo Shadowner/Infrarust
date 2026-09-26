@@ -210,13 +210,33 @@ conformance!(
 conformance!(
     permissions_setup_custom_native,
     permissions_setup_custom_wasm,
+    single("on permissions-setup normal custom admin", "custom:admin"),
+);
+
+conformance!(
+    permissions_setup_custom_player_native,
+    permissions_setup_custom_player_wasm,
+    single("on permissions-setup normal custom player", "custom:player"),
+);
+
+conformance!(
+    permissions_setup_custom_survives_a_later_listener_native,
+    permissions_setup_custom_survives_a_later_listener_wasm,
     Scenario::new()
-        .plugin("scripted", ["on permissions-setup normal custom admin"])
-        .fire_diverging(E::PermissionsSetup, "custom:admin", "use-default")
-        .log("scripted", [seen(E::PermissionsSetup, NORMAL)])
-        .expect_divergence(
-            "permissions-setup carries only use-default in infrarust:plugin@0.3.0, so a WASM \
-             guest cannot install a custom checker until permission snapshots land"
+        .plugin(
+            "scripted",
+            [
+                "on permissions-setup early custom admin",
+                "on permissions-setup late record",
+            ]
+        )
+        .fire(E::PermissionsSetup, "custom:admin")
+        .log(
+            "scripted",
+            [
+                seen(E::PermissionsSetup, EARLY),
+                seen(E::PermissionsSetup, LATE)
+            ]
         ),
 );
 

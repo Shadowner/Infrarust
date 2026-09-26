@@ -2,7 +2,7 @@ use super::GuestEvent;
 use crate::bindings::ban_service as wb;
 use crate::bindings::events::{Event, EventKind};
 use crate::services::BanEntry;
-use crate::types::uuid_from_wit;
+use crate::types::{uuid_from_wit, uuid_to_wit};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -15,7 +15,20 @@ pub enum BanSource {
 }
 
 impl BanSource {
-    fn from_wit(source: wb::BanSource) -> Self {
+    pub(crate) fn to_wit(&self) -> wb::BanSource {
+        match self {
+            Self::Console => wb::BanSource::Console,
+            Self::Player { uuid, name } => wb::BanSource::Player(wb::BanActor {
+                uuid: uuid_to_wit(*uuid),
+                name: name.clone(),
+            }),
+            Self::Plugin(id) => wb::BanSource::Plugin(id.clone()),
+            Self::WebApi(actor) => wb::BanSource::WebApi(actor.clone()),
+            Self::System => wb::BanSource::System,
+        }
+    }
+
+    pub(crate) fn from_wit(source: wb::BanSource) -> Self {
         match source {
             wb::BanSource::Console => Self::Console,
             wb::BanSource::Player(actor) => Self::Player {

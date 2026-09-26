@@ -323,6 +323,13 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
                 &[&id, &e.player.username, &online],
                 &action,
             );
+            if let Action::Custom(level) = &action {
+                e.provide(if level == "admin" {
+                    PermissionSnapshot::admin()
+                } else {
+                    PermissionSnapshot::new().deny("*")
+                });
+            }
         }),
         EventName::ServerPreConnect => ctx.on::<ServerPreConnectEvent>(at, move |e| {
             let id = e.player.id.to_string();

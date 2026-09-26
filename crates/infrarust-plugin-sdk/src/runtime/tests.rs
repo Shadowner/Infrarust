@@ -927,3 +927,226 @@ fn a_packet_listener_sends_its_filters_and_can_drop_packets() {
             .is_err()
     );
 }
+
+struct Guard {
+    banned: &'static str,
+    asked: Rc<Cell<u32>>,
+}
+
+fn guard_record(name: &str) -> crate::ban_provider::BanRecord {
+    crate::ban_provider::BanRecord::new(
+        "g1",
+        BanTarget::Username(name.to_owned()),
+        BanSource::Console,
+    )
+    .reason("griefing")
+}
+
+impl BanProvider for Guard {
+    fn check(
+        &self,
+        attempt: &LoginAttempt,
+    ) -> Result<Option<crate::ban_provider::BanVerdict>, PluginError> {
+        bump(&self.asked);
+        Ok((attempt.username.as_deref() == Some(self.banned)).then(|| {
+            crate::ban_provider::BanVerdict::new(guard_record(self.banned))
+                .message("you are banned")
+        }))
+    }
+
+    fn ban(
+        &self,
+        request: BanRequest,
+        source: BanSource,
+    ) -> Result<crate::ban_provider::BanRecord, PluginError> {
+        let mut record = crate::ban_provider::BanRecord::new("g2", request.target, source);
+        record.reason = request.reason;
+        Ok(record)
+    }
+
+    fn unban(
+        &self,
+        _request: UnbanRequest,
+    ) -> Result<Option<crate::ban_provider::BanRecord>, PluginError> {
+        Err(PluginError::from("storage offline"))
+    }
+
+    fn get(
+        &self,
+        target: &BanTarget,
+    ) -> Result<Option<crate::ban_provider::BanRecord>, PluginError> {
+        Ok((target == &BanTarget::Username(self.banned.to_owned()))
+            .then(|| guard_record(self.banned)))
+    }
+
+    fn list(&self, query: &BanQuery) -> Result<crate::ban_provider::BanRecordPage, PluginError> {
+        Ok(crate::ban_provider::BanRecordPage::new(
+            vec![guard_record(self.banned)],
+            query.cursor.clone(),
+        ))
+    }
+
+    fn features(&self) -> crate::ban_provider::BanFeatures {
+        crate::ban_provider::BanFeatures::new().ip_ranges(true)
+    }
+}
+
+fn attempt(username: &str) -> wb::LoginAttempt {
+    wb::LoginAttempt {
+        stage: wb::LoginStage::PreAuth,
+        ip: wt::IpAddress::Ipv4((203, 0, 113, 7)),
+        username: Some(username.to_owned()),
+        uuid: None,
+        uuid_verified: false,
+        virtual_host: Some("play.example.com".into()),
+        server: None,
+    }
+}
+
+#[test]
+fn without_a_provider_the_ban_exports_answer_an_error() {
+    assert_eq!(
+        ban_provider_check(attempt("Steve")),
+        Err(NO_BAN_PROVIDER.to_owned())
+    );
+    assert_eq!(
+        ban_provider_get(wb::BanTarget::Username("Steve".into())),
+        Err(NO_BAN_PROVIDER.to_owned())
+    );
+}
+
+#[test]
+fn a_ban_provider_is_registered_with_its_features_and_answers_the_exports() {
+    let asked = counter();
+    Context::new()
+        .provide_bans(Guard {
+            banned: "Griefer",
+            asked: Rc::clone(&asked),
+        })
+        .unwrap();
+    assert_eq!(
+        host::with_fake(|h| h.ban_providers.clone()),
+        [wb::BanFeatures {
+            ip_ranges: true,
+            pagination: false,
+        }]
+    );
+
+    assert_eq!(ban_provider_check(attempt("Steve")), Ok(None));
+    let verdict = ban_provider_check(attempt("Griefer"))
+        .unwrap()
+        .expect("the griefer is banned");
+    assert_eq!(verdict.entry.id, "g1");
+    assert_eq!(
+        verdict.kick_message,
+        Some(Component::text("you are banned").to_arena())
+    );
+    assert_eq!(asked.get(), 2);
+
+    let record = ban_provider_ban(
+        wb::BanRequest {
+            target: wb::BanTarget::Username("Alex".into()),
+            reason: Some("spam".into()),
+            duration_ms: None,
+            kick: true,
+            silent: false,
+        },
+        wb::BanSource::Plugin("web".into()),
+    )
+    .unwrap();
+    assert_eq!(record.source, wb::BanSource::Plugin("web".into()));
+    assert_eq!(record.reason.as_deref(), Some("spam"));
+    assert_eq!(
+        ban_provider_unban(wb::UnbanRequest {
+            target: wb::BanTarget::Username("Alex".into()),
+            source: wb::BanSource::Console,
+            silent: false,
+        }),
+        Err("storage offline".to_owned())
+    );
+    let page = ban_provider_list(wb::BanQuery {
+        cursor: Some("next".into()),
+        limit: 10,
+    })
+    .unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.next_cursor.as_deref(), Some("next"));
+}
+
+#[test]
+fn a_refused_ban_provider_is_not_kept() {
+    refuse("ban-provider");
+    let refused = Context::new().provide_bans(Guard {
+        banned: "Griefer",
+        asked: counter(),
+    });
+    assert_eq!(refused.unwrap_err().kind(), ErrorKind::Conflict);
+    assert_eq!(
+        ban_provider_check(attempt("Griefer")),
+        Err(NO_BAN_PROVIDER.to_owned())
+    );
+}
+
+struct Grants;
+
+impl PermissionProvider for Grants {
+    fn snapshot_for(&self, subject: &PermissionSubject) -> PermissionSnapshot {
+        match subject.profile() {
+            Some(profile) if profile.username == "Steve" => {
+                PermissionSnapshot::new().grant("demo.use")
+            }
+            Some(_) => PermissionSnapshot::new(),
+            None => PermissionSnapshot::admin(),
+        }
+    }
+}
+
+fn player_subject(username: &str) -> wp::PermissionSubject {
+    wp::PermissionSubject::Player(wp::PlayerSubject {
+        id: 1,
+        profile: wt::GameProfile {
+            uuid: wt::Uuid { hi: 0, lo: 1 },
+            username: username.to_owned(),
+            properties: vec![],
+        },
+        online_mode: false,
+        virtual_host: None,
+        remote_addr: wt::SocketAddress {
+            ip: wt::IpAddress::Ipv4((127, 0, 0, 1)),
+            port: 1,
+        },
+    })
+}
+
+#[test]
+fn a_permission_provider_answers_snapshots_and_none_means_empty() {
+    assert_eq!(
+        permission_snapshot_for(player_subject("Steve")),
+        PermissionSnapshot::new().to_wit()
+    );
+    Context::new().provide_permissions(Grants).unwrap();
+    assert_eq!(host::with_fake(|h| h.permission_providers), 1);
+    assert_eq!(
+        permission_snapshot_for(player_subject("Steve")),
+        PermissionSnapshot::new().grant("demo.use").to_wit()
+    );
+    assert_eq!(
+        permission_snapshot_for(player_subject("Alex")),
+        PermissionSnapshot::new().to_wit()
+    );
+    assert!(permission_snapshot_for(wp::PermissionSubject::Console).admin);
+}
+
+#[test]
+fn set_snapshot_and_release_reach_the_host() {
+    let snapshot = PermissionSnapshot::new().grant("demo.use");
+    crate::permissions::Permissions::set_snapshot(PlayerId::new(4), &snapshot).unwrap();
+    assert_eq!(
+        host::with_fake(|h| h.snapshots.get(&4).cloned()),
+        Some(snapshot.to_wit())
+    );
+    crate::permissions::Permissions::release(PlayerId::new(4)).unwrap();
+    assert!(host::with_fake(|h| h.snapshots.is_empty()));
+    refuse("set-snapshot");
+    assert!(crate::permissions::Permissions::set_snapshot(PlayerId::new(4), &snapshot).is_err());
+}

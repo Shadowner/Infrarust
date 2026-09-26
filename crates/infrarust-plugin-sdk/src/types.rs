@@ -538,6 +538,10 @@ pub(crate) fn time_from_millis(millis: u64) -> SystemTime {
         .unwrap_or(UNIX_EPOCH)
 }
 
+pub(crate) fn millis_since_epoch(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH).map_or(0, millis)
+}
+
 pub(crate) fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }

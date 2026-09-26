@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use super::{GuestEvent, ResultCell};
 use crate::bindings::events::{self as we, Event, EventKind, EventOutcome};
 use crate::component::{Component, from_host};
+use crate::permissions::PermissionSnapshot;
 use crate::types::{GameProfile, PlayerRef, ServerId, socket_from_wit};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,10 +190,29 @@ impl GuestEvent for OnlineAuthFailedEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PermissionsSetupResult {
     UseDefault,
+    Custom(PermissionSnapshot),
+}
+
+impl PermissionsSetupResult {
+    fn from_wit(result: we::PermissionsSetupResult) -> Self {
+        match result {
+            we::PermissionsSetupResult::UseDefault => Self::UseDefault,
+            we::PermissionsSetupResult::Custom(snapshot) => {
+                Self::Custom(PermissionSnapshot::from_wit(snapshot))
+            }
+        }
+    }
+
+    fn to_wit(&self) -> we::PermissionsSetupResult {
+        match self {
+            Self::UseDefault => we::PermissionsSetupResult::UseDefault,
+            Self::Custom(snapshot) => we::PermissionsSetupResult::Custom(snapshot.to_wit()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +232,10 @@ impl PermissionsSetupEvent {
     pub fn use_default(&mut self) {
         self.result.set(PermissionsSetupResult::UseDefault);
     }
+
+    pub fn provide(&mut self, snapshot: PermissionSnapshot) {
+        self.result.set(PermissionsSetupResult::Custom(snapshot));
+    }
 }
 
 impl GuestEvent for PermissionsSetupEvent {
@@ -221,11 +245,10 @@ impl GuestEvent for PermissionsSetupEvent {
         let Event::PermissionsSetup(e) = ev else {
             return None;
         };
-        let we::PermissionsSetupResult::UseDefault = e.result;
         Some(Self {
             player: PlayerRef::from_wit(e.player),
             online_mode: e.online_mode,
-            result: ResultCell::new(PermissionsSetupResult::UseDefault),
+            result: ResultCell::new(PermissionsSetupResult::from_wit(e.result)),
         })
     }
 
@@ -233,9 +256,7 @@ impl GuestEvent for PermissionsSetupEvent {
         self.result
             .into_changed()
             .map_or(EventOutcome::Unchanged, |r| {
-                EventOutcome::PermissionsSetup(match r {
-                    PermissionsSetupResult::UseDefault => we::PermissionsSetupResult::UseDefault,
-                })
+                EventOutcome::PermissionsSetup(r.to_wit())
             })
     }
 }
@@ -416,6 +437,39 @@ mod tests {
                 Component::text("no").bold().to_arena()
             ))
         );
+    }
+
+    #[test]
+    fn a_provided_snapshot_becomes_the_custom_outcome() {
+        let setup = |result| {
+            PermissionsSetupEvent::from_event(Event::PermissionsSetup(we::PermissionsSetupEvent {
+                player: wt::PlayerRef {
+                    id: 1,
+                    uuid: wt::Uuid { hi: 0, lo: 1 },
+                    username: "Steve".into(),
+                },
+                online_mode: true,
+                result,
+            }))
+            .unwrap()
+        };
+        let mut event = setup(we::PermissionsSetupResult::UseDefault);
+        assert_eq!(event.result(), &PermissionsSetupResult::UseDefault);
+        let snapshot = PermissionSnapshot::new().grant("demo.use");
+        event.provide(snapshot.clone());
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::PermissionsSetup(we::PermissionsSetupResult::Custom(snapshot.to_wit()))
+        );
+
+        let earlier = setup(we::PermissionsSetupResult::Custom(
+            PermissionSnapshot::admin().to_wit(),
+        ));
+        assert_eq!(
+            earlier.result(),
+            &PermissionsSetupResult::Custom(PermissionSnapshot::admin())
+        );
+        assert_eq!(earlier.into_outcome(), EventOutcome::Unchanged);
     }
 
     #[test]

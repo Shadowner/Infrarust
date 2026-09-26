@@ -211,6 +211,8 @@ export default
               { text: 'Commands', link: '/plugins/wasm/commands' },
               { text: 'Codec Filters', link: '/plugins/wasm/codec-filters' },
               { text: 'Limbo Handlers', link: '/plugins/wasm/limbo' },
+              { text: 'Permissions', link: '/plugins/wasm/permissions' },
+              { text: 'Bans', link: '/plugins/wasm/bans' },
               { text: 'Host Services', link: '/plugins/wasm/services' },
               { text: 'Building & Toolchain', link: '/plugins/wasm/building' },
               { text: 'Deploying & Configuring', link: '/plugins/wasm/deploying' },

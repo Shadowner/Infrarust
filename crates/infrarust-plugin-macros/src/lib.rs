@@ -323,6 +323,53 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
             ) {
                 ::infrarust_plugin_sdk::runtime::limbo_on_session_end(handler, player, reason)
             }
+
+            fn ban_provider_check(
+                attempt: ::infrarust_plugin_sdk::bindings::ban_service::LoginAttempt,
+            ) -> ::core::result::Result<
+                ::core::option::Option<::infrarust_plugin_sdk::bindings::ban_service::BanVerdict>,
+                ::std::string::String,
+            > {
+                ::infrarust_plugin_sdk::runtime::ban_provider_check(attempt)
+            }
+            fn ban_provider_ban(
+                request: ::infrarust_plugin_sdk::bindings::ban_service::BanRequest,
+                source: ::infrarust_plugin_sdk::bindings::ban_service::BanSource,
+            ) -> ::core::result::Result<
+                ::infrarust_plugin_sdk::bindings::ban_service::BanRecord,
+                ::std::string::String,
+            > {
+                ::infrarust_plugin_sdk::runtime::ban_provider_ban(request, source)
+            }
+            fn ban_provider_unban(
+                request: ::infrarust_plugin_sdk::bindings::ban_service::UnbanRequest,
+            ) -> ::core::result::Result<
+                ::core::option::Option<::infrarust_plugin_sdk::bindings::ban_service::BanRecord>,
+                ::std::string::String,
+            > {
+                ::infrarust_plugin_sdk::runtime::ban_provider_unban(request)
+            }
+            fn ban_provider_get(
+                target: ::infrarust_plugin_sdk::bindings::ban_service::BanTarget,
+            ) -> ::core::result::Result<
+                ::core::option::Option<::infrarust_plugin_sdk::bindings::ban_service::BanRecord>,
+                ::std::string::String,
+            > {
+                ::infrarust_plugin_sdk::runtime::ban_provider_get(target)
+            }
+            fn ban_provider_list(
+                query: ::infrarust_plugin_sdk::bindings::ban_service::BanQuery,
+            ) -> ::core::result::Result<
+                ::infrarust_plugin_sdk::bindings::ban_service::BanRecordPage,
+                ::std::string::String,
+            > {
+                ::infrarust_plugin_sdk::runtime::ban_provider_list(query)
+            }
+            fn permission_snapshot_for(
+                subject: ::infrarust_plugin_sdk::bindings::permissions::PermissionSubject,
+            ) -> ::infrarust_plugin_sdk::bindings::permissions::PermissionSnapshot {
+                ::infrarust_plugin_sdk::runtime::permission_snapshot_for(subject)
+            }
         }
 
         impl ::infrarust_plugin_sdk::bindings::codec_filter::Guest for __InfrarustPluginComponent {
@@ -454,6 +501,9 @@ mod tests {
             "DisableReason",
             "CommandInvocation",
             "Suggestion",
+            "ban_provider_check",
+            "ban_provider_list",
+            "permission_snapshot_for",
         ] {
             assert!(expanded.contains(export), "{export} missing");
         }

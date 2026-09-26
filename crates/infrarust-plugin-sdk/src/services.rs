@@ -58,7 +58,7 @@ pub enum BanTarget {
 }
 
 impl BanTarget {
-    fn to_wit(&self) -> wb::BanTarget {
+    pub(crate) fn to_wit(&self) -> wb::BanTarget {
         match self {
             Self::Ip(ip) => wb::BanTarget::Ip(ip_to_wit(*ip)),
             Self::IpRange(range) => wb::BanTarget::IpRange(range.clone()),
@@ -67,7 +67,7 @@ impl BanTarget {
         }
     }
 
-    fn from_wit(target: wb::BanTarget) -> Self {
+    pub(crate) fn from_wit(target: wb::BanTarget) -> Self {
         match target {
             wb::BanTarget::Ip(ip) => Self::Ip(ip_from_wit(ip)),
             wb::BanTarget::IpRange(range) => Self::IpRange(range),
@@ -120,6 +120,16 @@ impl BanRequest {
     pub const fn silent(mut self, silent: bool) -> Self {
         self.silent = silent;
         self
+    }
+
+    pub(crate) fn from_wit(request: wb::BanRequest) -> Self {
+        Self {
+            target: BanTarget::from_wit(request.target),
+            reason: request.reason,
+            duration: request.duration_ms.map(Duration::from_millis),
+            kick: request.kick,
+            silent: request.silent,
+        }
     }
 }
 

@@ -1,11 +1,14 @@
+use std::rc::Rc;
 use std::time::Duration;
 
+use crate::ban_provider::BanProvider;
 use crate::bindings::guest as wg;
 use crate::command::CommandBuilder;
 use crate::error::Error;
 use crate::event::{
     EventPriority, GuestEvent, NamedEvent, NamedOutcome, PacketFilter, RawPacketEvent,
 };
+use crate::permissions::PermissionProvider;
 use crate::runtime;
 use crate::types::millis;
 
@@ -225,6 +228,17 @@ impl Context {
 
     pub fn cancel(&self, handle: TaskHandle) {
         handle.cancel();
+    }
+
+    pub fn provide_bans(&self, provider: impl BanProvider + 'static) -> Result<(), Error> {
+        runtime::provide_bans(Rc::new(provider))
+    }
+
+    pub fn provide_permissions(
+        &self,
+        provider: impl PermissionProvider + 'static,
+    ) -> Result<(), Error> {
+        runtime::provide_permissions(Rc::new(provider))
     }
 }
 

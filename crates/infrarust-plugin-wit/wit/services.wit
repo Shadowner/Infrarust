@@ -21,7 +21,7 @@ interface server-manager {
 }
 
 interface ban-service {
-    use types.{uuid, ip-address, duration-ms, timestamp-ms, host-error};
+    use types.{uuid, ip-address, duration-ms, timestamp-ms, host-error, server-id, component};
 
     variant ban-target {
         ip(ip-address),
@@ -63,6 +63,57 @@ interface ban-service {
         plugin(string),
         web-api(option<string>),
         system,
+    }
+
+    enum login-stage {
+        status,
+        pre-auth,
+        post-auth,
+    }
+
+    record login-attempt {
+        stage: login-stage,
+        ip: ip-address,
+        username: option<string>,
+        uuid: option<uuid>,
+        uuid-verified: bool,
+        virtual-host: option<string>,
+        server: option<server-id>,
+    }
+
+    record ban-features {
+        ip-ranges: bool,
+        pagination: bool,
+    }
+
+    record ban-record {
+        id: string,
+        target: ban-target,
+        reason: option<string>,
+        source: ban-source,
+        created-at: timestamp-ms,
+        expires-at: option<timestamp-ms>,
+    }
+
+    record ban-verdict {
+        entry: ban-record,
+        kick-message: option<component>,
+    }
+
+    record unban-request {
+        target: ban-target,
+        source: ban-source,
+        silent: bool,
+    }
+
+    record ban-query {
+        cursor: option<string>,
+        limit: u32,
+    }
+
+    record ban-record-page {
+        entries: list<ban-record>,
+        next-cursor: option<string>,
     }
 
     ban: func(request: ban-request) -> result<ban-entry, host-error>;

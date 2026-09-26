@@ -6,6 +6,8 @@ use infrarust_api::limbo::SessionHandle;
 use infrarust_api::types::PlayerId;
 
 use crate::limbo::deny_unavailable;
+use crate::providers::{WasmBanProvider, WasmPermissionProvider};
+use crate::snapshots::PermissionSnapshots;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Target {
@@ -66,9 +68,32 @@ pub(crate) struct Registrations {
     command_registrations: Mutex<HashMap<String, CommandRegistration>>,
     limbo: Mutex<HashMap<String, Arc<Binding>>>,
     holds: Mutex<HashMap<PlayerId, Hold>>,
+    ban_provider: Mutex<Option<Arc<WasmBanProvider>>>,
+    permission_provider: Mutex<Option<Arc<WasmPermissionProvider>>>,
+    snapshots: Arc<PermissionSnapshots>,
 }
 
 impl Registrations {
+    pub(crate) fn snapshots(&self) -> &Arc<PermissionSnapshots> {
+        &self.snapshots
+    }
+
+    pub(crate) fn registered_ban_provider(&self) -> Option<Arc<WasmBanProvider>> {
+        lock(&self.ban_provider).clone()
+    }
+
+    pub(crate) fn keep_ban_provider(&self, provider: Arc<WasmBanProvider>) {
+        *lock(&self.ban_provider) = Some(provider);
+    }
+
+    pub(crate) fn registered_permission_provider(&self) -> Option<Arc<WasmPermissionProvider>> {
+        lock(&self.permission_provider).clone()
+    }
+
+    pub(crate) fn keep_permission_provider(&self, provider: Arc<WasmPermissionProvider>) {
+        *lock(&self.permission_provider) = Some(provider);
+    }
+
     pub(crate) fn bind_command(&self, name: &str, generation: u64, callback: u64) -> Bound {
         bind(&self.commands, name, generation, callback, false)
     }

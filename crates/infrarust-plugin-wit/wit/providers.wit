@@ -1,0 +1,7 @@
+interface providers {
+    use types.{host-error};
+    use ban-service.{ban-features};
+
+    register-ban-provider: func(features: ban-features) -> result<_, host-error>;
+    register-permission-provider: func() -> result<_, host-error>;
+}

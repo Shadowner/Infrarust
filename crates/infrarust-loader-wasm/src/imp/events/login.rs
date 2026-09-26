@@ -5,10 +5,14 @@ use infrarust_api::events::lifecycle::{
     PreLoginResult,
 };
 
+use infrarust_api::permissions::PermissionSnapshot;
+
 use super::{Applied, Texts, WasmEvent, unmatched};
+use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::component;
 use crate::convert;
+use crate::snapshots::{snapshot_from_wit, snapshot_to_wit};
 
 impl WasmEvent for PreLoginEvent {
     const KIND: EventKind = EventKind::PreLogin;
@@ -99,18 +103,38 @@ impl WasmEvent for PermissionsSetupEvent {
         we::Event::PermissionsSetup(we::PermissionsSetupEvent {
             player: convert::player_ref(&*self.player),
             online_mode: self.online_mode,
-            result: we::PermissionsSetupResult::UseDefault,
+            result: match self.result() {
+                PermissionsSetupResult::Custom(checker) => we::PermissionsSetupResult::Custom(
+                    snapshot_to_wit(&checker.to_snapshot().unwrap_or_default()),
+                ),
+                _ => we::PermissionsSetupResult::UseDefault,
+            },
         })
     }
 
     fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        self.apply_for(outcome, &InstanceRef::detached())
+    }
+
+    fn apply_for(&mut self, outcome: we::EventOutcome, instance: &InstanceRef) -> Applied {
         let we::EventOutcome::PermissionsSetup(result) = outcome else {
             return unmatched(&outcome);
         };
-        self.set_result(match result {
-            we::PermissionsSetupResult::UseDefault => PermissionsSetupResult::UseDefault,
-        });
-        Applied::Set
+        match result {
+            we::PermissionsSetupResult::UseDefault => {
+                self.set_result(PermissionsSetupResult::UseDefault);
+                Applied::Set
+            }
+            we::PermissionsSetupResult::Custom(snapshot) => {
+                let (snapshot, applied) = match snapshot_from_wit(&snapshot) {
+                    Ok(snapshot) => (snapshot, Applied::Set),
+                    Err(reason) => (PermissionSnapshot::new(), Applied::Degraded(reason)),
+                };
+                let checker = instance.snapshots().install(self.player_id(), snapshot);
+                self.set_result(PermissionsSetupResult::Custom(checker));
+                applied
+            }
+        }
     }
 }
 
@@ -307,6 +331,68 @@ mod tests {
         assert_eq!(event.profile.username, "Alex");
         assert_eq!(event.original(), &profile);
         assert!(event.is_modified());
+    }
+
+    #[test]
+    fn a_custom_snapshot_becomes_a_live_checker_held_for_the_player() {
+        let instance = InstanceRef::detached();
+        let mut event = PermissionsSetupEvent::new(steve(), true);
+        let snapshot = crate::bindings::infrarust::plugin::permissions::PermissionSnapshot {
+            rules: vec![
+                crate::bindings::infrarust::plugin::permissions::PermissionRule {
+                    node: "demo.use".into(),
+                    value: true,
+                },
+            ],
+            admin: false,
+        };
+        let applied = event.apply_for(
+            we::EventOutcome::PermissionsSetup(we::PermissionsSetupResult::Custom(
+                snapshot.clone(),
+            )),
+            &instance,
+        );
+        assert_eq!(applied, Applied::Set);
+        let PermissionsSetupResult::Custom(checker) = event.result() else {
+            panic!("a custom snapshot sets a custom checker");
+        };
+        assert!(checker.has_permission("demo.use"));
+        assert!(!checker.has_permission("demo.kick"));
+        let we::Event::PermissionsSetup(record) = event.to_wit() else {
+            panic!("a permissions setup is sent as permissions-setup");
+        };
+        assert_eq!(
+            record.result,
+            we::PermissionsSetupResult::Custom(snapshot),
+            "a later guest sees the snapshot"
+        );
+
+        let held = instance
+            .snapshots()
+            .live(event.player_id())
+            .expect("the host holds the checker for set-snapshot");
+        held.replace(PermissionSnapshot::new().with_admin(true));
+        assert!(checker.has_permission("demo.kick"), "the update is live");
+    }
+
+    #[test]
+    fn a_native_checker_is_shown_to_the_guest_as_a_custom_snapshot() {
+        let mut event = PermissionsSetupEvent::new(steve(), true);
+        event.set_result(PermissionsSetupResult::Custom(Arc::new(
+            infrarust_api::permissions::AllPermissionsChecker,
+        )));
+        let we::Event::PermissionsSetup(record) = event.to_wit() else {
+            panic!("a permissions setup is sent as permissions-setup");
+        };
+        assert_eq!(
+            record.result,
+            we::PermissionsSetupResult::Custom(
+                crate::bindings::infrarust::plugin::permissions::PermissionSnapshot {
+                    rules: vec![],
+                    admin: true,
+                }
+            )
+        );
     }
 
     #[test]

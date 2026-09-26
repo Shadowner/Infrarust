@@ -34,6 +34,9 @@ pub(crate) fn gate(interface: &str, function: &str) -> Option<Capability> {
         "scheduler" => Some(Capability::Scheduler),
         "codec-registry" => Some(Capability::CodecFilter),
         "limbo" if function == "register-limbo-handler" => Some(Capability::Limbo),
+        "permissions" => Some(Capability::PermissionProvider),
+        "providers" if function == "register-ban-provider" => Some(Capability::BanProvider),
+        "providers" => Some(Capability::PermissionProvider),
         _ => None,
     }
 }
@@ -308,5 +311,21 @@ mod tests {
         );
         assert_eq!(gate("proxy-info", "granted-capabilities"), None);
         assert_eq!(gate("plugin-registry", "list"), None);
+        assert_eq!(
+            gate("providers", "register-ban-provider"),
+            Some(Capability::BanProvider)
+        );
+        assert_eq!(
+            gate("providers", "register-permission-provider"),
+            Some(Capability::PermissionProvider)
+        );
+        assert_eq!(
+            gate("permissions", "set-snapshot"),
+            Some(Capability::PermissionProvider)
+        );
+        assert_eq!(
+            gate("permissions", "release"),
+            Some(Capability::PermissionProvider)
+        );
     }
 }

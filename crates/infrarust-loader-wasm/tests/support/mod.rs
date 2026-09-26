@@ -16,9 +16,11 @@ use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::types::GameProfile;
+use infrarust_core::ban::BanManager;
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::filter::transport_registry::TransportFilterRegistryImpl;
+use infrarust_core::permissions::PermissionService;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions, PluginRegistryImpl};
 use infrarust_core::routing::DomainRouter;
@@ -44,6 +46,8 @@ pub struct EnvOptions {
     pub ban_service: Arc<dyn BanService>,
     pub bus_config: EventBusConfig,
     pub grants: HashMap<String, PluginPermissions>,
+    pub ban_providers: Option<Arc<BanManager>>,
+    pub permissions: Option<Arc<PermissionService>>,
 }
 
 impl Default for EnvOptions {
@@ -54,6 +58,8 @@ impl Default for EnvOptions {
             ban_service: Arc::new(MockBanService),
             bus_config: EventBusConfig::default(),
             grants: HashMap::new(),
+            ban_providers: None,
+            permissions: None,
         }
     }
 }
@@ -103,8 +109,15 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
         proxy_info: ProxyInfo::default(),
         plugins_dir,
     };
+    let mut factory = PluginContextFactoryImpl::new(services, options.grants);
+    if let Some(bans) = options.ban_providers {
+        factory = factory.with_ban_providers(bans);
+    }
+    if let Some(permissions) = options.permissions {
+        factory = factory.with_permissions(permissions);
+    }
     TestEnv {
-        factory: PluginContextFactoryImpl::new(services, options.grants),
+        factory,
         event_bus,
         command_manager,
         codec_registry,

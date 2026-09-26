@@ -134,7 +134,7 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | Rust type | Fields | Result and helpers |
 | --- | --- | --- |
 | `PreLoginEvent` | `profile`, `remote_addr: SocketAddr`, `protocol`, `server_domain` | `PreLoginResult`: `allow()`, `deny(reason)`, `force_offline()`, `force_online()` |
-| `PermissionsSetupEvent` | `player`, `online_mode` | `PermissionsSetupResult::UseDefault`: `use_default()` |
+| `PermissionsSetupEvent` | `player`, `online_mode` | `PermissionsSetupResult`: `use_default()`, `provide(snapshot)` |
 | `PlayerChooseInitialServerEvent` | `player`, `initial_server` | `PlayerChooseInitialServerResult`: `allow()`, `redirect_to(server)`, `send_to_limbo(handlers)` |
 | `ServerPreConnectEvent` | `player`, `server`, `previous_server`, `cause: ConnectCause` | `ServerPreConnectResult`: `allow()`, `redirect_to(server)`, `send_to_limbo(handlers)`, `deny(reason)` |
 | `KickedFromServerEvent` | `player`, `server`, `reason: Option<Component>`, `cause: KickCause`, `during_connect`, `previous_server` | `KickedFromServerResult`: `disconnect(reason)`, `redirect_to(server)`, `send_to_limbo(handlers)`, `notify(message)` |
@@ -163,7 +163,7 @@ ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
 })?;
 ```
 
-`PermissionsSetupEvent` can only reset to the default checker in 0.3.0; installing a custom permission checker from WASM comes with permission snapshots in a later step.
+`PermissionsSetupEvent::provide(snapshot)` replaces the player's checker with a `PermissionSnapshot` for this session; `use_default()` keeps the checker of the active provider. The host holds the snapshot, so `Permissions::set_snapshot` can change it while the player is online. See [Permissions](./permissions).
 
 `GameProfileRequestEvent` hands you the profile the player is about to get. Edit it in place with `profile_mut()`; `original` stays the profile the proxy started from, and a handler that leaves the profile alone keeps whatever an earlier handler set.
 

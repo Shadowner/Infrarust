@@ -53,6 +53,7 @@ pub(crate) enum Applied {
     Unchanged,
     Set,
     Fallback(ArenaError),
+    Degraded(String),
     Mismatched,
 }
 
@@ -63,6 +64,10 @@ pub(crate) trait WasmEvent: Send + 'static {
 
     fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
         unmatched(&outcome)
+    }
+
+    fn apply_for(&mut self, outcome: we::EventOutcome, _instance: &InstanceRef) -> Applied {
+        self.apply(outcome)
     }
 }
 
@@ -276,12 +281,18 @@ fn settle<E: WasmEvent>(event: &mut E, outcome: we::EventOutcome, instance: &Ins
     let answered = outcome_name(&outcome);
     let plugin = instance.plugin_id();
     let event_name = kind_name(E::KIND);
-    match event.apply(outcome) {
+    match event.apply_for(outcome, instance) {
         Applied::Unchanged | Applied::Set => {}
         Applied::Fallback(error) => {
             if let Some(suppressed) = instance.admit_warning() {
                 tracing::warn!(plugin, event = event_name, %error, suppressed,
                     "wasm plugin set a result with an invalid text component; the result applies with a fallback text");
+            }
+        }
+        Applied::Degraded(reason) => {
+            if let Some(suppressed) = instance.admit_warning() {
+                tracing::warn!(plugin, event = event_name, %reason, suppressed,
+                    "wasm plugin set a result the host cannot use as given; a safe fallback applies instead");
             }
         }
         Applied::Mismatched => {
