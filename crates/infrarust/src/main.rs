@@ -83,22 +83,12 @@ fn main() -> ExitCode {
         && cli.config == Path::new("infrarust.toml")
         && std::io::stdout().is_terminal()
     {
-        match wizard::run(&cli.config) {
-            Ok(wizard::WizardOutcome::Config(c)) => {
-                let mut c = *c;
-                // CLI overrides (load_config does this for the normal path)
-                if let Some(bind) = cli.bind {
-                    c.bind = bind;
-                }
-                if let Some(ref plugins_dir) = cli.plugins_dir {
-                    c.plugins_dir = plugins_dir.clone();
-                }
-                if let Some(ref servers_dir) = cli.servers_dir {
-                    c.servers_dir = servers_dir.clone();
-                }
-                c
-            }
-            Ok(wizard::WizardOutcome::ExitClean) => return ExitCode::SUCCESS,
+        match wizard::run(&cli.config).and_then(|outcome| match outcome {
+            wizard::WizardOutcome::Config(c) => finalize_config(&cli, *c).map(Some),
+            wizard::WizardOutcome::ExitClean => Ok(None),
+        }) {
+            Ok(Some(c)) => c,
+            Ok(None) => return ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("error: {e:#}");
                 return ExitCode::FAILURE;
@@ -224,10 +214,13 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     let content = std::fs::read_to_string(&cli.config)
         .with_context(|| format!("cannot read config file: {}", cli.config.display()))?;
 
-    let mut config: ProxyConfig = toml::from_str(&content)
+    let config: ProxyConfig = toml::from_str(&content)
         .with_context(|| format!("invalid TOML in {}", cli.config.display()))?;
 
-    // CLI overrides
+    finalize_config(cli, config)
+}
+
+fn apply_cli_overrides(cli: &Cli, config: &mut ProxyConfig) {
     if let Some(bind) = cli.bind {
         config.bind = bind;
     }
@@ -237,9 +230,11 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     if let Some(ref servers_dir) = cli.servers_dir {
         config.servers_dir = servers_dir.clone();
     }
+}
 
+fn finalize_config(cli: &Cli, mut config: ProxyConfig) -> anyhow::Result<ProxyConfig> {
+    apply_cli_overrides(cli, &mut config);
     infrarust_config::validate_proxy_config(&config).context("configuration validation failed")?;
-
     Ok(config)
 }
 
@@ -347,5 +342,54 @@ async fn signal_handler() {
     #[cfg(not(unix))]
     {
         ctrl_c.await.ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::parse_from(std::iter::once("infrarust").chain(args.iter().copied()))
+    }
+
+    fn wizard_like_config(servers_dir: &Path) -> ProxyConfig {
+        let toml_str = format!(
+            "bind = \"0.0.0.0:25565\"\nservers_dir = {:?}\n\n[web]\nenable_api = true\nbind = \"127.0.0.1:8080\"\n",
+            servers_dir.display().to_string()
+        );
+        toml::from_str(&toml_str).unwrap()
+    }
+
+    #[test]
+    fn cli_overrides_replace_only_the_flags_given() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = wizard_like_config(tmp.path());
+        let plugins_dir = config.plugins_dir.clone();
+
+        apply_cli_overrides(&parse(&["--bind", "127.0.0.1:25577"]), &mut config);
+        assert_eq!(config.bind, "127.0.0.1:25577".parse().unwrap());
+        assert_eq!(config.servers_dir, tmp.path());
+        assert_eq!(config.plugins_dir, plugins_dir);
+
+        apply_cli_overrides(
+            &parse(&["--servers-dir", "/srv/mc", "--plugins-dir", "/srv/plugins"]),
+            &mut config,
+        );
+        assert_eq!(config.bind, "127.0.0.1:25577".parse().unwrap());
+        assert_eq!(config.servers_dir, Path::new("/srv/mc"));
+        assert_eq!(config.plugins_dir, Path::new("/srv/plugins"));
+    }
+
+    #[test]
+    fn a_bind_override_is_validated_against_the_generated_web_bind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = wizard_like_config(tmp.path());
+
+        let err = finalize_config(&parse(&["--bind", "0.0.0.0:8080"]), config.clone()).unwrap_err();
+        assert!(format!("{err:#}").contains("collides"), "{err:#}");
+
+        let ok = finalize_config(&parse(&["--bind", "0.0.0.0:25566"]), config).unwrap();
+        assert_eq!(ok.bind, "0.0.0.0:25566".parse().unwrap());
     }
 }

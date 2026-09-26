@@ -64,3 +64,6 @@ tracing-opentelemetry = { workspace = true, optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

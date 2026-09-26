@@ -216,9 +216,6 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
         )
     })?;
 
-    infrarust_config::validate_proxy_config(&config)
-        .context("generated configuration failed validation")?;
-
     Ok(WizardOutcome::Config(Box::new(config)))
 }
 
