@@ -117,7 +117,6 @@ impl PluginStoreState {
         priority: u8,
     ) -> HostResult<u64> {
         self.check("event-bus", "subscribe-packets")?;
-        self.check("event-bus", "subscribe-packets")?;
         if filters.is_empty() {
             return Err(host_error(
                 ErrorKind::InvalidArgument,

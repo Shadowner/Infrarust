@@ -261,11 +261,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         message: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("send-message", player)?;
-            let message = parse_text(&message)?;
-            player.send_message(message).map_err(player_error)
-        })())
+        Ok(self.message_player(player, &message))
     }
 
     async fn send_title(
@@ -273,11 +269,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         title: wt::TitleData,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("send-title", player)?;
-            let title = convert::title_data_from_wit(&title).map_err(|e| invalid_component(&e))?;
-            player.send_title(title).map_err(player_error)
-        })())
+        Ok(self.title_player(player, &title))
     }
 
     async fn send_action_bar(
@@ -285,11 +277,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         message: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("send-action-bar", player)?;
-            let message = parse_text(&message)?;
-            player.send_action_bar(message).map_err(player_error)
-        })())
+        Ok(self.action_bar_player(player, &message))
     }
 
     async fn send_packet(
@@ -297,13 +285,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         packet: wt::RawPacket,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            self.check("players", "send-packet")?;
-            let player = self.online_player(player)?;
-            player
-                .send_packet(convert::raw_packet_from_wit(packet))
-                .map_err(player_error)
-        })())
+        Ok(self.packet_to_player(player, packet))
     }
 
     async fn disconnect(
@@ -311,20 +293,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         reason: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("disconnect", player)?;
-            let reason = parse_text(&reason)?;
-            let plugin_id = self.plugin_id().to_owned();
-            let limit = self.host_call_timeout();
-            tokio::spawn(async move {
-                let player_id = player.id().as_u64();
-                if timeout(limit, player.disconnect(reason)).await.is_err() {
-                    tracing::warn!(plugin = %plugin_id, player = player_id,
-                        "player disconnect requested by plugin timed out");
-                }
-            });
-            Ok(())
-        })())
+        Ok(self.disconnect_player(player, &reason))
     }
 
     async fn switch_server(
@@ -332,20 +301,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         server: String,
     ) -> wasmtime::Result<HostResult<()>> {
-        let player = match self.writable_player("switch-server", player) {
-            Ok(player) => player,
-            Err(error) => return Ok(Err(error)),
-        };
-        let limit = self.host_call_limit(PLAYER_SWITCH_TIMEOUT);
-        Ok(
-            match limit
-                .run(player.switch_server(ServerId::from(server)))
-                .await
-            {
-                Ok(result) => result.map_err(player_error),
-                Err(expired) => Err(timed_out(expired)),
-            },
-        )
+        Ok(self.switch_player(player, server).await)
     }
 
     async fn has_permission(
@@ -353,10 +309,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         permission: String,
     ) -> wasmtime::Result<HostResult<bool>> {
-        Ok((|| {
-            self.check("players", "has-permission")?;
-            Ok(self.online_player(player)?.has_permission(&permission))
-        })())
+        Ok(self.player_has_permission(player, &permission))
     }
 
     async fn connect(
@@ -364,14 +317,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         server: String,
     ) -> wasmtime::Result<HostResult<wp::ConnectionResult>> {
-        let player = match self.writable_player("connect", player) {
-            Ok(player) => player,
-            Err(error) => return Ok(Err(error)),
-        };
-        let limit = self.service_call_limit();
-        Ok(bounded(limit, player.connect(ServerId::from(server)))
-            .await
-            .map(|result| connection_result_to_wit(&result)))
+        Ok(self.connect_player(player, server).await)
     }
 
     async fn set_player_list_header_footer(
@@ -380,21 +326,11 @@ impl wp::Host for PluginStoreState {
         header: wt::Component,
         footer: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("set-player-list-header-footer", player)?;
-            let header = parse_text(&header)?;
-            let footer = parse_text(&footer)?;
-            player
-                .set_player_list_header_footer(header, footer)
-                .map_err(player_error)
-        })())
+        Ok(self.set_list_header_footer(player, &header, &footer))
     }
 
     async fn clear_title(&mut self, player: u64, reset: bool) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("clear-title", player)?;
-            player.clear_title(reset).map_err(player_error)
-        })())
+        Ok(self.clear_player_title(player, reset))
     }
 
     async fn show_boss_bar(
@@ -422,12 +358,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         pack: wp::ResourcePackRequest,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("send-resource-pack", player)?;
-            player
-                .send_resource_pack(resource_pack(&pack)?)
-                .map_err(player_error)
-        })())
+        Ok(self.resource_pack_to_player(player, &pack))
     }
 
     async fn remove_resource_pack(
@@ -435,12 +366,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         id: Option<wt::Uuid>,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("remove-resource-pack", player)?;
-            player
-                .remove_resource_pack(id.map(convert::uuid_from_wit))
-                .map_err(player_error)
-        })())
+        Ok(self.remove_player_resource_pack(player, id))
     }
 
     async fn transfer(
@@ -448,12 +374,7 @@ impl wp::Host for PluginStoreState {
         player: u64,
         target: wt::ServerAddress,
     ) -> wasmtime::Result<HostResult<()>> {
-        let player = match self.writable_player("transfer", player) {
-            Ok(player) => player,
-            Err(error) => return Ok(Err(error)),
-        };
-        let limit = self.service_call_limit();
-        Ok(bounded(limit, player.transfer(&target.host, target.port)).await)
+        Ok(self.transfer_player(player, &target).await)
     }
 
     async fn store_cookie(
@@ -462,12 +383,7 @@ impl wp::Host for PluginStoreState {
         key: String,
         data: Vec<u8>,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            let player = self.writable_player("store-cookie", player)?;
-            player
-                .store_cookie(&key, Bytes::from(data))
-                .map_err(player_error)
-        })())
+        Ok(self.store_player_cookie(player, &key, data))
     }
 
     async fn request_cookie(
@@ -475,26 +391,148 @@ impl wp::Host for PluginStoreState {
         player: u64,
         key: String,
     ) -> wasmtime::Result<HostResult<Option<Vec<u8>>>> {
-        let player = match self.writable_player("request-cookie", player) {
-            Ok(player) => player,
-            Err(error) => return Ok(Err(error)),
-        };
-        let limit = self.service_call_limit();
-        Ok(bounded(limit, player.request_cookie(&key))
-            .await
-            .map(|cookie| cookie.map(|data| data.to_vec())))
+        Ok(self.request_player_cookie(player, &key).await)
     }
 
     async fn refresh_permissions(&mut self, player: u64) -> wasmtime::Result<HostResult<()>> {
-        let player = match self.writable_player("refresh-permissions", player) {
-            Ok(player) => player,
-            Err(error) => return Ok(Err(error)),
-        };
+        Ok(self.refresh_player_permissions(player).await)
+    }
+}
+
+impl PluginStoreState {
+    fn message_player(&mut self, player: u64, message: &wt::Component) -> HostResult<()> {
+        let player = self.writable_player("send-message", player)?;
+        let message = parse_text(message)?;
+        player.send_message(message).map_err(player_error)
+    }
+
+    fn title_player(&mut self, player: u64, title: &wt::TitleData) -> HostResult<()> {
+        let player = self.writable_player("send-title", player)?;
+        let title = convert::title_data_from_wit(title).map_err(|e| invalid_component(&e))?;
+        player.send_title(title).map_err(player_error)
+    }
+
+    fn action_bar_player(&mut self, player: u64, message: &wt::Component) -> HostResult<()> {
+        let player = self.writable_player("send-action-bar", player)?;
+        let message = parse_text(message)?;
+        player.send_action_bar(message).map_err(player_error)
+    }
+
+    fn packet_to_player(&mut self, player: u64, packet: wt::RawPacket) -> HostResult<()> {
+        self.check("players", "send-packet")?;
+        let player = self.online_player(player)?;
+        player
+            .send_packet(convert::raw_packet_from_wit(packet))
+            .map_err(player_error)
+    }
+
+    fn disconnect_player(&mut self, player: u64, reason: &wt::Component) -> HostResult<()> {
+        let player = self.writable_player("disconnect", player)?;
+        let reason = parse_text(reason)?;
+        let plugin_id = self.plugin_id().to_owned();
+        let limit = self.host_call_timeout();
+        tokio::spawn(async move {
+            let player_id = player.id().as_u64();
+            if timeout(limit, player.disconnect(reason)).await.is_err() {
+                tracing::warn!(plugin = %plugin_id, player = player_id,
+                    "player disconnect requested by plugin timed out");
+            }
+        });
+        Ok(())
+    }
+
+    async fn switch_player(&mut self, player: u64, server: String) -> HostResult<()> {
+        let player = self.writable_player("switch-server", player)?;
+        let limit = self.host_call_limit(PLAYER_SWITCH_TIMEOUT);
+        bounded(limit, player.switch_server(ServerId::from(server))).await
+    }
+
+    fn player_has_permission(&mut self, player: u64, permission: &str) -> HostResult<bool> {
+        self.check("players", "has-permission")?;
+        Ok(self.online_player(player)?.has_permission(permission))
+    }
+
+    async fn connect_player(
+        &mut self,
+        player: u64,
+        server: String,
+    ) -> HostResult<wp::ConnectionResult> {
+        let player = self.writable_player("connect", player)?;
         let limit = self.service_call_limit();
-        Ok(bounded(limit, async {
+        bounded(limit, player.connect(ServerId::from(server)))
+            .await
+            .map(|result| connection_result_to_wit(&result))
+    }
+
+    fn set_list_header_footer(
+        &mut self,
+        player: u64,
+        header: &wt::Component,
+        footer: &wt::Component,
+    ) -> HostResult<()> {
+        let player = self.writable_player("set-player-list-header-footer", player)?;
+        let header = parse_text(header)?;
+        let footer = parse_text(footer)?;
+        player
+            .set_player_list_header_footer(header, footer)
+            .map_err(player_error)
+    }
+
+    fn clear_player_title(&mut self, player: u64, reset: bool) -> HostResult<()> {
+        let player = self.writable_player("clear-title", player)?;
+        player.clear_title(reset).map_err(player_error)
+    }
+
+    fn resource_pack_to_player(
+        &mut self,
+        player: u64,
+        pack: &wp::ResourcePackRequest,
+    ) -> HostResult<()> {
+        let player = self.writable_player("send-resource-pack", player)?;
+        player
+            .send_resource_pack(resource_pack(pack)?)
+            .map_err(player_error)
+    }
+
+    fn remove_player_resource_pack(&mut self, player: u64, id: Option<wt::Uuid>) -> HostResult<()> {
+        let player = self.writable_player("remove-resource-pack", player)?;
+        player
+            .remove_resource_pack(id.map(convert::uuid_from_wit))
+            .map_err(player_error)
+    }
+
+    async fn transfer_player(&mut self, player: u64, target: &wt::ServerAddress) -> HostResult<()> {
+        let player = self.writable_player("transfer", player)?;
+        let limit = self.service_call_limit();
+        bounded(limit, player.transfer(&target.host, target.port)).await
+    }
+
+    fn store_player_cookie(&mut self, player: u64, key: &str, data: Vec<u8>) -> HostResult<()> {
+        let player = self.writable_player("store-cookie", player)?;
+        player
+            .store_cookie(key, Bytes::from(data))
+            .map_err(player_error)
+    }
+
+    async fn request_player_cookie(
+        &mut self,
+        player: u64,
+        key: &str,
+    ) -> HostResult<Option<Vec<u8>>> {
+        let player = self.writable_player("request-cookie", player)?;
+        let limit = self.service_call_limit();
+        bounded(limit, player.request_cookie(key))
+            .await
+            .map(|cookie| cookie.map(|data| data.to_vec()))
+    }
+
+    async fn refresh_player_permissions(&mut self, player: u64) -> HostResult<()> {
+        let player = self.writable_player("refresh-permissions", player)?;
+        let limit = self.service_call_limit();
+        bounded(limit, async {
             player.refresh_permissions().await;
             Ok(())
         })
-        .await)
+        .await
     }
 }

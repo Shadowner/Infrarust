@@ -22,29 +22,14 @@ fn backend_status(status: &BackendStatus) -> wl::BackendStatus {
 
 impl wl::Host for PluginStoreState {
     async fn strategy(&mut self, server: String) -> wasmtime::Result<HostResult<Option<String>>> {
-        Ok((|| {
-            self.check("load-balancer", "strategy")?;
-            Ok(self
-                .services()?
-                .load_balancer_service()
-                .strategy(&ServerId::from(server)))
-        })())
+        Ok(self.balancer_strategy(server))
     }
 
     async fn backends(
         &mut self,
         server: String,
     ) -> wasmtime::Result<HostResult<Vec<wl::BackendStatus>>> {
-        Ok((|| {
-            self.check("load-balancer", "backends")?;
-            Ok(self
-                .services()?
-                .load_balancer_service()
-                .backends(&ServerId::from(server))
-                .iter()
-                .map(backend_status)
-                .collect())
-        })())
+        Ok(self.balancer_backends(server))
     }
 
     async fn set_drained(
@@ -53,17 +38,7 @@ impl wl::Host for PluginStoreState {
         address: wt::ServerAddress,
         drained: bool,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            self.check("load-balancer", "set-drained")?;
-            self.services()?
-                .load_balancer_service()
-                .set_drained(
-                    &ServerId::from(server),
-                    &convert::server_address_from_wit(address),
-                    drained,
-                )
-                .map_err(|e| balancer_error(&e))
-        })())
+        Ok(self.drain_backend(server, address, drained))
     }
 
     async fn reset_backend(
@@ -71,15 +46,59 @@ impl wl::Host for PluginStoreState {
         server: String,
         address: wt::ServerAddress,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok((|| {
-            self.check("load-balancer", "reset-backend")?;
-            self.services()?
-                .load_balancer_service()
-                .reset_backend(
-                    &ServerId::from(server),
-                    &convert::server_address_from_wit(address),
-                )
-                .map_err(|e| balancer_error(&e))
-        })())
+        Ok(self.reset_balancer_backend(server, address))
+    }
+}
+
+impl PluginStoreState {
+    fn balancer_strategy(&mut self, server: String) -> HostResult<Option<String>> {
+        self.check("load-balancer", "strategy")?;
+        Ok(self
+            .services()?
+            .load_balancer_service()
+            .strategy(&ServerId::from(server)))
+    }
+
+    fn balancer_backends(&mut self, server: String) -> HostResult<Vec<wl::BackendStatus>> {
+        self.check("load-balancer", "backends")?;
+        Ok(self
+            .services()?
+            .load_balancer_service()
+            .backends(&ServerId::from(server))
+            .iter()
+            .map(backend_status)
+            .collect())
+    }
+
+    fn drain_backend(
+        &mut self,
+        server: String,
+        address: wt::ServerAddress,
+        drained: bool,
+    ) -> HostResult<()> {
+        self.check("load-balancer", "set-drained")?;
+        self.services()?
+            .load_balancer_service()
+            .set_drained(
+                &ServerId::from(server),
+                &convert::server_address_from_wit(address),
+                drained,
+            )
+            .map_err(|e| balancer_error(&e))
+    }
+
+    fn reset_balancer_backend(
+        &mut self,
+        server: String,
+        address: wt::ServerAddress,
+    ) -> HostResult<()> {
+        self.check("load-balancer", "reset-backend")?;
+        self.services()?
+            .load_balancer_service()
+            .reset_backend(
+                &ServerId::from(server),
+                &convert::server_address_from_wit(address),
+            )
+            .map_err(|e| balancer_error(&e))
     }
 }
