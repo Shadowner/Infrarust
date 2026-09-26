@@ -83,8 +83,10 @@ pub(crate) trait GuestCall: Send {
     fn refuse(self: Box<Self>, failure: CallFailure);
 }
 
+type Reply<T> = Option<oneshot::Sender<Result<T, CallFailure>>>;
+
 struct TypedCall<T, F> {
-    reply: oneshot::Sender<Result<T, CallFailure>>,
+    reply: Reply<T>,
     call: Option<F>,
     value: Option<T>,
 }
@@ -100,7 +102,7 @@ where
         + 'static,
 {
     fn caller_gone(&self) -> bool {
-        self.reply.is_closed()
+        self.reply.as_ref().is_some_and(oneshot::Sender::is_closed)
     }
 
     fn run<'a>(
@@ -120,11 +122,15 @@ where
 
     fn answer(self: Box<Self>) {
         let TypedCall { reply, value, .. } = *self;
-        let _ = reply.send(value.ok_or(CallFailure::Dropped));
+        if let Some(reply) = reply {
+            let _ = reply.send(value.ok_or(CallFailure::Dropped));
+        }
     }
 
     fn refuse(self: Box<Self>, failure: CallFailure) {
-        let _ = self.reply.send(Err(failure));
+        if let Some(reply) = self.reply {
+            let _ = reply.send(Err(failure));
+        }
     }
 }
 
@@ -144,8 +150,9 @@ impl Job {
         deadline: Option<Deadline>,
         generation: Option<u64>,
         chain: CallChain,
+        reply: Reply<T>,
         call: F,
-    ) -> (Self, oneshot::Receiver<Result<T, CallFailure>>)
+    ) -> Self
     where
         T: Send + 'static,
         F: for<'a> FnOnce(
@@ -155,8 +162,7 @@ impl Job {
             + Send
             + 'static,
     {
-        let (reply, answer) = oneshot::channel();
-        let job = Self {
+        Self {
             op,
             kind,
             deadline,
@@ -167,8 +173,7 @@ impl Job {
                 call: Some(call),
                 value: None,
             }),
-        };
-        (job, answer)
+        }
     }
 }
 
@@ -308,19 +313,35 @@ impl InstanceRef {
             + Send
             + 'static,
     {
-        let answer = self.enqueue(op, CallChain::current().unawaited(), call)?;
-        tokio::spawn(async move {
-            let _ = answer.await;
-        });
-        Ok(())
+        self.enqueue(op, CallChain::current().unawaited(), None, call)
+    }
+
+    fn awaited<T, F>(
+        &self,
+        op: &'static str,
+        call: F,
+    ) -> Result<oneshot::Receiver<Result<T, CallFailure>>, CallFailure>
+    where
+        T: Send + 'static,
+        F: for<'a> FnOnce(
+                &'a mut Store<PluginStoreState>,
+                &'a PluginBindings,
+            ) -> BoxFuture<'a, wasmtime::Result<T>>
+            + Send
+            + 'static,
+    {
+        let (reply, answer) = oneshot::channel();
+        self.enqueue(op, CallChain::current(), Some(reply), call)?;
+        Ok(answer)
     }
 
     fn enqueue<T, F>(
         &self,
         op: &'static str,
         chain: CallChain,
+        reply: Reply<T>,
         call: F,
-    ) -> Result<oneshot::Receiver<Result<T, CallFailure>>, CallFailure>
+    ) -> Result<(), CallFailure>
     where
         T: Send + 'static,
         F: for<'a> FnOnce(
@@ -334,16 +355,17 @@ impl InstanceRef {
             return Err(CallFailure::Stopped);
         };
         let deadline = Deadline::after(self.info.budget(self.kind));
-        let (job, answer) = Job::new(
+        let job = Job::new(
             op,
             JobKind::Call,
             Some(deadline),
             self.generation,
             chain,
+            reply,
             call,
         );
         match jobs.try_send(job) {
-            Ok(()) => Ok(answer),
+            Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
                 self.info.warn_queue_full(op);
                 Err(CallFailure::QueueFull)
@@ -362,7 +384,7 @@ impl InstanceRef {
             + Send
             + 'static,
     {
-        let answer = self.enqueue(op, CallChain::current(), call)?;
+        let answer = self.awaited(op, call)?;
         answer.await.unwrap_or(Err(CallFailure::Dropped))
     }
 
@@ -394,7 +416,7 @@ impl InstanceRef {
             + 'static,
     {
         let budget = self.info.budget(self.kind);
-        let answer = self.enqueue(op, CallChain::current(), call)?;
+        let answer = self.awaited(op, call)?;
         match tokio::time::timeout(budget, answer).await {
             Ok(answer) => answer.unwrap_or(Err(CallFailure::Dropped)),
             Err(_) => Err(CallFailure::TimedOut),
@@ -463,7 +485,16 @@ impl PluginActor {
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
-        let (job, answer) = Job::new(op, kind, None, None, CallChain::current(), call);
+        let (reply, answer) = oneshot::channel();
+        let job = Job::new(
+            op,
+            kind,
+            None,
+            None,
+            CallChain::current(),
+            Some(reply),
+            call,
+        );
         if jobs.send(job).await.is_err() {
             return Err(CallFailure::Stopped);
         }
@@ -532,4 +563,36 @@ async fn run(
         }
     }
     supervisor.retire();
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    fn job(reply: Reply<()>) -> Job {
+        Job::new(
+            "op",
+            JobKind::Call,
+            None,
+            None,
+            CallChain::default(),
+            reply,
+            |_: &mut Store<PluginStoreState>, _: &PluginBindings| Box::pin(async { Ok(()) }),
+        )
+    }
+
+    #[test]
+    fn a_posted_call_is_never_skipped_for_want_of_a_waiting_caller() {
+        assert!(!job(None).call.caller_gone());
+    }
+
+    #[test]
+    fn an_awaited_call_is_skipped_once_its_caller_stops_waiting() {
+        let (reply, answer) = oneshot::channel();
+        let job = job(Some(reply));
+        assert!(!job.call.caller_gone());
+        drop(answer);
+        assert!(job.call.caller_gone());
+    }
 }
