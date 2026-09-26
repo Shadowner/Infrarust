@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_20_2_keeps_the_target_dimension_type() {
         let dim = DimensionInfo::Named("minecraft:the_nether".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2).unwrap();
         assert_eq!(respawn.dimension_type, "minecraft:the_nether");
         assert_eq!(respawn.level_name, "minecraft:the_nether");
     }
