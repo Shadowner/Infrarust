@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_config::{ConfigError, ServerConfig};
 
 use crate::error::CoreError;
-use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
+use crate::provider::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
 use crate::util::sync::lock;
 
 const QUIET_PERIOD: Duration = Duration::from_millis(300);
@@ -209,7 +209,7 @@ async fn sleep_until_some(at: Option<Instant>) {
     }
 }
 
-async fn publish(events: Vec<ProviderEvent>, sender: &mpsc::Sender<ProviderEvent>) -> bool {
+async fn publish(events: Vec<ProviderChange>, sender: &mpsc::Sender<ProviderEvent>) -> bool {
     events.is_empty() || sender.send(ProviderEvent::Batch(events)).await.is_ok()
 }
 
@@ -224,7 +224,7 @@ fn file_id(path: &Path) -> ProviderId {
 /// Computes the diff between the current directory and the known map.
 ///
 /// Returns a list of `ProviderEvent`s and updates the known map in-place.
-fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<ProviderEvent> {
+fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<ProviderChange> {
     let mut events = Vec::new();
 
     // Collect current files
@@ -259,7 +259,7 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
         if let Some(old_config) = known.get(path) {
             // File exists in both — check if changed
             if old_config != config {
-                events.push(ProviderEvent::Updated(ProviderConfig {
+                events.push(ProviderChange::Updated(ProviderConfig {
                     id: file_id(path),
                     config: config.clone(),
                 }));
@@ -267,7 +267,7 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
             }
         } else {
             // New file
-            events.push(ProviderEvent::Added(ProviderConfig {
+            events.push(ProviderChange::Added(ProviderConfig {
                 id: file_id(path),
                 config: config.clone(),
             }));
@@ -283,7 +283,7 @@ fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<P
         .collect();
 
     for path in removed_paths {
-        events.push(ProviderEvent::Removed(file_id(&path)));
+        events.push(ProviderChange::Removed(file_id(&path)));
         known.remove(&path);
     }
 
@@ -404,15 +404,24 @@ mod tests {
 
     fn describe(event: &ProviderEvent) -> String {
         match event {
-            ProviderEvent::Added(pc) | ProviderEvent::Updated(pc) => format!(
-                "{} {:?} {}",
-                pc.id, pc.config.domains, pc.config.addresses[0].address.port
-            ),
+            ProviderEvent::Added(pc) | ProviderEvent::Updated(pc) => describe_config(pc),
             ProviderEvent::Removed(id) => format!("{id} removed"),
-            ProviderEvent::Batch(events) => {
-                events.iter().map(describe).collect::<Vec<_>>().join(", ")
-            }
+            ProviderEvent::Batch(changes) => changes
+                .iter()
+                .map(|change| match change {
+                    ProviderChange::Added(pc) | ProviderChange::Updated(pc) => describe_config(pc),
+                    ProviderChange::Removed(id) => format!("{id} removed"),
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
         }
+    }
+
+    fn describe_config(pc: &ProviderConfig) -> String {
+        format!(
+            "{} {:?} {}",
+            pc.id, pc.config.domains, pc.config.addresses[0].address.port
+        )
     }
 
     #[tokio::test(start_paused = true)]

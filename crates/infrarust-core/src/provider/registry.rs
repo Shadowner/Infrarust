@@ -15,7 +15,7 @@ use crate::event_bus::EventBusImpl;
 use crate::routing::DomainRouter;
 use crate::status::{FaviconCache, StatusCache};
 
-use super::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
+use super::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
 
 /// Orchestrates config providers, feeding their events into the `DomainRouter`.
 ///
@@ -199,39 +199,36 @@ fn apply(
     default_forwarding: &ForwardingMode,
     event: ProviderEvent,
 ) -> Vec<ConfigReloadEvent> {
-    let mut changes = Vec::new();
-    flatten(event, &mut changes);
+    let changes = event.into_changes();
 
     let mut before: Vec<(ProviderId, Option<Arc<ServerConfig>>)> = Vec::new();
     for change in changes {
         let id = match &change {
-            ProviderEvent::Added(pc) | ProviderEvent::Updated(pc) => {
+            ProviderChange::Added(pc) | ProviderChange::Updated(pc) => {
                 if !accepted(pc, default_forwarding) {
                     continue;
                 }
                 pc.id.clone()
             }
-            ProviderEvent::Removed(id) => id.clone(),
-            ProviderEvent::Batch(_) => continue,
+            ProviderChange::Removed(id) => id.clone(),
         };
         if !before.iter().any(|(seen, _)| *seen == id) {
             let previous = router.get(&id);
             before.push((id, previous));
         }
         match change {
-            ProviderEvent::Added(pc) => {
+            ProviderChange::Added(pc) => {
                 tracing::info!(id = %pc.id, "config added by provider");
                 router.add(pc.id, pc.config);
             }
-            ProviderEvent::Updated(pc) => {
+            ProviderChange::Updated(pc) => {
                 tracing::info!(id = %pc.id, "config updated by provider");
                 router.update(pc.id, pc.config);
             }
-            ProviderEvent::Removed(id) => {
+            ProviderChange::Removed(id) => {
                 tracing::info!(id = %id, "config removed by provider");
                 router.remove(&id);
             }
-            ProviderEvent::Batch(_) => {}
         }
     }
 
@@ -271,17 +268,6 @@ fn apply(
         }
     }
     reloads
-}
-
-fn flatten(event: ProviderEvent, into: &mut Vec<ProviderEvent>) {
-    match event {
-        ProviderEvent::Batch(events) => {
-            for event in events {
-                flatten(event, into);
-            }
-        }
-        change => into.push(change),
-    }
 }
 
 async fn on_config_change(

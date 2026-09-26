@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_core::provider::file::FileProvider;
-use infrarust_core::provider::{ConfigProvider, ProviderEvent};
+use infrarust_core::provider::{ConfigProvider, ProviderChange, ProviderEvent};
 
 const MINIMAL_CONFIG: &str = r#"
 domains = ["test.example.com"]
@@ -100,7 +100,19 @@ fn summary(event: &ProviderEvent) -> String {
         ProviderEvent::Added(pc) => format!("added {}", pc.id),
         ProviderEvent::Updated(pc) => format!("updated {}", pc.id),
         ProviderEvent::Removed(id) => format!("removed {id}"),
-        ProviderEvent::Batch(events) => events.iter().map(summary).collect::<Vec<_>>().join(", "),
+        ProviderEvent::Batch(changes) => changes
+            .iter()
+            .map(change_summary)
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+fn change_summary(change: &ProviderChange) -> String {
+    match change {
+        ProviderChange::Added(pc) => format!("added {}", pc.id),
+        ProviderChange::Updated(pc) => format!("updated {}", pc.id),
+        ProviderChange::Removed(id) => format!("removed {id}"),
     }
 }
 
@@ -110,7 +122,7 @@ async fn next_event(rx: &mut mpsc::Receiver<ProviderEvent>) -> ProviderEvent {
         .expect("timeout waiting for event")
         .expect("channel closed");
     match event {
-        ProviderEvent::Batch(mut events) if events.len() == 1 => events.remove(0),
+        ProviderEvent::Batch(mut events) if events.len() == 1 => events.remove(0).into(),
         event => event,
     }
 }
@@ -282,10 +294,10 @@ async fn test_watch_emits_changes_made_between_load_and_watch() {
     };
     let mut seen = Vec::new();
     for change in &changes {
-        if let ProviderEvent::Updated(pc) = change {
+        if let ProviderChange::Updated(pc) = change {
             assert!(pc.config.domains.contains(&"survival.mc.com".to_string()));
         }
-        seen.push(summary(change));
+        seen.push(change_summary(change));
     }
     seen.sort();
     assert_eq!(
