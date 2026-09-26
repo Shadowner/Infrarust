@@ -281,7 +281,7 @@ async fn an_ip_ban_kicks_every_player_sharing_the_address() {
 async fn a_request_without_a_source_is_recorded_as_the_system() {
     let world = builtin_world();
 
-    let entry = BanService::ban(
+    let entry = BanProvider::ban(
         world.manager.as_ref(),
         BanRequest::new(BanTarget::Username("Anon".into())),
     )

@@ -541,26 +541,7 @@ pub trait BanProvider: Send + Sync {
     }
 }
 
-pub trait BanService: Send + Sync + private::Sealed {
-    fn check<'a>(
-        &'a self,
-        attempt: &'a LoginAttempt,
-    ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>>;
-
-    fn ban(&self, request: BanRequest) -> BoxFuture<'_, Result<BanEntry, ServiceError>>;
-
-    fn unban(&self, request: UnbanRequest)
-    -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>>;
-
-    fn get<'a>(
-        &'a self,
-        target: &'a BanTarget,
-    ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>>;
-
-    fn list(&self, query: BanQuery) -> BoxFuture<'_, Result<BanPage, ServiceError>>;
-
-    fn features(&self) -> BanFeatures;
-
+pub trait BanService: BanProvider + private::Sealed {
     fn list_all(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
         Box::pin(async move {
             let mut entries = Vec::new();

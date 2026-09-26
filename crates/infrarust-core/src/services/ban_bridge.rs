@@ -3,8 +3,8 @@ use std::sync::Arc;
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::ban_service::{
-    BanEntry, BanFeatures, BanPage, BanQuery, BanRequest, BanService, BanSource, BanTarget,
-    BanVerdict, LoginAttempt, UnbanRequest,
+    BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanSource,
+    BanTarget, BanVerdict, LoginAttempt, UnbanRequest,
 };
 
 pub struct PluginBanService {
@@ -27,7 +27,7 @@ impl PluginBanService {
 
 impl infrarust_api::services::ban_service::private::Sealed for PluginBanService {}
 
-impl BanService for PluginBanService {
+impl BanProvider for PluginBanService {
     fn check<'a>(
         &'a self,
         attempt: &'a LoginAttempt,
@@ -63,3 +63,5 @@ impl BanService for PluginBanService {
         self.inner.features()
     }
 }
+
+impl BanService for PluginBanService {}

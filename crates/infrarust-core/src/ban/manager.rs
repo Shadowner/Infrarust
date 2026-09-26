@@ -390,7 +390,7 @@ fn session_attempt(session: &PlayerSession) -> LoginAttempt {
 
 impl infrarust_api::services::ban_service::private::Sealed for BanManager {}
 
-impl BanService for BanManager {
+impl BanProvider for BanManager {
     fn check<'a>(
         &'a self,
         attempt: &'a LoginAttempt,
@@ -424,3 +424,5 @@ impl BanService for BanManager {
         self.features()
     }
 }
+
+impl BanService for BanManager {}

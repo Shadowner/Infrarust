@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use crate::error::ServiceError;
 use crate::event::BoxFuture;
 use crate::services::ban_service::{
-    BanEntry, BanFeatures, BanPage, BanQuery, BanRequest, BanService, BanSource, BanTarget,
-    BanVerdict, LoginAttempt, UnbanRequest,
+    BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanSource,
+    BanTarget, BanVerdict, LoginAttempt, UnbanRequest,
 };
 
 use super::{Gate, lock};
@@ -101,7 +101,7 @@ impl MockBanService {
 
 impl crate::services::ban_service::private::Sealed for MockBanService {}
 
-impl BanService for MockBanService {
+impl BanProvider for MockBanService {
     fn check<'a>(
         &'a self,
         attempt: &'a LoginAttempt,
@@ -189,6 +189,8 @@ impl BanService for MockBanService {
         BanFeatures::new().ip_ranges(true).pagination(true)
     }
 }
+
+impl BanService for MockBanService {}
 
 #[cfg(test)]
 mod tests {
