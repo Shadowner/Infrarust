@@ -42,7 +42,7 @@ The proxy runs the login itself, so every step can be observed and most can be r
 ```
 PreLoginEvent ─────────────── Denied ──▶ disconnected during login
   → authentication (client_only: encryption and session server)
-                            ─ failed ──▶ OnlineAuthFailed, disconnected
+                            ─ failed ──▶ OnlineAuthFailedEvent, disconnected
   → GameProfileRequestEvent    the profile can be rewritten
   → ban check (IP, name, final UUID) ─ banned ──▶ disconnected during login
   → PermissionsSetupEvent
@@ -89,10 +89,10 @@ PreLoginEvent ─────────────── Denied ──▶ dis
 - `GameProfileRequestEvent` fires with `online_mode: false` and the offline profile (see [`[auth] offline_uuid`](../../configuration/global#authentication)). The profile left in the event is the player's identity on the proxy: the UUID ban check, the player registry and every later event use it, and BungeeCord or BungeeGuard forwarding sends its UUID and properties (skin textures, for example) to the backend. The backend still runs its own login with the name the client sent, and the client receives the backend's `LoginSuccess`, so a changed name or UUID only exists on the proxy unless forwarding carries it.
 - `PermissionsSetupEvent` and `LoginEvent` fire with `online_mode: false`.
 - The player is not active: `is_active()` is `false`, and `send_message`, `send_title`, `send_action_bar`, `send_packet`, `send_plugin_message`, `send_plugin_message_to_backend` and `switch_server` return `PlayerError::NotActive`. No plugin message or client state event fires, and `client_brand()`, `settings()` and `ping()` return `None`. `disconnect` works: until the proxy has connected to the backend, the client gets the reason in a login disconnect; after that, the proxy closes the connection without a message.
-- `PlayerChooseInitialServerEvent`: `Redirect` is honored. `ServerPreConnectEvent`: `Allowed`, `ConnectTo` and `Denied` are honored.
+- `PlayerChooseInitialServerEvent`: `Redirect` is honored. `ServerPreConnectEvent`: `Allowed`, `Redirect` and `Denied` are honored.
 - `SendToLimbo`, from either event, disconnects the player with "Limbo is not available on this server" and logs a warning: limbo needs the proxy to run the login, which only `offline` and `client_only` do. The `DisconnectEvent` cause is `Kicked` with that reason.
-- A redirect (`Redirect`, `ConnectTo`, or `RedirectTo` from `KickedFromServerEvent`) must target a server in a forwarding mode. Forwarding the login to an `offline` or `client_only` server would skip the login the proxy runs for it, so the player is disconnected with "This server cannot be joined from here" and a warning is logged. An unknown server disconnects the player with "Unknown server".
-- `KickedFromServerEvent` fires only when the backend cannot be reached or the [server manager](#server-wake) cannot start it (`cause` is `Unreachable`), or the connection drops while the login packets are sent (`ConnectionLost`). `during_connect` is `true` and `previous_server` is `None`. `reason` is `None`, except for a server the server manager could not start, where it is the proxy's message. Nothing reached the client yet, so `RedirectTo` works: it goes through `ServerPreConnectEvent` with the cause `KickRedirect`, and after three redirects in a row that failed, the next one is handled as `DisconnectPlayer { reason: None }`. The default result is `DisconnectPlayer { reason: None }`, which shows the event's `reason`, or the server's `disconnect_message` when it is `None`. `Notify` has no server to keep the player on and disconnects with its message. `SendToLimbo` is handled as `DisconnectPlayer { reason: None }` and logs a warning. When the player ends up disconnected, the `DisconnectEvent` cause is `Error` for an unreachable server and `BackendClosed` for a lost connection.
+- A redirect (`Redirect` from any of the three events) must target a server in a forwarding mode. Forwarding the login to an `offline` or `client_only` server would skip the login the proxy runs for it, so the player is disconnected with "This server cannot be joined from here" and a warning is logged. An unknown server disconnects the player with "Unknown server".
+- `KickedFromServerEvent` fires only when the backend cannot be reached or the [server manager](#server-wake) cannot start it (`cause` is `Unreachable`), or the connection drops while the login packets are sent (`ConnectionLost`). `during_connect` is `true` and `previous_server` is `None`. `reason` is `None`, except for a server the server manager could not start, where it is the proxy's message. Nothing reached the client yet, so `Redirect` works: it goes through `ServerPreConnectEvent` with the cause `KickRedirect`, and after three redirects in a row that failed, the next one is handled as `DisconnectPlayer { reason: None }`. The default result is `DisconnectPlayer { reason: None }`, which shows the event's `reason`, or the server's `disconnect_message` when it is `None`. `Notify` has no server to keep the player on and disconnects with its message. `SendToLimbo` is handled as `DisconnectPlayer { reason: None }` and logs a warning. When the player ends up disconnected, the `DisconnectEvent` cause is `Error` for an unreachable server and `BackendClosed` for a lost connection.
 
 The proxy never reads the backend's packets in these modes, which changes three things:
 
@@ -220,7 +220,7 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailed`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `PreTransferEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailedEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `PreTransferEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
 | Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent`, `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent`, `PlayerResourcePackStatusEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
@@ -349,7 +349,7 @@ ctx.event_bus().subscribe::<PreLoginEvent, _>(
 );
 ```
 
-### OnlineAuthFailed
+### OnlineAuthFailedEvent
 
 Fired when online-mode authentication fails, for example a cracked client that cannot complete the encryption handshake. This covers both forced online auth (`ForceOnline` returned from `PreLoginEvent` while the server is in offline mode) and the default online auth used by `client_only` mode. A plugin can listen for this to remember the username and return `ForceOffline` on the player's next connection attempt. Informational only, and awaited: the client is disconnected once the listeners are done.
 
@@ -579,7 +579,7 @@ Fired before the proxy opens a connection to a backend server, once per connecti
 | Variant | Description |
 |---------|-------------|
 | `Allowed` (default) | Connect to `server` |
-| `ConnectTo(ServerId)` | Redirect to a different server |
+| `Redirect(ServerId)` | Redirect to a different server |
 | `SendToLimbo { limbo_handlers }` | Route through limbo handlers |
 | `Denied { reason }` | Block the connection |
 
@@ -670,7 +670,7 @@ It does not fire when a `ServerPreConnectEvent` listener denies a connection, or
 | Variant | Description |
 |---------|-------------|
 | `DisconnectPlayer { reason }` (`disconnect(reason)`) | Disconnect the player. With `reason: None` the client gets the server's disconnect packet byte for byte, re-encoded only when the client is in another phase than the server was. When the server sent none, the client gets the server's `disconnect_message` |
-| `RedirectTo(ServerId)` (`redirect_to`) | Connect the player to another server |
+| `Redirect(ServerId)` (`redirect_to`) | Connect the player to another server |
 | `SendToLimbo { limbo_handlers }` (`send_to_limbo`) | Send the player to limbo. An empty list uses the `limbo_handlers` of `server` |
 | `Notify { message }` (`notify`) | Keep the player on the server they are on and send them `message` in chat. When they have no server to stay on, disconnect them with `message` |
 
@@ -684,7 +684,7 @@ It does not fire when a `ServerPreConnectEvent` listener denies a connection, or
 
 During a switch the player stays on their server until the new one sends its `JoinGame`, with one exception on 1.20.2+: the client leaves the old server's world when the new server starts its configuration phase. A disconnect sent as the first configuration packet still leaves the player where they were. A later one, or a failure after the configuration phase, leaves them with no server to stay on.
 
-A `RedirectTo` goes through the [connection events](#server-connections): `ServerPreConnectEvent` fires with the cause `KickRedirect` and `previous_server` set to the player's current server, which is the server that kicked them after a kick in the play phase. If the redirect fails as well, a new `KickedFromServerEvent` fires for the redirect target. After three redirects in a row that failed, a fourth `RedirectTo` is handled as `DisconnectPlayer { reason: None }`.
+A `Redirect` goes through the [connection events](#server-connections): `ServerPreConnectEvent` fires with the cause `KickRedirect` and `previous_server` set to the player's current server, which is the server that kicked them after a kick in the play phase. If the redirect fails as well, a new `KickedFromServerEvent` fires for the redirect target. After three redirects in a row that failed, a fourth `Redirect` is handled as `DisconnectPlayer { reason: None }`.
 
 When the player ends up disconnected, the `DisconnectEvent` cause is `BackendClosed` with the reason the client was shown: the server's parsed reason, or your `reason` or `message`. It is `None` when the server sent no reason and the client got the `disconnect_message`. A server that could not be reached gives the cause `Error`. A limbo handler reached through `SendToLimbo` gets `LimboEntryContext::KickedFromServer` with the server's reason, or its `disconnect_message`.
 
@@ -1284,7 +1284,7 @@ ctx.event_bus().subscribe::<PartyInvite, _>(EventPriority::NORMAL, |invite| {
     invite.accepted = Some(invite.to != "Mallory");
 });
 
-let bus = ctx.event_bus_handle();
+let bus = ctx.event_bus();
 let invite = bus
     .fire(PartyInvite {
         from: "Steve".into(),
@@ -1298,7 +1298,7 @@ let invite = bus
 
 Two plugins exchange a custom event only if they use the same Rust type. Put the event types in a crate both plugins depend on.
 
-To fire from inside a listener, keep the `Arc<dyn EventBus>` returned by `ctx.event_bus_handle()` in the listener and call `fire` on it. A listener that fires an event waits for that event's listeners, and the time counts against its own `handler_timeout`.
+To fire from inside a listener, keep the `Arc<dyn EventBus>` returned by `ctx.event_bus()` in the listener and call `fire` on it. A listener that fires an event waits for that event's listeners, and the time counts against its own `handler_timeout`.
 
 ### NamedEvent
 
@@ -1326,7 +1326,7 @@ ctx.event_bus().subscribe::<NamedEvent, _>(EventPriority::NORMAL, |event| {
 });
 
 let answered = ctx
-    .event_bus_handle()
+    .event_bus()
     .fire(NamedEvent::new("economy:balance", "text/plain", "Steve"))
     .await?;
 ```

@@ -39,7 +39,7 @@ discover_all()               load_and_enable_all()                shutdown()
 
 ## PluginState
 
-The `PluginState` enum tracks where a plugin is in the lifecycle:
+The `infrarust_api::plugin::PluginState` enum tracks where a plugin is in the lifecycle:
 
 ```rust
 pub enum PluginState {
@@ -50,7 +50,7 @@ pub enum PluginState {
 }
 ```
 
-Query a plugin's state programmatically via `PluginManager::plugin_state()`, which returns `Option<&PluginState>`. The in-game `plugins` subcommand lists loaded plugins, and `plugin <id>` lists or runs a plugin's commands, but neither exposes the raw lifecycle state.
+`as_str()` gives the lowercase label (`enabled`, `error`, ...). Query a plugin's state programmatically via `PluginManager::plugin_state()`, which returns `Option<&PluginState>`, or through `ctx.plugin_registry()`, whose `PluginInfo` carries the plugin's `metadata` and `state`. The in-game `plugins` subcommand lists loaded plugins, and `plugin <id>` lists or runs a plugin's commands, but neither exposes the raw lifecycle state.
 
 ## The Plugin trait
 
@@ -230,17 +230,16 @@ Some of the available services:
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `event_bus()` | `&dyn EventBus` | Subscribe to events |
-| `command_manager()` | `&dyn CommandManager` | Register console/player commands |
-| `command_manager_handle()` | `Arc<dyn CommandManager>` | Owned handle for registering commands after `on_enable` |
-| `scheduler()` | `&dyn Scheduler` | Schedule delayed or repeating tasks |
-| `player_registry()` | `&dyn PlayerRegistry` | Look up connected players |
-| `server_manager()` | `&dyn ServerManager` | Query and manage backend servers |
-| `ban_service()` | `&dyn BanService` | Ban/unban players |
-| `config_service()` | `&dyn ConfigService` | Read proxy configuration |
-| `plugin_registry()` | `&dyn PluginRegistry` | Inspect other loaded plugins |
+| `event_bus()` | `Arc<dyn EventBus>` | Subscribe to events |
+| `command_manager()` | `Arc<dyn CommandManager>` | Register console/player commands, during or after `on_enable` |
+| `scheduler()` | `Arc<dyn Scheduler>` | Schedule delayed or repeating tasks |
+| `player_registry()` | `Arc<dyn PlayerRegistry>` | Look up connected players |
+| `server_manager()` | `Arc<dyn ServerManager>` | Query and manage backend servers |
+| `ban_service()` | `Arc<dyn BanService>` | Ban/unban players |
+| `config_service()` | `Arc<dyn ConfigService>` | Read proxy configuration |
+| `plugin_registry()` | `Arc<dyn PluginRegistry>` | Inspect other loaded plugins |
 | `register_limbo_handler()` | `Result<LimboHandlerRegistration, LimboHandlerError>` | Register a limbo handler, at any time |
-| `services()` | `&dyn ServiceRegistry` | Provide an API to other plugins or use theirs |
+| `services()` | `Arc<dyn ServiceRegistry>` | Provide an API to other plugins or use theirs |
 | `register_config_provider()` | `()` | Register a config provider |
 | `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters, `Some` only with the `CodecFilter` capability |
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters, `Some` only with the `TransportFilter` capability |
@@ -252,7 +251,7 @@ Some of the available services:
 
 The two filter registries return `None` unless the plugin holds the matching capability. Compiled-in native plugins are trusted and receive both; WASM plugins are gated by config.
 
-Most accessors have an `_handle()` companion (`event_bus_handle()`, `player_registry_handle()`, and so on) that returns an `Arc` instead of a borrow. Use the `Arc` form when you need to capture the service in a closure or move it into a spawned async task.
+Every service accessor returns an `Arc`, so the handle can be captured in a closure or moved into a spawned async task; cloning it is cheap.
 
 ## Plugin loaders
 

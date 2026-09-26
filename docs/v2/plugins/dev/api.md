@@ -72,32 +72,22 @@ The `PluginContext` trait provides access to every service and registration meth
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `event_bus()` | `&dyn EventBus` | Subscribe to proxy events |
-| `event_bus_handle()` | `Arc<dyn EventBus>` | Cloneable handle for closures |
-| `player_registry()` | `&dyn PlayerRegistry` | Look up connected players |
-| `player_registry_handle()` | `Arc<dyn PlayerRegistry>` | Cloneable handle for closures |
-| `server_manager()` | `&dyn ServerManager` | Query and control backend servers |
-| `server_manager_handle()` | `Arc<dyn ServerManager>` | Cloneable handle for closures |
-| `ban_service()` | `&dyn BanService` | Ban and unban players |
-| `ban_service_handle()` | `Arc<dyn BanService>` | Cloneable handle for closures |
-| `config_service()` | `&dyn ConfigService` | Read proxy and server configuration, and rewrite the global one with the `ConfigWrite` capability |
-| `config_service_handle()` | `Arc<dyn ConfigService>` | Cloneable handle for closures |
-| `load_balancer_service()` | `&dyn LoadBalancerService` | Read per-address backend status, drain or reset an address |
-| `load_balancer_service_handle()` | `Arc<dyn LoadBalancerService>` | Cloneable handle for closures |
-| `command_manager()` | `&dyn CommandManager` | Register and unregister commands |
-| `command_manager_handle()` | `Arc<dyn CommandManager>` | Owned handle for registering commands after `on_enable` |
-| `scheduler()` | `&dyn Scheduler` | Schedule delayed, recurring and async tasks |
-| `scheduler_handle()` | `Arc<dyn Scheduler>` | Cloneable handle for closures |
-| `services()` | `&dyn ServiceRegistry` | Provide an API to other plugins or use theirs, see [Sharing services](./services) |
-| `services_handle()` | `Arc<dyn ServiceRegistry>` | Cloneable handle for closures |
-| `plugin_registry()` | `&dyn PluginRegistry` | Read-only view of loaded plugins |
-| `plugin_registry_handle()` | `Arc<dyn PluginRegistry>` | Cloneable handle for closures |
+| `event_bus()` | `Arc<dyn EventBus>` | Subscribe to proxy events |
+| `player_registry()` | `Arc<dyn PlayerRegistry>` | Look up connected players |
+| `server_manager()` | `Arc<dyn ServerManager>` | Query and control backend servers |
+| `ban_service()` | `Arc<dyn BanService>` | Ban and unban players |
+| `config_service()` | `Arc<dyn ConfigService>` | Read proxy and server configuration, and rewrite the global one with the `ConfigWrite` capability |
+| `load_balancer_service()` | `Arc<dyn LoadBalancerService>` | Read per-address backend status, drain or reset an address |
+| `command_manager()` | `Arc<dyn CommandManager>` | Register and unregister commands, during or after `on_enable` |
+| `scheduler()` | `Arc<dyn Scheduler>` | Schedule delayed, recurring and async tasks |
+| `services()` | `Arc<dyn ServiceRegistry>` | Provide an API to other plugins or use theirs, see [Sharing services](./services) |
+| `plugin_registry()` | `Arc<dyn PluginRegistry>` | Read-only view of loaded plugins: each `PluginInfo` carries the plugin's `metadata` and `state` |
 | `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters (needs the `CodecFilter` capability) |
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters (needs the `TransportFilter` capability) |
 | `register_limbo_handler(handler)` | `Result<LimboHandlerRegistration, LimboHandlerError>` | Register a limbo handler, see [Limbo handlers](#limbo-handlers) |
 | `register_config_provider(provider)` | `()` | Register a dynamic config provider |
-| `register_ban_provider(provider)` | `Result<(), BanProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
-| `register_permission_provider(provider)` | `Result<(), PermissionProviderRejected>` | Become the permission provider. Needs `permission-provider` and `[permissions] provider` naming this plugin, see [Permissions](./permissions) |
+| `register_ban_provider(provider)` | `Result<(), ProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
+| `register_permission_provider(provider)` | `Result<(), ProviderRejected>` | Become the permission provider. Needs `permission-provider` and `[permissions] provider` naming this plugin, see [Permissions](./permissions) |
 | `register_permission_node(node)` | `Result<(), PermissionNodeError>` | Register a node this plugin checks, with its default. Removed when the plugin is disabled |
 | `permission_nodes()` | `Vec<PermissionNodeInfo>` | Every registered node and the plugin that owns it |
 | `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
@@ -112,15 +102,17 @@ The `PluginContext` trait provides access to every service and registration meth
 
 A filter belongs to the plugin that registered it. `register` and `unregister` return `Result<(), FilterRegistryError>`: registering an id that another plugin or the proxy owns fails with `FilterRegistryError::OwnedBy { id, owner }`, and registering one of your own ids again replaces it. `unregister` removes only a filter you own, and answers `OwnedBy` for someone else's id and `NotFound` for an id nobody registered. Filters the proxy registers itself are owned by `PROXY_FILTER_OWNER` (`"infrarust"`), which no plugin can take over. Every filter a plugin owns is removed when it is disabled, so connections opened afterwards no longer run its code.
 
-The `_handle()` variants return `Arc` so you can move them into event handlers, scheduled tasks, or any `'static` closure:
+Every service accessor returns an `Arc`, so you can move the handle into event handlers, scheduled tasks, or any `'static` closure:
 
 ```rust
-let registry = ctx.player_registry_handle();
-ctx.scheduler().interval(
+let registry = ctx.player_registry();
+ctx.scheduler().repeat(
     std::time::Duration::from_secs(60),
+    None,
     Box::new(move || {
         let count = registry.online_count();
         tracing::info!("{count} players online");
+        Box::pin(async {})
     }),
 );
 ```
@@ -409,25 +401,29 @@ use std::time::Duration;
 let handle = ctx.scheduler().delay(
     Duration::from_secs(5),
     Box::new(|| {
-        tracing::info!("5 seconds have passed");
+        Box::pin(async {
+            tracing::info!("5 seconds have passed");
+        })
     }),
 );
 
-// Recurring at a fixed rate: runs every 30 seconds
-let registry = ctx.player_registry_handle();
-let interval_handle = ctx.scheduler().interval(
+// Recurring: runs every 30 seconds, one period after the previous run ended
+let registry = ctx.player_registry();
+let repeat_handle = ctx.scheduler().repeat(
     Duration::from_secs(30),
+    None,
     Box::new(move || {
         tracing::info!("{} players online", registry.online_count());
+        Box::pin(async {})
     }),
 );
 
 // Cancel either type of task
 ctx.scheduler().cancel(handle);
-ctx.scheduler().cancel(interval_handle);
+ctx.scheduler().cancel(repeat_handle);
 ```
 
-The async variants take futures, so a task can await storage, HTTP calls or other services:
+Every task builds a future, so it can await storage, HTTP calls or other services:
 
 ```rust
 let storage = self.storage.clone();
@@ -444,7 +440,7 @@ ctx.scheduler().repeat(
     }),
 );
 
-let bans = ctx.ban_service_handle();
+let bans = ctx.ban_service();
 ctx.scheduler().spawn(Box::pin(async move {
     let _ = bans.list_all().await;
 }));
@@ -452,11 +448,8 @@ ctx.scheduler().spawn(Box::pin(async move {
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `delay` | `(Duration, Box<dyn FnOnce() + Send>) -> TaskHandle` | Run once after a delay |
-| `interval` | `(Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run at a fixed rate, first run after one period |
-| `interval_with_delay` | `(Duration, Duration, Box<dyn Fn() + Send + Sync>) -> TaskHandle` | Run at a fixed rate, first run after the delay |
+| `delay` | `(Duration, AsyncTask) -> TaskHandle` | Build and await a future once, after a delay |
 | `spawn` | `(BoxFuture<'static, ()>) -> TaskHandle` | Run a future now |
-| `delay_async` | `(Duration, AsyncTask) -> TaskHandle` | Build and await a future once, after a delay |
 | `repeat` | `(Duration, Option<Duration>, RepeatingTask) -> TaskHandle` | Await a new future every period, never two at once |
 | `spawn_blocking` | `(Box<dyn FnOnce() + Send>) -> TaskHandle` | Run blocking code on the blocking thread pool |
 | `cancel` | `(TaskHandle)` | Cancel a task |
@@ -466,10 +459,9 @@ ctx.scheduler().spawn(Box::pin(async move {
 How each kind runs:
 
 - `repeat` waits `period` after a run finishes before starting the next one, so runs never overlap and a slow run pushes the next one back. The first run starts after `initial_delay`, or after one `period` when it is `None`. `Some(Duration::ZERO)` runs it right away.
-- `interval` and `interval_with_delay` run at a fixed rate. The closure is synchronous, so keep it short; a tick missed because the runtime was busy is skipped, not replayed.
 - A period below 1 ms is raised to 1 ms.
 - A task that panics is logged with the plugin ID. The panic ends that run only: the scheduler keeps working, and a repeating task runs again at its next period.
-- `cancel` stops a sync task before its next run. An async task is dropped at its next `.await`. A `spawn_blocking` closure that already started runs to completion.
+- `cancel` stops a task before its next run. A running future is dropped at its next `.await`. A `spawn_blocking` closure that already started runs to completion.
 
 `TaskHandle` is an opaque ID. The proxy forgets it once the task finishes, so a finished one-shot task leaves nothing behind. Cancelling a finished task, or a task scheduled by another plugin, does nothing.
 
@@ -767,16 +759,7 @@ struct MyProvider;
 impl PluginConfigProvider for MyProvider {
     fn provider_type(&self) -> &str { "my_api" }
 
-    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ServerConfig>, PluginError>> {
-        Box::pin(async {
-            // Fetch initial configs from your source
-            Ok(vec![])
-        })
-    }
-
-    fn load_initial_documents(
-        &self,
-    ) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ServerDocument>, PluginError>> {
         Box::pin(async {
             Ok(vec![ServerDocument {
                 id: ServerId::new("survival"),
@@ -792,8 +775,8 @@ impl PluginConfigProvider for MyProvider {
         Box::pin(async move {
             while !sender.is_shutdown() {
                 // Poll for changes, emit events:
-                // sender.send(PluginProviderEvent::AddedDocument(doc)).await;
-                // sender.send(PluginProviderEvent::UpdatedDocument(doc)).await;
+                // sender.send(PluginProviderEvent::Added(doc)).await;
+                // sender.send(PluginProviderEvent::Updated(doc)).await;
                 // sender.send(PluginProviderEvent::Removed(server_id)).await;
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
@@ -803,13 +786,11 @@ impl PluginConfigProvider for MyProvider {
 }
 ```
 
-The proxy calls `load_initial` and `load_initial_documents` once after all plugins are enabled, then spawns `watch` in a background task. Use the `PluginProviderSender` to emit `Added`, `Updated`, `AddedDocument`, `UpdatedDocument`, or `Removed` events as configurations change.
+The proxy calls `load_initial` once after all plugins are enabled (it defaults to an empty list), then spawns `watch` in a background task. Use the `PluginProviderSender` to emit `Added`, `Updated` or `Removed` events as configurations change.
 
-### Configs or documents
+### Documents
 
-A provider supplies either form, or both. `ServerConfig` is the projection this crate models, so it reaches `domains`, `addresses`, `proxy_mode`, `limbo_handlers` and little else; a config built that way gets the defaults for everything the struct does not carry.
-
-A `ServerDocument` is raw TOML that the proxy parses against its own full schema, the same one `servers_dir` files use, so it is the only way to reach `balance`, `slow_start`, `[active_health]`, `[motd]`, `[server_manager]`, `[timeouts]` or `ip_filter` from a provider. Its `id` identifies the document within the provider and becomes the server id when the TOML itself sets neither `name` nor `id`. A document that fails to parse or validate is logged and skipped, and the server keeps whatever configuration it already had.
+A `ServerDocument` is raw TOML that the proxy parses against its own full schema, the same one `servers_dir` files use, so every field, `balance`, `slow_start`, `[active_health]`, `[motd]`, `[server_manager]`, `[timeouts]` or `ip_filter` included, is reachable from a provider. Its `id` identifies the document within the provider and becomes the server id when the TOML itself sets neither `name` nor `id`. A document that fails to parse or validate is logged and skipped, and the server keeps whatever configuration it already had.
 
 ## Prelude
 

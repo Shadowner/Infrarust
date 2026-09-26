@@ -41,7 +41,7 @@ provider = "builtin"   # the default: bans.json
 # provider = "libertybans"  # the plugin with this id provides bans
 ```
 
-Only the plugin whose id matches `provider` becomes active. Any other plugin that registers a provider gets `BanProviderRejected::NotSelected` back, and the proxy logs a warning. See [Bans configuration](../../configuration/security/bans#choosing-a-provider) for the operator side.
+Only the plugin whose id matches `provider` becomes active. Any other plugin that registers a provider gets `ProviderRejected::NotSelected { kind: ProviderKind::Ban, .. }` back, and the proxy logs a warning. See [Bans configuration](../../configuration/security/bans#choosing-a-provider) for the operator side.
 
 ### When the selected plugin is missing
 

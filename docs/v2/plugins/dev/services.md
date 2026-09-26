@@ -71,7 +71,7 @@ if let Some(logins) = ctx.services().get::<dyn LoginState>() {
 A service can come and go while the proxy runs: its provider can be disabled, or enabled after the consumer. Don't cache the `Arc` for the lifetime of your plugin. Keep a registry handle and look the service up when you need it:
 
 ```rust
-let services = ctx.services_handle();
+let services = ctx.services();
 ctx.event_bus().subscribe(EventPriority::NORMAL, move |event: &mut PostLoginEvent| {
     let logged_in = services
         .get::<dyn LoginState>()
@@ -134,5 +134,4 @@ Deciding whether a player holds a permission node is a different job, done by a 
 | `provider::<T>()` | `ServiceRegistryExt` | `Option<String>` |
 | `withdraw()` | `ServiceHandle` | `bool`, `false` if it was already gone |
 | `service()` | `ServiceHandle` | The type name |
-| `services()` | `PluginContext` | `&dyn ServiceRegistry` |
-| `services_handle()` | `PluginContext` | `Arc<dyn ServiceRegistry>` |
+| `services()` | `PluginContext` | `Arc<dyn ServiceRegistry>` |

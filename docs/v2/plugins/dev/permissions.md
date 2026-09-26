@@ -118,14 +118,14 @@ A plugin registers from `on_enable`:
 
 ```rust
 match ctx.register_permission_provider(Arc::new(MyProvider::new(store))) {
-    Ok(()) | Err(PermissionProviderRejected::NotSelected { .. }) => {}
+    Ok(()) | Err(ProviderRejected::NotSelected { .. }) => {}
     Err(e) => return Err(PluginError::InitFailed(e.to_string())),
 }
 ```
 
 See [Permissions configuration](../../configuration/security/permissions) for the operator side.
 
-Registering needs the `permission-provider` capability, which compiled-in plugins hold by default. Only the plugin whose id matches `provider` is accepted; any other gets `PermissionProviderRejected::NotSelected { selected }` and the proxy logs a warning. Without the capability the call returns `PermissionProviderRejected::MissingCapability`. A WASM plugin can be the provider too, with permission snapshots: see [WASM permissions](../wasm/permissions).
+Registering needs the `permission-provider` capability, which compiled-in plugins hold by default. Only the plugin whose id matches `provider` is accepted; any other gets `ProviderRejected::NotSelected { kind: ProviderKind::Permission, selected }` and the proxy logs a warning. Without the capability the call returns `ProviderRejected::MissingCapability { kind: ProviderKind::Permission }`. A WASM plugin can be the provider too, with permission snapshots: see [WASM permissions](../wasm/permissions).
 
 When a provider registers while players are online, and when the provider plugin is disabled, the proxy refreshes every online player so they move to the new answers.
 

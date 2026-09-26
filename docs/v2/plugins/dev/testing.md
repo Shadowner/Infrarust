@@ -122,7 +122,7 @@ assert!(steve.sent_text().contains("permission"));
 
 ### RecordingLimboSession
 
-A `LimboSession` for testing a `LimboHandler` without the proxy. It is also reachable as `infrarust_api::limbo::test_util::RecordingLimboSession`.
+A `LimboSession` for testing a `LimboHandler` without the proxy. The handles it mints through `handle()` record into the same session.
 
 ```rust
 use infrarust_api::test_util::RecordingLimboSession;
@@ -250,13 +250,13 @@ impl PluginContext for MockPluginContext {
     fn register_ban_provider(
         &self,
         _provider: Arc<dyn infrarust_api::services::ban_service::BanProvider>,
-    ) -> Result<(), infrarust_api::services::ban_service::BanProviderRejected> {
+    ) -> Result<(), infrarust_api::services::ProviderRejected> {
         unimplemented!("mock")
     }
     fn register_permission_provider(
         &self,
         _provider: Arc<dyn infrarust_api::permissions::PermissionProvider>,
-    ) -> Result<(), infrarust_api::permissions::PermissionProviderRejected> {
+    ) -> Result<(), infrarust_api::services::ProviderRejected> {
         unimplemented!("mock")
     }
     fn register_permission_node(

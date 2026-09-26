@@ -89,7 +89,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 1. The proxy reads the client's handshake and login start packets.
 2. It fires a `PreLoginEvent`, giving plugins a chance to deny the connection.
-3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`. If this fails, it fires `OnlineAuthFailed` and disconnects the client.
+3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`. If this fails, it fires `OnlineAuthFailedEvent` and disconnects the client.
 4. It fires a `GameProfileRequestEvent`, where plugins may rewrite the profile, then checks bans against the final UUID. A banned player is disconnected while still in the login phase.
 5. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.
 6. It sends `LoginSuccess` to the client with the final UUID, username, and skin properties. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and transitions to the Configuration state. For older versions, it transitions directly to Play state.

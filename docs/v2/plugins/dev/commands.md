@@ -85,21 +85,22 @@ When your plugin is disabled, the proxy unregisters every command it registered.
 
 ### Registering later
 
-`ctx.command_manager()` borrows from the context, which you only hold during `on_enable`. To register or unregister commands afterwards, from a scheduled task or an event listener, keep the owned handle:
+`ctx.command_manager()` returns an `Arc<dyn CommandManager>` you can keep past `on_enable`. To register or unregister commands afterwards, from a scheduled task or an event listener, move the handle into the closure:
 
 ```rust
-let commands = ctx.command_manager_handle();
+let commands = ctx.command_manager();
 ctx.scheduler().delay(
     std::time::Duration::from_secs(60),
     Box::new(move || {
         let _ = commands.register(CommandSpec::new("event"), Box::new(EventCommand));
+        Box::pin(async {})
     }),
 );
 ```
 
 The handle is bound to your plugin, so the same ownership rules apply and cleanup still covers it. Players who are already connected see the new command straight away, see [The client command tree](#the-client-command-tree).
 
-`list()` returns a `CommandInfo` for every registered command, built-ins and other plugins included. `CommandInfo::plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin_id>:<name>")`, or `None` for built-ins.
+`list()` returns a `CommandInfo` for every registered command, built-ins and other plugins included. `CommandInfo::spec` is the registered `CommandSpec`, `plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin_id>:<name>")`, or `None` for built-ins.
 
 ## CommandHandler
 
@@ -311,7 +312,7 @@ impl CommandHandler for ChangePasswordCommand {
 }
 ```
 
-A handler that looks up other players keeps a registry handle, taken with `ctx.player_registry_handle()` at registration time.
+A handler that looks up other players keeps a registry handle, taken with `ctx.player_registry()` at registration time.
 
 ## Organizing commands
 

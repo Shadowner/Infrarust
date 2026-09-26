@@ -32,10 +32,8 @@ Everything a plugin hands to the proxy can be called from any worker thread, and
 | A custom event type | `Event: Send + Sync + 'static` |
 | `CommandHandler`, `LimboHandler`, `PermissionProvider`, `PermissionChecker`, `BanProvider`, `CodecFilterFactory`, `TransportFilter` | `Send + Sync` |
 | `CodecFilterInstance` | `Send` (one instance per connection side, never shared) |
-| `Scheduler::delay` | `Box<dyn FnOnce() + Send>` |
-| `Scheduler::interval`, `interval_with_delay` | `Box<dyn Fn() + Send + Sync>` |
 | `Scheduler::spawn` | `BoxFuture<'static, ()>` |
-| `Scheduler::delay_async` | `AsyncTask`: `Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>` |
+| `Scheduler::delay` | `AsyncTask`: `Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>` |
 | `Scheduler::repeat` | `RepeatingTask`: `Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>` |
 | `Scheduler::spawn_blocking` | `Box<dyn FnOnce() + Send>` |
 | A service in the [service registry](./services) | `Send + Sync + 'static` |
@@ -66,7 +64,7 @@ ctx.event_bus()
 A `std::sync::Mutex` is fine as long as the guard is dropped before the next `.await`. End the statement that uses it, as below, or use `tokio::sync::Mutex` when a lock must be held across an await:
 
 ```rust
-let bans = ctx.ban_service_handle();
+let bans = ctx.ban_service();
 let greeted: Arc<Mutex<HashSet<String>>> = Arc::default();
 
 ctx.event_bus()
@@ -160,7 +158,7 @@ Code runs directly on a worker thread in these places:
 
 - synchronous listeners, and every async listener between two `.await`s;
 - command handlers, limbo callbacks and providers, between awaits;
-- the closures of `delay`, `interval` and `interval_with_delay`;
+- the closures of `delay` and `repeat` until their future is built, and that future between two `.await`s;
 - codec filters, called for every packet of a connection.
 
 Blocking there also defeats the time limits: tokio can only cancel a future at an `.await`, so a listener stuck in a blocking call is not cancelled at `handler_timeout`.
@@ -168,7 +166,7 @@ Blocking there also defeats the time limits: tokio can only cancel a future at a
 Blocking means synchronous file or network I/O, a blocking database driver, `std::thread::sleep`, waiting on a `std::sync` lock that another thread holds for long, or a long computation. Move it to the blocking thread pool with `ctx.scheduler().spawn_blocking`:
 
 ```rust
-let scheduler = ctx.scheduler_handle();
+let scheduler = ctx.scheduler();
 let path = ctx.data_dir().join("last-seen.log");
 
 ctx.event_bus()
@@ -196,8 +194,7 @@ Each task scheduled through `ctx.scheduler()` is a tokio task, or a blocking-poo
 
 | Method | Runs | Overlap |
 |--------|------|---------|
-| `delay`, `delay_async` | Once, after the delay | None |
-| `interval`, `interval_with_delay` | A synchronous closure at a fixed rate, inline on a worker thread | Never: the next tick waits for the closure to return; a tick missed because the runtime was busy is skipped, not replayed |
+| `delay` | Builds and awaits a future once, after the delay | None |
 | `repeat` | Builds and awaits a new future, then waits `period` before the next run | Never: a slow run pushes the next one back. The first run starts after `initial_delay`, or after one `period` when it is `None` |
 | `spawn` | A future, now | None |
 | `spawn_blocking` | A closure on the blocking pool | None |
@@ -248,7 +245,7 @@ Code the session itself is awaiting is different: a listener of one of that play
 In those places, queue the request with `switch_server` when you do not need the outcome, or start the wait in a task of its own and let your code return:
 
 ```rust
-let scheduler = ctx.scheduler_handle();
+let scheduler = ctx.scheduler();
 ctx.event_bus()
     .subscribe_async::<ChatMessageEvent, _>(EventPriority::NORMAL, move |event| {
         let scheduler = Arc::clone(&scheduler);

@@ -529,10 +529,10 @@ What to do: replace `permission_level()`, and prefer `connect` where you need to
 |-|--------------|---------|
 | `register_limbo_handler(handler)` | `()`, only collected at startup | `Result<LimboHandlerRegistration, LimboHandlerError>`, at any time; `registration.unregister()` |
 | `ServerManager::on_state_change(callback)` | Present, never removed on disable | Removed with `StateChangeCallback`: subscribe to `ServerStateChangeEvent` |
-| Scheduler | `delay`, `interval`, `interval_with_delay`, `cancel` | Adds `spawn`, `delay_async`, `repeat` (runs never overlap) and `spawn_blocking`; tasks belong to the plugin |
+| Scheduler | `delay`, `interval`, `interval_with_delay`, `cancel` | `delay` (async), `repeat` (runs never overlap), `spawn` and `spawn_blocking`; tasks belong to the plugin. See [Trimmed API surface](#trimmed-api-surface) |
 | Sharing services between plugins | none | `ctx.services()`: `provide`, `get`, `provider`, withdrawn when the provider is disabled |
 | `PlayerRegistry` | Name lookups case-sensitive | `get_player` is case-insensitive; `get_players_by_ip` is new |
-| `PluginContext` handles | | `command_manager_handle`, `scheduler_handle`, `services_handle`, `channel_registrar`, `server_messenger`, `register_ban_provider`, `register_permission_provider`, `register_permission_node`, `permission_nodes` |
+| `PluginContext` | Borrowing accessors, `_handle()` twins for some | Every service accessor returns an `Arc`; adds `channel_registrar`, `server_messenger`, `register_ban_provider`, `register_permission_provider`, `register_permission_node`, `permission_nodes`. See [Trimmed API surface](#trimmed-api-surface) |
 
 ```rust
 // 2.0.0-beta.3
@@ -700,6 +700,125 @@ The Tier 3 virtual backend API (`infrarust_api::virtual_backend`, `VirtualBacken
 
 What to do: nothing for most plugins. If you implement `VirtualBackendHandler`, enable `infrarust-api = { features = ["unstable"] }`. If you match on `Capability`, it is `#[non_exhaustive]` from a foreign crate, so keep a wildcard arm.
 
+## Trimmed API surface
+
+**Breaks the build.** A pass over `infrarust-api` removed the duplicated halves of its surface. Each item below names the old shape, the current one and the mechanical change.
+
+### One accessor per service
+
+`PluginContext` exposed each service twice, as a borrow (`event_bus() -> &dyn EventBus`) and as an owned handle (`event_bus_handle() -> Arc<dyn EventBus>`). Only the `Arc` form remains, under the short name: `event_bus()`, `player_registry()`, `server_manager()`, `ban_service()`, `config_service()`, `load_balancer_service()`, `command_manager()`, `scheduler()`, `services()` and `plugin_registry()` all return `Arc<dyn ...>`. `codec_filters()`, `transport_filters()`, `proxy_info()`, `capabilities()` and `channel_registrar()` still borrow.
+
+```rust
+// 2.0.0-beta.3
+let registry = ctx.player_registry_handle();
+subscribe_all(ctx.event_bus());
+
+// current
+let registry = ctx.player_registry();
+subscribe_all(&*ctx.event_bus());
+```
+
+What to do: drop the `_handle` suffix. Method calls on the returned `Arc` work unchanged; a call site that passed the borrow to a function taking `&dyn Service` reborrows with `&*`.
+
+### Scheduler
+
+The synchronous generation is gone: `delay(Duration, Box<dyn FnOnce()>)`, `interval` and `interval_with_delay` no longer exist, and `delay_async` is now called `delay`. `Scheduler` is `delay(Duration, AsyncTask)`, `repeat(Duration, Option<Duration>, RepeatingTask)`, `spawn(BoxFuture)`, `spawn_blocking(Box<dyn FnOnce() + Send>)` and `cancel(TaskHandle)`.
+
+```rust
+// 2.0.0-beta.3
+ctx.scheduler().interval(period, Box::new(move || tick(&state)));
+ctx.scheduler().interval_with_delay(period, first, Box::new(move || tick(&state)));
+ctx.scheduler().delay(wait, Box::new(move || done(&state)));
+ctx.scheduler().delay_async(wait, Box::new(move || Box::pin(flush(state))));
+
+// current
+ctx.scheduler().repeat(period, None, Box::new(move || {
+    tick(&state);
+    Box::pin(async {})
+}));
+ctx.scheduler().repeat(period, Some(first), Box::new(move || {
+    tick(&state);
+    Box::pin(async {})
+}));
+ctx.scheduler().delay(wait, Box::new(move || {
+    done(&state);
+    Box::pin(async {})
+}));
+ctx.scheduler().delay(wait, Box::new(move || Box::pin(flush(state))));
+```
+
+**Compiles unchanged after the rename, behaves differently**: `repeat` waits one period after a run finishes instead of ticking at a fixed rate, so runs never overlap and a slow run pushes the next one back. `Some(Duration::ZERO)` runs the first iteration at once.
+
+What to do: return `Box::pin(async {})` from a closure that has nothing to await, and move `interval_with_delay`'s first-run delay into `repeat`'s second argument.
+
+### Player accessors on events
+
+Every event that carries `player: Arc<dyn Player>` implements the new `events::PlayerEvent` trait (`player()`, `player_id()`, `profile()`), and its inherent `player_id()` and `profile()` methods are still there, so existing calls compile. Generic code can now take `E: PlayerEvent`. `ResultedEvent` implementations are generated by a macro; nothing changes for listeners.
+
+### `PluginInfo`
+
+`PluginInfo` no longer copies the metadata fields or renders the state as a `String`. It is `{ metadata: PluginMetadata, state: PluginState }` with an `id()` helper, `PluginDependencyInfo` is gone in favour of `PluginDependency`, and `PluginState` moved from `infrarust_core::plugin` into `infrarust_api::plugin` with an `as_str()` label (`loading`, `enabled`, `disabled`, `error`).
+
+```rust
+// 2.0.0-beta.3
+let enabled = info.state == "enabled";
+println!("{} v{}", info.name, info.version);
+
+// current
+let enabled = info.state == PluginState::Enabled;
+println!("{} v{}", info.metadata.name, info.metadata.version);
+```
+
+### `BanService` is a `BanProvider`
+
+`BanService` no longer restates `check`, `ban`, `unban`, `get`, `list` and `features`: it is `BanProvider + Sealed` plus `list_all`. Calls through `Arc<dyn BanService>` are unchanged. Code that named the trait to disambiguate, such as `BanService::ban(&*service, request)`, now writes `BanProvider::ban(...)`.
+
+### `PluginError`
+
+`PluginError::Custom(String)` is gone, and the conversions from `ServiceError` and `LimboHandlerError` no longer flatten into `InitFailed(String)`:
+
+| Variant | Carries |
+|---------|---------|
+| `InitFailed(String)` | Unchanged |
+| `Service(ServiceError)` | `From<ServiceError>`, so `?` on a service call keeps the error |
+| `Limbo(LimboHandlerError)` | `From<LimboHandlerError>`, so `?` on `register_limbo_handler` keeps the error |
+| `Other(Box<dyn std::error::Error + Send + Sync>)` | Any other error; `String` and `&str` still convert into it |
+
+`Display` of the wrapping variants is transparent, so `service unavailable: ...` reads as before without the `plugin initialization failed:` prefix. What to do: replace `PluginError::Custom(msg)` with `PluginError::from(msg)`, or box the original error into `Other`; a match on `PluginError` gains the two typed arms.
+
+### Provider registration errors
+
+`BanProviderRejected` and `PermissionProviderRejected` are one type, `infrarust_api::services::ProviderRejected`, whose variants carry a `ProviderKind` (`Ban` or `Permission`): `MissingCapability { kind }` and `NotSelected { kind, selected }`. The messages are unchanged, and `kind()` answers which registration failed.
+
+```rust
+// 2.0.0-beta.3
+Err(PermissionProviderRejected::NotSelected { .. }) => {}
+
+// current
+Err(ProviderRejected::NotSelected { .. }) => {}
+```
+
+### Config providers serve documents only
+
+`PluginConfigProvider::load_initial` now returns `Vec<ServerDocument>` and has a default that returns an empty list; `load_initial_documents` is gone. `PluginProviderEvent` is `Added(ServerDocument)`, `Updated(ServerDocument)` and `Removed(ServerId)`; the `AddedDocument`/`UpdatedDocument` variants and the projected `ServerConfig` path are removed, since a document reaches every field of a server file.
+
+What to do: rename `load_initial_documents` to `load_initial`, delete the old `load_initial`, and rename the two `...Document` event variants.
+
+### Naming
+
+- `OnlineAuthFailed` is `OnlineAuthFailedEvent`, like every other event.
+- `ServerPreConnectResult::ConnectTo` and `KickedFromServerResult::RedirectTo` are both `Redirect(ServerId)`, matching `PlayerChooseInitialServerResult::Redirect`. The `redirect_to()` shortcuts keep their names.
+- `infrarust_api::message::ProxyMessage` is `infrarust_api::branding::ProxyMessage`; the prelude still exports `ProxyMessage`.
+- `infrarust_api::limbo::test_util::RecordingLimboSession` lives at `infrarust_api::test_util::RecordingLimboSession` only.
+- `PacketDirection` is defined at `infrarust_api::event::PacketDirection`; `events::packet::PacketDirection` and the prelude re-export it.
+
+### Smaller reshapes
+
+- `CommandInfo` is `{ spec: CommandSpec, plugin_id: Option<String> }` with `name()` and `namespaced()`; read `info.spec.description` instead of `info.description`.
+- `ServerConfig::new` takes only the `ServerId`; the other nine fields have chained setters (`.addresses(..)`, `.proxy_mode(..)`, `.max_players(..)`, ...) and stay public.
+- `infrarust_api::services` and the prelude re-export `ServerSource`, `RateLimitInfo`, `StatusCacheInfo`, `KeepaliveInfo` and `UnknownDomainBehavior` next to `ServerConfig` and `ProxyInfo`.
+- `types::namespaced_key` (`is_valid`, `parse`) is the one validator behind `ChannelId` and `cookie_key`.
+
 ## Checklist
 
 - [ ] Bump `infrarust-api` and fix the build.
@@ -725,6 +844,12 @@ What to do: nothing for most plugins. If you implement `VirtualBackendHandler`, 
 - [ ] Review `[events]`, `[ban]` and `[permissions]` defaults for your deployment.
 - [ ] Decide what to do with data keyed by offline UUIDs, or set `[auth] offline_uuid = "client"`.
 - [ ] Enable the `unstable` feature if you implement `VirtualBackendHandler`.
+- [ ] Drop the `_handle` suffix on `PluginContext` accessors and reborrow with `&*` where a `&dyn` service is expected.
+- [ ] Port `interval`/`interval_with_delay` to `repeat`, and sync `delay` closures to futures.
+- [ ] Read `PluginInfo::metadata` and compare `PluginInfo::state` with `PluginState`.
+- [ ] Replace `PluginError::Custom` and the two `*ProviderRejected` types.
+- [ ] Rename `load_initial_documents` to `load_initial` and the `*Document` provider events.
+- [ ] Rename `OnlineAuthFailed`, `ConnectTo`/`RedirectTo` and the `message` module.
 
 ## See also
 
