@@ -8,7 +8,7 @@ use infrarust_api::types::ServerId;
 use tokio::sync::broadcast;
 
 use crate::state::ApiEvent;
-use crate::util::{format_address, now_iso8601};
+use crate::util::{format_address, now_iso8601, server_state_str};
 
 /// Bridges proxy EventBus events to the API broadcast channel.
 ///
@@ -73,12 +73,7 @@ impl EventBridge {
         let tx = self.event_tx.clone();
         ctx.event_bus()
             .subscribe::<ServerStateChangeEvent, _>(EventPriority::LAST, move |event| {
-                let _ = tx.send(ApiEvent::ServerStateChange {
-                    server_id: event.server.as_str().to_string(),
-                    old_state: format!("{:?}", event.old_state),
-                    new_state: format!("{:?}", event.new_state),
-                    timestamp: now_iso8601(),
-                });
+                let _ = tx.send(server_state_change(event));
             });
 
         // ConfigReloadEvent → ConfigReload
@@ -112,5 +107,43 @@ impl EventBridge {
                     timestamp: now_iso8601(),
                 });
             });
+    }
+}
+
+fn server_state_change(event: &ServerStateChangeEvent) -> ApiEvent {
+    ApiEvent::ServerStateChange {
+        server_id: event.server.as_str().to_string(),
+        old_state: server_state_str(&event.old_state).to_string(),
+        new_state: server_state_str(&event.new_state).to_string(),
+        timestamp: now_iso8601(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use infrarust_api::services::server_manager::ServerState;
+
+    use super::*;
+
+    #[test]
+    fn a_state_change_carries_the_same_state_names_as_the_rest_api() {
+        let event = ServerStateChangeEvent {
+            server: ServerId::new("hub"),
+            old_state: ServerState::Sleeping,
+            new_state: ServerState::Online,
+        };
+        match server_state_change(&event) {
+            ApiEvent::ServerStateChange {
+                server_id,
+                old_state,
+                new_state,
+                ..
+            } => {
+                assert_eq!(server_id, "hub");
+                assert_eq!(old_state, "sleeping");
+                assert_eq!(new_state, "online");
+            }
+            other => panic!("expected a server state change, got {other:?}"),
+        }
     }
 }

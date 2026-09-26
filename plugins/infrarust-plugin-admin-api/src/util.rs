@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 use infrarust_api::error::ServiceError;
 use infrarust_api::services::ban_service::{BanService, BanTarget};
 use infrarust_api::services::config_service::ProxyMode;
+use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::ServerAddress;
 
 use crate::error::ApiError;
@@ -134,6 +135,21 @@ pub fn parse_proxy_mode(s: &str) -> Result<ProxyMode, ApiError> {
         _ => Err(ApiError::BadRequest(format!(
             "Invalid proxy mode '{s}'. Expected: passthrough, zero_copy, client_only, offline, server_only"
         ))),
+    }
+}
+
+pub fn server_state_str(state: &ServerState) -> &'static str {
+    match state {
+        ServerState::Online => "online",
+        ServerState::Offline => "offline",
+        ServerState::Starting => "starting",
+        ServerState::Stopping => "stopping",
+        ServerState::Sleeping => "sleeping",
+        ServerState::Crashed => "crashed",
+        other => {
+            tracing::warn!(?other, "Unknown ServerState variant");
+            "unknown"
+        }
     }
 }
 

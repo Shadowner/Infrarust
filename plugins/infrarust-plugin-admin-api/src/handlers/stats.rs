@@ -4,12 +4,13 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::State;
 use infrarust_api::error::ServiceError;
+use infrarust_api::services::server_manager::ServerState;
 
 use crate::dto::stats::StatsResponse;
 use crate::error::ApiError;
 use crate::response::{ApiResponse, ok};
 use crate::state::ApiState;
-use crate::util::{active_ban_count, get_memory_rss};
+use crate::util::{active_ban_count, get_memory_rss, server_state_str};
 
 pub async fn overview(
     State(state): State<Arc<ApiState>>,
@@ -37,28 +38,15 @@ pub async fn overview(
     let mut servers_offline = 0usize;
 
     for (_, server_state) in &all_servers {
-        let key = match server_state {
-            infrarust_api::services::server_manager::ServerState::Online => {
-                servers_online += 1;
-                "online"
-            }
-            infrarust_api::services::server_manager::ServerState::Sleeping => {
-                servers_sleeping += 1;
-                "sleeping"
-            }
-            infrarust_api::services::server_manager::ServerState::Offline => {
-                servers_offline += 1;
-                "offline"
-            }
-            infrarust_api::services::server_manager::ServerState::Starting => "starting",
-            infrarust_api::services::server_manager::ServerState::Stopping => "stopping",
-            infrarust_api::services::server_manager::ServerState::Crashed => "crashed",
-            other => {
-                tracing::warn!(?other, "Unknown ServerState variant");
-                "unknown"
-            }
-        };
-        *servers_by_state.entry(key.to_string()).or_insert(0) += 1;
+        match server_state {
+            ServerState::Online => servers_online += 1,
+            ServerState::Sleeping => servers_sleeping += 1,
+            ServerState::Offline => servers_offline += 1,
+            _ => {}
+        }
+        *servers_by_state
+            .entry(server_state_str(server_state).to_string())
+            .or_insert(0) += 1;
     }
 
     let uptime = state.start_time.elapsed();

@@ -21,22 +21,7 @@ use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::proxy_mode_str;
-
-fn server_state_str(state: &ServerState) -> &'static str {
-    match state {
-        ServerState::Online => "online",
-        ServerState::Offline => "offline",
-        ServerState::Starting => "starting",
-        ServerState::Stopping => "stopping",
-        ServerState::Sleeping => "sleeping",
-        ServerState::Crashed => "crashed",
-        other => {
-            tracing::warn!(?other, "Unknown ServerState variant");
-            "unknown"
-        }
-    }
-}
+use crate::util::{proxy_mode_str, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
 
