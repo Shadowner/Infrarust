@@ -169,7 +169,6 @@ impl AdminApiPlugin {
 
         let shutdown = self.shutdown.clone();
         self.spawn(async move {
-            // ConnectInfo exposes the peer address for per-IP rate limiting.
             if let Err(e) = axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<std::net::SocketAddr>(),

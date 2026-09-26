@@ -45,8 +45,6 @@ impl PluginConfigProvider for ApiConfigProvider {
             // hand-over and now, so it is still pending here.
             crate::server_dir::reload(&dir, &sender_slot).await;
 
-            // The sender stays in the slot for the REST handlers until the
-            // plugin is disabled.
             shutdown.cancelled().await;
             Ok(())
         })
