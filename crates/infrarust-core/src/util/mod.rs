@@ -1,4 +1,5 @@
 pub mod domain_rewrite;
+pub mod sync;
 pub mod text;
 
 /// Normalizes a handshake `serverAddress` for routing.

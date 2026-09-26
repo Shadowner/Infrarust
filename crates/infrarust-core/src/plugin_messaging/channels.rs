@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use infrarust_api::messaging::{
@@ -15,6 +15,8 @@ use infrarust_protocol::packets::play::client_information::SClientInformation;
 use infrarust_protocol::packets::play::plugin_message::{CPluginMessage, SPluginMessage};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+
+use crate::util::sync::{read, write};
 
 pub(crate) const MAX_KNOWN_CHANNELS: usize = 1024;
 pub(crate) const MAX_BRAND_CHARS: usize = 128;
@@ -212,7 +214,7 @@ impl ChannelRegistry {
     }
 
     pub fn register(&self, owner: &Arc<str>, channel: &ChannelId) {
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = write(&self.entries);
         for name in channel.names() {
             let entry = entries.entry(Box::from(name)).or_insert_with(|| Entry {
                 channel: channel.clone(),
@@ -226,7 +228,7 @@ impl ChannelRegistry {
     }
 
     pub fn unregister(&self, owner: &Arc<str>, channel: &ChannelId) -> bool {
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = write(&self.entries);
         let mut removed = false;
         for name in channel.names() {
             if let Some(entry) = entries.get_mut(name) {
@@ -243,7 +245,7 @@ impl ChannelRegistry {
     }
 
     pub fn remove_owner(&self, owner: &Arc<str>) {
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = write(&self.entries);
         entries.retain(|_, entry| {
             entry.owners.retain(|o| o != owner);
             !entry.owners.is_empty()
@@ -255,15 +257,13 @@ impl ChannelRegistry {
         if self.count.load(Ordering::Acquire) == 0 {
             return None;
         }
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .get(raw)
             .map(|entry| entry.channel.clone())
     }
 
     pub fn owned_by(&self, owner: &Arc<str>) -> Vec<ChannelId> {
-        let entries = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let entries = read(&self.entries);
         let mut channels: Vec<ChannelId> = Vec::new();
         for entry in entries.values() {
             if entry.owners.contains(owner) && !channels.contains(&entry.channel) {
@@ -275,7 +275,7 @@ impl ChannelRegistry {
 
     pub fn wire_names(&self, version: ProtocolVersion) -> Vec<String> {
         let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
-        let entries = self.entries.read().unwrap_or_else(PoisonError::into_inner);
+        let entries = read(&self.entries);
         let mut names: Vec<String> = Vec::new();
         for entry in entries.values() {
             let name = entry.channel.wire_name(api_version);

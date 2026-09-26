@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::IpAddr;
 use std::ops::Bound;
 use std::path::PathBuf;
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -15,6 +15,7 @@ use infrarust_api::services::ban_service::{
 use crate::ban::storage::{BanStorage, StorageFuture};
 use crate::ban::types::{BanAction, BanAuditLogEntry, BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
+use crate::util::sync::{read, write};
 
 const MAX_AUDIT_LOG_ENTRIES: usize = 10_000;
 
@@ -212,11 +213,11 @@ impl FileBanStorage {
     }
 
     fn read(&self) -> RwLockReadGuard<'_, BanTable> {
-        self.table.read().unwrap_or_else(PoisonError::into_inner)
+        read(&self.table)
     }
 
     fn write(&self) -> RwLockWriteGuard<'_, BanTable> {
-        self.table.write().unwrap_or_else(PoisonError::into_inner)
+        write(&self.table)
     }
 
     fn serialize_all(&self, audit_log: &[BanAuditLogEntry]) -> Result<String, CoreError> {

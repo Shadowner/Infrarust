@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{PoisonError, RwLock};
+use std::sync::RwLock;
 
 use infrarust_api::permissions::{
     ADMIN_PERMISSION, COMMAND_PERMISSION_PREFIX, PermissionChecker, PermissionDefault,
     PermissionNode, PermissionNodeError, PermissionNodeInfo, Tristate, WILDCARD, normalize_node,
 };
+
+use crate::util::sync::{read, write};
 
 const RESERVED_PREFIX: &str = "infrarust.";
 
@@ -32,7 +34,7 @@ impl NodeRegistry {
         if !is_valid(&name) {
             return Err(PermissionNodeError::InvalidName(node.name));
         }
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = write(&self.entries);
         if let Some(owner) = owner {
             if name.starts_with(RESERVED_PREFIX) {
                 return Err(PermissionNodeError::Reserved(name));
@@ -61,25 +63,20 @@ impl NodeRegistry {
     }
 
     pub(crate) fn unregister_owned(&self, owner: &str) -> usize {
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = write(&self.entries);
         let before = entries.len();
         entries.retain(|_, entry| entry.owner.as_deref() != Some(owner));
         before - entries.len()
     }
 
     pub(crate) fn default_of(&self, node: &str) -> Option<PermissionDefault> {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .get(normalize_node(node).as_ref())
             .map(|entry| entry.node.default)
     }
 
     pub(crate) fn list(&self) -> Vec<PermissionNodeInfo> {
-        let mut infos: Vec<PermissionNodeInfo> = self
-            .entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        let mut infos: Vec<PermissionNodeInfo> = read(&self.entries)
             .values()
             .map(|entry| PermissionNodeInfo::new(entry.node.clone(), entry.owner.clone()))
             .collect();

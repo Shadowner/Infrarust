@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use tokio::sync::watch;
 
@@ -9,6 +9,8 @@ use infrarust_api::command::{
 };
 use infrarust_api::event::BoxFuture;
 use infrarust_api::message::ProxyMessage;
+
+use crate::util::sync::{read, write};
 
 pub const COMMAND_DENIED: &str = "You don't have permission to use this command.";
 
@@ -162,11 +164,11 @@ impl CommandManagerImpl {
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, Table> {
-        self.table.read().unwrap_or_else(PoisonError::into_inner)
+        read(&self.table)
     }
 
     fn write(&self) -> std::sync::RwLockWriteGuard<'_, Table> {
-        self.table.write().unwrap_or_else(PoisonError::into_inner)
+        write(&self.table)
     }
 
     pub fn register_builtin(&self, spec: CommandSpec, handler: Box<dyn CommandHandler>) {

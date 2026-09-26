@@ -3,6 +3,8 @@ use std::sync::RwLock;
 use infrarust_api::plugin::PluginMetadata;
 use infrarust_api::services::plugin_registry::{PluginDependencyInfo, PluginInfo, PluginRegistry};
 
+use crate::util::sync::{read, write};
+
 const ENABLED: &str = "enabled";
 
 pub struct PluginRegistryImpl {
@@ -33,16 +35,13 @@ impl PluginRegistryImpl {
                 })
                 .collect(),
         };
-        let mut data = self.data.write().expect("lock poisoned");
+        let mut data = write(&self.data);
         data.retain(|p| p.id != info.id);
         data.push(info);
     }
 
     pub fn remove(&self, id: &str) {
-        self.data
-            .write()
-            .expect("lock poisoned")
-            .retain(|p| p.id != id);
+        write(&self.data).retain(|p| p.id != id);
     }
 }
 
@@ -56,15 +55,10 @@ impl infrarust_api::services::plugin_registry::private::Sealed for PluginRegistr
 
 impl PluginRegistry for PluginRegistryImpl {
     fn list_plugin_info(&self) -> Vec<PluginInfo> {
-        self.data.read().expect("lock poisoned").clone()
+        read(&self.data).clone()
     }
 
     fn plugin_info(&self, id: &str) -> Option<PluginInfo> {
-        self.data
-            .read()
-            .expect("lock poisoned")
-            .iter()
-            .find(|p| p.id == id)
-            .cloned()
+        read(&self.data).iter().find(|p| p.id == id).cloned()
     }
 }

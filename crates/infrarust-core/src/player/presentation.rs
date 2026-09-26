@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
@@ -12,6 +12,7 @@ use infrarust_api::player::{BossBar, BossBarControl, BossBarUpdate, ResourcePack
 use infrarust_api::types::Component;
 
 use super::{BossBarCommand, PlayerCommand};
+use crate::util::sync::lock;
 
 const MAX_TRACKED_COOKIE_KEYS: usize = 256;
 const MAX_TRACKED_REQUESTS_PER_KEY: usize = 16;
@@ -43,10 +44,6 @@ pub(crate) struct Presentation {
     screen: Mutex<Screen>,
     cookies: Mutex<HashMap<String, VecDeque<CookieRequester>>>,
     packs: Mutex<Packs>,
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl Presentation {

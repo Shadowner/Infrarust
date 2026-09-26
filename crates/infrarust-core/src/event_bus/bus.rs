@@ -28,6 +28,7 @@ use tokio::time::Instant;
 use super::builtin::is_builtin_event;
 use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, panic_message, short_type_name};
 use super::handler::{HandlerEntry, HandlerKind};
+use crate::util::sync::{lock, read, write};
 
 pub const CORE_OWNER: &str = "infrarust";
 
@@ -141,10 +142,7 @@ impl EventBusImpl {
     }
 
     pub fn listener_owners<E: Event>(&self) -> Vec<Arc<str>> {
-        let map = self
-            .handlers
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = read(&self.handlers);
         map.get(&TypeId::of::<E>())
             .map(|entries| entries.iter().map(|e| Arc::clone(&e.owner)).collect())
             .unwrap_or_default()
@@ -174,10 +172,7 @@ impl EventBusImpl {
         E::Result: Clone + PartialEq,
     {
         let snapshot = {
-            let map = self
-                .handlers
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let map = read(&self.handlers);
             map.get(&TypeId::of::<E>()).cloned()
         };
         let mut decided_by = None;
@@ -225,11 +220,7 @@ impl EventBusImpl {
     }
 
     pub fn start_dispatcher(self: &Arc<Self>) {
-        let undispatched = self
-            .undispatched
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
+        let undispatched = lock(&self.undispatched).take();
         if let Some(queue) = undispatched {
             tokio::spawn(run_dispatcher(Arc::downgrade(self), queue));
         }
@@ -243,10 +234,7 @@ impl EventBusImpl {
     }
 
     pub fn has_listeners<E: Event>(&self) -> bool {
-        let map = self
-            .handlers
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = read(&self.handlers);
         map.get(&TypeId::of::<E>())
             .is_some_and(|entries| !entries.is_empty())
     }
@@ -291,10 +279,7 @@ impl EventBusImpl {
         fired_by: &Arc<str>,
     ) {
         let snapshot = {
-            let map = self
-                .handlers
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let map = read(&self.handlers);
             map.get(&type_id).cloned()
         };
 
@@ -321,10 +306,7 @@ impl EventBusImpl {
     fn insert_handler(&self, event_type: TypeId, entry: HandlerEntry) -> ListenerHandle {
         let handle = entry.handle;
         {
-            let mut map = self
-                .handlers
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut map = write(&self.handlers);
             let vec_arc = map.entry(event_type).or_default();
 
             // Copy-on-write: if a dispatch holds the old Arc, this clones the Vec.
@@ -345,10 +327,7 @@ impl EventBusImpl {
     fn insert_packet_handler(&self, key: PacketKey, entry: HandlerEntry) -> ListenerHandle {
         let handle = entry.handle;
         {
-            let mut map = self
-                .packet_handlers
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut map = write(&self.packet_handlers);
             let vec_arc = map.entry(key).or_default();
             let vec = Arc::make_mut(vec_arc);
             let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
@@ -374,10 +353,7 @@ impl EventBusImpl {
             direction,
         };
         let snapshot = {
-            let map = self
-                .packet_handlers
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let map = read(&self.packet_handlers);
             map.get(&key).cloned()
         };
 
@@ -532,18 +508,12 @@ impl EventBusImpl {
 
     pub(crate) fn unsubscribe_owned(&self, owner: &str, handle: ListenerHandle) -> bool {
         {
-            let mut map = self
-                .handlers
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut map = write(&self.handlers);
             if remove_handler(&mut map, owner, handle) {
                 return true;
             }
         }
-        let mut map = self
-            .packet_handlers
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = write(&self.packet_handlers);
         let removed = remove_handler(&mut map, owner, handle);
         if removed {
             self.packet_listener_count.fetch_sub(1, Ordering::Relaxed);
@@ -652,10 +622,7 @@ impl EventBus for EventBusImpl {
             state,
             direction,
         };
-        let map = self
-            .packet_handlers
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = read(&self.packet_handlers);
         map.get(&key).is_some_and(|v| !v.is_empty())
     }
 

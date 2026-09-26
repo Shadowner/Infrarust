@@ -1,5 +1,5 @@
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use futures_util::FutureExt;
 use tokio::sync::mpsc;
@@ -17,6 +17,7 @@ use crate::event_bus::diagnostic::panic_message;
 use crate::services::command_manager::{
     CommandManagerImpl, Completion, DispatchOutcome, Invocation, Prepared,
 };
+use crate::util::sync::lock;
 
 const QUEUE_CAPACITY: usize = 16;
 
@@ -131,7 +132,7 @@ impl CommandQueue {
     }
 
     pub(crate) fn submit(&self, job: Queued) -> Result<(), Refused> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = lock(&self.state);
         if matches!(*state, State::Idle) {
             *state = State::Running(Worker::spawn(self.player.clone()));
         }
@@ -145,10 +146,7 @@ impl CommandQueue {
     }
 
     pub(crate) fn stop(&self) -> Option<JoinHandle<()>> {
-        let state = std::mem::replace(
-            &mut *self.state.lock().unwrap_or_else(PoisonError::into_inner),
-            State::Closed,
-        );
+        let state = std::mem::replace(&mut *lock(&self.state), State::Closed);
         match state {
             State::Running(worker) => {
                 worker.stop.cancel();

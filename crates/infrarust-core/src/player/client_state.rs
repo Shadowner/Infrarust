@@ -1,11 +1,12 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use infrarust_api::player::{ChatMode, ClientSettings, MainHand, ParticleStatus, SkinParts};
 use infrarust_protocol::packets::play::client_information::ClientInformation;
 
 use crate::plugin_messaging::channels::MAX_KNOWN_CHANNELS;
+use crate::util::sync::lock;
 
 const NO_PING: u64 = u64::MAX;
 
@@ -32,7 +33,7 @@ impl Default for ClientState {
 
 impl ClientState {
     fn captured(&self) -> std::sync::MutexGuard<'_, Captured> {
-        self.captured.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.captured)
     }
 
     pub(crate) fn brand(&self) -> Option<String> {

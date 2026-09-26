@@ -24,6 +24,7 @@ use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
+use crate::util::sync::lock;
 
 /// Wraps an [`EventBus`] and records all [`ListenerHandle`]s for later cleanup.
 pub struct TrackingEventBus {
@@ -46,18 +47,18 @@ impl TrackingEventBus {
     }
 
     pub fn tracked_count(&self) -> usize {
-        self.handles.lock().expect("lock poisoned").len()
+        lock(&self.handles).len()
     }
 
     pub fn unsubscribe_all(&self) {
-        let handles = std::mem::take(&mut *self.handles.lock().expect("lock poisoned"));
+        let handles = std::mem::take(&mut *lock(&self.handles));
         for handle in handles {
             self.inner.unsubscribe_owned(&self.owner, handle);
         }
     }
 
     fn track(&self, handle: ListenerHandle) -> ListenerHandle {
-        self.handles.lock().expect("lock poisoned").insert(handle);
+        lock(&self.handles).insert(handle);
         handle
     }
 }
@@ -135,7 +136,7 @@ impl EventBus for TrackingEventBus {
     }
 
     fn unsubscribe(&self, handle: ListenerHandle) -> bool {
-        let tracked = self.handles.lock().expect("lock poisoned").remove(&handle);
+        let tracked = lock(&self.handles).remove(&handle);
         if !tracked {
             tracing::warn!(
                 plugin = %self.owner,
@@ -172,11 +173,11 @@ impl TrackingCommandManager {
     }
 
     pub fn tracked(&self) -> Vec<String> {
-        self.commands.lock().expect("lock poisoned").clone()
+        lock(&self.commands).clone()
     }
 
     pub fn unregister_all(&self) {
-        let commands = std::mem::take(&mut *self.commands.lock().expect("lock poisoned"));
+        let commands = std::mem::take(&mut *lock(&self.commands));
         for key in commands {
             if let Err(e) = self.inner.unregister_owned(&self.plugin_id, &key) {
                 tracing::debug!(plugin = %self.plugin_id, "command already gone at cleanup: {e}");
@@ -194,7 +195,7 @@ impl CommandManager for TrackingCommandManager {
         handler: Box<dyn CommandHandler>,
     ) -> Result<CommandRegistration, CommandError> {
         let registration = self.inner.register_owned(&self.plugin_id, spec, handler)?;
-        let mut commands = self.commands.lock().expect("lock poisoned");
+        let mut commands = lock(&self.commands);
         if !commands.contains(&registration.namespaced) {
             commands.push(registration.namespaced.clone());
         }
@@ -203,10 +204,7 @@ impl CommandManager for TrackingCommandManager {
 
     fn unregister(&self, name: &str) -> Result<(), CommandError> {
         let key = self.inner.unregister_owned(&self.plugin_id, name)?;
-        self.commands
-            .lock()
-            .expect("lock poisoned")
-            .retain(|tracked| *tracked != key);
+        lock(&self.commands).retain(|tracked| *tracked != key);
         Ok(())
     }
 

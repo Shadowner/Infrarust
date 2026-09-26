@@ -12,6 +12,7 @@ use infrarust_config::secrets::{PROXY_SECRETS, SERVER_SECRETS, redact, reinject,
 use toml_edit::DocumentMut;
 
 use crate::routing::DomainRouter;
+use crate::util::sync::lock;
 
 /// Provider types owned by a plugin are prefixed with `plugin:<id>:`.
 const PLUGIN_PROVIDER_PREFIX: &str = "plugin:";
@@ -164,10 +165,7 @@ impl ConfigService for ConfigServiceImpl {
             .map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
 
         off_async_worker(move || {
-            let _guard = self
-                .write_lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _guard = lock(&self.write_lock);
 
             reinject(&mut document, &self.current_document(), PROXY_SECRETS);
             let unrestored = still_redacted(&document, PROXY_SECRETS);

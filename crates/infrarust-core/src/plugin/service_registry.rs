@@ -1,13 +1,14 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock, Weak};
+use std::sync::{Arc, RwLock, Weak};
 
 use infrarust_api::error::ServiceError;
 use infrarust_api::events::plugin::{ServiceProvidedEvent, ServiceRemovedEvent};
 use infrarust_api::services::service_registry::{ErasedService, ServiceHandle, ServiceRegistry};
 
 use crate::event_bus::EventBusImpl;
+use crate::util::sync::{read, write};
 
 struct Provided {
     id: u64,
@@ -39,7 +40,7 @@ impl ServiceRegistryImpl {
         instance: ErasedService,
     ) -> Result<u64, ServiceError> {
         let id = {
-            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let mut entries = write(&self.entries);
             if let Some(existing) = entries.get(&service) {
                 return Err(ServiceError::AlreadyProvided {
                     service: existing.name,
@@ -67,7 +68,7 @@ impl ServiceRegistryImpl {
 
     pub fn withdraw(&self, id: u64) -> bool {
         let removed = {
-            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let mut entries = write(&self.entries);
             let key = entries
                 .iter()
                 .find(|(_, provided)| provided.id == id)
@@ -85,7 +86,7 @@ impl ServiceRegistryImpl {
 
     pub fn withdraw_owner(&self, owner: &str) -> usize {
         let removed: Vec<(TypeId, Provided)> = {
-            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let mut entries = write(&self.entries);
             let mut owned: Vec<(TypeId, Provided)> = entries
                 .extract_if(|_, provided| &*provided.owner == owner)
                 .collect();
@@ -99,26 +100,19 @@ impl ServiceRegistryImpl {
     }
 
     pub fn get(&self, service: TypeId) -> Option<ErasedService> {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .get(&service)
             .map(|provided| Arc::clone(&provided.instance))
     }
 
     pub fn provider(&self, service: TypeId) -> Option<String> {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .get(&service)
             .map(|provided| provided.owner.to_string())
     }
 
     pub fn len(&self) -> usize {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+        read(&self.entries).len()
     }
 
     pub fn is_empty(&self) -> bool {

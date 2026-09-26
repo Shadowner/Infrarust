@@ -10,6 +10,8 @@ use dashmap::{DashMap, DashSet};
 use infrarust_config::ServerAddress;
 use infrarust_transport::{ConnectAttempt, ConnectAttemptObserver};
 
+use crate::util::sync::{read, write};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendState {
     Healthy,
@@ -160,19 +162,11 @@ impl PassiveBackendHealth {
     }
 
     pub fn add_listener(&self, listener: Arc<dyn HealthTransitionListener>) {
-        self.listeners
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(listener);
+        write(&self.listeners).push(listener);
     }
 
     fn notify(&self, addr: &ServerAddress, to: BackendState) {
-        for listener in self
-            .listeners
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-        {
+        for listener in read(&self.listeners).iter() {
             listener.on_transition(addr, to);
         }
     }

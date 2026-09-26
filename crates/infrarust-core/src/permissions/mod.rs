@@ -2,7 +2,7 @@ mod builtin;
 mod nodes;
 
 use std::collections::HashSet;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use uuid::Uuid;
 
@@ -13,6 +13,8 @@ use infrarust_api::permissions::{
     PermissionProviderRejected, PermissionSubject, Tristate, WILDCARD,
 };
 use infrarust_config::{PermissionProviderSelection, PermissionsConfig};
+
+use crate::util::sync::{read, write};
 
 pub use builtin::{ConfigPermissionChecker, ConfigPermissionProvider, resolve_username_to_uuid};
 pub use nodes::command_node;
@@ -89,10 +91,7 @@ impl PermissionService {
     ) -> Result<(), PermissionProviderRejected> {
         match &self.selection {
             PermissionProviderSelection::Plugin(id) if id == plugin_id => {
-                *self
-                    .registered
-                    .write()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(provider);
+                *write(&self.registered) = Some(provider);
                 tracing::info!(plugin = %plugin_id, "permission provider registered, permissions now come from it");
                 Ok(())
             }
@@ -113,12 +112,7 @@ impl PermissionService {
         if self.selection.plugin_id() != Some(plugin_id) {
             return false;
         }
-        let removed = self
-            .registered
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-            .is_some();
+        let removed = write(&self.registered).take().is_some();
         if removed {
             tracing::error!(
                 plugin = %plugin_id,
@@ -144,11 +138,7 @@ impl PermissionService {
             PermissionProviderSelection::Builtin => {
                 Some(Arc::clone(&self.builtin) as Arc<dyn PermissionProvider>)
             }
-            PermissionProviderSelection::Plugin(_) => self
-                .registered
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
+            PermissionProviderSelection::Plugin(_) => read(&self.registered).clone(),
         }
     }
 
@@ -239,10 +229,7 @@ impl PermissionService {
         }
         self.builtin.lock_subcommands(&admin_only);
         names.sort();
-        *self
-            .subcommands
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = names;
+        *write(&self.subcommands) = names;
     }
 
     pub fn is_command_allowed(&self, command: &str, source: &CommandSource) -> bool {
@@ -250,11 +237,7 @@ impl PermissionService {
     }
 
     pub fn visible_subcommands(&self, source: &CommandSource) -> HashSet<String> {
-        let names = self
-            .subcommands
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let names = read(&self.subcommands).clone();
         names
             .into_iter()
             .filter(|name| self.is_command_allowed(name, source))

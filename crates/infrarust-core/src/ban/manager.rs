@@ -1,4 +1,4 @@
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -23,6 +23,7 @@ use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::player::PlayerSession;
 use crate::registry::ConnectionRegistry;
+use crate::util::sync::{read, write};
 
 pub const BAN_CHECK_UNAVAILABLE: &str =
     "Your ban status cannot be checked right now. Please try again later.";
@@ -145,17 +146,13 @@ impl BanManager {
                 .as_ref()
                 .map(|builtin| Arc::clone(builtin) as Arc<dyn BanProvider>)),
             BanProviderSelection::Disabled => Ok(None),
-            BanProviderSelection::Plugin(id) => self
-                .registered
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone()
-                .map(Some)
-                .ok_or_else(|| {
+            BanProviderSelection::Plugin(id) => {
+                read(&self.registered).clone().map(Some).ok_or_else(|| {
                     ServiceError::Unavailable(format!(
                         "ban provider plugin `{id}` has not registered a provider"
                     ))
-                }),
+                })
+            }
         }
     }
 
@@ -325,10 +322,7 @@ impl BanManager {
     ) -> Result<(), BanProviderRejected> {
         match &self.selection {
             BanProviderSelection::Plugin(id) if id == plugin_id => {
-                *self
-                    .registered
-                    .write()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(provider);
+                *write(&self.registered) = Some(provider);
                 tracing::info!(plugin = %plugin_id, "ban provider registered, bans now go through it");
                 Ok(())
             }
@@ -349,11 +343,7 @@ impl BanManager {
         if self.selection.plugin_id() != Some(plugin_id) {
             return;
         }
-        let removed = self
-            .registered
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let removed = write(&self.registered).take();
         if removed.is_some() {
             tracing::error!(
                 plugin = %plugin_id,

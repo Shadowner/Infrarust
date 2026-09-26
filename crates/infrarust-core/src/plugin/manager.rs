@@ -401,6 +401,7 @@ mod tests {
 
     use crate::plugin::context_factory::PluginContextFactory;
     use crate::plugin::static_loader::StaticPluginLoader;
+    use crate::util::sync::lock;
 
     use super::*;
 
@@ -700,7 +701,7 @@ mod tests {
             let fail = self.fail_on_load;
             let name = self.name;
             Box::pin(async move {
-                log.lock().expect("lock poisoned").push(label);
+                lock(&log).push(label);
                 if fail {
                     Err(LoaderError::LoadFailed {
                         plugin_id: name.to_string(),
@@ -721,9 +722,7 @@ mod tests {
             let log = Arc::clone(&self.log);
             let id = plugin_id.to_string();
             Box::pin(async move {
-                log.lock()
-                    .expect("lock poisoned")
-                    .push(format!("load:{id}"));
+                lock(&log).push(format!("load:{id}"));
                 Ok(Box::new(TestPlugin {
                     id,
                     enabled: Arc::new(AtomicBool::new(false)),
@@ -735,9 +734,7 @@ mod tests {
             let log = Arc::clone(&self.log);
             let id = plugin_id.to_string();
             Box::pin(async move {
-                log.lock()
-                    .expect("lock poisoned")
-                    .push(format!("unload:{id}"));
+                lock(&log).push(format!("unload:{id}"));
                 Ok(())
             })
         }
@@ -746,7 +743,7 @@ mod tests {
             let log = Arc::clone(&self.log);
             let label = format!("on_shutdown:{}", self.name);
             Box::pin(async move {
-                log.lock().expect("lock poisoned").push(label);
+                lock(&log).push(label);
                 Ok(())
             })
         }

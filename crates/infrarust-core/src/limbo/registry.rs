@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::handle::SessionHandle;
@@ -10,6 +10,7 @@ use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::types::PlayerId;
 
 use crate::error::CoreError;
+use crate::util::sync::{lock, read, write};
 
 #[derive(Default)]
 struct Holds {
@@ -24,7 +25,7 @@ struct ManagedHandler {
 
 impl ManagedHandler {
     fn holds(&self) -> MutexGuard<'_, Holds> {
-        self.holds.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.holds)
     }
 
     fn is_removed(&self) -> bool {
@@ -144,7 +145,7 @@ impl LimboHandlerRegistry {
         handler: Box<dyn LimboHandler>,
     ) -> Result<u64, LimboHandlerError> {
         let name = handler.name().to_string();
-        let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+        let mut entries = write(&self.entries);
         if let Some(existing) = entries.get(&name) {
             return Err(LimboHandlerError::NameTaken {
                 name,
@@ -168,7 +169,7 @@ impl LimboHandlerRegistry {
 
     pub fn unregister(&self, id: u64) -> bool {
         let removed = {
-            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let mut entries = write(&self.entries);
             let name = entries
                 .iter()
                 .find(|(_, entry)| entry.id == id)
@@ -186,7 +187,7 @@ impl LimboHandlerRegistry {
 
     pub fn unregister_owner(&self, owner: &str) -> usize {
         let removed: Vec<Entry> = {
-            let mut entries = self.entries.write().unwrap_or_else(PoisonError::into_inner);
+            let mut entries = write(&self.entries);
             let names: Vec<String> = entries
                 .iter()
                 .filter(|(_, entry)| &*entry.owner == owner)
@@ -204,25 +205,19 @@ impl LimboHandlerRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn LimboHandler>> {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .get(name)
             .map(|entry| Arc::clone(&entry.handler) as Arc<dyn LimboHandler>)
     }
 
     pub fn owner_of(&self, name: &str) -> Option<String> {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .get(name)
             .map(|entry| entry.owner.to_string())
     }
 
     pub fn owned_by(&self, owner: &str) -> Vec<Arc<dyn LimboHandler>> {
-        self.entries
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
+        read(&self.entries)
             .values()
             .filter(|entry| &*entry.owner == owner)
             .map(|entry| Arc::clone(&entry.handler) as Arc<dyn LimboHandler>)

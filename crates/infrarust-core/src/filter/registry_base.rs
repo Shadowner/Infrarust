@@ -3,6 +3,7 @@ use std::sync::RwLock;
 use infrarust_api::filter::{FilterMetadata, FilterRegistryError, PROXY_FILTER_OWNER};
 
 use super::ordering::resolve_filter_order;
+use crate::util::sync::{read, write};
 
 /// Trait for filter types that expose ordering metadata.
 pub trait HasFilterMetadata {
@@ -54,7 +55,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     pub fn register(&self, owner: FilterOwner, item: F) -> Result<(), FilterRegistryError> {
         let metadata = item.metadata();
         {
-            let mut items = self.items.write().expect("lock poisoned");
+            let mut items = write(&self.items);
             if let Some(existing) = items.iter().find(|entry| entry.metadata.id == metadata.id)
                 && existing.owner != owner
             {
@@ -87,7 +88,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
         filter_id: &str,
     ) -> Result<(), FilterRegistryError> {
         {
-            let mut items = self.items.write().expect("lock poisoned");
+            let mut items = write(&self.items);
             let at = items
                 .iter()
                 .position(|entry| entry.metadata.id == filter_id)
@@ -113,7 +114,7 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
 
     pub fn unregister_owner(&self, owner: &FilterOwner) -> usize {
         let removed = {
-            let mut items = self.items.write().expect("lock poisoned");
+            let mut items = write(&self.items);
             let before = items.len();
             items.retain(|entry| entry.owner != *owner);
             before - items.len()
@@ -131,18 +132,14 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     }
 
     pub fn owner_of(&self, filter_id: &str) -> Option<FilterOwner> {
-        self.items
-            .read()
-            .expect("lock poisoned")
+        read(&self.items)
             .iter()
             .find(|entry| entry.metadata.id == filter_id)
             .map(|entry| entry.owner.clone())
     }
 
     pub fn owned_by(&self, owner: &FilterOwner) -> Vec<String> {
-        self.items
-            .read()
-            .expect("lock poisoned")
+        read(&self.items)
             .iter()
             .filter(|entry| entry.owner == *owner)
             .map(|entry| entry.metadata.id.clone())
@@ -150,14 +147,14 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.items.read().expect("lock poisoned").is_empty()
+        read(&self.items).is_empty()
     }
 
     /// Provides read access to the items (with their cached metadata) and
     /// ordered IDs for building output structures (chains, instance lists, etc.).
     pub fn with_ordered<R>(&self, f: impl FnOnce(&[Registered<F>], &[String]) -> R) -> R {
-        let items = self.items.read().expect("lock poisoned");
-        let ordered = self.ordered_ids.read().expect("lock poisoned");
+        let items = read(&self.items);
+        let ordered = read(&self.ordered_ids);
         f(&items, &ordered)
     }
 
@@ -166,13 +163,13 @@ impl<F: HasFilterMetadata> FilterRegistryBase<F> {
     /// On cycle detection failure, logs an error and preserves the previous
     /// order so the proxy continues operating with a stale order.
     fn recalculate_order(&self) {
-        let items = self.items.read().expect("lock poisoned");
+        let items = read(&self.items);
         let metadata: Vec<FilterMetadata> =
             items.iter().map(|entry| entry.metadata.clone()).collect();
 
         match resolve_filter_order(&metadata) {
             Ok(order) => {
-                let mut ordered = self.ordered_ids.write().expect("lock poisoned");
+                let mut ordered = write(&self.ordered_ids);
                 *ordered = order;
             }
             Err(e) => {

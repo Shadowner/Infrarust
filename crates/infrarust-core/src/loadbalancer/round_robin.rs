@@ -7,6 +7,7 @@ use infrarust_config::ServerAddress;
 
 use super::slow_start::{SlowStartConfig, effective_weight};
 use super::{BackendCandidate, LoadBalancer, SelectionMode};
+use crate::util::sync::lock;
 
 pub struct RoundRobin {
     state: Mutex<HashMap<ServerAddress, f64>>,
@@ -32,10 +33,7 @@ impl LoadBalancer for RoundRobin {
         selectable: &[&'a BackendCandidate],
         mode: SelectionMode,
     ) -> SmallVec<[&'a BackendCandidate; 4]> {
-        let mut cw = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut cw = lock(&self.state);
 
         let mut total = 0.0_f64;
         let raised: SmallVec<[f64; 4]> = selectable

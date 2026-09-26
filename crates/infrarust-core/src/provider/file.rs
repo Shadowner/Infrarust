@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -18,6 +18,7 @@ use infrarust_config::{ConfigError, ServerConfig};
 
 use crate::error::CoreError;
 use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
+use crate::util::sync::lock;
 
 const QUIET_PERIOD: Duration = Duration::from_millis(300);
 const MAX_WAIT: Duration = Duration::from_secs(2);
@@ -40,9 +41,7 @@ impl FileProvider {
     }
 
     fn lock_published(&self) -> MutexGuard<'_, Option<HashMap<PathBuf, ServerConfig>>> {
-        self.published
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        lock(&self.published)
     }
 }
 

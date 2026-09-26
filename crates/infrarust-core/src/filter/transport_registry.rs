@@ -6,6 +6,7 @@ use infrarust_api::filter::{FilterMetadata, FilterRegistryError, TransportFilter
 
 use super::registry_base::{FilterOwner, FilterRegistryBase, HasFilterMetadata};
 use super::transport_chain::{ChainedFilter, TransportFilterChain};
+use crate::util::sync::{read, write};
 
 impl HasFilterMetadata for Arc<dyn TransportFilter> {
     fn metadata(&self) -> FilterMetadata {
@@ -32,7 +33,7 @@ impl TransportFilterRegistryImpl {
 
     #[must_use]
     pub fn chain(&self) -> TransportFilterChain {
-        self.chain.read().expect("lock poisoned").clone()
+        read(&self.chain).clone()
     }
 
     pub fn register_builtin(
@@ -94,7 +95,7 @@ impl TransportFilterRegistryImpl {
     }
 
     fn rebuild(&self) {
-        let mut chain = self.chain.write().expect("lock poisoned");
+        let mut chain = write(&self.chain);
         *chain = self.base.with_ordered(|filters, ordered| {
             let ordered_filters: Vec<ChainedFilter> = ordered
                 .iter()

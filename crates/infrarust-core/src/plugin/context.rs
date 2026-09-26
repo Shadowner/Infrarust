@@ -38,6 +38,7 @@ use crate::provider::ProviderId;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
+use crate::util::sync::lock;
 
 use super::service_registry::{PluginServiceRegistry, ServiceRegistryImpl};
 use super::tracking::{
@@ -210,22 +211,16 @@ impl PluginContextImpl {
     }
 
     pub fn take_config_providers(&self) -> Vec<Box<dyn PluginConfigProvider>> {
-        let mut providers = self.config_providers.lock().expect("lock poisoned");
+        let mut providers = lock(&self.config_providers);
         std::mem::take(&mut *providers)
     }
 
     pub fn register_active_provider_ids(&self, ids: Vec<ProviderId>) {
-        self.registered_provider_ids
-            .lock()
-            .expect("lock poisoned")
-            .extend(ids);
+        lock(&self.registered_provider_ids).extend(ids);
     }
 
     pub fn register_provider_token(&self, token: CancellationToken) {
-        self.registered_provider_tokens
-            .lock()
-            .expect("lock poisoned")
-            .push(token);
+        lock(&self.registered_provider_tokens).push(token);
     }
 
     pub fn tracked_commands(&self) -> Vec<String> {
@@ -245,18 +240,12 @@ impl PluginContextImpl {
         self.limbo_handlers.unregister_owner(&self.plugin_id);
         self.services.withdraw_all();
 
-        let tokens = std::mem::take(
-            &mut *self
-                .registered_provider_tokens
-                .lock()
-                .expect("lock poisoned"),
-        );
+        let tokens = std::mem::take(&mut *lock(&self.registered_provider_tokens));
         for token in tokens {
             token.cancel();
         }
 
-        let provider_ids =
-            std::mem::take(&mut *self.registered_provider_ids.lock().expect("lock poisoned"));
+        let provider_ids = std::mem::take(&mut *lock(&self.registered_provider_ids));
         for pid in &provider_ids {
             self.domain_router.remove(pid);
         }
@@ -441,7 +430,7 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn register_config_provider(&self, provider: Box<dyn PluginConfigProvider>) {
-        let mut providers = self.config_providers.lock().expect("lock poisoned");
+        let mut providers = lock(&self.config_providers);
         providers.push(provider);
     }
 

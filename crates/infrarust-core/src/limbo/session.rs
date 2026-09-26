@@ -4,7 +4,7 @@
 //! and an mpsc channel that the limbo engine loop drains.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -20,6 +20,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::player::packets;
+use crate::util::sync::lock;
 
 /// Concrete implementation of [`LimboSession`] used by the limbo engine.
 ///
@@ -79,9 +80,7 @@ impl LimboSessionImpl {
     }
 
     fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<HandlerResult>>> {
-        self.complete_slot
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        lock(&self.complete_slot)
     }
 }
 

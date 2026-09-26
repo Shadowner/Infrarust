@@ -8,6 +8,7 @@ use infrarust_api::plugin::{Plugin, PluginMetadata};
 
 use super::context_factory::PluginContextFactory;
 use super::loader::{LoaderError, PluginLoader};
+use crate::util::sync::{read, write};
 
 pub trait PluginFactory: Send + Sync {
     fn metadata(&self) -> PluginMetadata;
@@ -60,7 +61,7 @@ impl StaticPluginLoader {
         let id = metadata.id.clone();
         let plugin_factory = FnPluginFactory { metadata, factory };
 
-        let mut factories = self.factories.write().expect("lock poisoned");
+        let mut factories = write(&self.factories);
         if factories.iter().any(|(existing, _)| *existing == id) {
             panic!("Duplicate static plugin id: {id}");
         }
@@ -68,14 +69,12 @@ impl StaticPluginLoader {
     }
 
     pub fn registered_count(&self) -> usize {
-        self.factories.read().expect("lock poisoned").len()
+        read(&self.factories).len()
     }
 
     #[must_use]
     pub fn registered_ids(&self) -> Vec<String> {
-        self.factories
-            .read()
-            .expect("lock poisoned")
+        read(&self.factories)
             .iter()
             .map(|(id, _)| id.clone())
             .collect()
@@ -98,7 +97,7 @@ impl PluginLoader for StaticPluginLoader {
         _plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>> {
         Box::pin(async {
-            let factories = self.factories.read().expect("lock poisoned");
+            let factories = read(&self.factories);
             let metadatas = factories.iter().map(|(_, f)| f.metadata()).collect();
             Ok(metadatas)
         })
@@ -110,7 +109,7 @@ impl PluginLoader for StaticPluginLoader {
         _context_factory: &'a dyn PluginContextFactory,
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
-            let factories = self.factories.read().expect("lock poisoned");
+            let factories = read(&self.factories);
             let (_, factory) = factories
                 .iter()
                 .find(|(id, _)| id == plugin_id)

@@ -42,6 +42,7 @@ use infrarust_protocol::version::ProtocolVersion as WireVersion;
 use crate::event_bus::EventBusImpl;
 use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
+use crate::util::sync::{lock, read, write};
 
 use client_state::ClientState;
 use command_queue::CommandQueue;
@@ -270,7 +271,7 @@ impl PlayerSession {
 
     pub(crate) fn settle_connect(&self, target: &ServerId, result: &ConnectionResult) {
         let settled: Vec<_> = {
-            let mut connects = self.connects.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut connects = lock(&self.connects);
             let (settled, waiting) = std::mem::take(&mut *connects)
                 .into_iter()
                 .partition(|(server, _)| server == target);
@@ -328,16 +329,13 @@ impl PlayerSession {
         self.connected.store(false, Ordering::Release);
         self.set_connected_address(None);
         self.presentation.end();
-        self.connects
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        lock(&self.connects).clear();
         drop(self.typed_commands.stop());
     }
 
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
-        let mut routing = self.routing.write().unwrap_or_else(PoisonError::into_inner);
+        let mut routing = write(&self.routing);
         if routing.current.as_ref() != Some(&server) {
             routing.previous = routing.current.replace(server);
         }
@@ -345,30 +343,20 @@ impl PlayerSession {
     }
 
     pub(crate) fn previous_server(&self) -> Option<ServerId> {
-        self.routing
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .previous
-            .clone()
+        read(&self.routing).previous.clone()
     }
 
     pub(crate) fn set_pending_server(&self, server: ServerId) {
-        self.routing
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pending = Some(server);
+        write(&self.routing).pending = Some(server);
     }
 
     pub(crate) fn counted_server(&self) -> Option<ServerId> {
-        let routing = self.routing.read().unwrap_or_else(PoisonError::into_inner);
+        let routing = read(&self.routing);
         routing.current.clone().or_else(|| routing.pending.clone())
     }
 
     pub fn set_connected_address(&self, address: Option<ServerAddress>) {
-        let mut guard = self
-            .connected_address
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut guard = write(&self.connected_address);
         if *guard == address {
             return;
         }
@@ -381,10 +369,7 @@ impl PlayerSession {
     }
 
     pub fn connected_address(&self) -> Option<ServerAddress> {
-        self.connected_address
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        read(&self.connected_address).clone()
     }
 
     pub fn shutdown_token(&self) -> &CancellationToken {
@@ -444,10 +429,7 @@ impl PlayerSession {
     }
 
     pub fn set_permission_checker(&self, checker: Arc<dyn PermissionChecker>) {
-        *self
-            .permission_checker
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = checker;
+        *write(&self.permission_checker) = checker;
     }
 
     pub fn override_permission_checker(&self, checker: Arc<dyn PermissionChecker>) {
@@ -476,12 +458,7 @@ impl PlayerSession {
     }
 
     fn permission_checker(&self) -> Arc<dyn PermissionChecker> {
-        Arc::clone(
-            &self
-                .permission_checker
-                .read()
-                .unwrap_or_else(PoisonError::into_inner),
-        )
+        Arc::clone(&read(&self.permission_checker))
     }
 
     pub(crate) fn mark_released(&self) {
@@ -519,11 +496,7 @@ impl PlayerSession {
         if !self.runs_this_code() {
             return Ok(());
         }
-        let admitted = self
-            .self_waits
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .admit(Instant::now());
+        let admitted = lock(&self.self_waits).admit(Instant::now());
         if let Some(suppressed) = admitted {
             tracing::warn!(
                 player = %self.profile.username,
@@ -616,11 +589,7 @@ impl Player for PlayerSession {
     }
 
     fn current_server(&self) -> Option<ServerId> {
-        self.routing
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .current
-            .clone()
+        read(&self.routing).current.clone()
     }
 
     fn is_connected(&self) -> bool {
@@ -740,10 +709,7 @@ impl Player for PlayerSession {
             self.ready()?;
             self.refuse_self_wait("connect")?;
             let (reply, result) = oneshot::channel();
-            self.connects
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push((target.clone(), reply));
+            lock(&self.connects).push((target.clone(), reply));
             self.send_command(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
                 .await?;
             Ok(result.await.unwrap_or(ConnectionResult::Cancelled))

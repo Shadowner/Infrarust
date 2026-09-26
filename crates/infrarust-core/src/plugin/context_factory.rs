@@ -14,6 +14,7 @@ use crate::ban::BanManager;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
 use crate::services::ban_bridge::PluginBanService;
+use crate::util::sync::lock;
 
 /// Per-plugin permissions extracted from proxy configuration.
 #[derive(Debug, Clone, Default)]
@@ -93,7 +94,7 @@ impl PluginContextFactoryImpl {
 
 impl PluginContextFactory for PluginContextFactoryImpl {
     fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
-        let mut cache = self.contexts.lock().expect("lock poisoned");
+        let mut cache = lock(&self.contexts);
         if let Some(existing) = cache.get(plugin_id).and_then(Weak::upgrade) {
             return existing;
         }
@@ -162,9 +163,6 @@ impl PluginContextFactory for PluginContextFactoryImpl {
     }
 
     fn forget_context(&self, plugin_id: &str) {
-        self.contexts
-            .lock()
-            .expect("lock poisoned")
-            .remove(plugin_id);
+        lock(&self.contexts).remove(plugin_id);
     }
 }

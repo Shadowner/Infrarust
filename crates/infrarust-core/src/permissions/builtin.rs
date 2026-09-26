@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, RwLock};
 
 use dashmap::DashSet;
 use uuid::Uuid;
@@ -12,6 +12,7 @@ use infrarust_api::permissions::{
 use infrarust_config::PermissionsConfig;
 
 use super::nodes::command_node;
+use crate::util::sync::{read, write};
 
 struct Shared {
     admins: DashSet<Uuid>,
@@ -98,12 +99,7 @@ impl ConfigPermissionProvider {
     }
 
     pub(crate) fn lock_subcommands(&self, admin_only: &HashSet<String>) {
-        *self
-            .shared
-            .grants
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) =
-            Arc::new(player_grants(&self.player_commands, admin_only));
+        *write(&self.shared.grants) = Arc::new(player_grants(&self.player_commands, admin_only));
     }
 
     pub fn trusts_offline_admins(&self) -> bool {
@@ -148,13 +144,7 @@ impl PermissionChecker for ConfigPermissionChecker {
         if self.admin_eligible && self.shared.admins.contains(&self.uuid) {
             return Tristate::True;
         }
-        let grants = Arc::clone(
-            &self
-                .shared
-                .grants
-                .read()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
+        let grants = Arc::clone(&read(&self.shared.grants));
         grants.value(node)
     }
 }

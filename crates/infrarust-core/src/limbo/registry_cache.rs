@@ -11,6 +11,7 @@ use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::registry_data::RegistryDataProvider;
+use crate::util::sync::{read, write};
 
 pub struct RegistryCodecCache {
     captured: RwLock<HashMap<ProtocolVersion, CapturedFrames>>,
@@ -49,7 +50,7 @@ impl RegistryCodecCache {
             return;
         }
         let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
-        let mut map = self.captured.write().expect("registry cache lock poisoned");
+        let mut map = write(&self.captured);
         let entry = map.entry(version).or_insert_with(|| CapturedFrames {
             registry_frames: Vec::new(),
             known_packs_frame: None,
@@ -66,7 +67,7 @@ impl RegistryCodecCache {
     }
 
     pub fn finalize(&self, version: ProtocolVersion) {
-        let mut map = self.captured.write().expect("registry cache lock poisoned");
+        let mut map = write(&self.captured);
         if let Some(entry) = map.get_mut(&version) {
             entry.finalized = true;
             tracing::info!(
@@ -82,7 +83,7 @@ impl RegistryCodecCache {
         version: ProtocolVersion,
     ) -> Result<Vec<PacketFrame>, CoreError> {
         {
-            let map = self.captured.read().expect("registry cache lock poisoned");
+            let map = read(&self.captured);
             if let Some(entry) = map.get(&version)
                 && entry.finalized
                 && !entry.registry_frames.is_empty()
@@ -99,7 +100,7 @@ impl RegistryCodecCache {
         version: ProtocolVersion,
     ) -> Result<Option<PacketFrame>, CoreError> {
         {
-            let map = self.captured.read().expect("registry cache lock poisoned");
+            let map = read(&self.captured);
             if let Some(entry) = map.get(&version)
                 && entry.finalized
                 && !entry.registry_frames.is_empty()
@@ -112,7 +113,7 @@ impl RegistryCodecCache {
     }
 
     pub fn has_captured(&self, version: ProtocolVersion) -> bool {
-        let map = self.captured.read().expect("registry cache lock poisoned");
+        let map = read(&self.captured);
         map.get(&version).is_some_and(|e| e.finalized)
     }
 

@@ -14,6 +14,7 @@ use infrarust_config::ServerConfig;
 
 use crate::loadbalancer::{LoadBalancer, build_load_balancer};
 use crate::provider::ProviderId;
+use crate::util::sync::{read, write};
 
 /// Entry stored per provider in the router.
 struct RouterEntry {
@@ -220,10 +221,7 @@ impl DomainRouter {
 
         // 2. Wildcard match (sequential scan)
         {
-            let patterns = self
-                .wildcard_patterns
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let patterns = read(&self.wildcard_patterns);
             for wc in patterns.iter() {
                 if wc.matcher.matches(&normalized)
                     && let Some(entry) = self.configs.get(&wc.provider_id)
@@ -310,10 +308,7 @@ impl DomainRouter {
             }
         }
 
-        let mut lock = self
-            .wildcard_patterns
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut lock = write(&self.wildcard_patterns);
         *lock = patterns;
     }
 }
