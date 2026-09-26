@@ -147,12 +147,12 @@ impl MojangAuth {
             .decrypt(Pkcs1v15Encrypt, &enc_response.shared_secret)
             .map_err(|e| CoreError::Auth(format!("shared secret decrypt failed: {e}")))?;
 
-        if shared_secret.len() != 16 {
-            return Err(CoreError::Auth(format!(
+        let key: [u8; 16] = shared_secret.as_slice().try_into().map_err(|_| {
+            CoreError::Auth(format!(
                 "shared secret must be 16 bytes, got {}",
                 shared_secret.len()
-            )));
-        }
+            ))
+        })?;
 
         match &enc_response.proof {
             EncryptionProof::VerifyToken(token) => {
@@ -183,10 +183,6 @@ impl MojangAuth {
         let profile = self.verify_session(username, &server_hash).await?;
 
         // Enable encryption on client bridge
-        #[allow(clippy::expect_used)] // Length already validated above
-        let key: [u8; 16] = shared_secret
-            .try_into()
-            .expect("shared secret length already validated as 16");
         client.enable_encryption(&key);
 
         Ok(profile)

@@ -38,11 +38,10 @@ impl RateLimiterMiddleware {
         }
     }
 
-    #[allow(clippy::expect_used)] // max.max(1) guarantees NonZero, and period is always valid
     fn build_limiter(max: u32, window: std::time::Duration) -> KeyedLimiter {
-        let max = NonZeroU32::new(max.max(1)).expect("rate limit max must be > 0");
+        let max = NonZeroU32::new(max).unwrap_or(NonZeroU32::MIN);
         let quota = Quota::with_period(window / max.get())
-            .expect("valid quota period")
+            .unwrap_or_else(|| Quota::per_second(max))
             .allow_burst(max);
         RateLimiter::dashmap(quota)
     }

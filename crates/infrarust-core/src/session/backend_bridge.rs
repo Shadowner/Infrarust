@@ -333,7 +333,7 @@ impl BackendBridge {
                                     let response =
                                         crate::forwarding::velocity::build_velocity_response(
                                             request, fwd_data, secret,
-                                        );
+                                        )?;
                                     self.send_packet(&response, registry).await?;
                                     tracing::info!("velocity forwarding applied (auto-detected)");
                                     continue;

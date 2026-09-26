@@ -308,7 +308,7 @@ impl PlayerSession {
                 properties: vec![],
             },
             ProtocolVersion::new(767), // 1.21
-            "127.0.0.1:12345".parse().expect("valid test addr"),
+            SocketAddr::from(([127, 0, 0, 1], 12345)),
             None,
             active,
             false,

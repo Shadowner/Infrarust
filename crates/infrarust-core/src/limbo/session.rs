@@ -148,6 +148,7 @@ impl LimboSession for LimboSessionImpl {
         }
     }
 
+    #[allow(clippy::expect_used)]
     fn handle(&self) -> SessionHandle {
         let weak = self
             .self_ref

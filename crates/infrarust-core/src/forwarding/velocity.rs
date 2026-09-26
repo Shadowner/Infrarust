@@ -4,6 +4,7 @@ use hmac::KeyInit;
 use hmac::{Hmac, Mac};
 use infrarust_protocol::VarInt;
 use infrarust_protocol::codec::McBufWriteExt;
+use infrarust_protocol::error::ProtocolResult;
 use infrarust_protocol::packets::login::{CLoginPluginRequest, SLoginPluginResponse};
 use infrarust_protocol::version::ProtocolVersion;
 use sha2::Sha256;
@@ -47,33 +48,23 @@ impl VelocityForwardingHandler {
         0x01
     }
 
-    fn build_payload(data: &ForwardingData, version: u8) -> Vec<u8> {
+    fn build_payload(data: &ForwardingData, version: u8) -> ProtocolResult<Vec<u8>> {
         let mut buf = Vec::with_capacity(256);
 
-        buf.write_var_int(&VarInt(i32::from(version)))
-            .expect("writing to Vec<u8> cannot fail");
-        buf.write_string(&data.real_ip.to_string())
-            .expect("writing to Vec<u8> cannot fail");
-        buf.write_uuid(&data.uuid)
-            .expect("writing to Vec<u8> cannot fail");
-        buf.write_string(&data.username)
-            .expect("writing to Vec<u8> cannot fail");
+        buf.write_var_int(&VarInt(i32::from(version)))?;
+        buf.write_string(&data.real_ip.to_string())?;
+        buf.write_uuid(&data.uuid)?;
+        buf.write_string(&data.username)?;
 
-        buf.write_var_int(&VarInt(data.properties.len() as i32))
-            .expect("writing to Vec<u8> cannot fail");
+        buf.write_var_int(&VarInt(data.properties.len() as i32))?;
         for prop in &data.properties {
-            buf.write_string(&prop.name)
-                .expect("writing to Vec<u8> cannot fail");
-            buf.write_string(&prop.value)
-                .expect("writing to Vec<u8> cannot fail");
+            buf.write_string(&prop.name)?;
+            buf.write_string(&prop.value)?;
             if let Some(ref sig) = prop.signature {
-                buf.write_bool(true)
-                    .expect("writing to Vec<u8> cannot fail");
-                buf.write_string(sig)
-                    .expect("writing to Vec<u8> cannot fail");
+                buf.write_bool(true)?;
+                buf.write_string(sig)?;
             } else {
-                buf.write_bool(false)
-                    .expect("writing to Vec<u8> cannot fail");
+                buf.write_bool(false)?;
             }
         }
 
@@ -81,28 +72,24 @@ impl VelocityForwardingHandler {
             && let Some(ref session) = data.chat_session
         {
             buf.extend_from_slice(&session.expiry.to_be_bytes());
-            buf.write_byte_array(&session.public_key)
-                .expect("writing to Vec<u8> cannot fail");
-            buf.write_byte_array(&session.key_signature)
-                .expect("writing to Vec<u8> cannot fail");
+            buf.write_byte_array(&session.public_key)?;
+            buf.write_byte_array(&session.key_signature)?;
 
             if version >= 0x03 {
                 if let Some(ref holder) = session.holder_uuid {
-                    buf.write_bool(true)
-                        .expect("writing to Vec<u8> cannot fail");
-                    buf.write_uuid(holder)
-                        .expect("writing to Vec<u8> cannot fail");
+                    buf.write_bool(true)?;
+                    buf.write_uuid(holder)?;
                 } else {
-                    buf.write_bool(false)
-                        .expect("writing to Vec<u8> cannot fail");
+                    buf.write_bool(false)?;
                 }
             }
         }
 
-        buf
+        Ok(buf)
     }
 }
 
+#[allow(clippy::expect_used)]
 fn sign_payload(secret: &[u8], payload: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
     mac.update(payload);
@@ -120,7 +107,7 @@ pub fn build_velocity_response(
     request: &CLoginPluginRequest,
     data: &ForwardingData,
     secret: &[u8],
-) -> SLoginPluginResponse {
+) -> ProtocolResult<SLoginPluginResponse> {
     let backend_version = request.data.first().copied().unwrap_or(0x01);
     let negotiated = VelocityForwardingHandler::negotiate_version(
         backend_version,
@@ -134,18 +121,18 @@ pub fn build_velocity_response(
         "velocity forwarding version negotiated"
     );
 
-    let payload = VelocityForwardingHandler::build_payload(data, negotiated);
+    let payload = VelocityForwardingHandler::build_payload(data, negotiated)?;
     let signature = sign_payload(secret, &payload);
 
     let mut response_data = Vec::with_capacity(32 + payload.len());
     response_data.extend_from_slice(&signature);
     response_data.extend(payload);
 
-    SLoginPluginResponse {
+    Ok(SLoginPluginResponse {
         message_id: request.message_id,
         successful: true,
         data: response_data,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -227,7 +214,7 @@ mod tests {
     #[test]
     fn test_velocity_payload_v1_format() {
         let data = make_data();
-        let payload = VelocityForwardingHandler::build_payload(&data, 0x01);
+        let payload = VelocityForwardingHandler::build_payload(&data, 0x01).unwrap();
 
         assert_eq!(payload[0], 0x01);
         assert!(payload.len() > 20);
@@ -236,8 +223,8 @@ mod tests {
     #[test]
     fn test_velocity_payload_v4_no_chat_session() {
         let data = make_data();
-        let payload_v1 = VelocityForwardingHandler::build_payload(&data, 0x01);
-        let payload_v4 = VelocityForwardingHandler::build_payload(&data, 0x04);
+        let payload_v1 = VelocityForwardingHandler::build_payload(&data, 0x01).unwrap();
+        let payload_v4 = VelocityForwardingHandler::build_payload(&data, 0x04).unwrap();
 
         assert_eq!(payload_v1[0], 0x01);
         assert_eq!(payload_v4[0], 0x04);
@@ -249,7 +236,7 @@ mod tests {
         let secret = b"test-secret-key";
         let data = make_data();
 
-        let payload = VelocityForwardingHandler::build_payload(&data, 0x01);
+        let payload = VelocityForwardingHandler::build_payload(&data, 0x01).unwrap();
         let signature = sign_payload(secret, &payload);
 
         let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
@@ -265,7 +252,7 @@ mod tests {
         let secret = b"my-secret";
         let data = make_data();
 
-        let payload = VelocityForwardingHandler::build_payload(&data, 0x01);
+        let payload = VelocityForwardingHandler::build_payload(&data, 0x01).unwrap();
         let signature = sign_payload(secret, &payload);
 
         let mut response = Vec::with_capacity(32 + payload.len());
@@ -294,8 +281,8 @@ mod tests {
             holder_uuid: None,
         });
 
-        let payload_v1 = VelocityForwardingHandler::build_payload(&data, 0x01);
-        let payload_v2 = VelocityForwardingHandler::build_payload(&data, 0x02);
+        let payload_v1 = VelocityForwardingHandler::build_payload(&data, 0x01).unwrap();
+        let payload_v2 = VelocityForwardingHandler::build_payload(&data, 0x02).unwrap();
 
         assert!(
             payload_v2.len() > payload_v1.len(),
@@ -321,8 +308,8 @@ mod tests {
             ),
         });
 
-        let payload_v2 = VelocityForwardingHandler::build_payload(&data, 0x02);
-        let payload_v3 = VelocityForwardingHandler::build_payload(&data, 0x03);
+        let payload_v2 = VelocityForwardingHandler::build_payload(&data, 0x02).unwrap();
+        let payload_v3 = VelocityForwardingHandler::build_payload(&data, 0x03).unwrap();
 
         assert!(
             payload_v3.len() > payload_v2.len(),
@@ -343,7 +330,7 @@ mod tests {
             data: vec![],
         };
 
-        let response = build_velocity_response(&request, &data, secret);
+        let response = build_velocity_response(&request, &data, secret).unwrap();
         assert_eq!(response.message_id, VarInt(42));
         assert!(response.successful);
         assert_eq!(response.data[32], 0x01);
@@ -354,7 +341,7 @@ mod tests {
         let secret = b"correct-secret";
         let data = make_data();
 
-        let payload = VelocityForwardingHandler::build_payload(&data, 0x01);
+        let payload = VelocityForwardingHandler::build_payload(&data, 0x01).unwrap();
         let signature = sign_payload(secret, &payload);
 
         let mut mac =
