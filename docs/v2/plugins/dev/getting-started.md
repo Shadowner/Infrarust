@@ -300,5 +300,7 @@ impl CommandHandler for GreetCommand {
 - [Events](./events.md) for the complete event catalog and how `ResultedEvent` outcomes are applied.
 - [Commands](./commands.md) for tab completion, permission gating, and argument parsing.
 - [Lifecycle](./lifecycle.md) for the load, enable, disable, and unload flow.
+- [Threading Model](./threading.md) for where your code runs and what it must not block.
+- [Migrating from 2.0.0-beta.3](./migration.md) if your plugin was written against the beta.3 API.
 - The built-in [hello plugin](https://github.com/Shadowner/Infrarust/tree/main/plugins/infrarust-plugin-hello) for examples of limbo handlers and scheduled tasks.
 - The `infrarust_api::prelude` module for the full list of available types, events, and services.

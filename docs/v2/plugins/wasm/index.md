@@ -153,6 +153,7 @@ If the plugin traps or runs past its limits, the host replaces its instance with
 | [Getting Started](./getting-started) | Build and run your first WASM plugin end to end. |
 | [Architecture](./architecture) | Host instances, the contract, and the execution model. |
 | [Fault Model](./fault-model) | What happens when a plugin traps: fresh instances, restart budget, quarantine. |
+| [Threading & Concurrency](./threading) | One call at a time, the call queue, no re-entry, deadlines, and why WASM threads are not supported. |
 | [Capabilities](./capabilities) | Baseline and opt-in capabilities, and the config that grants them. |
 | [Events](./events) | The event kinds the SDK exposes and how to handle them. |
 | [Commands](./commands) | Registering and handling proxy commands. |
@@ -160,6 +161,7 @@ If the plugin traps or runs past its limits, the host replaces its instance with
 | [Limbo](./limbo) | Holding players in a proxy-hosted void world. |
 | [Permissions](./permissions) | Permission snapshots, the permission provider, live updates. |
 | [Bans](./bans) | Being the proxy's ban provider. |
+| [Plugin Messaging](./messaging) | Plugin channels, `PluginMessageEvent`, sending to players and servers, and the BungeeCord channel. |
 | [Host Services](./services) | Player registry, server manager, config, and bans. |
 | [Building](./building) | Compiling to a `wasm32-wasip2` component. |
 | [Deploying](./deploying) | Installing and configuring a plugin on a running proxy. |
