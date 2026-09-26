@@ -14,4 +14,4 @@ pub use context_factory::{PluginContextFactory, PluginContextFactoryImpl, Plugin
 pub use infrarust_api::plugin::PluginState;
 pub use loader::{LoaderError, PluginLoader};
 pub use plugin_registry_impl::PluginRegistryImpl;
-pub use static_loader::{PluginFactory, StaticPluginLoader};
+pub use static_loader::StaticPluginLoader;

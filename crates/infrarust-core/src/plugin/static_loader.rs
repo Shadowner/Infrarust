@@ -1,5 +1,6 @@
 //! [`StaticPluginLoader`] — loads plugins compiled into the binary via Cargo features.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::RwLock;
 
@@ -10,45 +11,27 @@ use super::context_factory::PluginContextFactory;
 use super::loader::{LoaderError, PluginLoader};
 use crate::util::sync::{read, write};
 
-pub trait PluginFactory: Send + Sync {
-    fn metadata(&self) -> PluginMetadata;
-    fn create(&self) -> Box<dyn Plugin>;
-}
+type PluginConstructor = Box<dyn Fn() -> Box<dyn Plugin> + Send + Sync>;
 
-/// A [`PluginFactory`] backed by a closure.
-struct FnPluginFactory<F>
-where
-    F: Fn() -> Box<dyn Plugin> + Send + Sync,
-{
+struct StaticPlugin {
     metadata: PluginMetadata,
-    factory: F,
+    construct: PluginConstructor,
 }
 
-impl<F> PluginFactory for FnPluginFactory<F>
-where
-    F: Fn() -> Box<dyn Plugin> + Send + Sync,
-{
-    fn metadata(&self) -> PluginMetadata {
-        self.metadata.clone()
-    }
-
-    fn create(&self) -> Box<dyn Plugin> {
-        (self.factory)()
-    }
+#[derive(Default)]
+struct Registered {
+    in_order: Vec<StaticPlugin>,
+    by_id: HashMap<String, usize>,
 }
 
-/// Plugin loader for statically compiled plugins (Cargo features).
-///
-/// Plugins are registered explicitly via [`register()`](Self::register).
-/// The `plugin_dir` argument in [`discover()`](PluginLoader::discover) is ignored.
 pub struct StaticPluginLoader {
-    factories: RwLock<Vec<(String, Box<dyn PluginFactory>)>>,
+    plugins: RwLock<Registered>,
 }
 
 impl StaticPluginLoader {
     pub fn new() -> Self {
         Self {
-            factories: RwLock::new(Vec::new()),
+            plugins: RwLock::new(Registered::default()),
         }
     }
 
@@ -59,24 +42,29 @@ impl StaticPluginLoader {
         F: Fn() -> Box<dyn Plugin> + Send + Sync + 'static,
     {
         let id = metadata.id.clone();
-        let plugin_factory = FnPluginFactory { metadata, factory };
-
-        let mut factories = write(&self.factories);
-        if factories.iter().any(|(existing, _)| *existing == id) {
-            panic!("Duplicate static plugin id: {id}");
-        }
-        factories.push((id, Box::new(plugin_factory)));
+        let mut plugins = write(&self.plugins);
+        assert!(
+            !plugins.by_id.contains_key(&id),
+            "Duplicate static plugin id: {id}"
+        );
+        let index = plugins.in_order.len();
+        plugins.by_id.insert(id, index);
+        plugins.in_order.push(StaticPlugin {
+            metadata,
+            construct: Box::new(factory),
+        });
     }
 
     pub fn registered_count(&self) -> usize {
-        read(&self.factories).len()
+        read(&self.plugins).in_order.len()
     }
 
     #[must_use]
     pub fn registered_ids(&self) -> Vec<String> {
-        read(&self.factories)
+        read(&self.plugins)
+            .in_order
             .iter()
-            .map(|(id, _)| id.clone())
+            .map(|plugin| plugin.metadata.id.clone())
             .collect()
     }
 }
@@ -97,9 +85,11 @@ impl PluginLoader for StaticPluginLoader {
         _plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>> {
         Box::pin(async {
-            let factories = read(&self.factories);
-            let metadatas = factories.iter().map(|(_, f)| f.metadata()).collect();
-            Ok(metadatas)
+            Ok(read(&self.plugins)
+                .in_order
+                .iter()
+                .map(|plugin| plugin.metadata.clone())
+                .collect())
         })
     }
 
@@ -109,14 +99,15 @@ impl PluginLoader for StaticPluginLoader {
         _context_factory: &'a dyn PluginContextFactory,
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
-            let factories = read(&self.factories);
-            let (_, factory) = factories
-                .iter()
-                .find(|(id, _)| id == plugin_id)
+            let plugins = read(&self.plugins);
+            let plugin = plugins
+                .by_id
+                .get(plugin_id)
+                .and_then(|&index| plugins.in_order.get(index))
                 .ok_or_else(|| LoaderError::PluginNotFound {
                     plugin_id: plugin_id.to_string(),
                 })?;
-            Ok(factory.create())
+            Ok((plugin.construct)())
         })
     }
 
