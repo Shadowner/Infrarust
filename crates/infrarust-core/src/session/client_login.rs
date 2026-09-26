@@ -67,7 +67,6 @@ async fn send_login_success(
     Ok(())
 }
 
-/// Consumes LoginAcknowledged from client, transitions to Config state.
 async fn consume_login_acknowledged(
     client: &mut ClientBridge,
     version: ProtocolVersion,

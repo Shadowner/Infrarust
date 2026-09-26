@@ -18,8 +18,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use super::bungeecord;
 use super::channels::{
-    self, MessageIds, Peeked, is_brand, is_bungeecord, is_register, is_unregister,
-    reserved_for_backends,
+    self, Peeked, is_brand, is_bungeecord, is_register, is_unregister, reserved_for_backends,
 };
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
@@ -27,52 +26,11 @@ use crate::player::PlayerSession;
 use crate::player::client_state::to_settings;
 use crate::services::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
-use crate::session::presentation::PresentationIds;
 
 pub(crate) const fn phase_of(state: ConnectionState) -> MessagePhase {
     match state {
         ConnectionState::Config => MessagePhase::Configuration,
         _ => MessagePhase::Play,
-    }
-}
-
-pub(crate) struct ClientObserver {
-    session: Arc<PlayerSession>,
-    bus: Arc<EventBusImpl>,
-    ids: MessageIds,
-    presentation: PresentationIds,
-    version: ProtocolVersion,
-}
-
-impl ClientObserver {
-    pub(crate) fn new(
-        session: &Arc<PlayerSession>,
-        services: &ProxyServices,
-        version: ProtocolVersion,
-    ) -> Self {
-        Self {
-            session: Arc::clone(session),
-            bus: Arc::clone(&services.event_bus),
-            ids: MessageIds::resolve(&services.packet_registry, version),
-            presentation: PresentationIds::resolve(&services.packet_registry, version),
-            version,
-        }
-    }
-
-    pub(crate) fn observe(&self, frame: &PacketFrame, state: ConnectionState) {
-        if self
-            .presentation
-            .client_reply(&self.session, &self.bus, frame, state)
-        {
-            return;
-        }
-        if self.ids.is_information(frame, state) {
-            observe_information(&self.session, &self.bus, frame, state, self.version);
-        } else if self.ids.is_serverbound(frame, state)
-            && let Some(peeked) = channels::peek(frame, self.version)
-        {
-            observe_client_message(&self.session, &self.bus, &peeked, self.version);
-        }
     }
 }
 
@@ -107,7 +65,7 @@ pub(crate) fn observe_information(
     }
 }
 
-fn observe_client_message(
+pub(crate) fn observe_client_message(
     session: &Arc<PlayerSession>,
     bus: &EventBusImpl,
     peeked: &Peeked,

@@ -20,6 +20,7 @@ use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::{Login, connect_backend};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
+use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::wake::wake;
@@ -117,7 +118,7 @@ pub(crate) async fn resolve_initial_mode(
         infrarust_api::events::connection::PlayerChooseInitialServerResult::SendToLimbo {
             limbo_handlers,
         } => {
-            prepare_client_for_limbo(ctx, client, progress).await?;
+            prepare_client_for_limbo(ctx, client, progress, &initial_server).await?;
             let Some(handlers) =
                 resolve_limbo_strict(&services.limbo_handler_registry, limbo_handlers)
             else {
@@ -152,7 +153,7 @@ pub(crate) async fn resolve_initial_mode(
             infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
                 limbo_handlers,
             } => {
-                prepare_client_for_limbo(ctx, client, progress).await?;
+                prepare_client_for_limbo(ctx, client, progress, &target_server_id).await?;
                 let handler_names = if limbo_handlers.is_empty() {
                     server_config.limbo_handlers.clone()
                 } else {
@@ -215,7 +216,7 @@ pub(crate) async fn resolve_initial_mode(
             &server_config.limbo_handlers,
         )
     {
-        prepare_client_for_limbo(ctx, client, progress).await?;
+        prepare_client_for_limbo(ctx, client, progress, &target_server_id).await?;
         initial_mode = Some(ConnectionMode::Limbo(
             handlers,
             LimboEntryContext::InitialConnection {
@@ -315,6 +316,7 @@ async fn prepare_client_for_limbo(
     ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
     progress: &mut LoginProgress,
+    server: &ServerId,
 ) -> Result<(), CoreError> {
     ensure_login_complete(ctx, client, progress).await?;
 
@@ -325,11 +327,7 @@ async fn prepare_client_for_limbo(
             version,
             ctx.registry(),
             &ctx.services.registry_codec_cache,
-            Some(&crate::plugin_messaging::router::ClientObserver::new(
-                &ctx.session,
-                ctx.services,
-                version,
-            )),
+            Some(&FrameChain::new(ctx, server)),
         )
         .await
     {

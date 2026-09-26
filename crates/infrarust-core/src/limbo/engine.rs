@@ -36,6 +36,7 @@ pub(crate) async fn enter_limbo(
     io: &mut SessionIo,
     handlers: Vec<Arc<dyn LimboHandler>>,
     entry_context: LimboEntryContext,
+    server: &ServerId,
 ) -> LimboExitResult {
     let registry = Arc::clone(&ctx.services.packet_registry);
     let player_id = ctx.player_id();
@@ -58,6 +59,7 @@ pub(crate) async fn enter_limbo(
         session,
         core,
         keepalive: KeepAliveState::new(),
+        server: server.clone(),
     };
 
     let chain_result = run_handler_chain(ctx, io, &mut limbo, &handlers, true).await;
@@ -368,6 +370,7 @@ mod tests {
             LimboEntryContext::InitialConnection {
                 target_server: ServerId::new("lobby"),
             },
+            &ServerId::new("lobby"),
         )
         .await;
 

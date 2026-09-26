@@ -15,8 +15,8 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::packets::encode_packet;
-use crate::plugin_messaging::router::ClientObserver;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::frame_chain::FrameChain;
 
 const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 
@@ -43,7 +43,7 @@ pub(crate) async fn complete_config_for_limbo(
     version: ProtocolVersion,
     registry: &PacketRegistry,
     codec_cache: &RegistryCodecCache,
-    observer: Option<&ClientObserver>,
+    observer: Option<&FrameChain<'_>>,
 ) -> Result<(), CoreError> {
     if client.awaits_config_ack() {
         absorb_until(
@@ -107,7 +107,7 @@ async fn absorb_until(
     client: &mut ClientBridge,
     target_id: Option<i32>,
     timeout_message: &'static str,
-    observer: Option<&ClientObserver>,
+    observer: Option<&FrameChain<'_>>,
 ) -> Result<(), CoreError> {
     tokio::time::timeout(
         Duration::from_secs(LIMBO_CONFIG_PHASE_TIMEOUT_SECS),

@@ -19,6 +19,7 @@ use crate::limbo::engine::{LimboExitResult, enter_limbo};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
+use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
 use crate::session::server_join::ServerJoin;
@@ -185,7 +186,7 @@ pub(crate) async fn run_session_loop(
             ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
                 session.set_connected_address(None);
                 pending.join = None;
-                if let Err(e) = enter_play(ctx, &mut io.client).await {
+                if let Err(e) = enter_play(ctx, &mut io.client, &current_server_id).await {
                     tracing::warn!("could not bring the client into play for limbo: {e}");
                     io.client
                         .disconnect(&Component::text(e.to_string()), &services.packet_registry)
@@ -202,7 +203,14 @@ pub(crate) async fn run_session_loop(
                         entry_ctx.clone(),
                     ))
                     .await;
-                let exit = enter_limbo(ctx, io, handlers.clone(), entry_ctx.clone()).await;
+                let exit = enter_limbo(
+                    ctx,
+                    io,
+                    handlers.clone(),
+                    entry_ctx.clone(),
+                    &current_server_id,
+                )
+                .await;
 
                 let shutting_down = ctx.token.is_cancelled();
                 let (reason, next_server) = limbo_exit(&exit, shutting_down, &current_server_id);
@@ -647,14 +655,14 @@ async fn leave_login(ctx: &SessionContext<'_>, client: &mut ClientBridge) -> Res
     Ok(())
 }
 
-async fn enter_play(ctx: &SessionContext<'_>, client: &mut ClientBridge) -> Result<(), CoreError> {
+async fn enter_play(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    server: &ServerId,
+) -> Result<(), CoreError> {
     leave_login(ctx, client).await?;
     if client.state() == ConnectionState::Config {
-        let observer = crate::plugin_messaging::router::ClientObserver::new(
-            &ctx.session,
-            ctx.services,
-            ctx.version(),
-        );
+        let observer = FrameChain::new(ctx, server);
         crate::limbo::login::complete_config_for_limbo(
             client,
             ctx.version(),

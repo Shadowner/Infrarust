@@ -26,10 +26,10 @@ use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::player::packets::build_system_chat_message;
-use crate::plugin_messaging::router::ClientObserver;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
+use crate::session::frame_chain::FrameChain;
 
 #[derive(Debug)]
 pub(crate) enum LimboChainResult {
@@ -48,6 +48,7 @@ pub(crate) struct Limbo {
     pub(crate) session: Arc<LimboSessionImpl>,
     pub(crate) core: VirtualSessionCore,
     pub(crate) keepalive: KeepAliveState,
+    pub(crate) server: ServerId,
 }
 
 pub(crate) struct Hold {
@@ -154,6 +155,7 @@ async fn wait_for_hold(
         session,
         core,
         keepalive,
+        server,
     } = limbo;
     let Hold {
         timeout,
@@ -176,7 +178,7 @@ async fn wait_for_hold(
     tokio::pin!(hold_timeout);
 
     let player = &ctx.session;
-    let observer = ClientObserver::new(player, services, core.protocol_version);
+    let observer = FrameChain::new(ctx, server);
 
     let released = commands.drain(client, &core.packet_registry, true);
     if let Some(action) = settle_commands(client, commands, &core.packet_registry, released).await {
@@ -432,6 +434,7 @@ mod tests {
             session,
             core,
             keepalive: KeepAliveState::new(),
+            server: ServerId::new("test"),
         }
     }
 

@@ -23,6 +23,7 @@ use crate::error::CoreError;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::{Login, connect_backend};
 use crate::session::context::{SessionContext, SessionIo};
+use crate::session::frame_chain::FrameChain;
 use crate::session::kick::{BackendKick, Kick};
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::wake::wake;
@@ -199,13 +200,14 @@ pub(crate) async fn perform_switch(
             )));
         }
         let session_token = session.shutdown_token().clone();
-        let scope = ctx.scope(&effective_target);
+        let chain = FrameChain::new(ctx, &effective_target);
         let config_phase = tokio::time::timeout(
             std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
             config_phase::handle_config_phase_switch(
+                ctx,
                 client,
                 &mut new_backend,
-                &scope,
+                &chain,
                 &mut stranded,
             ),
         );
