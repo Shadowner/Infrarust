@@ -20,6 +20,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::player::packets::packet_id;
 use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;
@@ -199,16 +200,7 @@ impl ClientBridge {
             )));
         }
 
-        let packet_id = registry
-            .get_packet_id::<P>(self.protocol_version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!(
-                    "no packet ID for {} in {}/{:?}",
-                    P::NAME,
-                    P::STATE,
-                    self.protocol_version
-                ))
-            })?;
+        let packet_id = packet_id::<P>(registry, self.protocol_version)?;
 
         let mut payload = Vec::new();
         packet.encode(&mut payload, self.protocol_version)?;

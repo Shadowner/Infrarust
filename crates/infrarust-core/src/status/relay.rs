@@ -25,6 +25,7 @@ use infrarust_transport::connection::ConnectionInfo;
 use super::STATUS_PROTOCOL_VERSION;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
+use crate::player::packets::packet_id;
 
 /// Result of a successful status relay.
 #[derive(Debug)]
@@ -238,13 +239,7 @@ async fn send_packet<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
-    let packet_id = registry.get_packet_id::<P>(version).ok_or_else(|| {
-        CoreError::Other(format!(
-            "no packet id for {} at protocol {}",
-            P::NAME,
-            version.0
-        ))
-    })?;
+    let packet_id = packet_id::<P>(registry, version)?;
 
     let mut payload = Vec::new();
     packet.encode(&mut payload, version)?;

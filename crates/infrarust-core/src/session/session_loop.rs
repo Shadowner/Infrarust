@@ -227,8 +227,8 @@ pub(crate) async fn run_session_loop(
                     }
                     Settled::End(outcome) => break outcome,
                     Settled::Stay => {
-                        break ProxyLoopOutcome::Error(CoreError::Other(
-                            "a kicked player has no server to stay on".to_string(),
+                        break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                            "a kicked player has no server to stay on",
                         ));
                     }
                 }
@@ -302,8 +302,8 @@ pub(crate) async fn run_session_loop(
                                 current_server_id = new_server;
                             }
                             SwitchAction::Unchanged => {
-                                break ProxyLoopOutcome::Error(CoreError::Other(
-                                    "a limbo exit kept no server to join".to_string(),
+                                break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                                    "a limbo exit kept no server to join",
                                 ));
                             }
                             SwitchAction::Limbo(handlers, limbo_ctx) => {
@@ -313,8 +313,8 @@ pub(crate) async fn run_session_loop(
                                             "skipping re-entry into limbo after initial connection gate"
                                         );
                                     }
-                                    break ProxyLoopOutcome::Error(CoreError::Other(
-                                        "no limbo handlers left to continue with".to_string(),
+                                    break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                                        "no limbo handlers left to continue with",
                                     ));
                                 }
                                 mode = ConnectionMode::Limbo(handlers, limbo_ctx);
@@ -344,8 +344,8 @@ pub(crate) async fn run_session_loop(
                             tracing::warn!(
                                 "limbo-to-limbo but no valid handlers resolved, disconnecting"
                             );
-                            break ProxyLoopOutcome::Error(CoreError::Other(
-                                "no limbo handlers resolved for a limbo-to-limbo move".to_string(),
+                            break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                                "no limbo handlers resolved for a limbo-to-limbo move",
                             ));
                         }
                         mode = ConnectionMode::Limbo(

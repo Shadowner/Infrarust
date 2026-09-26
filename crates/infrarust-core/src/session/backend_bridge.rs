@@ -21,6 +21,7 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
+use crate::player::packets::packet_id;
 use crate::session::kick::BackendKick;
 use crate::util::domain_rewrite::rewrite_handshake;
 
@@ -129,16 +130,7 @@ impl BackendBridge {
             )));
         }
 
-        let packet_id = registry
-            .get_packet_id::<P>(self.protocol_version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!(
-                    "no packet ID for {} in {} ({})",
-                    P::NAME,
-                    P::STATE,
-                    P::DIRECTION
-                ))
-            })?;
+        let packet_id = packet_id::<P>(registry, self.protocol_version)?;
 
         let mut payload = Vec::new();
         packet.encode(&mut payload, self.protocol_version)?;
@@ -214,11 +206,7 @@ impl BackendBridge {
             profile_key: None,
         };
 
-        let packet_id = registry
-            .get_packet_id::<SLoginStart>(version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!("no SLoginStart id for protocol {}", version.0))
-            })?;
+        let packet_id = packet_id::<SLoginStart>(registry, version)?;
 
         let mut payload = Vec::new();
         login_start.encode(&mut payload, version)?;
@@ -252,11 +240,7 @@ impl BackendBridge {
             profile_key: None,
         };
 
-        let packet_id = registry
-            .get_packet_id::<SLoginStart>(version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!("no SLoginStart id for protocol {}", version.0))
-            })?;
+        let packet_id = packet_id::<SLoginStart>(registry, version)?;
 
         let mut payload = Vec::new();
         login_start.encode(&mut payload, version)?;

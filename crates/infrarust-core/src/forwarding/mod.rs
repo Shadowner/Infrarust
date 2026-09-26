@@ -82,22 +82,13 @@ pub fn build_handshake_for_backend(
     handshake_data: &crate::pipeline::types::HandshakeData,
     server_config: &infrarust_config::ServerConfig,
 ) -> infrarust_protocol::packets::handshake::SHandshake {
-    use infrarust_config::DomainRewrite;
     use infrarust_protocol::VarInt;
     use infrarust_protocol::version::ConnectionState;
 
     use crate::pipeline::types::ConnectionIntent;
 
-    let domain = match &server_config.domain_rewrite {
-        DomainRewrite::None => handshake_data.domain.clone(),
-        DomainRewrite::Explicit(d) => d.clone(),
-        DomainRewrite::FromBackend => server_config
-            .addresses
-            .first()
-            .map(|a| a.address.host.clone())
-            .unwrap_or_else(|| handshake_data.domain.clone()),
-        _ => handshake_data.domain.clone(),
-    };
+    let domain = crate::util::domain_rewrite::backend_host(server_config)
+        .unwrap_or_else(|| handshake_data.domain.clone());
 
     let next_state = match handshake_data.intent {
         ConnectionIntent::Status => ConnectionState::Status,

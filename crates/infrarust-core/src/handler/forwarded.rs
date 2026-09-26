@@ -13,7 +13,7 @@ use infrarust_api::events::lifecycle::{
 use infrarust_api::player::Player;
 use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
-use infrarust_config::{DomainRewrite, ProxyMode, ServerAddress, ServerConfig};
+use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
@@ -38,6 +38,7 @@ use crate::services::ProxyServices;
 use crate::session::kick::Kick;
 use crate::session::server_join::pre_connect;
 use crate::session::wake::wake;
+use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
 pub(crate) const UNKNOWN_SERVER: &str = "Unknown server";
@@ -625,20 +626,10 @@ async fn send_initial_packets(
         return send_with_forwarding(backend, handshake, server_config, data, &handler).await;
     }
 
-    match &server_config.domain_rewrite {
-        DomainRewrite::Explicit(new_domain) => {
-            send_with_rewritten_handshake(backend, handshake, new_domain).await?;
-        }
-        DomainRewrite::FromBackend => {
-            if let Some(addr) = server_config.addresses.first() {
-                send_with_rewritten_handshake(backend, handshake, &addr.address.host).await?;
-            } else {
-                send_packets(backend, &handshake.raw_packets).await?;
-            }
-        }
-        _ => send_packets(backend, &handshake.raw_packets).await?,
-    }
-
+    backend
+        .write_all(&rewrite_handshake(handshake, server_config)?)
+        .await?;
+    send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
     backend.flush().await?;
     Ok(())
 }
@@ -672,14 +663,4 @@ async fn send_with_forwarding(
     send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
     backend.flush().await?;
     Ok(())
-}
-
-async fn send_with_rewritten_handshake(
-    backend: &mut TcpStream,
-    handshake: &HandshakeData,
-    new_domain: &str,
-) -> Result<(), CoreError> {
-    let encoded = crate::util::domain_rewrite::encode_handshake_with_domain(handshake, new_domain)?;
-    backend.write_all(&encoded).await?;
-    send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await
 }

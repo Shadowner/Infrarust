@@ -8,7 +8,6 @@
 use bytes::Bytes;
 use infrarust_protocol::codec::{McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::center_chunk::CSetCenterChunk;
 use infrarust_protocol::packets::play::chunk_batch::{CChunkBatchFinished, CChunkBatchStart};
 use infrarust_protocol::packets::play::chunk_data::CChunkData;
@@ -16,14 +15,12 @@ use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::game_event::{CGameEvent, START_WAITING_CHUNKS};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
 use infrarust_protocol::packets::play::player_position::CSynchronizePlayerPosition;
-use infrarust_protocol::packets::play::respawn::CRespawn;
-use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
-use crate::player::packets::encode_packet;
+use crate::player::packets::{encode_packet, respawn_frame};
 use crate::session::client_bridge::ClientBridge;
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
@@ -96,8 +93,16 @@ async fn send_pre_1_16_with_join(
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
     send_join_game(client, version, registry).await?;
-    send_limbo_respawn(client, &DimensionInfo::Legacy(0), version, registry).await?;
-    send_limbo_respawn(client, &LIMBO_DIM, version, registry).await?;
+    client
+        .write_frame(&respawn_frame(
+            &DimensionInfo::Legacy(0),
+            version,
+            registry,
+        )?)
+        .await?;
+    client
+        .write_frame(&respawn_frame(&LIMBO_DIM, version, registry)?)
+        .await?;
     send_player_position(client, version, registry).await?;
     send_chunk(client, version, registry).await
 }
@@ -107,8 +112,16 @@ async fn send_pre_1_16_switch(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    send_limbo_respawn(client, &DimensionInfo::Legacy(0), version, registry).await?;
-    send_limbo_respawn(client, &LIMBO_DIM, version, registry).await?;
+    client
+        .write_frame(&respawn_frame(
+            &DimensionInfo::Legacy(0),
+            version,
+            registry,
+        )?)
+        .await?;
+    client
+        .write_frame(&respawn_frame(&LIMBO_DIM, version, registry)?)
+        .await?;
     send_player_position(client, version, registry).await?;
     send_chunk(client, version, registry).await
 }
@@ -129,20 +142,20 @@ async fn send_legacy_switch(
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
     if version.no_less_than(ProtocolVersion::V1_16) {
-        send_limbo_respawn(
-            client,
-            &DimensionInfo::Named("minecraft:overworld".to_string()),
-            version,
-            registry,
-        )
-        .await?;
-        send_limbo_respawn(
-            client,
-            &DimensionInfo::Named(LIMBO_DIMENSION_NAME.to_string()),
-            version,
-            registry,
-        )
-        .await?;
+        client
+            .write_frame(&respawn_frame(
+                &DimensionInfo::Named("minecraft:overworld".to_string()),
+                version,
+                registry,
+            )?)
+            .await?;
+        client
+            .write_frame(&respawn_frame(
+                &DimensionInfo::Named(LIMBO_DIMENSION_NAME.to_string()),
+                version,
+                registry,
+            )?)
+            .await?;
     }
     send_player_position(client, version, registry).await?;
     send_chunk(client, version, registry).await
@@ -189,24 +202,6 @@ async fn send_chunk(
         num_sections: LIMBO_NUM_SECTIONS,
     };
     let frame = encode_packet(&chunk, version, registry)?;
-    client.write_frame(&frame).await
-}
-
-async fn send_limbo_respawn(
-    client: &mut ClientBridge,
-    dimension: &DimensionInfo,
-    version: ProtocolVersion,
-    registry: &PacketRegistry,
-) -> Result<(), CoreError> {
-    let respawn = respawn_switch::for_switch(dimension, version)?;
-    let packet_id = registry
-        .get_packet_id::<CRespawn>(version)
-        .ok_or_else(|| CoreError::Other("no Respawn packet ID".to_string()))?;
-
-    let mut payload = Vec::new();
-    respawn.encode(&mut payload, version)?;
-
-    let frame = PacketFrame::new(packet_id, payload.into());
     client.write_frame(&frame).await
 }
 

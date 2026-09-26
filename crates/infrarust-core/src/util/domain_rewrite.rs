@@ -23,21 +23,24 @@ use crate::pipeline::types::{ConnectionIntent, HandshakeData};
 ///
 /// # Errors
 /// Returns `CoreError` if handshake packet encoding fails.
+pub(crate) fn backend_host(server_config: &ServerConfig) -> Option<String> {
+    match &server_config.domain_rewrite {
+        DomainRewrite::Explicit(domain) => Some(domain.clone()),
+        DomainRewrite::FromBackend => server_config
+            .addresses
+            .first()
+            .map(|addr| addr.address.host.clone()),
+        _ => None,
+    }
+}
+
 pub fn rewrite_handshake(
     handshake_data: &HandshakeData,
     server_config: &ServerConfig,
 ) -> Result<Vec<u8>, CoreError> {
-    match &server_config.domain_rewrite {
-        DomainRewrite::None => Ok(first_raw_packet(handshake_data)),
-        DomainRewrite::Explicit(domain) => encode_handshake_with_domain(handshake_data, domain),
-        DomainRewrite::FromBackend => server_config.addresses.first().map_or_else(
-            || Ok(first_raw_packet(handshake_data)),
-            |addr| encode_handshake_with_domain(handshake_data, &addr.address.host),
-        ),
-        _ => {
-            // Future non-exhaustive variants: pass through
-            Ok(first_raw_packet(handshake_data))
-        }
+    match backend_host(server_config) {
+        Some(host) => encode_handshake_with_domain(handshake_data, &host),
+        None => Ok(first_raw_packet(handshake_data)),
     }
 }
 
@@ -49,7 +52,7 @@ fn first_raw_packet(handshake_data: &HandshakeData) -> Vec<u8> {
         .unwrap_or_default()
 }
 
-pub(crate) fn encode_handshake_with_domain(
+fn encode_handshake_with_domain(
     handshake_data: &HandshakeData,
     new_domain: &str,
 ) -> Result<Vec<u8>, CoreError> {
@@ -154,6 +157,18 @@ mod tests {
         let decoded = decode_handshake_from_framed(&result);
         assert_eq!(decoded.server_address, "new.domain.com");
         assert_eq!(decoded.server_port, 25565);
+    }
+
+    #[test]
+    fn backend_host_is_none_without_a_rewrite_or_an_address() {
+        assert_eq!(backend_host(&make_server_config(DomainRewrite::None)), None);
+        let mut without_addresses = make_server_config(DomainRewrite::FromBackend);
+        without_addresses.addresses.clear();
+        assert_eq!(backend_host(&without_addresses), None);
+        assert_eq!(
+            backend_host(&make_server_config(DomainRewrite::FromBackend)).as_deref(),
+            Some("backend.local")
+        );
     }
 
     #[test]

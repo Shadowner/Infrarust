@@ -7,7 +7,6 @@
 
 use std::time::Duration;
 
-use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig, SKnownPacks};
 use infrarust_protocol::packets::play::start_configuration::SAcknowledgeConfiguration;
 use infrarust_protocol::registry::PacketRegistry;
@@ -15,6 +14,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::player::packets::encode_packet;
 use crate::plugin_messaging::router::ClientObserver;
 use crate::session::client_bridge::ClientBridge;
 
@@ -79,22 +79,7 @@ pub(crate) async fn complete_config_for_limbo(
     }
 
     // 3. Send CFinishConfig
-    let finish_id = registry
-        .get_packet_id::<CFinishConfig>(version)
-        .ok_or_else(|| {
-            CoreError::Other(format!(
-                "no packet ID for {} in {}/{}/{version:?}",
-                CFinishConfig::NAME,
-                CFinishConfig::STATE,
-                CFinishConfig::DIRECTION,
-            ))
-        })?;
-    let mut finish_payload = Vec::new();
-    CFinishConfig
-        .encode(&mut finish_payload, version)
-        .map_err(|e| CoreError::Other(e.to_string()))?;
-    let finish_frame =
-        infrarust_protocol::io::PacketFrame::new(finish_id, bytes::Bytes::from(finish_payload));
+    let finish_frame = encode_packet(&CFinishConfig, version, registry)?;
     client.write_frame(&finish_frame).await?;
 
     // 4. Wait for SAcknowledgeFinishConfig, absorbing any other client packets

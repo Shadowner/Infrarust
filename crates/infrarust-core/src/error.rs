@@ -50,6 +50,9 @@ pub enum CoreError {
     #[error("backend kicked the player: {0}")]
     BackendKick(Box<crate::session::kick::BackendKick>),
 
+    #[error("invalid session state: {0}")]
+    InvalidState(&'static str),
+
     #[error("{0}")]
     Other(String),
 }

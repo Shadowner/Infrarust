@@ -8,11 +8,14 @@ use uuid::Uuid;
 
 use infrarust_api::player::{BossBar, BossBarUpdate, clamp_progress};
 use infrarust_api::types::{Component, TitleData};
+use infrarust_protocol::ProtocolError;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::play::boss_bar::{BossBarAction, CBossBar};
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
+use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::packets::play::tab_list::CTabListHeaderFooter;
 use infrarust_protocol::packets::play::title::{
     CClearTitles, CSetSubtitle, CSetTitle, CSetTitleTimes, CTitleLegacy,
@@ -229,25 +232,37 @@ pub(crate) const fn boss_bar_removed(id: Uuid) -> CBossBar {
     }
 }
 
+pub(crate) fn packet_id<P: Packet>(
+    registry: &PacketRegistry,
+    version: ProtocolVersion,
+) -> Result<i32, CoreError> {
+    registry.get_packet_id::<P>(version).ok_or_else(|| {
+        CoreError::Protocol(ProtocolError::invalid(format!(
+            "no packet id for {} ({} {}) at protocol {version}",
+            P::NAME,
+            P::STATE,
+            P::DIRECTION,
+        )))
+    })
+}
+
+pub(crate) fn respawn_frame(
+    dimension: &DimensionInfo,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<PacketFrame, CoreError> {
+    let respawn = respawn_switch::for_switch(dimension, version)?;
+    encode_packet(&respawn, version, registry)
+}
+
 /// Encodes a typed packet into a `PacketFrame`.
 pub(crate) fn encode_packet<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<PacketFrame, CoreError> {
-    let packet_id = registry.get_packet_id::<P>(version).ok_or_else(|| {
-        CoreError::Other(format!(
-            "no packet ID for {} in {}/{}/{version:?}",
-            P::NAME,
-            P::STATE,
-            P::DIRECTION,
-        ))
-    })?;
-
+    let packet_id = packet_id::<P>(registry, version)?;
     let mut payload = Vec::new();
-    packet
-        .encode(&mut payload, version)
-        .map_err(|e| CoreError::Other(e.to_string()))?;
-
+    packet.encode(&mut payload, version)?;
     Ok(PacketFrame::new(packet_id, Bytes::from(payload)))
 }

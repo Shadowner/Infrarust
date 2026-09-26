@@ -33,6 +33,7 @@ use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
+use crate::player::packets::packet_id;
 use crate::registry::ConnectionRegistry;
 use crate::util::text::api_version;
 
@@ -457,13 +458,7 @@ impl StatusHandler {
         packet: &P,
         version: ProtocolVersion,
     ) -> Result<(), CoreError> {
-        let packet_id = self.registry.get_packet_id::<P>(version).ok_or_else(|| {
-            CoreError::Other(format!(
-                "no packet id for {} at protocol {}",
-                P::NAME,
-                version.0
-            ))
-        })?;
+        let packet_id = packet_id::<P>(&self.registry, version)?;
 
         let mut payload = Vec::new();
         packet.encode(&mut payload, version)?;
