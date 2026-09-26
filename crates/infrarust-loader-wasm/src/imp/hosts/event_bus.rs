@@ -61,7 +61,7 @@ impl PluginStoreState {
             )?;
         }
         let ctx = self.services()?;
-        let instance = self.instance_ref(CallKind::Event);
+        let instance = self.instance_ref(CallKind::Event)?;
         let listener = self.mint_listener_id();
         match events::register(
             ctx.event_bus(),
@@ -81,7 +81,7 @@ impl PluginStoreState {
     fn subscribe_named_event(&mut self, name: String, priority: u8) -> HostResult<u64> {
         self.check("event-bus", "subscribe-named")?;
         let ctx = self.services()?;
-        let instance = self.instance_ref(CallKind::Event);
+        let instance = self.instance_ref(CallKind::Event)?;
         let listener = self.mint_listener_id();
         let handle = events::register_named(
             ctx.event_bus(),
@@ -133,7 +133,7 @@ impl PluginStoreState {
             })
             .collect();
         let ctx = self.services()?;
-        let instance = self.instance_ref(CallKind::Event);
+        let instance = self.instance_ref(CallKind::Event)?;
         let listener = self.mint_listener_id();
         let handles = events::register_packets(
             ctx.event_bus(),

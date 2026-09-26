@@ -26,7 +26,7 @@ impl PluginStoreState {
     fn register_limbo(&mut self, name: String, handler: u64) -> HostResult<()> {
         self.check("limbo", "register-limbo-handler")?;
         let ctx = self.services()?;
-        let instance = self.instance_ref(CallKind::Callback).any_generation();
+        let instance = self.instance_ref(CallKind::Callback)?.any_generation();
         let Bound::Fresh(binding) =
             self.registrations()
                 .bind_limbo(&name, self.generation(), handler)

@@ -252,6 +252,7 @@ pub(crate) struct InstanceRef {
 }
 
 impl InstanceRef {
+    #[cfg(test)]
     pub(crate) fn detached() -> Self {
         let (jobs, _) = mpsc::channel(1);
         Self {

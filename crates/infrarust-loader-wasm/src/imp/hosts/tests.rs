@@ -33,6 +33,7 @@ use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
 
+use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::{
     ban_service, codec_registry, command_manager, config_service, event_bus, limbo, load_balancer,
@@ -72,6 +73,7 @@ fn state_with(capabilities: CapabilitySet, players: Vec<Arc<dyn Player>>) -> Plu
     build_probe_state("test".to_owned(), &SandboxLimits::default())
         .with_capabilities(capabilities)
         .with_ctx(context(players))
+        .with_instance(InstanceRef::detached())
 }
 
 fn text_of(message: &str) -> wt::Component {

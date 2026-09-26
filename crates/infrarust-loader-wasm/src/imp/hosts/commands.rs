@@ -52,7 +52,7 @@ impl PluginStoreState {
     ) -> HostResult<wcm::CommandRegistration> {
         self.check("command-manager", "register")?;
         let ctx = self.services()?;
-        let instance = self.instance_ref(CallKind::Callback).any_generation();
+        let instance = self.instance_ref(CallKind::Callback)?.any_generation();
         let name = spec.name.clone();
         let binding = match self
             .registrations()

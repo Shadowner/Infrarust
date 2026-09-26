@@ -23,6 +23,7 @@ use crate::consts::{
 };
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
+use crate::host_error::{HostResult, no_services};
 use crate::mounts::Mount;
 use crate::network::{HttpHooks, NetworkPolicy, probe_policy};
 use crate::rate_limit::RateLimit;
@@ -48,7 +49,7 @@ pub(crate) struct PluginStoreState {
     limits: StoreLimits,
     capabilities: CapabilitySet,
     ctx: Option<Arc<dyn PluginContext>>,
-    instance: InstanceRef,
+    instance: Option<InstanceRef>,
     deadline: Option<Deadline>,
     pub(crate) plugin_id: String,
     pub(crate) epoch_yields: u32,
@@ -125,8 +126,11 @@ impl PluginStoreState {
             "wasm plugin codec filter registration: {reason}");
     }
 
-    pub(crate) fn instance_ref(&self, kind: CallKind) -> InstanceRef {
-        self.instance.for_calls(kind)
+    pub(crate) fn instance_ref(&self, kind: CallKind) -> HostResult<InstanceRef> {
+        self.instance
+            .as_ref()
+            .map(|instance| instance.for_calls(kind))
+            .ok_or_else(no_services)
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -216,6 +220,12 @@ impl PluginStoreState {
         self.ctx = Some(ctx);
         self
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_instance(mut self, instance: InstanceRef) -> Self {
+        self.instance = Some(instance);
+        self
+    }
 }
 
 impl WasiView for PluginStoreState {
@@ -290,7 +300,7 @@ pub(crate) fn build_load_state(
         limits: store_limits(&setup.sandbox),
         capabilities: setup.capabilities.clone(),
         ctx: Some(Arc::clone(&setup.ctx)),
-        instance,
+        instance: Some(instance),
         deadline: None,
         plugin_id: setup.plugin_id.clone(),
         epoch_yields: 0,
@@ -317,7 +327,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
         limits: store_limits(sandbox),
         capabilities: CapabilitySet::default(),
         ctx: None,
-        instance: InstanceRef::detached(),
+        instance: None,
         deadline: None,
         plugin_id,
         epoch_yields: 0,

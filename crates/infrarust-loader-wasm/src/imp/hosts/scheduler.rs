@@ -13,7 +13,7 @@ impl wsched::Host for PluginStoreState {
         Ok((|| {
             self.check("scheduler", "delay")?;
             let ctx = self.services()?;
-            let instance = self.instance_ref(CallKind::Callback);
+            let instance = self.instance_ref(CallKind::Callback)?;
             let handle = ctx.scheduler().delay(
                 Duration::from_millis(after),
                 Box::new(move || proxies::dispatch_scheduled_task(instance, handler)),
@@ -32,7 +32,7 @@ impl wsched::Host for PluginStoreState {
         Ok((|| {
             self.check("scheduler", "interval")?;
             let ctx = self.services()?;
-            let instance = self.instance_ref(CallKind::Callback);
+            let instance = self.instance_ref(CallKind::Callback)?;
             let task =
                 Box::new(move || proxies::dispatch_scheduled_task(instance.clone(), handler));
             let period = Duration::from_millis(period);

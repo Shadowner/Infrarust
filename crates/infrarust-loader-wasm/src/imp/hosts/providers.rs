@@ -35,7 +35,7 @@ impl PluginStoreState {
             registered.set_features(features);
             return Ok(());
         }
-        let instance = self.instance_ref(CallKind::Event).any_generation();
+        let instance = self.instance_ref(CallKind::Event)?.any_generation();
         let provider = Arc::new(WasmBanProvider::new(instance, features));
         ctx.register_ban_provider(Arc::clone(&provider) as Arc<dyn BanProvider>)
             .map_err(|rejected| match rejected {
@@ -58,7 +58,7 @@ impl PluginStoreState {
         {
             return Ok(());
         }
-        let instance = self.instance_ref(CallKind::Event).any_generation();
+        let instance = self.instance_ref(CallKind::Event)?.any_generation();
         let provider = Arc::new(WasmPermissionProvider::new(instance));
         ctx.register_permission_provider(Arc::clone(&provider) as Arc<dyn PermissionProvider>)
             .map_err(|rejected| match rejected {

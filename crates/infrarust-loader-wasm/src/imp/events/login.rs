@@ -113,28 +113,27 @@ impl WasmEvent for PermissionsSetupEvent {
     }
 
     fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
-        self.apply_for(outcome, &InstanceRef::detached())
+        let we::EventOutcome::PermissionsSetup(we::PermissionsSetupResult::UseDefault) = outcome
+        else {
+            return unmatched(&outcome);
+        };
+        self.set_result(PermissionsSetupResult::UseDefault);
+        Applied::Set
     }
 
     fn apply_for(&mut self, outcome: we::EventOutcome, instance: &InstanceRef) -> Applied {
-        let we::EventOutcome::PermissionsSetup(result) = outcome else {
-            return unmatched(&outcome);
+        let we::EventOutcome::PermissionsSetup(we::PermissionsSetupResult::Custom(snapshot)) =
+            outcome
+        else {
+            return self.apply(outcome);
         };
-        match result {
-            we::PermissionsSetupResult::UseDefault => {
-                self.set_result(PermissionsSetupResult::UseDefault);
-                Applied::Set
-            }
-            we::PermissionsSetupResult::Custom(snapshot) => {
-                let (snapshot, applied) = match snapshot_from_wit(&snapshot) {
-                    Ok(snapshot) => (snapshot, Applied::Set),
-                    Err(reason) => (PermissionSnapshot::new(), Applied::Degraded(reason)),
-                };
-                let checker = instance.snapshots().install(self.player_id(), snapshot);
-                self.set_result(PermissionsSetupResult::Custom(checker));
-                applied
-            }
-        }
+        let (snapshot, applied) = match snapshot_from_wit(&snapshot) {
+            Ok(snapshot) => (snapshot, Applied::Set),
+            Err(reason) => (PermissionSnapshot::new(), Applied::Degraded(reason)),
+        };
+        let checker = instance.snapshots().install(self.player_id(), snapshot);
+        self.set_result(PermissionsSetupResult::Custom(checker));
+        applied
     }
 }
 
