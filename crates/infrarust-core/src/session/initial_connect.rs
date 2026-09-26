@@ -7,24 +7,20 @@ use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
-use infrarust_api::player::Player;
-use infrarust_api::types::Component;
+use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
-use infrarust_transport::BackendConnector;
 
 use super::session_loop::Pending;
 use crate::error::CoreError;
-use crate::forwarding::{ForwardingData, build_handshake_for_backend};
-use crate::handler::intercepted::auth::AuthResult;
+use crate::forwarding::build_handshake_for_backend;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::middleware::backend_selection::BackendTargets;
-use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::player::PlayerSession;
-use crate::services::ProxyServices;
+use crate::pipeline::types::RoutingData;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::wake::wake;
@@ -35,14 +31,22 @@ pub(crate) enum ConnectionMode {
     Kicked(Kick),
 }
 
+pub(crate) struct Initial {
+    pub(crate) mode: ConnectionMode,
+    pub(crate) server: ServerId,
+    pub(crate) pending: Pending,
+}
+
 pub(crate) enum InitialMode {
-    Connected {
-        mode: Box<ConnectionMode>,
-        server_id: infrarust_api::types::ServerId,
-        pending: Pending,
-    },
+    Connected(Box<Initial>),
     /// Disconnect already sent.
     Denied(DisconnectCause),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LoginProgress {
+    pub(crate) completed: bool,
+    pub(crate) rewritten: bool,
 }
 
 fn kicked(reason: Component) -> InitialMode {
@@ -74,38 +78,31 @@ fn resolve_limbo_lenient(
 }
 
 async fn deny_no_limbo_handlers(
+    ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
-    services: &ProxyServices,
 ) -> Result<InitialMode, CoreError> {
     tracing::warn!("SendToLimbo at initial connect but no handlers resolved");
     let reason = Component::text("No limbo handlers configured");
-    client
-        .disconnect(&reason, &services.packet_registry)
-        .await
-        .ok();
+    client.disconnect(&reason, ctx.registry()).await.ok();
     Ok(kicked(reason))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn resolve_initial_mode(
-    client: &mut ClientBridge,
-    player: &Arc<PlayerSession>,
-    auth_result: &AuthResult,
-    login_completed: &mut bool,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
     routing: &RoutingData,
-    handshake: &HandshakeData,
     backend_targets: Option<&BackendTargets>,
     pending_ticket: &mut Option<PendingTicket>,
-    version: ProtocolVersion,
-    services: &ProxyServices,
-    backend_connector: &BackendConnector,
-    connection_info: &infrarust_transport::ConnectionInfo,
+    progress: &mut LoginProgress,
 ) -> Result<InitialMode, CoreError> {
+    let services = ctx.services;
+    let player = &ctx.session;
+    let client = &mut io.client;
     let server_config = &routing.server_config;
 
-    let initial_server = infrarust_api::types::ServerId::new(routing.config_id.clone());
+    let initial_server = ServerId::new(routing.config_id.clone());
     let choose = infrarust_api::events::connection::PlayerChooseInitialServerEvent::new(
-        Arc::clone(player) as Arc<dyn Player>,
+        ctx.player(),
         initial_server.clone(),
     );
     let choose = services.event_bus.fire(choose).await;
@@ -121,19 +118,11 @@ pub(crate) async fn resolve_initial_mode(
         infrarust_api::events::connection::PlayerChooseInitialServerResult::SendToLimbo {
             limbo_handlers,
         } => {
-            prepare_client_for_limbo(
-                client,
-                player,
-                auth_result,
-                login_completed,
-                version,
-                services,
-            )
-            .await?;
+            prepare_client_for_limbo(ctx, client, progress).await?;
             let Some(handlers) =
                 resolve_limbo_strict(&services.limbo_handler_registry, limbo_handlers)
             else {
-                return deny_no_limbo_handlers(client, services).await;
+                return deny_no_limbo_handlers(ctx, client).await;
             };
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
@@ -158,24 +147,13 @@ pub(crate) async fn resolve_initial_mode(
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                client
-                    .disconnect(reason, &services.packet_registry)
-                    .await
-                    .ok();
+                client.disconnect(reason, ctx.registry()).await.ok();
                 return Ok(kicked(reason.clone()));
             }
             infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
                 limbo_handlers,
             } => {
-                prepare_client_for_limbo(
-                    client,
-                    player,
-                    auth_result,
-                    login_completed,
-                    version,
-                    services,
-                )
-                .await?;
+                prepare_client_for_limbo(ctx, client, progress).await?;
                 let handler_names = if limbo_handlers.is_empty() {
                     server_config.limbo_handlers.clone()
                 } else {
@@ -184,7 +162,7 @@ pub(crate) async fn resolve_initial_mode(
                 let Some(handlers) =
                     resolve_limbo_lenient(&services.limbo_handler_registry, &handler_names)
                 else {
-                    return deny_no_limbo_handlers(client, services).await;
+                    return deny_no_limbo_handlers(ctx, client).await;
                 };
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
@@ -213,10 +191,7 @@ pub(crate) async fn resolve_initial_mode(
                 "plugin redirected to an unknown server"
             );
             let reason = Component::text("Unknown server");
-            client
-                .disconnect(&reason, &services.packet_registry)
-                .await
-                .ok();
+            client.disconnect(&reason, ctx.registry()).await.ok();
             return Ok(kicked(reason));
         };
         Some(RoutingData {
@@ -231,7 +206,7 @@ pub(crate) async fn resolve_initial_mode(
 
     let redirected_targets = redirected
         .as_ref()
-        .map(|r| fresh_targets(r, services, pending_ticket));
+        .map(|r| fresh_targets(r, ctx, pending_ticket));
     let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
     if initial_mode.is_none()
@@ -241,15 +216,7 @@ pub(crate) async fn resolve_initial_mode(
             &server_config.limbo_handlers,
         )
     {
-        prepare_client_for_limbo(
-            client,
-            player,
-            auth_result,
-            login_completed,
-            version,
-            services,
-        )
-        .await?;
+        prepare_client_for_limbo(ctx, client, progress).await?;
         initial_mode = Some(ConnectionMode::Limbo(
             handlers,
             LimboEntryContext::InitialConnection {
@@ -279,33 +246,20 @@ pub(crate) async fn resolve_initial_mode(
         pending = Pending::nothing();
         ConnectionMode::Kicked(unavailable.into_kick(target_server_id.clone()))
     } else {
-        let warmed =
-            matches!(woken, Ok(true)).then(|| fresh_targets(routing, services, pending_ticket));
+        let warmed = matches!(woken, Ok(true)).then(|| fresh_targets(routing, ctx, pending_ticket));
         let backend_targets = warmed.as_ref().or(backend_targets);
 
         let forwarding_handler = services.resolve_forwarding_handler(server_config);
         if requires_proxy_completed_login(
             &forwarding_handler,
-            auth_result.rewritten,
-            *login_completed,
+            progress.rewritten,
+            progress.completed,
         ) {
-            ensure_login_complete(client, auth_result, login_completed, version, services).await?;
+            ensure_login_complete(ctx, client, progress).await?;
         }
 
         let mut join = ServerJoin::new(player, target_server_id.clone());
-        match connect_to_backend(
-            &mut join,
-            auth_result,
-            *login_completed,
-            routing,
-            handshake,
-            backend_targets,
-            version,
-            services,
-            backend_connector,
-            connection_info,
-        )
-        .await
+        match connect_to_backend(ctx, &mut join, progress.completed, routing, backend_targets).await
         {
             Ok(backend) => {
                 pending = Pending::join(join);
@@ -323,18 +277,19 @@ pub(crate) async fn resolve_initial_mode(
         }
     };
 
-    Ok(InitialMode::Connected {
-        mode: Box::new(mode),
-        server_id: target_server_id,
+    Ok(InitialMode::Connected(Box::new(Initial {
+        mode,
+        server: target_server_id,
         pending,
-    })
+    })))
 }
 
 fn fresh_targets(
     routing: &RoutingData,
-    services: &ProxyServices,
+    ctx: &SessionContext<'_>,
     pending_ticket: &mut Option<PendingTicket>,
 ) -> BackendTargets {
+    let services = ctx.services;
     let targets = BackendTargets {
         addresses: crate::loadbalancer::select_backend_addresses(
             &routing.server_config,
@@ -349,30 +304,27 @@ fn fresh_targets(
     targets
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn connect_to_backend(
+    ctx: &SessionContext<'_>,
     join: &mut ServerJoin,
-    auth_result: &AuthResult,
     login_completed: bool,
     routing: &RoutingData,
-    handshake: &HandshakeData,
     backend_targets: Option<&BackendTargets>,
-    version: ProtocolVersion,
-    services: &ProxyServices,
-    backend_connector: &BackendConnector,
-    connection_info: &infrarust_transport::ConnectionInfo,
 ) -> Result<BackendBridge, CoreError> {
+    let services = ctx.services;
+    let version = ctx.version();
     let server_config = &routing.server_config;
 
     let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
 
-    let backend_conn = backend_connector
+    let backend_conn = ctx
+        .backend_connector
         .connect(
             &routing.config_id,
             &addresses,
             server_config.timeouts.as_ref().map(|t| t.connect),
             server_config.send_proxy_protocol,
-            connection_info,
+            &ctx.connection_info,
         )
         .await?;
 
@@ -382,21 +334,21 @@ async fn connect_to_backend(
 
     if login_completed {
         let handler = services.resolve_forwarding_handler(server_config);
-        let fwd_data = build_forwarding_data(auth_result, connection_info, version);
+        let fwd_data = ctx.forwarding_data();
 
         if handler.modifies_handshake() {
-            let mut hs = build_handshake_for_backend(handshake, server_config);
+            let mut hs = build_handshake_for_backend(&ctx.handshake, server_config);
             handler.apply_handshake(&mut hs, &fwd_data);
             backend
-                .send_handshake_and_login(&hs, &auth_result.username, &services.packet_registry)
+                .send_handshake_and_login(&hs, ctx.username(), ctx.registry())
                 .await?;
         } else {
             backend
                 .send_initial_packets_offline(
-                    handshake,
+                    &ctx.handshake,
                     server_config,
-                    &auth_result.username,
-                    &services.packet_registry,
+                    ctx.username(),
+                    ctx.registry(),
                 )
                 .await?;
         }
@@ -408,69 +360,50 @@ async fn connect_to_backend(
         };
 
         backend
-            .consume_backend_login(&services.packet_registry, version, velocity_ctx)
+            .consume_backend_login(ctx.registry(), version, velocity_ctx)
             .await?;
 
         if version.no_less_than(ProtocolVersion::V1_20_2) {
             let ack = SLoginAcknowledged;
-            backend.send_packet(&ack, &services.packet_registry).await?;
+            backend.send_packet(&ack, ctx.registry()).await?;
             backend.set_state(ConnectionState::Config);
             tracing::debug!("backend LoginAcknowledged -> Config");
         }
         join.connected(&services.event_bus).await;
     } else {
         backend
-            .send_initial_packets(handshake, server_config)
+            .send_initial_packets(&ctx.handshake, server_config)
             .await?;
     }
 
     Ok(backend)
 }
 
-fn build_forwarding_data(
-    auth_result: &AuthResult,
-    connection_info: &infrarust_transport::ConnectionInfo,
-    protocol_version: ProtocolVersion,
-) -> ForwardingData {
-    let real_ip = connection_info
-        .real_ip
-        .unwrap_or(connection_info.peer_addr.ip());
-
-    ForwardingData {
-        real_ip,
-        uuid: auth_result.player_uuid,
-        username: auth_result.username.clone(),
-        properties: auth_result.api_profile.properties.clone(),
-        protocol_version,
-        chat_session: None,
-    }
-}
-
 async fn prepare_client_for_limbo(
+    ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
-    player: &Arc<PlayerSession>,
-    auth_result: &AuthResult,
-    login_completed: &mut bool,
-    version: ProtocolVersion,
-    services: &ProxyServices,
+    progress: &mut LoginProgress,
 ) -> Result<(), CoreError> {
-    ensure_login_complete(client, auth_result, login_completed, version, services).await?;
+    ensure_login_complete(ctx, client, progress).await?;
 
+    let version = ctx.version();
     if version.no_less_than(ProtocolVersion::V1_20_2)
         && let Err(e) = crate::limbo::login::complete_config_for_limbo(
             client,
             version,
-            &services.packet_registry,
-            &services.registry_codec_cache,
+            ctx.registry(),
+            &ctx.services.registry_codec_cache,
             Some(&crate::plugin_messaging::router::ClientObserver::new(
-                player, services, version,
+                &ctx.session,
+                ctx.services,
+                version,
             )),
         )
         .await
     {
         tracing::warn!("limbo config phase failed: {e}");
         client
-            .disconnect(&Component::text(e.to_string()), &services.packet_registry)
+            .disconnect(&Component::text(e.to_string()), ctx.registry())
             .await
             .ok();
         return Err(e);
@@ -480,25 +413,23 @@ async fn prepare_client_for_limbo(
 }
 
 async fn ensure_login_complete(
+    ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
-    auth_result: &AuthResult,
-    login_completed: &mut bool,
-    version: ProtocolVersion,
-    services: &ProxyServices,
+    progress: &mut LoginProgress,
 ) -> Result<(), CoreError> {
-    if *login_completed {
+    if progress.completed {
         return Ok(());
     }
 
     crate::session::client_login::complete_login(
         client,
-        &auth_result.api_profile,
-        version,
-        &services.packet_registry,
+        ctx.profile(),
+        ctx.version(),
+        ctx.registry(),
     )
     .await?;
 
-    *login_completed = true;
+    progress.completed = true;
     Ok(())
 }
 
@@ -526,9 +457,10 @@ mod tests {
 
     use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
     use crate::loadbalancer::AddressConnectionCount;
-    use crate::pipeline::types::ConnectionIntent;
+    use crate::player::PlayerSession;
+    use crate::session::context::test_helpers::{test_connector, test_context, test_io};
 
-    use crate::limbo::test_helpers::{test_client_bridge, test_profile, test_proxy_services};
+    use crate::limbo::test_helpers::{test_client_bridge, test_proxy_services};
 
     fn config(name: &str, address: &str) -> ServerConfig {
         toml::from_str(&format!(
@@ -564,36 +496,16 @@ mod tests {
             },
         );
 
-        let version = ProtocolVersion::V1_20_2;
-        let (mut client, _client_stream) = test_client_bridge(version).await;
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = test_context(&services, &connector, player);
+        let (client, _client_stream) = test_client_bridge(ctx.version()).await;
+        let mut io = test_io(&ctx, client);
         let (origin_config, load_balancer) = services
             .domain_router
             .find_route_by_server_id("origin")
             .unwrap();
 
-        let auth_result = AuthResult {
-            player_id: infrarust_api::types::PlayerId::new(1),
-            player_uuid: uuid::Uuid::nil(),
-            username: "Redirected".to_string(),
-            api_profile: test_profile(),
-            rewritten: false,
-        };
-        let handshake = HandshakeData {
-            domain: "origin.test".to_string(),
-            raw_host: "origin.test".to_string(),
-            port: 25565,
-            protocol_version: version,
-            intent: ConnectionIntent::Login,
-            raw_packets: vec![],
-        };
-        let peer_addr = "127.0.0.1:40000".parse().unwrap();
-        let connection_info = infrarust_transport::ConnectionInfo {
-            peer_addr,
-            real_ip: None,
-            real_port: None,
-            local_addr: peer_addr,
-            connected_at: tokio::time::Instant::now(),
-        };
         // Stale pipeline targets: they still point at the origin server.
         let stale_targets = BackendTargets {
             addresses: smallvec::smallvec![origin_config.addresses[0].address.clone()],
@@ -610,39 +522,30 @@ mod tests {
             1
         );
 
-        let (player, _commands) = PlayerSession::new_test(true);
+        let mut progress = LoginProgress {
+            completed: false,
+            rewritten: false,
+        };
         let mode = resolve_initial_mode(
-            &mut client,
-            &player,
-            &auth_result,
-            &mut false,
+            &ctx,
+            &mut io,
             &RoutingData {
                 server_config: origin_config,
                 config_id: "origin".to_string(),
                 load_balancer,
             },
-            &handshake,
             Some(&stale_targets),
             &mut pending_ticket,
-            version,
-            &services,
-            &BackendConnector::new(
-                std::time::Duration::from_secs(2),
-                infrarust_config::KeepaliveConfig::default(),
-            ),
-            &connection_info,
+            &mut progress,
         )
         .await
         .unwrap();
 
-        let InitialMode::Connected {
-            mode, server_id, ..
-        } = mode
-        else {
+        let InitialMode::Connected(initial) = mode else {
             panic!("expected a backend connection");
         };
-        assert_eq!(server_id.as_str(), "target");
-        let ConnectionMode::Backend(backend) = *mode else {
+        assert_eq!(initial.server.as_str(), "target");
+        let ConnectionMode::Backend(backend) = initial.mode else {
             panic!("expected backend mode, got limbo");
         };
         assert_eq!(

@@ -8,15 +8,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
-use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+use infrarust_protocol::version::ConnectionState;
 
 use super::LIMBO_SWITCH_TARGET;
 use super::chat::{ClientMessage, parse_client_message};
@@ -29,9 +27,9 @@ use super::virtual_session::VirtualSessionCore;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::player::packets::build_system_chat_message;
 use crate::plugin_messaging::router::ClientObserver;
-use crate::services::ProxyServices;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 
 #[derive(Debug)]
 pub(crate) enum LimboChainResult {
@@ -46,53 +44,50 @@ pub(crate) enum LimboChainResult {
 
 const KEEPALIVE_INTERVAL_SECS: u64 = 10;
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct Limbo {
+    pub(crate) session: Arc<LimboSessionImpl>,
+    pub(crate) core: VirtualSessionCore,
+    pub(crate) keepalive: KeepAliveState,
+}
+
+pub(crate) struct Hold {
+    timeout: Option<HoldTimeout>,
+    complete: oneshot::Receiver<HandlerResult>,
+}
+
 pub(crate) async fn run_handler_chain(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    limbo: &mut Limbo,
     handlers: &[Arc<dyn LimboHandler>],
-    session: Arc<LimboSessionImpl>,
-    client: &mut ClientBridge,
-    core: &mut VirtualSessionCore,
-    keepalive: &mut KeepAliveState,
-    services: &ProxyServices,
-    cancel: CancellationToken,
-    version: ProtocolVersion,
-    registry: &PacketRegistry,
     needs_join_game: bool,
-    commands: &mut CommandInbox,
 ) -> LimboChainResult {
     let mut spawn_sent = false;
 
     for handler in handlers {
-        let complete_rx = session.begin_handler();
-        let result = handler.on_player_enter(session.as_ref()).await;
+        let complete = limbo.session.begin_handler();
+        let result = handler.on_player_enter(limbo.session.as_ref()).await;
 
         match process_handler_result(result) {
             HandlerAction::Continue => continue,
             HandlerAction::Exit(chain_result) => return chain_result,
             HandlerAction::Hold(timeout) => {
                 if !spawn_sent {
-                    if let Err(e) =
-                        send_spawn_sequence(client, version, registry, needs_join_game).await
+                    if let Err(e) = send_spawn_sequence(
+                        &mut io.client,
+                        ctx.version(),
+                        ctx.registry(),
+                        needs_join_game,
+                    )
+                    .await
                     {
                         tracing::warn!(error = %e, "failed to send limbo spawn sequence");
                         return LimboChainResult::Kick(Component::text("Internal error"));
                     }
                     spawn_sent = true;
                 }
-                match wait_for_hold(
-                    handler.as_ref(),
-                    &session,
-                    client,
-                    core,
-                    keepalive,
-                    services,
-                    cancel.clone(),
-                    timeout,
-                    complete_rx,
-                    commands,
-                )
-                .await
-                {
+                let hold = Hold { timeout, complete };
+                match wait_for_hold(ctx, io, limbo, handler.as_ref(), hold).await {
                     HandlerAction::Continue => continue,
                     HandlerAction::Exit(chain_result) => return chain_result,
                     HandlerAction::Hold(_) => {
@@ -145,19 +140,26 @@ fn process_handler_result(result: HandlerResult) -> HandlerAction {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn wait_for_hold(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    limbo: &mut Limbo,
     handler: &dyn LimboHandler,
-    session: &Arc<LimboSessionImpl>,
-    client: &mut ClientBridge,
-    core: &mut VirtualSessionCore,
-    keepalive: &mut KeepAliveState,
-    services: &ProxyServices,
-    cancel: CancellationToken,
-    timeout: Option<HoldTimeout>,
-    mut complete_rx: oneshot::Receiver<HandlerResult>,
-    commands: &mut CommandInbox,
+    hold: Hold,
 ) -> HandlerAction {
+    let SessionIo {
+        client, commands, ..
+    } = io;
+    let Limbo {
+        session,
+        core,
+        keepalive,
+    } = limbo;
+    let Hold {
+        timeout,
+        mut complete,
+    } = hold;
+    let services = ctx.services;
     let mut keepalive_interval =
         tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
 
@@ -173,10 +175,8 @@ async fn wait_for_hold(
     };
     tokio::pin!(hold_timeout);
 
-    let player = services.connection_registry.find_by_id(core.player_id);
-    let observer = player
-        .as_ref()
-        .map(|player| ClientObserver::new(player, services, core.protocol_version));
+    let player = &ctx.session;
+    let observer = ClientObserver::new(player, services, core.protocol_version);
 
     let released = commands.drain(client, &core.packet_registry, true);
     if let Some(action) = settle_commands(client, commands, &core.packet_registry, released).await {
@@ -194,7 +194,7 @@ async fn wait_for_hold(
                 }
             }
 
-            () = cancel.cancelled() => {
+            () = ctx.token.cancelled() => {
                 if let Some(reason) = commands.take_kick(client, &core.packet_registry, true) {
                     return HandlerAction::Exit(LimboChainResult::Kick(reason));
                 }
@@ -204,15 +204,12 @@ async fn wait_for_hold(
             frame = client.read_frame() => {
                 match frame {
                     Ok(Some(frame)) => {
-                        if let Some(observer) = &observer {
-                            observer.observe(&frame, ConnectionState::Play);
-                        }
+                        observer.observe(&frame, ConnectionState::Play);
                         if is_keepalive_response(&frame, &core.packet_registry, core.protocol_version) {
                             if let Some(id) = extract_keepalive_id(&frame, core.protocol_version) {
-                                match (keepalive.on_response(id), &player) {
-                                    (Some(rtt), Some(player)) => player.client_state().record_ping(rtt),
-                                    (Some(_), None) => {}
-                                    (None, _) => tracing::debug!(id, "limbo keepalive response ID mismatch"),
+                                match keepalive.on_response(id) {
+                                    Some(rtt) => player.client_state().record_ping(rtt),
+                                    None => tracing::debug!(id, "limbo keepalive response ID mismatch"),
                                 }
                             }
                         } else if let Some(msg) = parse_client_message(&frame, &core.packet_registry, core.protocol_version) {
@@ -223,17 +220,14 @@ async fn wait_for_hold(
                                     } else {
                                         format!("{name} {}", args.join(" "))
                                     };
-                                    let outcome = match &player {
-                                        Some(player) => player.dispatch_command(&services.command_manager, &input),
-                                        None => DispatchOutcome::Unknown,
-                                    };
+                                    let outcome = player.dispatch_command(&services.command_manager, &input);
                                     if outcome == DispatchOutcome::Unknown {
                                         let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                                         handler.on_command(session.as_ref(), &name, &args_refs).await;
                                     }
                                 }
                                 ClientMessage::Chat { message, signed } => {
-                                    if let Some(message) = limbo_chat(services, core, client, message, signed).await {
+                                    if let Some(message) = limbo_chat(ctx, client, message, signed).await {
                                         handler.on_chat(session.as_ref(), &message).await;
                                     }
                                 }
@@ -265,7 +259,7 @@ async fn wait_for_hold(
                 }
             }
 
-            result = &mut complete_rx => {
+            result = &mut complete => {
                 debug_assert!(
                     result.is_ok(),
                     "limbo hold completion sender dropped without sending a result"
@@ -286,27 +280,20 @@ async fn wait_for_hold(
 }
 
 async fn limbo_chat(
-    services: &ProxyServices,
-    core: &VirtualSessionCore,
+    ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
     message: String,
     signed: bool,
 ) -> Option<String> {
-    let Some(player) = services.player_registry.get_player_by_id(core.player_id) else {
-        return Some(message);
-    };
-    let event = services
+    let event = ctx
+        .services
         .event_bus
-        .fire(ChatMessageEvent::new(player, message, signed, None))
+        .fire(ChatMessageEvent::new(ctx.player(), message, signed, None))
         .await;
     match event.result().clone() {
         ChatMessageResult::Deny { reason } => {
             if let Some(reason) = reason {
-                match build_system_chat_message(
-                    &reason,
-                    core.protocol_version,
-                    &core.packet_registry,
-                ) {
+                match build_system_chat_message(&reason, ctx.version(), ctx.registry()) {
                     Ok(frame) => {
                         if let Err(e) = client.write_frame(&frame).await {
                             tracing::debug!("failed to send a chat denial reason in limbo: {e}");
@@ -353,6 +340,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use tokio::net::TcpStream;
     use tokio_util::sync::CancellationToken;
 
     use infrarust_api::event::BoxFuture;
@@ -361,11 +349,15 @@ mod tests {
     use infrarust_api::limbo::session::LimboSession;
     use infrarust_api::types::{Component, PlayerId, ServerId};
     use infrarust_protocol::version::ProtocolVersion;
+    use infrarust_transport::BackendConnector;
 
     use super::super::session::LimboSessionImpl;
     use super::super::test_helpers::*;
     use super::super::virtual_session::VirtualSessionCore;
     use super::*;
+    use crate::player::PlayerSession;
+    use crate::services::ProxyServices;
+    use crate::session::context::test_helpers::{test_connector, test_context, test_io};
 
     #[test]
     fn test_process_handler_result_accept() {
@@ -416,19 +408,13 @@ mod tests {
         }
     }
 
-    fn make_chain_plumbing() -> (
-        Arc<LimboSessionImpl>,
-        VirtualSessionCore,
-        KeepAliveState,
-        Arc<PacketRegistry>,
-    ) {
+    fn make_chain_plumbing() -> Limbo {
         let registry = Arc::new(test_registry());
         let player_id = PlayerId::new(1);
         let profile = test_profile();
         let version = ProtocolVersion::V1_21;
 
-        let core =
-            VirtualSessionCore::new(player_id, profile.clone(), version, Arc::clone(&registry));
+        let core = VirtualSessionCore::new(profile.clone(), version, Arc::clone(&registry));
 
         let session = LimboSessionImpl::new(
             player_id,
@@ -439,10 +425,37 @@ mod tests {
             },
             core.outgoing_tx.clone(),
             CancellationToken::new(),
-            Arc::clone(&registry),
+            registry,
         );
 
-        (session, core, KeepAliveState::new(), registry)
+        Limbo {
+            session,
+            core,
+            keepalive: KeepAliveState::new(),
+        }
+    }
+
+    struct Plumbing<'a> {
+        ctx: SessionContext<'a>,
+        io: SessionIo,
+        limbo: Limbo,
+        raw: TcpStream,
+    }
+
+    async fn plumbing<'a>(
+        services: &'a ProxyServices,
+        connector: &'a BackendConnector,
+    ) -> Plumbing<'a> {
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = test_context(services, connector, player);
+        let (client, raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let io = test_io(&ctx, client);
+        Plumbing {
+            ctx,
+            io,
+            limbo: make_chain_plumbing(),
+            raw,
+        }
     }
 
     fn complete_later(session: &Arc<LimboSessionImpl>, delay_ms: u64, result: HandlerResult) {
@@ -453,13 +466,15 @@ mod tests {
         });
     }
 
+    async fn run(handlers: Vec<Arc<dyn LimboHandler>>) -> LimboChainResult {
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
+        run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await
+    }
+
     #[tokio::test]
     async fn test_chain_all_accept() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
-        let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![
             Arc::new(FixedHandler {
                 name: "h1",
@@ -475,30 +490,12 @@ mod tests {
             }),
         ];
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run(handlers).await;
         assert!(matches!(result, LimboChainResult::Completed));
     }
 
     #[tokio::test]
     async fn test_chain_deny_short_circuits() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
-        let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
         let second_called = Arc::new(AtomicBool::new(false));
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![
             Arc::new(FixedHandler {
@@ -512,20 +509,7 @@ mod tests {
             }),
         ];
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run(handlers).await;
         assert!(matches!(result, LimboChainResult::Kick(_)));
         assert!(
             !second_called.load(Ordering::SeqCst),
@@ -535,11 +519,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_chain_redirect() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
-        let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![
             Arc::new(FixedHandler {
                 name: "accept",
@@ -551,20 +530,7 @@ mod tests {
             }),
         ];
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run(handlers).await;
         match result {
             LimboChainResult::Switch(s) => assert_eq!(s, ServerId::new("lobby")),
             other => panic!("expected Switch, got {other:?}"),
@@ -573,61 +539,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_chain_hold_then_accept() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
 
-        complete_later(&session, 50, HandlerResult::Accept);
+        complete_later(&p.limbo.session, 50, HandlerResult::Accept);
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::Completed));
     }
 
     #[tokio::test]
     async fn test_chain_hold_then_redirect() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
 
         complete_later(
-            &session,
+            &p.limbo.session,
             50,
             HandlerResult::Redirect(ServerId::new("survival")),
         );
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         match result {
             LimboChainResult::Switch(s) => assert_eq!(s, ServerId::new("survival")),
             other => panic!("expected Switch, got {other:?}"),
@@ -636,100 +572,50 @@ mod tests {
 
     #[tokio::test]
     async fn test_chain_shutdown_during_hold() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
 
-        let cancel_clone = cancel.clone();
+        let cancel = p.ctx.token.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            cancel_clone.cancel();
+            cancel.cancel();
         });
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::Shutdown));
     }
 
     #[tokio::test]
     async fn test_chain_client_disconnect_during_hold() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, raw_stream) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
+        let connector = test_connector();
+        let Plumbing {
+            ctx,
+            mut io,
+            mut limbo,
+            raw,
+        } = plumbing(&services, &connector).await;
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            drop(raw_stream);
+            drop(raw);
         });
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run_handler_chain(&ctx, &mut io, &mut limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::ClientDisconnected));
     }
 
     #[tokio::test]
     async fn test_chain_empty_handlers() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
-        let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
-        let handlers: Vec<Arc<dyn LimboHandler>> = vec![];
-
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run(Vec::new()).await;
         assert!(matches!(result, LimboChainResult::Completed));
     }
 
     #[tokio::test]
     async fn test_chain_hold_with_timeout_denies() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
-        let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
             name: "hold_timeout",
             result: HandlerResult::HoldWithTimeout {
@@ -738,30 +624,15 @@ mod tests {
             },
         })];
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run(handlers).await;
         assert!(matches!(result, LimboChainResult::Kick(_)));
     }
 
     #[tokio::test]
     async fn test_hold_with_timeout_complete_wins_over_deadline() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
             name: "hold_timeout",
             result: HandlerResult::HoldWithTimeout {
@@ -770,22 +641,9 @@ mod tests {
             },
         })];
 
-        complete_later(&session, 50, HandlerResult::Accept);
+        complete_later(&p.limbo.session, 50, HandlerResult::Accept);
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::Completed));
     }
 
@@ -813,10 +671,9 @@ mod tests {
 
     #[tokio::test]
     async fn unconsumed_completion_cannot_release_next_handlers_hold() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
-        let cancel = CancellationToken::new();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
 
         // Handler A latches a Redirect that its Accept return never consumes;
         // handler B's Hold must not be released by it.
@@ -828,22 +685,9 @@ mod tests {
             Arc::new(HoldHandler { name: "hold" }),
         ];
 
-        complete_later(&session, 150, HandlerResult::Accept);
+        complete_later(&p.limbo.session, 150, HandlerResult::Accept);
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(
             matches!(result, LimboChainResult::Completed),
             "handler B must stay held until its own completion, got {result:?}"
@@ -852,32 +696,32 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_race_stale_completion_does_not_release_next_hold() {
-        let (session, mut core, mut keepalive, _registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
 
         // Handler A held with a timeout; a complete() landed at the deadline
         // but the timeout arm won with a non-terminal result, so the
         // completion was never consumed.
-        let _rx_a = session.begin_handler();
-        session.complete(HandlerResult::Redirect(ServerId::new("survival")));
+        let _rx_a = p.limbo.session.begin_handler();
+        p.limbo
+            .session
+            .complete(HandlerResult::Redirect(ServerId::new("survival")));
 
         // Handler B's hold must not see A's stale completion.
-        let rx_b = session.begin_handler();
+        let rx_b = p.limbo.session.begin_handler();
         let handler = HoldHandler { name: "b" };
         let held = tokio::time::timeout(
             Duration::from_millis(200),
             wait_for_hold(
+                &p.ctx,
+                &mut p.io,
+                &mut p.limbo,
                 &handler,
-                &session,
-                &mut client,
-                &mut core,
-                &mut keepalive,
-                &services,
-                CancellationToken::new(),
-                None,
-                rx_b,
-                &mut idle_commands(),
+                Hold {
+                    timeout: None,
+                    complete: rx_b,
+                },
             ),
         )
         .await;
@@ -889,11 +733,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_hold_with_timeout_nested_hold_coerced_to_accept() {
-        let (session, mut core, mut keepalive, registry) = make_chain_plumbing();
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
-        let services = test_proxy_services();
-        let cancel = CancellationToken::new();
-
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
             name: "nested",
             result: HandlerResult::HoldWithTimeout {
@@ -902,20 +741,7 @@ mod tests {
             },
         })];
 
-        let result = run_handler_chain(
-            &handlers,
-            session,
-            &mut client,
-            &mut core,
-            &mut keepalive,
-            &services,
-            cancel,
-            ProtocolVersion::V1_21,
-            &registry,
-            true,
-            &mut idle_commands(),
-        )
-        .await;
+        let result = run(handlers).await;
         assert!(matches!(result, LimboChainResult::Completed));
     }
 }

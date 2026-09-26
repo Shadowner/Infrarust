@@ -24,9 +24,12 @@ use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login;
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
-use crate::session::initial_connect::{self, InitialMode};
-use crate::session::session_loop;
-use auth::{AuthResult, AuthStrategy, Authenticated};
+use crate::session::context::{SessionContext, SessionIo};
+use crate::session::initial_connect::{
+    ConnectionMode, InitialMode, LoginProgress, resolve_initial_mode,
+};
+use crate::session::session_loop::run_session_loop;
+use auth::{AuthStrategy, Authenticated};
 
 pub struct InterceptedHandler {
     backend_connector: Arc<BackendConnector>,
@@ -85,27 +88,29 @@ impl InterceptedHandler {
 
     async fn serve(
         &self,
-        mut ctx: ConnectionContext,
+        mut conn: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
-        let handshake = ctx
+        let routing = conn
+            .require_extension::<RoutingData>("RoutingData")?
+            .clone();
+        let handshake = conn
             .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
-        let login_data = ctx.extensions.get::<LoginData>().cloned();
-        let backend_targets = ctx
+        let login_data = conn.extensions.get::<LoginData>().cloned();
+        let backend_targets = conn
             .extensions
             .get::<crate::middleware::backend_selection::BackendTargets>()
             .cloned();
 
         let version = handshake.protocol_version;
         let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
-        let peer_addr = ctx.peer_addr;
-        let remote_addr = ctx.client_addr();
-        let connection_info = ctx.connection_info();
+        let peer_addr = conn.peer_addr;
+        let remote_addr = conn.client_addr();
+        let connection_info = conn.connection_info();
         let registry = &self.services.packet_registry;
 
-        let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
+        let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
 
         let (profile, online_mode) = match self
             .auth_strategy
@@ -142,7 +147,7 @@ impl InterceptedHandler {
             commands: cmd_rx,
             token: session_token,
             rewritten,
-        } = match admit(&self.services, &ctx, &shutdown, arrival, kind).await {
+        } = match admit(&self.services, &conn, &shutdown, arrival, kind).await {
             Admission::Admitted(admitted) => admitted,
             Admission::Refused(reason) => {
                 client.disconnect(&reason, registry).await.ok();
@@ -160,10 +165,33 @@ impl InterceptedHandler {
             login_completed = true;
         }
 
-        let mut commands =
+        let commands =
             CommandInbox::new(cmd_rx).with_presentation(Arc::clone(player.presentation()));
-        if let Some(reason) = commands.take_kick(&mut client, registry, false) {
-            client.disconnect(&reason, registry).await.ok();
+        let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
+            &self.services.codec_filter_registry,
+            api_version,
+            player.id().as_u64(),
+            peer_addr,
+            Some(conn.client_ip),
+        );
+        let mut io = SessionIo {
+            client,
+            commands,
+            client_codec,
+            server_codec,
+        };
+        let ctx = SessionContext {
+            services: &self.services,
+            backend_connector: &self.backend_connector,
+            session: Arc::clone(&player),
+            handshake,
+            connection_info,
+            token: session_token,
+        };
+
+        if let Some(reason) = io.commands.take_kick(&mut io.client, registry, false) {
+            io.client.disconnect(&reason, registry).await.ok();
+            io.close();
             lifecycle
                 .end(DisconnectCause::Kicked {
                     reason: Some(reason),
@@ -171,127 +199,87 @@ impl InterceptedHandler {
                 .await;
             return Ok(());
         }
-        if session_token.is_cancelled() {
+        if ctx.token.is_cancelled() {
             let cause = cancelled_cause(&shutdown);
-            announce_shutdown(&mut client, &cause, registry).await;
+            announce_shutdown(&mut io.client, &cause, registry).await;
+            io.close();
             lifecycle.end(cause).await;
             return Ok(());
         }
 
-        let auth_result = AuthResult::new(player.id(), profile, rewritten);
-        let mut pending_ticket = ctx
+        let mut progress = LoginProgress {
+            completed: login_completed,
+            rewritten,
+        };
+        let mut pending_ticket = conn
             .extensions
             .remove::<crate::loadbalancer::PendingTicket>();
 
-        let initial = match initial_connect::resolve_initial_mode(
-            &mut client,
-            &player,
-            &auth_result,
-            &mut login_completed,
+        let initial = match resolve_initial_mode(
+            &ctx,
+            &mut io,
             &routing,
-            &handshake,
             backend_targets.as_ref(),
             &mut pending_ticket,
-            version,
-            &self.services,
-            &self.backend_connector,
-            &connection_info,
+            &mut progress,
         )
         .await
         {
-            Ok(initial) => initial,
+            Ok(InitialMode::Connected(initial)) => *initial,
+            Ok(InitialMode::Denied(cause)) => {
+                io.close();
+                lifecycle.end(cause).await;
+                return Ok(());
+            }
             Err(e) => {
+                io.close();
                 lifecycle.end(DisconnectCause::Error).await;
                 return Err(e);
             }
         };
 
-        let (initial_mode, target_server_id, pending) = match initial {
-            InitialMode::Connected {
-                mode,
-                server_id,
-                pending,
-            } => (*mode, server_id, pending),
-            InitialMode::Denied(cause) => {
-                lifecycle.end(cause).await;
-                return Ok(());
-            }
-        };
-
-        player.set_pending_server(target_server_id.clone());
-        if let initial_connect::ConnectionMode::Backend(ref backend) = initial_mode {
+        player.set_pending_server(initial.server.clone());
+        if let ConnectionMode::Backend(ref backend) = initial.mode {
             player.set_connected_address(backend.server_address().cloned());
         }
-        // The session now owns the accounting for this address.
         drop(pending_ticket);
 
-        let session_id = auth_result.player_uuid;
+        let session_id = ctx.profile().uuid;
         let mode_label = self.auth_strategy.mode_label();
         tracing::info!(
             session = %session_id,
-            server = %target_server_id,
-            username = %auth_result.username,
+            server = %initial.server,
+            username = %ctx.username(),
             mode = mode_label,
             "session started"
         );
 
         #[cfg(feature = "telemetry")]
-        super::helpers::record_session_start(&self.metrics, target_server_id.as_str(), mode_label);
-
-        let (mut client_codec_chain, mut server_codec_chain) =
-            crate::filter::codec_chain::build_codec_chains(
-                &self.services.codec_filter_registry,
-                api_version,
-                auth_result.player_id.as_u64(),
-                peer_addr,
-                Some(ctx.client_ip),
-            );
-
+        super::helpers::record_session_start(&self.metrics, initial.server.as_str(), mode_label);
         #[cfg(feature = "telemetry")]
-        let session_server = target_server_id.clone();
-        let outcome = session_loop::run_session_loop(
-            &mut client,
-            initial_mode,
-            auth_result.player_id,
-            &auth_result.api_profile,
-            &auth_result.username,
-            &handshake,
-            version,
-            peer_addr,
-            Some(ctx.client_ip),
-            target_server_id,
-            pending,
-            &player,
-            &self.services,
-            &self.backend_connector,
-            session_token,
-            &mut commands,
-            &mut client_codec_chain,
-            &mut server_codec_chain,
-        )
-        .await;
+        let session_server = initial.server.clone();
+
+        let outcome = run_session_loop(&ctx, &mut io, initial).await;
         player.end_commands().await;
 
-        let cause = match commands.take_kick(&mut client, registry, false) {
+        let cause = match io.commands.take_kick(&mut io.client, registry, false) {
             Some(reason) => {
-                client.disconnect(&reason, registry).await.ok();
+                io.client.disconnect(&reason, registry).await.ok();
                 DisconnectCause::Kicked {
                     reason: Some(reason),
                 }
             }
             None => disconnect_cause(&outcome, &shutdown),
         };
-        announce_shutdown(&mut client, &cause, registry).await;
-
-        client_codec_chain.close();
-        server_codec_chain.close();
+        announce_shutdown(&mut io.client, &cause, registry).await;
+        io.close();
 
         lifecycle.end(cause).await;
 
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_end(
             &self.metrics,
-            ctx.connection_duration(),
+            conn.connection_duration(),
             session_server.as_str(),
             mode_label,
         );

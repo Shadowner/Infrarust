@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use infrarust_api::events::lifecycle::{OnlineAuthFailed, PreLoginResult};
-use infrarust_api::types::{Component, GameProfile, PlayerId, ProfileProperty};
+use infrarust_api::types::{Component, GameProfile, ProfileProperty};
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::auth::game_profile::offline_profile_uuid;
@@ -20,26 +20,6 @@ pub(crate) enum Authenticated {
         profile: GameProfile,
         online_mode: bool,
     },
-}
-
-pub(crate) struct AuthResult {
-    pub player_id: PlayerId,
-    pub player_uuid: uuid::Uuid,
-    pub username: String,
-    pub api_profile: GameProfile,
-    pub rewritten: bool,
-}
-
-impl AuthResult {
-    pub(crate) fn new(player_id: PlayerId, profile: GameProfile, rewritten: bool) -> Self {
-        Self {
-            player_id,
-            player_uuid: profile.uuid,
-            username: profile.username.clone(),
-            api_profile: profile,
-            rewritten,
-        }
-    }
 }
 
 pub(crate) enum AuthStrategy {

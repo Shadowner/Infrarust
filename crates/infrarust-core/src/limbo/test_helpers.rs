@@ -29,8 +29,6 @@ use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
-use crate::player::PlayerSession;
-use crate::player::commands::CommandInbox;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -72,10 +70,6 @@ pub async fn test_client_bridge(version: ProtocolVersion) -> (ClientBridge, TcpS
     let mut bridge = ClientBridge::new(server_stream, BytesMut::new(), version);
     bridge.set_state(ConnectionState::Play);
     (bridge, client_stream)
-}
-
-pub fn idle_commands() -> CommandInbox {
-    CommandInbox::new(PlayerSession::channel().1)
 }
 
 pub fn test_proxy_services() -> ProxyServices {

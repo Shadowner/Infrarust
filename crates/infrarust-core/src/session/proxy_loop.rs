@@ -15,13 +15,8 @@ use infrarust_api::event::bus::EventBus;
 use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::messaging::ChannelId;
 use infrarust_api::player::Player;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{
-    Component, PlayerId, ProtocolVersion as ApiVersion, RawPacket, ServerId,
-};
-use tokio::sync::watch;
+use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, ServerId};
 use tokio::time::Instant;
-use tokio_util::sync::CancellationToken;
 
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::config::{
@@ -50,11 +45,12 @@ use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
-use crate::plugin_messaging::router::{self, Scope};
+use crate::plugin_messaging::router;
 use crate::services::ProxyServices;
 use crate::services::command_manager::Prepared;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::BackendKick;
 use crate::session::presentation::{self, PresentationIds};
 use crate::session::server_join::ServerJoin;
@@ -190,7 +186,6 @@ enum Milestone {
 const TRACKED_KEEPALIVES: usize = 8;
 
 struct LoopState {
-    session: Option<Arc<PlayerSession>>,
     keepalives: VecDeque<(i64, Instant)>,
     config_closing: bool,
     reconfiguring: bool,
@@ -198,9 +193,8 @@ struct LoopState {
 }
 
 impl LoopState {
-    const fn new(session: Option<Arc<PlayerSession>>) -> Self {
+    const fn new() -> Self {
         Self {
-            session,
             keepalives: VecDeque::new(),
             config_closing: false,
             reconfiguring: false,
@@ -235,7 +229,12 @@ impl LoopState {
         self.keepalives.push_back((keepalive.id, Instant::now()));
     }
 
-    fn keepalive_answered(&mut self, frame: &PacketFrame, version: ProtocolVersion) {
+    fn keepalive_answered(
+        &mut self,
+        session: &PlayerSession,
+        frame: &PacketFrame,
+        version: ProtocolVersion,
+    ) {
         use infrarust_protocol::packets::Packet;
         let Ok(keepalive) = SKeepAlive::decode(&mut frame.payload.as_ref(), version) else {
             return;
@@ -249,9 +248,7 @@ impl LoopState {
         };
         let sent_at = self.keepalives[index].1;
         self.keepalives.drain(..=index);
-        if let Some(session) = &self.session {
-            session.client_state().record_ping(sent_at.elapsed());
-        }
+        session.client_state().record_ping(sent_at.elapsed());
     }
 
     const fn client_open(&self, client: &ClientBridge, in_game: bool) -> bool {
@@ -276,6 +273,7 @@ fn deliver(
 }
 
 fn restore_presentation(
+    session: &PlayerSession,
     client: &mut ClientBridge,
     commands: &mut CommandInbox,
     registry: &PacketRegistry,
@@ -284,9 +282,6 @@ fn restore_presentation(
     if !std::mem::take(&mut state.presentation_lost) {
         return;
     }
-    let Some(session) = state.session.as_ref() else {
-        return;
-    };
     commands.discard_deferred_presentation();
     let frames = match presentation::restore_frames(session, registry, client.protocol_version) {
         Ok(frames) => frames,
@@ -356,28 +351,27 @@ async fn reach(milestone: Milestone, join: &mut Option<ServerJoin>, services: &P
 /// Codec filters are applied to every packet BEFORE the EventBus.
 /// In Play state, only `CDisconnect` is intercepted. All other packets
 /// are forwarded opaquely for maximum performance.
-#[allow(clippy::too_many_arguments)]
 pub async fn proxy_loop(
-    client: &mut ClientBridge,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
     backend: &mut BackendBridge,
-    registry: &PacketRegistry,
-    shutdown: CancellationToken,
-    commands: &mut CommandInbox,
-    services: &ProxyServices,
-    player_id: PlayerId,
     server: &ServerId,
-    client_codec_chain: &mut CodecFilterChain,
-    server_codec_chain: &mut CodecFilterChain,
     join: &mut Option<ServerJoin>,
 ) -> ProxyLoopOutcome {
+    let SessionIo {
+        client,
+        commands,
+        client_codec: client_codec_chain,
+        server_codec: server_codec_chain,
+    } = io;
+    let services = ctx.services;
+    let registry = ctx.registry();
+    let session = &ctx.session;
+    let shutdown = ctx.token.clone();
     let hot_ids = HotIds::resolve(registry, client.protocol_version);
     let mut tree_updates = services.command_manager.subscribe();
-    let session = services.connection_registry.find_by_id(player_id);
-    let mut permission_updates = session.as_ref().map_or_else(
-        || watch::channel(0).1,
-        |player| player.subscribe_permissions(),
-    );
-    let mut state = LoopState::new(session);
+    let mut permission_updates = session.subscribe_permissions();
+    let mut state = LoopState::new();
     let mut backend_tree: Option<CCommands> = None;
     let mut in_game = client.state() == ConnectionState::Play && join.is_none();
     if in_game {
@@ -422,13 +416,7 @@ pub async fn proxy_loop(
             LoopEvent::CommandsChanged => {
                 if let Some(tree) = backend_tree.as_ref()
                     && client.state() == ConnectionState::Play
-                    && let Some(frame) = command_tree_frame(
-                        tree,
-                        services,
-                        player_id,
-                        &hot_ids,
-                        client.protocol_version,
-                    )
+                    && let Some(frame) = command_tree_frame(tree, ctx, &hot_ids)
                 {
                     if let Err(e) = client.queue_frame(&frame) {
                         tracing::warn!("failed to queue the refreshed command tree: {e}");
@@ -451,9 +439,7 @@ pub async fn proxy_loop(
                         client,
                         backend,
                         frame,
-                        registry,
-                        services,
-                        player_id,
+                        ctx,
                         server,
                         client_codec_chain,
                         &hot_ids,
@@ -468,9 +454,7 @@ pub async fn proxy_loop(
                                     client,
                                     backend,
                                     frame,
-                                    registry,
-                                    services,
-                                    player_id,
+                                    ctx,
                                     server,
                                     client_codec_chain,
                                     &hot_ids,
@@ -520,9 +504,7 @@ pub async fn proxy_loop(
                         client,
                         backend,
                         frame,
-                        registry,
-                        services,
-                        player_id,
+                        ctx,
                         server,
                         server_codec_chain,
                         &hot_ids,
@@ -533,7 +515,7 @@ pub async fn proxy_loop(
                     in_game |= joins && result.is_ok();
                     in_game &= !state.reconfiguring;
                     if joins && result.is_ok() {
-                        restore_presentation(client, commands, registry, &mut state);
+                        restore_presentation(session, client, commands, registry, &mut state);
                     }
                     let mut command_outcome = commands.drain(client, registry, in_game);
                     while milestone.is_none()
@@ -552,9 +534,7 @@ pub async fn proxy_loop(
                                     client,
                                     backend,
                                     frame,
-                                    registry,
-                                    services,
-                                    player_id,
+                                    ctx,
                                     server,
                                     server_codec_chain,
                                     &hot_ids,
@@ -565,7 +545,9 @@ pub async fn proxy_loop(
                                 in_game |= joins && result.is_ok();
                                 in_game &= !state.reconfiguring;
                                 if joins && result.is_ok() {
-                                    restore_presentation(client, commands, registry, &mut state);
+                                    restore_presentation(
+                                        session, client, commands, registry, &mut state,
+                                    );
                                 }
                                 command_outcome = commands.drain(client, registry, in_game);
                             }
@@ -668,26 +650,15 @@ async fn kick(
 
 fn command_tree_frame(
     tree: &CCommands,
-    services: &ProxyServices,
-    player_id: PlayerId,
+    ctx: &SessionContext<'_>,
     hot_ids: &HotIds,
-    version: ProtocolVersion,
 ) -> Option<PacketFrame> {
     let id = hot_ids.c_commands?;
-    let player = services.player_registry.get_player_by_id(player_id);
-    let (proxy_tree, visible) = match player {
-        Some(player) => {
-            let source = CommandSource::Player(player);
-            (
-                services.command_manager.tree_for(Some(&source)),
-                services.permission_service.visible_subcommands(&source),
-            )
-        }
-        None => (
-            services.command_manager.tree_for(None),
-            std::collections::HashSet::new(),
-        ),
-    };
+    let services = ctx.services;
+    let version = ctx.version();
+    let source = CommandSource::Player(ctx.player());
+    let proxy_tree = services.command_manager.tree_for(Some(&source));
+    let visible = services.permission_service.visible_subcommands(&source);
     let mut modified = tree.clone();
     if let Err(e) = crate::commands::brigadier::inject_proxy_commands(
         &mut modified,
@@ -794,14 +765,15 @@ async fn handle_client_to_backend(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
     mut frame: PacketFrame,
-    registry: &PacketRegistry,
-    services: &ProxyServices,
-    player_id: PlayerId,
+    ctx: &SessionContext<'_>,
     server: &ServerId,
     codec_chain: &mut CodecFilterChain,
     hot_ids: &HotIds,
     loop_state: &mut LoopState,
 ) -> Result<(), CoreError> {
+    let registry = ctx.registry();
+    let services = ctx.services;
+    let session = &ctx.session;
     let version = client.protocol_version;
     let state = LoopState::client_reading(client);
 
@@ -822,28 +794,21 @@ async fn handle_client_to_backend(
         }
 
         if Some(frame.id) == hot_ids.s_keepalive {
-            loop_state.keepalive_answered(&frame, version);
+            loop_state.keepalive_answered(session, &frame, version);
         }
-        if let Some(session) = loop_state.session.as_ref() {
-            if hot_ids
-                .presentation
-                .client_reply(session, &services.event_bus, &frame, state)
-            {
-                return Ok(());
-            }
-            if hot_ids.messages.is_information(&frame, state) {
-                router::observe_information(session, &services.event_bus, &frame, state, version);
-            } else if hot_ids.messages.is_serverbound(&frame, state) {
-                let scope = Scope {
-                    services,
-                    session,
-                    server,
-                    version,
-                };
-                match router::from_client(&scope, frame, state).await {
-                    Some(next) => frame = next,
-                    None => return Ok(()),
-                }
+        if hot_ids
+            .presentation
+            .client_reply(session, &services.event_bus, &frame, state)
+        {
+            return Ok(());
+        }
+        if hot_ids.messages.is_information(&frame, state) {
+            router::observe_information(session, &services.event_bus, &frame, state, version);
+        } else if hot_ids.messages.is_serverbound(&frame, state) {
+            let scope = ctx.scope(server);
+            match router::from_client(&scope, frame, state).await {
+                Some(next) => frame = next,
+                None => return Ok(()),
             }
         }
 
@@ -855,7 +820,6 @@ async fn handle_client_to_backend(
 
         if Some(frame.id) == hot_ids.s_tab_request
             && let Some(packet_id) = hot_ids.c_tab_response
-            && let Some(session) = loop_state.session.as_ref()
             && let Ok(DecodedPacket::Typed { id: _, packet }) =
                 registry.decode_frame(&frame, state, Direction::Serverbound, version)
             && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
@@ -890,12 +854,9 @@ async fn handle_client_to_backend(
 
         if let Some(input) = decode_player_input(&frame, &hot_ids.chat, version) {
             let scope = ChatScope {
-                services,
-                registry,
+                ctx,
                 ids: &hot_ids.chat,
-                player_id,
                 server,
-                version,
             };
             match intercept(input, frame, &scope, client, backend).await? {
                 Some(next) => frame = next,
@@ -912,7 +873,7 @@ async fn handle_client_to_backend(
         {
             let raw_packet = RawPacket::new(frame.id, frame.payload.clone());
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
-                player_id,
+                ctx.player_id(),
                 api_direction,
                 raw_packet,
             );
@@ -936,9 +897,7 @@ async fn handle_client_to_backend(
         return Ok(());
     }
 
-    if state == ConnectionState::Config
-        && let Some(session) = loop_state.session.as_ref()
-    {
+    if state == ConnectionState::Config {
         if hot_ids
             .presentation
             .client_reply(session, &services.event_bus, &frame, state)
@@ -948,12 +907,7 @@ async fn handle_client_to_backend(
         if hot_ids.messages.is_information(&frame, state) {
             router::observe_information(session, &services.event_bus, &frame, state, version);
         } else if hot_ids.messages.is_serverbound(&frame, state) {
-            let scope = Scope {
-                services,
-                session,
-                server,
-                version,
-            };
+            let scope = ctx.scope(server);
             if let Some(next) = router::from_client(&scope, frame, state).await {
                 backend.queue_frame(&next)?;
             }
@@ -1076,15 +1030,16 @@ async fn handle_backend_to_client(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
     mut frame: PacketFrame,
-    registry: &PacketRegistry,
-    services: &ProxyServices,
-    player_id: PlayerId,
+    ctx: &SessionContext<'_>,
     server: &ServerId,
     codec_chain: &mut CodecFilterChain,
     hot_ids: &HotIds,
     backend_tree: &mut Option<CCommands>,
     loop_state: &mut LoopState,
 ) -> Result<BackendAction, CoreError> {
+    let registry = ctx.registry();
+    let services = ctx.services;
+    let session = &ctx.session;
     let version = client.protocol_version;
     let state = loop_state.backend_reading(backend);
 
@@ -1097,23 +1052,14 @@ async fn handle_backend_to_client(
         if Some(frame.id) == hot_ids.c_keepalive {
             loop_state.keepalive_sent(&frame, version);
         }
-        if let Some(session) = loop_state.session.as_ref() {
-            match presentation_from_backend(&hot_ids.presentation, session, services, frame, state)
-                .await
-            {
-                Some(next) => frame = next,
-                None => return Ok(BackendAction::Continue),
-            }
-        }
-        if hot_ids.messages.is_clientbound(&frame, state)
-            && let Some(session) = loop_state.session.as_ref()
+        match presentation_from_backend(&hot_ids.presentation, session, services, frame, state)
+            .await
         {
-            let scope = Scope {
-                services,
-                session,
-                server,
-                version,
-            };
+            Some(next) => frame = next,
+            None => return Ok(BackendAction::Continue),
+        }
+        if hot_ids.messages.is_clientbound(&frame, state) {
+            let scope = ctx.scope(server);
             match router::from_backend(&scope, frame, backend, state).await? {
                 Some(next) => frame = next,
                 None => return Ok(BackendAction::Continue),
@@ -1129,7 +1075,7 @@ async fn handle_backend_to_client(
         {
             let raw_packet = RawPacket::new(frame.id, frame.payload.clone());
             let mut event = infrarust_api::events::packet::RawPacketEvent::new(
-                player_id,
+                ctx.player_id(),
                 api_direction,
                 raw_packet,
             );
@@ -1179,7 +1125,7 @@ async fn handle_backend_to_client(
         };
         let injected = tree
             .as_ref()
-            .and_then(|tree| command_tree_frame(tree, services, player_id, hot_ids, version));
+            .and_then(|tree| command_tree_frame(tree, ctx, hot_ids));
         client.queue_frame(injected.as_ref().unwrap_or(&frame))?;
         if tree.is_some() {
             *backend_tree = tree;
@@ -1187,9 +1133,7 @@ async fn handle_backend_to_client(
         return Ok(BackendAction::Continue);
     }
 
-    if state == ConnectionState::Config
-        && let Some(session) = loop_state.session.as_ref()
-    {
+    if state == ConnectionState::Config {
         match presentation_from_backend(&hot_ids.presentation, session, services, frame, state)
             .await
         {
@@ -1198,16 +1142,8 @@ async fn handle_backend_to_client(
         }
     }
 
-    if state == ConnectionState::Config
-        && hot_ids.messages.is_clientbound(&frame, state)
-        && let Some(session) = loop_state.session.as_ref()
-    {
-        let scope = Scope {
-            services,
-            session,
-            server,
-            version,
-        };
+    if state == ConnectionState::Config && hot_ids.messages.is_clientbound(&frame, state) {
+        let scope = ctx.scope(server);
         match router::from_backend(&scope, frame, backend, state).await? {
             Some(next) => frame = next,
             None => return Ok(BackendAction::Continue),

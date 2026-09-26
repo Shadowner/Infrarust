@@ -5,22 +5,19 @@
 
 use std::sync::Arc;
 
-use tokio_util::sync::CancellationToken;
-
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::{LimboHandler, SessionEndReason};
-use infrarust_api::types::{Component, GameProfile, PlayerId, ServerId};
+use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::handler_chain::{LimboChainResult, run_handler_chain};
+use super::handler_chain::{Limbo, LimboChainResult, run_handler_chain};
 use super::keepalive::KeepAliveState;
 use super::session::LimboSessionImpl;
 use super::virtual_session::VirtualSessionCore;
-use crate::player::commands::CommandInbox;
 use crate::player::packets::build_disconnect;
-use crate::services::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 
 #[derive(Debug)]
 pub(crate) enum LimboExitResult {
@@ -34,27 +31,18 @@ pub(crate) enum LimboExitResult {
     SendToLimbo(Vec<String>),
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn enter_limbo(
-    client: &mut ClientBridge,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
     handlers: Vec<Arc<dyn LimboHandler>>,
-    player_id: PlayerId,
-    profile: GameProfile,
-    version: ProtocolVersion,
     entry_context: LimboEntryContext,
-    services: &ProxyServices,
-    cancel: CancellationToken,
-    commands: &mut CommandInbox,
 ) -> LimboExitResult {
-    let registry = Arc::clone(&services.packet_registry);
-    let mut core = VirtualSessionCore::new(
-        player_id,
-        profile,
-        version,
-        Arc::clone(&services.packet_registry),
-    );
+    let registry = Arc::clone(&ctx.services.packet_registry);
+    let player_id = ctx.player_id();
+    let version = ctx.version();
+    let core = VirtualSessionCore::new(ctx.profile().clone(), version, Arc::clone(&registry));
 
-    let limbo_token = cancel.child_token();
+    let limbo_token = ctx.token.child_token();
     let session = LimboSessionImpl::new(
         player_id,
         core.profile.clone(),
@@ -62,30 +50,21 @@ pub(crate) async fn enter_limbo(
         entry_context,
         core.outgoing_tx.clone(),
         limbo_token.clone(),
-        Arc::clone(&services.packet_registry),
+        Arc::clone(&registry),
     );
     let _limbo_guard = limbo_token.drop_guard();
 
-    let mut keepalive = KeepAliveState::new();
-
-    let chain_result = run_handler_chain(
-        &handlers,
+    let mut limbo = Limbo {
         session,
-        client,
-        &mut core,
-        &mut keepalive,
-        services,
-        cancel,
-        version,
-        &registry,
-        true,
-        commands,
-    )
-    .await;
+        core,
+        keepalive: KeepAliveState::new(),
+    };
+
+    let chain_result = run_handler_chain(ctx, io, &mut limbo, &handlers, true).await;
 
     map_chain_result(
         chain_result,
-        client,
+        &mut io.client,
         version,
         &registry,
         &handlers,
@@ -93,7 +72,6 @@ pub(crate) async fn enter_limbo(
     )
     .await
 }
-
 async fn map_chain_result(
     result: LimboChainResult,
     client: &mut ClientBridge,
@@ -174,11 +152,12 @@ mod tests {
     use infrarust_api::limbo::handler::{HandlerResult, SessionEndReason};
     use infrarust_api::types::{Component, PlayerId, ServerId};
     use infrarust_protocol::version::ProtocolVersion;
-    use tokio_util::sync::CancellationToken;
 
     use super::super::handler_chain::LimboChainResult;
     use super::super::test_helpers::*;
     use super::*;
+    use crate::player::PlayerSession;
+    use crate::session::context::test_helpers::{test_connector, test_context, test_io};
 
     #[tokio::test]
     async fn test_map_completed() {
@@ -369,8 +348,12 @@ mod tests {
 
     #[tokio::test]
     async fn per_session_token_cancelled_after_enter_limbo_returns() {
-        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
         let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = test_context(&services, &connector, player);
+        let (client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let mut io = test_io(&ctx, client);
         let captured = Arc::new(Mutex::new(None));
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(TokenCaptureHandler {
             name: "cap",
@@ -379,17 +362,12 @@ mod tests {
         })];
 
         let exit = enter_limbo(
-            &mut client,
+            &ctx,
+            &mut io,
             handlers,
-            PlayerId::new(1),
-            test_profile(),
-            ProtocolVersion::V1_21,
             LimboEntryContext::InitialConnection {
                 target_server: ServerId::new("lobby"),
             },
-            &services,
-            CancellationToken::new(),
-            &mut idle_commands(),
         )
         .await;
 

@@ -19,16 +19,11 @@ use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
-use infrarust_transport::BackendConnector;
 
 use crate::error::CoreError;
-use crate::forwarding::{ForwardingData, build_handshake_for_backend};
-use crate::pipeline::types::HandshakeData;
-use crate::player::PlayerSession;
-use crate::plugin_messaging::router::Scope;
-use crate::services::ProxyServices;
+use crate::forwarding::build_handshake_for_backend;
 use crate::session::backend_bridge::BackendBridge;
-use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::{BackendKick, Kick};
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::wake::wake;
@@ -69,22 +64,16 @@ impl SwitchTarget {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn perform_switch(
-    client: &mut ClientBridge,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
     current_server: &ServerId,
     target: SwitchTarget,
-    handshake_data: &HandshakeData,
-    game_profile_name: &str,
-    session: &Arc<PlayerSession>,
-    services: &ProxyServices,
-    backend_connector: &BackendConnector,
-    peer_addr: std::net::SocketAddr,
-    real_ip: Option<std::net::IpAddr>,
-    protocol_version: ProtocolVersion,
 ) -> Result<SwitchResult, CoreError> {
-    let version = protocol_version;
-    let api_profile = session.game_profile();
+    let client = &mut io.client;
+    let services = ctx.services;
+    let session = &ctx.session;
+    let version = ctx.version();
     let requested = target.server().clone();
 
     let (server_config, load_balancer) = services
@@ -169,14 +158,6 @@ pub(crate) async fn perform_switch(
         ));
     }
 
-    let connection_info = infrarust_transport::ConnectionInfo {
-        peer_addr,
-        real_ip,
-        real_port: None,
-        local_addr: peer_addr, // Not critical for outgoing backend connections
-        connected_at: tokio::time::Instant::now(),
-    };
-
     // Same strategy + unhealthy-last ordering as the login pipeline.
     let addresses = crate::loadbalancer::select_backend_addresses(
         &server_config,
@@ -185,13 +166,14 @@ pub(crate) async fn perform_switch(
         services.backend_health.as_ref(),
     );
 
-    let backend_conn = match backend_connector
+    let backend_conn = match ctx
+        .backend_connector
         .connect(
             effective_target.as_str(),
             &addresses,
             server_config.timeouts.as_ref().map(|t| t.connect),
             server_config.send_proxy_protocol,
-            &connection_info,
+            &ctx.connection_info,
         )
         .await
     {
@@ -209,19 +191,7 @@ pub(crate) async fn perform_switch(
     let mut new_backend = BackendBridge::new(backend_conn.into_stream(), version)
         .with_server_address(connected_address);
 
-    if let Err(e) = login_to_backend(
-        &mut new_backend,
-        handshake_data,
-        game_profile_name,
-        api_profile,
-        &server_config,
-        services,
-        peer_addr,
-        real_ip,
-        version,
-    )
-    .await
-    {
+    if let Err(e) = login_to_backend(ctx, &mut new_backend, &server_config).await {
         return Ok(SwitchResult::Failed(Kick::failed(
             effective_target,
             e,
@@ -244,12 +214,7 @@ pub(crate) async fn perform_switch(
             )));
         }
         let session_token = session.shutdown_token().clone();
-        let scope = Scope {
-            services,
-            session,
-            server: &effective_target,
-            version,
-        };
+        let scope = ctx.scope(&effective_target);
         let config_phase = tokio::time::timeout(
             std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
             config_phase::handle_config_phase_switch(
@@ -356,53 +321,41 @@ pub(crate) async fn perform_switch(
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn login_to_backend(
+    ctx: &SessionContext<'_>,
     new_backend: &mut BackendBridge,
-    handshake_data: &HandshakeData,
-    game_profile_name: &str,
-    profile: &infrarust_api::types::GameProfile,
     server_config: &infrarust_config::ServerConfig,
-    services: &ProxyServices,
-    peer_addr: std::net::SocketAddr,
-    real_ip: Option<std::net::IpAddr>,
-    version: ProtocolVersion,
 ) -> Result<(), CoreError> {
+    let services = ctx.services;
+    let version = ctx.version();
     let handler = services.resolve_forwarding_handler(server_config);
-    let fwd_data = ForwardingData {
-        real_ip: real_ip.unwrap_or(peer_addr.ip()),
-        uuid: profile.uuid,
-        username: game_profile_name.to_string(),
-        properties: profile.properties.clone(),
-        protocol_version: version,
-        chat_session: None,
-    };
+    let fwd_data = ctx.forwarding_data();
 
     if handler.modifies_handshake() {
-        let mut hs = build_handshake_for_backend(handshake_data, server_config);
+        let mut hs = build_handshake_for_backend(&ctx.handshake, server_config);
         handler.apply_handshake(&mut hs, &fwd_data);
         new_backend
-            .send_handshake_and_login(&hs, game_profile_name, &services.packet_registry)
+            .send_handshake_and_login(&hs, ctx.username(), ctx.registry())
             .await?;
     } else {
         new_backend
             .send_initial_packets_offline(
-                handshake_data,
+                &ctx.handshake,
                 server_config,
-                game_profile_name,
-                &services.packet_registry,
+                ctx.username(),
+                ctx.registry(),
             )
             .await?;
     }
 
     let velocity_ctx = services.forwarding_secret().map(|s| (&fwd_data, s));
     new_backend
-        .consume_backend_login(&services.packet_registry, version, velocity_ctx)
+        .consume_backend_login(ctx.registry(), version, velocity_ctx)
         .await?;
 
     if version.no_less_than(ProtocolVersion::V1_20_2) {
         new_backend
-            .send_packet(&SLoginAcknowledged, &services.packet_registry)
+            .send_packet(&SLoginAcknowledged, ctx.registry())
             .await?;
         new_backend.set_state(ConnectionState::Config);
         tracing::debug!("backend LoginAcknowledged → Config");

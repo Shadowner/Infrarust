@@ -5,28 +5,24 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::player::Player;
-use infrarust_api::types::{Component, PlayerId, ServerId};
+use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
-use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::player::PlayerSession;
 use crate::player::packets::build_system_chat_message;
-use crate::services::ProxyServices;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::chat_utils::{ChatIds, ChatInput, CommandInput, Outgoing, PlayerInput};
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::SessionContext;
 
 pub(crate) struct ChatScope<'a> {
-    pub(crate) services: &'a ProxyServices,
-    pub(crate) registry: &'a PacketRegistry,
+    pub(crate) ctx: &'a SessionContext<'a>,
     pub(crate) ids: &'a ChatIds,
-    pub(crate) player_id: PlayerId,
     pub(crate) server: &'a ServerId,
-    pub(crate) version: ProtocolVersion,
 }
 
 pub(crate) async fn intercept(
@@ -36,27 +32,12 @@ pub(crate) async fn intercept(
     client: &mut ClientBridge,
     backend: &mut BackendBridge,
 ) -> Result<Option<PacketFrame>, CoreError> {
-    let Some(session) = scope
-        .services
-        .connection_registry
-        .find_by_id(scope.player_id)
-    else {
-        return Ok(Some(frame));
-    };
     match input {
         PlayerInput::Chat(chat) => {
-            on_chat(
-                chat,
-                frame,
-                session as Arc<dyn Player>,
-                scope,
-                client,
-                backend,
-            )
-            .await
+            on_chat(chat, frame, scope.ctx.player(), scope, client, backend).await
         }
         PlayerInput::Command(command) => {
-            on_command(command, frame, &session, scope, client, backend).await
+            on_command(command, frame, &scope.ctx.session, scope, client, backend).await
         }
     }
 }
@@ -75,10 +56,10 @@ async fn on_chat(
         chat.signed(),
         Some(scope.server.clone()),
     );
-    let event = scope.services.event_bus.fire(event).await;
+    let event = scope.ctx.services.event_bus.fire(event).await;
     match event.result() {
         ChatMessageResult::Deny { reason } => {
-            acknowledge(chat.acknowledgement(scope.version), scope, backend)?;
+            acknowledge(chat.acknowledgement(scope.ctx.version()), scope, backend)?;
             tell(reason.as_ref(), scope, client)?;
             Ok(None)
         }
@@ -86,10 +67,10 @@ async fn on_chat(
             let rewritten = encode(
                 &chat.rewrite(message.clone()),
                 scope.ids.message,
-                scope.version,
+                scope.ctx.version(),
             );
             if rewritten.is_none() {
-                acknowledge(chat.acknowledgement(scope.version), scope, backend)?;
+                acknowledge(chat.acknowledgement(scope.ctx.version()), scope, backend)?;
             }
             Ok(rewritten)
         }
@@ -111,8 +92,8 @@ async fn on_command(
         command.signed(),
         Some(scope.server.clone()),
     );
-    let event = scope.services.event_bus.fire(event).await;
-    let acknowledgement = command.acknowledgement(scope.version);
+    let event = scope.ctx.services.event_bus.fire(event).await;
+    let acknowledgement = command.acknowledgement(scope.ctx.version());
     match event.result() {
         CommandExecuteResult::Deny { reason } => {
             acknowledge(acknowledgement, scope, backend)?;
@@ -128,10 +109,14 @@ async fn on_command(
             if modified == command.command() {
                 return Ok(Some(frame));
             }
-            let (outgoing, trailing) = command.rewrite(modified, scope.version);
+            let (outgoing, trailing) = command.rewrite(modified, scope.ctx.version());
             let rewritten = match outgoing {
-                Outgoing::Message(packet) => encode(&packet, scope.ids.message, scope.version),
-                Outgoing::Command(packet) => encode(&packet, scope.ids.command, scope.version),
+                Outgoing::Message(packet) => {
+                    encode(&packet, scope.ids.message, scope.ctx.version())
+                }
+                Outgoing::Command(packet) => {
+                    encode(&packet, scope.ids.command, scope.ctx.version())
+                }
             };
             match rewritten {
                 Some(frame) => {
@@ -155,7 +140,7 @@ async fn on_command(
 }
 
 fn dispatch(session: &Arc<PlayerSession>, input: &str, scope: &ChatScope<'_>) -> bool {
-    session.dispatch_command(&scope.services.command_manager, input) != DispatchOutcome::Unknown
+    session.dispatch_command(&scope.ctx.services.command_manager, input) != DispatchOutcome::Unknown
 }
 
 fn acknowledge(
@@ -163,8 +148,8 @@ fn acknowledge(
     scope: &ChatScope<'_>,
     backend: &mut BackendBridge,
 ) -> Result<(), CoreError> {
-    if let Some(frame) =
-        acknowledgement.and_then(|packet| encode(&packet, scope.ids.acknowledgement, scope.version))
+    if let Some(frame) = acknowledgement
+        .and_then(|packet| encode(&packet, scope.ids.acknowledgement, scope.ctx.version()))
     {
         backend.queue_frame(&frame)?;
     }
@@ -179,7 +164,7 @@ fn tell(
     let Some(reason) = reason else {
         return Ok(());
     };
-    match build_system_chat_message(reason, scope.version, scope.registry) {
+    match build_system_chat_message(reason, scope.ctx.version(), scope.ctx.registry()) {
         Ok(frame) => client.queue_frame(&frame),
         Err(e) => {
             tracing::warn!("failed to encode a chat denial reason: {e}");
