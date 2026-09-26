@@ -14,8 +14,9 @@ use infrarust_protocol::packets::play::plugin_message::{CPluginMessage, SPluginM
 use tokio::sync::mpsc;
 
 use infrarust_test_harness::plugin_message::{
-    BUNGEE, LEGACY_BUNGEE, PluginMessage, backend_message, client_message, clientbound,
-    config_messages, send_to_backend, send_to_client, serverbound, to_client,
+    BUNGEE, ClientHello, LEGACY_BUNGEE, PluginMessage, backend_message, client_message,
+    clientbound, config_messages, expect_client_state, send_to_backend, send_to_client,
+    serverbound, to_client,
 };
 use infrarust_test_harness::wire;
 use infrarust_test_harness::{
@@ -336,11 +337,17 @@ async fn plugins_send_in_the_configuration_phase(version: ProtocolVersion) {
         .await
         .unwrap();
 
-    let client = proxy.client(version);
+    let hello = ClientHello {
+        brand: None,
+        channels: Vec::new(),
+        ..ClientHello::sample()
+    };
+    let client = proxy.client(version).hello(hello.clone());
     let login = tokio::spawn(async move { client.login("Steve").await });
     let mut conn = backend.next_connection(T).await.unwrap();
     assert_eq!(conn.state(), ConnectionState::Config);
     let player = proxy.wait_for_player("Steve", T).await.unwrap();
+    expect_client_state(&mut conn, &hello, T).await.unwrap();
     let channel = ChannelId::modern(ECHO).unwrap();
 
     player
