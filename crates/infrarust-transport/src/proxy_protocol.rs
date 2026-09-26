@@ -17,6 +17,8 @@ use crate::error::TransportError;
 /// Maximum proxy protocol header size (covers both v1 and v2).
 const MAX_HEADER_SIZE: usize = 536;
 
+pub const HEADER_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Proxy protocol v2 signature (12 bytes).
 const PP_V2_SIGNATURE: [u8; 12] = [
     0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A,
@@ -57,7 +59,7 @@ pub struct ProxyProtocolInfo {
 pub async fn decode_proxy_protocol(
     stream: &mut TcpStream,
 ) -> Result<(Option<ProxyProtocolInfo>, Vec<u8>), TransportError> {
-    timeout(Duration::from_secs(5), async {
+    timeout(HEADER_TIMEOUT, async {
         let mut buf = [0u8; MAX_HEADER_SIZE];
         let mut total_read = 0;
 

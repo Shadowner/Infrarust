@@ -36,7 +36,7 @@ The WASM toolchain talks across a frozen contract rather than a Rust dependency.
 
 A connection is handled by `ProxyServer`, built in `ProxyServer::new` and driven by `ProxyServer::run` (`crates/infrarust-core/src/server.rs`). Startup loads server configs through the provider registry, builds the status, ban, and forwarding subsystems, assembles the shared services, and then constructs two pipelines and the per-mode handlers. After that, `run` binds the listener and enters the accept loop.
 
-For each accepted socket the server spawns a task and runs it through the common pipeline first. Once the handshake is parsed, the connection branches on its declared intent.
+For each accepted socket the server spawns a task. The accept loop never reads from the socket: the task reads the PROXY protocol header when `receive_proxy_protocol` is on, runs the transport filters, and then runs the connection through the common pipeline. Once the handshake is parsed, the connection branches on its declared intent.
 
 A status ping (`ConnectionIntent::Status`) goes straight to the status handler, which answers from the status cache or relays a live request to the backend. It never enters the login pipeline.
 

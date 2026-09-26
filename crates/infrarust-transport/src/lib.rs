@@ -16,7 +16,7 @@ pub use backend::{BackendConnection, BackendConnector, ConnectAttempt, ConnectAt
 pub use connection::{ClientConnection, ConnectionInfo};
 pub use error::{TransportError, TransportResult};
 pub use forward::{CopyForwarder, ForwardEndReason, ForwardResult, Forwarder, select_forwarder};
-pub use listener::{AcceptedConnection, Listener, ListenerConfig};
+pub use listener::{AcceptedConnection, Listener, ListenerConfig, PendingConnection};
 pub use proxy_protocol::{
     ProxyProtocolInfo, ProxyProtocolVersion, decode_proxy_protocol, encode_proxy_protocol_v2,
 };

@@ -9,7 +9,7 @@ use infrarust_config::{
 };
 use infrarust_protocol::build_default_registry;
 use infrarust_protocol::version::ProtocolVersion;
-use infrarust_transport::{BackendConnector, Listener, ListenerConfig};
+use infrarust_transport::{BackendConnector, Listener, ListenerConfig, PendingConnection};
 use tracing::Instrument;
 
 use infrarust_api::events::proxy::ServerStateChangeEvent;
@@ -449,7 +449,7 @@ impl ProxyServer {
 
         // Accept loop
         loop {
-            let accepted = tokio::select! {
+            let pending = tokio::select! {
                 biased;
                 () = self.shutdown.cancelled() => {
                     tracing::info!("proxy server shutting down");
@@ -467,12 +467,12 @@ impl ProxyServer {
             };
 
             let sessions = self.sessions.clone();
-            let peer = accepted.connection.peer_addr();
+            let peer = pending.peer_addr();
             tracing::debug!(peer = %peer, "new connection");
 
             let server = Arc::clone(&self);
             self.connections.spawn(async move {
-                if let Err(e) = server.handle_connection(accepted, sessions).await {
+                if let Err(e) = server.handle_connection(pending, sessions).await {
                     tracing::warn!(peer = %peer, error = %e, "connection error");
                 }
             });
@@ -516,9 +516,14 @@ impl ProxyServer {
     /// Processes a single connection through the pipeline.
     async fn handle_connection(
         &self,
-        accepted: infrarust_transport::AcceptedConnection,
+        pending: PendingConnection,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
+        let accepted = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Ok(()),
+            accepted = pending.resolve() => accepted?,
+        };
         let mut ctx = ConnectionContext::from_accepted(accepted);
         if !self.open_transport(&mut ctx, &shutdown).await {
             return Ok(());
