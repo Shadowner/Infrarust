@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
 
+use super::helpers::cancelled_cause;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
@@ -200,7 +201,7 @@ impl InterceptedHandler {
             return Ok(());
         }
         if ctx.token.is_cancelled() {
-            let cause = cancelled_cause(&shutdown);
+            let cause = cancelled_cause(&shutdown, None);
             announce_shutdown(&mut io.client, &cause, registry).await;
             io.close();
             lifecycle.end(cause).await;
@@ -303,14 +304,6 @@ async fn announce_shutdown(
     }
 }
 
-fn cancelled_cause(shutdown: &CancellationToken) -> DisconnectCause {
-    if shutdown.is_cancelled() {
-        DisconnectCause::Shutdown
-    } else {
-        DisconnectCause::Kicked { reason: None }
-    }
-}
-
 fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) -> DisconnectCause {
     match outcome {
         ProxyLoopOutcome::ClientDisconnected => DisconnectCause::ClientQuit,
@@ -326,7 +319,7 @@ fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) ->
         ProxyLoopOutcome::BackendDisconnected { .. } => {
             DisconnectCause::BackendClosed { reason: None }
         }
-        ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown),
+        ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown, None),
         ProxyLoopOutcome::Error(_) | ProxyLoopOutcome::SwitchRequested { .. } => {
             DisconnectCause::Error
         }

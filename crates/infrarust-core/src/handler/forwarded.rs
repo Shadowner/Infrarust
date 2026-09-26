@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::helpers::{MAX_KICK_REDIRECTS, cancelled_cause};
 use crate::auth::game_profile::offline_profile_uuid;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
@@ -40,7 +41,6 @@ use crate::util::domain_rewrite::rewrite_handshake;
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
 pub(crate) const UNKNOWN_SERVER: &str = "Unknown server";
 pub(crate) const PROXY_LOGIN_SERVER: &str = "This server cannot be joined from here";
-const MAX_KICK_REDIRECTS: usize = 3;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Wire {
@@ -520,14 +520,6 @@ fn queued_kick(commands: &mut mpsc::Receiver<PlayerCommand>) -> Option<Component
         }
     }
     None
-}
-
-fn cancelled_cause(shutdown: &CancellationToken, reason: Option<Component>) -> DisconnectCause {
-    if shutdown.is_cancelled() {
-        DisconnectCause::Shutdown
-    } else {
-        DisconnectCause::Kicked { reason }
-    }
 }
 
 async fn send_raw(backend: &mut TcpStream, raw: &[u8]) -> Result<(), CoreError> {

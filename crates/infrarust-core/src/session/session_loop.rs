@@ -26,8 +26,8 @@ use crate::session::server_join::ServerJoin;
 use crate::session::server_switch::{SwitchResult, SwitchTarget};
 
 use super::initial_connect::{ConnectionMode, Initial};
+use crate::handler::helpers::MAX_KICK_REDIRECTS;
 
-const MAX_KICK_REDIRECTS: usize = 3;
 const UNREACHABLE_MESSAGE: &str = "Server is currently unreachable. Please try again later.";
 
 /// Alternates between Backend (`proxy_loop`) and Limbo (`enter_limbo`),

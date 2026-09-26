@@ -3,8 +3,10 @@
 #[cfg(feature = "telemetry")]
 use std::sync::Arc;
 
+use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::types::{Component, LEGACY_SECTION};
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use infrarust_protocol::io::PacketEncoder;
@@ -15,6 +17,19 @@ use infrarust_protocol::{Packet, PacketRegistry};
 
 use crate::error::CoreError;
 use crate::session::proxy_loop::ProxyLoopOutcome;
+
+pub(crate) const MAX_KICK_REDIRECTS: usize = 3;
+
+pub(crate) fn cancelled_cause(
+    shutdown: &CancellationToken,
+    reason: Option<Component>,
+) -> DisconnectCause {
+    if shutdown.is_cancelled() {
+        DisconnectCause::Shutdown
+    } else {
+        DisconnectCause::Kicked { reason }
+    }
+}
 
 /// Logs the outcome of a proxy loop session with consistent formatting.
 ///
