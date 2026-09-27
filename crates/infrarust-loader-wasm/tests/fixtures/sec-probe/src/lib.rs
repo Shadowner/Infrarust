@@ -66,8 +66,10 @@ fn run(args: &[String]) -> Result<String, String> {
         "forge-unreg-codec" => forge_unreg_codec(arg(1)?),
         "forge-unreg-channel" => forge_unreg_channel(arg(1)?),
         "config-dump" => config_dump(),
+        "config-effective" => config_effective(),
         "config-get" => config_get(arg(1)?),
         "config-write" => config_write(arg(1)?),
+        "config-edit" => config_edit(arg(1)?, arg(2)?),
         "caps" => Ok(Proxy::granted_capabilities()
             .into_iter()
             .map(Capability::to_kebab)
@@ -231,7 +233,19 @@ fn forge_unreg_channel(name: &str) -> Result<String, String> {
 }
 
 fn config_dump() -> Result<String, String> {
-    config_service::get_proxy_config_document().map_err(|error| kind(&error))
+    config_service::get_proxy_config_document()
+        .map(|document| one_line(&document))
+        .map_err(|error| kind(&error))
+}
+
+fn config_effective() -> Result<String, String> {
+    config_service::get_effective_proxy_config_document()
+        .map(|document| one_line(&document))
+        .map_err(|error| kind(&error))
+}
+
+fn one_line(document: &str) -> String {
+    document.replace('\n', "\\n")
 }
 
 fn config_get(key: &str) -> Result<String, String> {
@@ -241,9 +255,14 @@ fn config_get(key: &str) -> Result<String, String> {
 }
 
 fn config_write(document: &str) -> Result<String, String> {
-    config_service::write_proxy_config_document(document)
+    config_service::write_proxy_config_document(&document.replace("\\n", "\n"))
         .map(|()| "written".to_owned())
         .map_err(|error| kind(&error))
+}
+
+fn config_edit(from: &str, to: &str) -> Result<String, String> {
+    let document = config_service::get_proxy_config_document().map_err(|error| kind(&error))?;
+    config_write(&document.replace(from, to))
 }
 
 fn flood_tasks(n: u32) -> u32 {

@@ -14,7 +14,9 @@ use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::test_util::MockConfigService;
+use infrarust_core::routing::DomainRouter;
 use infrarust_core::services::command_manager::DispatchOutcome;
+use infrarust_core::services::config_service::ConfigServiceImpl;
 use net::{UdpSink, enable_probe, free_port, network_toml};
 use support::log_capture::LogCapture;
 use support::{EnvOptions, TestEnv, add_fixture, console, loader_from_toml, make_env_with, stage};
@@ -630,15 +632,19 @@ async fn a_quota_refusal_is_logged_once_per_window_naming_the_plugin_and_the_quo
     );
 }
 
-async fn enable_sec_with_config(config: MockConfigService) -> SecProbe {
+async fn enable_sec_with_config(
+    grants: &[&str],
+    config: std::sync::Arc<dyn ConfigService>,
+) -> SecProbe {
     let (tmp, plugins_dir) = stage(SEC);
-    let env = make_env_with(
-        plugins_dir.clone(),
-        EnvOptions {
-            config_service: std::sync::Arc::new(config) as std::sync::Arc<dyn ConfigService>,
-            ..EnvOptions::default()
-        },
-    );
+    let options = EnvOptions {
+        config_service: config,
+        ..EnvOptions::default()
+    };
+    let options = grants
+        .iter()
+        .fold(options, |options, grant| options.grant(SEC, grant));
+    let env = make_env_with(plugins_dir.clone(), options);
     let loader = loader_from_toml("");
     loader.discover(&plugins_dir).await.unwrap();
     let plugin = loader.load(SEC, &env.factory).await.unwrap();
@@ -653,27 +659,221 @@ async fn enable_sec_with_config(config: MockConfigService) -> SecProbe {
     }
 }
 
+const OTHER_SECRET: &str = "TOP-SECRET-TOKEN";
+const OTHER_BLOCK: &str = "[plugins.secret-plugin]\napi_token = \"TOP-SECRET-TOKEN\"\n";
+const SEC_DENIED: &str = "err ErrorKind::PermissionDenied";
+
+fn proxy_document() -> String {
+    format!(
+        "bind = \"0.0.0.0:25565\"\n\n{OTHER_BLOCK}\n[plugins.sec-probe]\ngreeting = \"hello\"\n"
+    )
+}
+
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-16: config-read reads every other plugin's config"]
-async fn a_baseline_plugin_reads_every_other_plugins_config() {
-    let document = "[plugins.secret-plugin] api_token=TOP-SECRET-TOKEN";
+async fn a_baseline_plugin_cannot_read_another_plugins_config() {
     let config = MockConfigService::new()
-        .with_proxy_document(document)
-        .with_value("plugins.secret-plugin.api_token", "TOP-SECRET-TOKEN");
-    let probe = enable_sec_with_config(config).await;
+        .with_proxy_document(&proxy_document())
+        .with_value("plugins.secret-plugin.api_token", OTHER_SECRET);
+    let probe = enable_sec_with_config(&[], std::sync::Arc::new(config)).await;
 
     let dump = probe.run("config-dump").await;
+    assert!(dump.starts_with("ok "), "{dump}");
     assert!(
-        !dump.contains("TOP-SECRET-TOKEN"),
-        "config-read is baseline, yet a plugin dumped another plugin's secret from the whole proxy config: {dump}"
+        !dump.contains(OTHER_SECRET) && !dump.contains("secret-plugin"),
+        "config-read is baseline, yet a plugin read another plugin's block from the proxy config: {dump}"
     );
-    let value = probe
-        .run("config-get plugins.secret-plugin.api_token")
-        .await;
     assert!(
-        !value.contains("TOP-SECRET-TOKEN"),
-        "a plugin read another plugin's config value: {value}"
+        dump.contains("[plugins.sec-probe]") && dump.contains("0.0.0.0:25565"),
+        "the plugin's own block and the rest of the document stay readable: {dump}"
     );
+    assert_eq!(
+        probe
+            .run("config-get plugins.secret-plugin.api_token")
+            .await,
+        SEC_DENIED,
+        "a plugin read another plugin's config value"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_value_under_another_plugin_is_refused_whether_or_not_it_exists() {
+    let config = MockConfigService::new()
+        .with_value(
+            "plugins.secret-plugin",
+            "{ api_token = \"TOP-SECRET-TOKEN\" }",
+        )
+        .with_value("plugins.secret-plugin.api_token", OTHER_SECRET);
+    let probe = enable_sec_with_config(&[], std::sync::Arc::new(config)).await;
+
+    for key in [
+        "plugins.secret-plugin",
+        "plugins.secret-plugin.api_token",
+        "plugins.nobody.path",
+        "plugins.sec-probe-twin.path",
+    ] {
+        assert_eq!(
+            probe.run(&format!("config-get {key}")).await,
+            SEC_DENIED,
+            "{key}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_reads_its_own_values_and_the_rest_of_the_config() {
+    let config = MockConfigService::new()
+        .with_value("bind", "0.0.0.0:25565")
+        .with_value("plugins.sec-probe.greeting", "hello")
+        .with_value(
+            "plugins",
+            "{ secret-plugin = { api_token = \"TOP-SECRET-TOKEN\" }, sec-probe = { greeting = \"hello\" } }",
+        );
+    let probe = enable_sec_with_config(&[], std::sync::Arc::new(config)).await;
+
+    assert_eq!(probe.run("config-get bind").await, "ok 0.0.0.0:25565");
+    assert_eq!(
+        probe.run("config-get plugins.sec-probe.greeting").await,
+        "ok hello"
+    );
+    assert_eq!(
+        probe.run("config-get plugins.sec-probe.missing").await,
+        "ok none"
+    );
+    assert_eq!(
+        probe.run("config-get plugins").await,
+        "ok { sec-probe = { greeting = \"hello\" } }",
+        "the whole plugins table keeps only the caller's entry"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_effective_document_hides_other_plugins_blocks() {
+    let config = MockConfigService::new()
+        .with_proxy_document("bind = \"0.0.0.0:25565\"\n")
+        .effective_with(|document| {
+            format!("{document}\n{OTHER_BLOCK}\n[plugins.sec-probe]\nenabled = true\n")
+        });
+    let probe = enable_sec_with_config(&[], std::sync::Arc::new(config)).await;
+
+    let effective = probe.run("config-effective").await;
+    assert!(effective.starts_with("ok "), "{effective}");
+    assert!(
+        !effective.contains(OTHER_SECRET) && !effective.contains("secret-plugin"),
+        "{effective}"
+    );
+    assert!(
+        effective.contains("[plugins.sec-probe]") && effective.contains("0.0.0.0:25565"),
+        "{effective}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_document_the_host_cannot_parse_is_not_handed_out() {
+    let config = MockConfigService::new()
+        .with_proxy_document("[plugins.secret-plugin] api_token=TOP-SECRET-TOKEN");
+    let probe = enable_sec_with_config(&[], std::sync::Arc::new(config)).await;
+
+    assert_eq!(probe.run("config-dump").await, "err ErrorKind::Internal");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writing_the_config_back_keeps_the_blocks_the_plugin_cannot_see() {
+    let config = std::sync::Arc::new(
+        MockConfigService::new()
+            .with_proxy_document(&proxy_document())
+            .accepting_writes(),
+    );
+    let probe = enable_sec_with_config(
+        &["config-write"],
+        std::sync::Arc::<MockConfigService>::clone(&config),
+    )
+    .await;
+
+    assert_eq!(
+        probe
+            .run("config-write bind=\"0.0.0.0:1\"\\n[plugins.sec-probe]\\ngreeting=\"bye\"")
+            .await,
+        "ok written"
+    );
+
+    let stored: toml::Table = toml::from_str(&config.stored_proxy_document()).unwrap();
+    assert_eq!(stored["bind"].as_str(), Some("0.0.0.0:1"));
+    assert_eq!(
+        stored["plugins"]["sec-probe"]["greeting"].as_str(),
+        Some("bye")
+    );
+    assert_eq!(
+        stored["plugins"]["secret-plugin"]["api_token"].as_str(),
+        Some(OTHER_SECRET),
+        "a plugin that cannot see another plugin's block must not erase it by writing"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writing_another_plugins_block_is_refused() {
+    let config = std::sync::Arc::new(
+        MockConfigService::new()
+            .with_proxy_document(&proxy_document())
+            .accepting_writes(),
+    );
+    let probe = enable_sec_with_config(
+        &["config-write"],
+        std::sync::Arc::<MockConfigService>::clone(&config),
+    )
+    .await;
+
+    assert_eq!(
+        probe
+            .run("config-write [plugins.secret-plugin]\\napi_token=\"mine-now\"")
+            .await,
+        SEC_DENIED
+    );
+    assert!(config.written().is_empty());
+    assert_eq!(config.stored_proxy_document(), proxy_document());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_the_proxy_config_keeps_other_plugins_blocks_and_secrets_on_disk() {
+    let root = tempfile::tempdir().unwrap();
+    let servers = root.path().join("servers");
+    std::fs::create_dir(&servers).unwrap();
+    let path = root.path().join("infrarust.toml");
+    let text = format!(
+        "servers_dir = {servers:?}\nbind = \"0.0.0.0:25565\"\n\n\
+         [web]\nbind = \"127.0.0.1:8080\"\napi_key = \"super-secret-key-value\"\n\n\
+         # owned by another plugin\n[plugins.other]\npath = \"/srv/other.wasm\"\npermissions = [\"ban\"]\n\n\
+         [plugins.sec-probe]\npermissions = [\"config-write\"]\n"
+    );
+    std::fs::write(&path, &text).unwrap();
+    let config: infrarust_config::ProxyConfig = toml::from_str(&text).unwrap();
+    let service = ConfigServiceImpl::new(
+        std::sync::Arc::new(DomainRouter::new()),
+        path.clone(),
+        std::sync::Arc::new(config),
+    );
+    let probe = enable_sec_with_config(&["config-write"], std::sync::Arc::new(service)).await;
+
+    let dump = probe.run("config-dump").await;
+    assert!(dump.starts_with("ok "), "{dump}");
+    assert!(
+        !dump.contains("/srv/other.wasm") && !dump.contains("super-secret-key-value"),
+        "{dump}"
+    );
+    assert_eq!(
+        probe.run("config-edit 0.0.0.0:25565 0.0.0.0:25566").await,
+        "ok written"
+    );
+
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(on_disk.contains("0.0.0.0:25566"), "{on_disk}");
+    assert!(
+        on_disk.contains("# owned by another plugin") && on_disk.contains("/srv/other.wasm"),
+        "{on_disk}"
+    );
+    assert!(on_disk.contains("super-secret-key-value"), "{on_disk}");
+    let written: infrarust_config::ProxyConfig = toml::from_str(&on_disk).unwrap();
+    assert_eq!(written.plugins["other"].permissions, ["ban"]);
+    assert_eq!(written.plugins["sec-probe"].permissions, ["config-write"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

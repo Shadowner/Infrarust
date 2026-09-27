@@ -1,8 +1,10 @@
 use infrarust_api::types::ServerId;
+use infrarust_config::secrets::{self, PluginScopeError};
 
 use crate::bindings::infrarust::plugin::config_service as wc;
+use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
 use crate::convert;
-use crate::host_error::{HostResult, config_write_error};
+use crate::host_error::{HostResult, config_write_error, host_error};
 use crate::store_state::PluginStoreState;
 
 impl wc::Host for PluginStoreState {
@@ -53,7 +55,20 @@ impl wc::Host for PluginStoreState {
 impl PluginStoreState {
     fn config_value(&mut self, key: &str) -> HostResult<Option<String>> {
         self.check("config-service", "get-value")?;
-        Ok(self.services()?.config_service().get_value(key))
+        if secrets::names_another_plugin(key, self.plugin_id()) {
+            return Err(host_error(
+                ErrorKind::PermissionDenied,
+                format!("`{key}` belongs to another plugin's configuration"),
+            ));
+        }
+        let value = self.services()?.config_service().get_value(key);
+        if key != secrets::PLUGINS {
+            return Ok(value);
+        }
+        value
+            .map(|table| secrets::plugins_value_view(&table, self.plugin_id()))
+            .transpose()
+            .map_err(|e| scope_error(&e))
     }
 
     fn server_config(&mut self, server: String) -> HostResult<Option<wc::ServerConfig>> {
@@ -103,25 +118,39 @@ impl PluginStoreState {
 
     fn proxy_config_document(&mut self) -> HostResult<String> {
         self.check("config-service", "get-proxy-config-document")?;
-        Ok(self
+        let document = self
             .services()?
             .config_service()
-            .get_proxy_config_document())
+            .get_proxy_config_document();
+        secrets::plugin_view(&document, self.plugin_id()).map_err(|e| scope_error(&e))
     }
 
     fn effective_proxy_config_document(&mut self) -> HostResult<String> {
         self.check("config-service", "get-effective-proxy-config-document")?;
-        Ok(self
+        let document = self
             .services()?
             .config_service()
-            .get_effective_proxy_config_document())
+            .get_effective_proxy_config_document();
+        secrets::plugin_view(&document, self.plugin_id()).map_err(|e| scope_error(&e))
     }
 
     fn write_proxy_document(&mut self, document: &str) -> HostResult<()> {
         self.check("config-service", "write-proxy-config-document")?;
-        self.services()?
-            .config_service()
-            .write_proxy_config_document(document)
+        let service = self.services()?.config_service();
+        let current = service.get_proxy_config_document();
+        let document = secrets::plugin_write(document, &current, self.plugin_id())
+            .map_err(|e| scope_error(&e))?;
+        service
+            .write_proxy_config_document(&document)
             .map_err(|e| config_write_error(&e))
     }
+}
+
+fn scope_error(error: &PluginScopeError) -> HostError {
+    let kind = match error {
+        PluginScopeError::Invalid(_) => ErrorKind::InvalidArgument,
+        PluginScopeError::OtherPlugins(_) => ErrorKind::PermissionDenied,
+        PluginScopeError::Unreadable(_) => ErrorKind::Internal,
+    };
+    host_error(kind, error.to_string())
 }
