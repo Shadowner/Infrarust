@@ -86,6 +86,8 @@ This covers:
 - an event a host call fires inline, such as the `PreTransferEvent` that `Player::transfer` fires before it moves the player;
 - a loop through other WASM plugins: plugin A fires a named event, plugin B handles it and fires one that A listens to. A is in the chain, so B's event reaches A without anyone waiting for A.
 
+The chain also counts how many times it has entered each plugin. An event queued this way starts a new call into the plugin, still in the same chain, so two plugins that answer each event from the other by firing one back would pass events between them forever, with nobody waiting and no fault to stop them. The host allows a chain to enter the same plugin 8 times. An event that would enter it a ninth time is dropped: the plugin does not receive it, and the proxy logs `wasm plugin event dropped: the call that led to it already entered this plugin 8 times; plugins may be passing events back and forth`, at most five times a minute per plugin. A round trip such as A to B and back to A enters A twice and is not affected.
+
 Providers get the same protection. A [ban provider](./bans) that calls the ban service from inside one of its own calls gets an `Unavailable` error at once instead of waiting on itself. A [permission provider](./permissions) asked for a checker from inside its own call answers with the snapshot it already holds for that player, or the node defaults.
 
 Events the proxy queues rather than fires inline, such as the `BanIssuedEvent` after `Bans::ban`, are delivered by the proxy's event queue on its own task. They reach your plugin after the current call, like any other event.
