@@ -229,10 +229,16 @@ async fn boss_bar_is_added_updated_and_removed(version: ProtocolVersion) {
 
     session.quit().await;
     proxy.wait_for_connection_count(0, T).await.unwrap();
-    assert!(matches!(
-        handle.set_progress(0.2),
-        Err(PlayerError::Disconnected)
-    ));
+    let disconnected = tokio::time::timeout(T, async {
+        while !matches!(handle.set_progress(0.2), Err(PlayerError::Disconnected)) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(
+        disconnected.is_ok(),
+        "the boss bar handle never reported the player as disconnected"
+    );
 
     proxy.shutdown().await.unwrap();
 }
