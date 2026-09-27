@@ -149,7 +149,7 @@ Every reason and message argument takes `impl Into<Component>`, so `deny("Banned
 | `Players.online_count()`, `online_count_on(server)` | `Players::count()`, `Players::count_on(&server)` |
 | `Players.get_by_id(id)` | `Players::get(PlayerId)` |
 | `Players.get_by_name(name)`, `get_by_uuid(&str)` | `Players::by_name(name)`, `Players::by_uuid(Uuid)` |
-| `Players.on_server(server)`, `all()` | `Players::on_server(&ServerId)`, `Players::list()` |
+| `Players.on_server(server)`, `all()` | `Players::on_server(&ServerId)`, `Players::list()`, which answer a `PlayerSummary` (`player: PlayerRef`, `current_server`) per player; `summary.info()` or `Players::get(id)` for the full `PlayerInfo` |
 | `ctx.player_registry()` | the `Players` functions directly |
 | `player.profile()`, `remote_addr()`, `current_server()`, ... | fields of `PlayerInfo`: `profile`, `remote_addr: SocketAddr`, `current_server`, `online_mode`, `connected`, `active`, `connected_at: SystemTime`, plus `virtual_host`, `client_brand`, `ping` |
 | `player.permission_level()` | removed: use `has_permission("infrarust.admin")` |

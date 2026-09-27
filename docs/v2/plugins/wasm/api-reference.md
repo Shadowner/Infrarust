@@ -932,6 +932,11 @@ interface players {
         server-address,
     };
 
+    record player-summary {
+        player: player-ref,
+        current-server: option<server-id>,
+    }
+
     record player-info {
         player: player-ref,
         profile: game-profile,
@@ -994,7 +999,7 @@ interface players {
     get: func(id: player-id) -> option<player-info>;
     get-by-name: func(username: string) -> option<player-info>;
     get-by-uuid: func(id: uuid) -> option<player-info>;
-    %list: func(server: option<server-id>) -> list<player-info>;
+    %list: func(server: option<server-id>) -> list<player-summary>;
     count: func(server: option<server-id>) -> u32;
 
     send-message: func(player: player-id, message: component) -> result<_, host-error>;
@@ -1027,6 +1032,8 @@ interface players {
 | `send-packet` | `raw-packet` |
 
 `disconnect` returns once the kick is queued. `switch-server` waits for the session to accept the switch, bounded by a short host timeout and by the guest call's deadline. `connect`, `transfer`, `request-cookie` and `refresh-permissions` wait for their outcome, bounded by `host_call_timeout` and the guest call's deadline. `show-boss-bar` answers the bar's id, which `update-boss-bar` and `hide-boss-bar` take; an id the plugin does not own answers `not-found`. `settings` and `known-channels` in `player-info` are what the client sent, empty until it did.
+
+`list` answers a `player-summary` per player: its `player-ref` (id, UUID, username) and its current server. The full `player-info` of one player comes from `get`, `get-by-name` or `get-by-uuid`. A full record carries the profile with its textures property, the settings and the channels, and copying one per online player into the guest costs about a millisecond per thousand players; the summary costs a tenth of that.
 
 ## Text
 

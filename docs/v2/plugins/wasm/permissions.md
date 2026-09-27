@@ -161,7 +161,7 @@ fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
     ctx.provide_permissions(groups.clone())?;
     if let Some(EnableReason::Recovered(_)) = ctx.enable_reason() {
         for player in Players::list() {
-            let _ = Permissions::set_snapshot(player.id(), &groups.of(&player.profile.username));
+            let _ = Permissions::set_snapshot(player.id(), &groups.of(&player.player.username));
         }
     }
     Ok(())
