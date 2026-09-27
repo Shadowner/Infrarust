@@ -55,8 +55,8 @@ Restart=on-failure
 RestartSec=5
 
 # Shutdown grace period: Infrarust drains active connections
-# for up to 30 seconds before forcing exit
-TimeoutStopSec=35
+# for up to 30 seconds, then gives plugins up to 10 seconds
+TimeoutStopSec=45
 
 # Hardening
 NoNewPrivileges=true
@@ -72,7 +72,7 @@ WantedBy=multi-user.target
 ```
 
 ::: tip
-`TimeoutStopSec=35` gives Infrarust time to finish its 30-second connection drain before systemd sends SIGKILL. The 5-second buffer between 30 and 35 accounts for plugin shutdown before the drain starts.
+`TimeoutStopSec=45` gives Infrarust time to finish its 30-second connection drain and its 10-second plugin shutdown before systemd sends SIGKILL, with 5 seconds to spare. A second SIGTERM while Infrarust is stopping makes it exit at once, with exit code 143.
 :::
 
 Reload systemd and enable the service:

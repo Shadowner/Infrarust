@@ -67,7 +67,10 @@ services:
     volumes:
       - ./config:/app/config
     restart: unless-stopped
+    stop_grace_period: 45s
 ```
+
+`docker stop` sends SIGTERM and kills the container 10 seconds later by default. Infrarust drains connections for up to 30 seconds and then gives plugins up to 10 seconds, so `stop_grace_period: 45s` (or `docker stop -t 45`) lets it finish. A second SIGTERM while it is stopping makes it exit at once.
 
 ## Environment variables
 

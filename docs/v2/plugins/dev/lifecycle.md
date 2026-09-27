@@ -35,9 +35,9 @@ Each refusal concerns one plugin: it is logged at `error`, the plugin's state be
 
 **Enabled.** The manager calls `plugin.on_enable(ctx)`. If it succeeds, state moves to `Enabled`. If it fails, state moves to `Error` and the context is cleaned up immediately.
 
-**Disabled.** During shutdown, the manager iterates plugins in reverse order. It calls `on_disable()`, then runs automatic cleanup regardless of whether `on_disable` succeeded. A single plugin can also be disabled while the proxy runs, see [Disabling one plugin](#disabling-one-plugin).
+**Disabled.** During shutdown, the manager disables the plugins that depend on others before the plugins they depend on, and the plugins of one dependency level all at once. It calls `on_disable()`, waiting at most 5 seconds, then runs automatic cleanup regardless of whether `on_disable` succeeded. A single plugin can also be disabled while the proxy runs, see [Disabling one plugin](#disabling-one-plugin).
 
-**Unloaded.** After all plugins are disabled, the manager calls `loader.unload()` for each plugin to release loader-level resources, then `loader.on_shutdown()` once per loader (only for loaders whose `on_load()` succeeded) to tear down the runtime.
+**Unloaded.** Once a plugin is disabled, the manager calls `loader.unload()` for it to release loader-level resources. After the last plugin, it calls `loader.on_shutdown()` once per loader (only for loaders whose `on_load()` succeeded) to tear down the runtime.
 
 ## PluginState
 
@@ -164,15 +164,18 @@ Errors during loading or enabling don't stop other plugins. The manager collects
 
 ## Shutdown flow
 
-`shutdown()` disables plugins in reverse load order (last enabled, first disabled):
+`shutdown()` first cancels the `proxy_shutdown()` token, if the proxy has not already done so. Then it groups the plugins into dependency levels: level 0 holds the plugins no enabled plugin depends on, level 1 the plugins only level 0 depends on, and so on, counting hard and optional dependencies alike. It disables one level at a time, starting with level 0, and every plugin of a level at once. For each plugin:
 
-1. Skips any plugin not in the `Enabled` state.
+1. Skips `on_disable` and cleanup for a plugin not in the `Enabled` state.
 2. Sets state to `Disabled`.
-3. Calls `plugin.on_disable()`. Errors are logged but don't stop the shutdown.
-4. Runs `cleanup()` on the plugin's context. This happens even if `on_disable` failed.
+3. Calls `plugin.on_disable()` and waits for it at most 5 seconds. Errors are logged but don't stop the shutdown. A future still running after 5 seconds is dropped with a warning, `Plugin on_disable() did not return in time during shutdown; stopping the plugin without it`, and the plugin is unloaded before its cleanup.
+4. Runs `cleanup()` on the plugin's context. This happens even if `on_disable` failed or was stopped.
 5. Posts a `PluginDisabledEvent`.
-6. After all plugins are disabled, calls `loader.unload()` for each plugin.
-7. Calls `loader.on_shutdown()` on each loader that booted successfully, in reverse order. Shutdown is idempotent, so calling it twice runs `on_shutdown()` only once.
+6. Calls `loader.unload()` for the plugin.
+
+The next level starts when every plugin of the current one is done. The whole plugin phase, `ProxyShutdownEvent` listeners included, is bounded at 10 seconds: once it runs out, `on_disable` is no longer waited for, but every remaining plugin is still cleaned up and unloaded. Last, the manager calls `loader.on_shutdown()` on each loader that booted successfully, in reverse order. Shutdown is idempotent, so calling it twice runs `on_shutdown()` only once.
+
+Keep `on_disable` short: flush what you must keep and return. Anything longer than 5 seconds is cut off at shutdown. The limits are fixed for the `infrarust` binary; a program that embeds the proxy can set them with `ProxyRuntimeBuilder::plugin_disable_timeout` and `plugin_shutdown_timeout`, or with `PluginManager::set_shutdown_limits`. A second SIGTERM or Ctrl-C while the proxy is stopping exits the process at once, without waiting for any plugin.
 
 ## Disabling one plugin
 
@@ -189,7 +192,7 @@ The plugin manager posts two reserved events:
 | `PluginEnabledEvent` | `plugin_id`, `version` | Right after a plugin's `on_enable` succeeded |
 | `PluginDisabledEvent` | `plugin_id` | Right after a plugin's cleanup, on shutdown or `disable_plugin` |
 
-The manager waits for each event to be delivered before it moves to the next plugin, so the events arrive in enable and disable order. A plugin receives the `PluginEnabledEvent` of itself and of every plugin enabled after it; use the [plugin registry](./api#plugincontext) for those enabled before. The registry lists the plugins that are enabled right now, each with the state `enabled`: the manager adds a plugin as soon as its `on_enable` returns, before its `PluginEnabledEvent`, and removes it when its disabling starts, before `on_disable`, on shutdown as with `disable_plugin`. A plugin whose `on_enable` failed never appears in it, and a plugin does not find itself there during its own `on_enable` or `on_disable`. A plugin never receives its own `PluginDisabledEvent`, because its listeners are removed in the cleanup that comes first. On shutdown, the disabled events are posted after `ProxyShutdownEvent`.
+The manager waits for each event to be delivered before it moves to the next plugin, so the events arrive in enable order, and in disable order from one dependency level to the next. The plugins of one level are disabled at once, so their `PluginDisabledEvent`s can arrive in any order. A plugin receives the `PluginEnabledEvent` of itself and of every plugin enabled after it; use the [plugin registry](./api#plugincontext) for those enabled before. The registry lists the plugins that are enabled right now, each with the state `enabled`: the manager adds a plugin as soon as its `on_enable` returns, before its `PluginEnabledEvent`, and removes it when its disabling starts, before `on_disable`, on shutdown as with `disable_plugin`. A plugin whose `on_enable` failed never appears in it, and a plugin does not find itself there during its own `on_enable` or `on_disable`. A plugin never receives its own `PluginDisabledEvent`, because its listeners are removed in the cleanup that comes first. On shutdown, the disabled events are posted after `ProxyShutdownEvent`.
 
 ## Automatic resource cleanup
 
@@ -326,4 +329,4 @@ Errors during the lifecycle surface as `PluginError` or `LoaderError` depending 
 
 `discover_all()` returns a single `PluginError` on the first fatal problem (a duplicate ID, a loader discovery failure, or an unresolvable dependency graph), and no plugins load. `load_and_enable_all()` is more forgiving: it collects every error into a `Vec<PluginError>` and returns them. An error returned from a plugin's own `on_enable` is collected as-is, not re-wrapped. Each failed plugin is marked `PluginState::Error` while the remaining plugins continue loading.
 
-During `shutdown`, errors from `on_disable` and `unload` are logged but don't interrupt the process. Every plugin gets its cleanup pass regardless of errors in other plugins.
+During `shutdown`, errors from `on_disable` and `unload` are logged but don't interrupt the process. Every plugin gets its cleanup pass regardless of errors or time-outs in other plugins.
