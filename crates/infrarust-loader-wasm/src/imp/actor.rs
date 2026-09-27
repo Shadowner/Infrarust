@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::BoxFuture;
+use infrarust_api::plugin::PluginRuntimeStatus;
 use infrarust_api::services::caller_deadline;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -24,6 +25,7 @@ use crate::events::AccessListeners;
 use crate::instance::InstanceFactory;
 use crate::rate_limit::SharedRateLimit;
 use crate::snapshots::PermissionSnapshots;
+use crate::status::StatusBoard;
 use crate::store_state::PluginStoreState;
 use crate::supervisor::Fault;
 use crate::supervisor::Supervisor;
@@ -268,6 +270,7 @@ struct ActorInfo {
     loop_warnings: SharedRateLimit,
     snapshots: Arc<PermissionSnapshots>,
     access: Arc<AccessListeners>,
+    board: StatusBoard,
 }
 
 impl ActorInfo {
@@ -288,6 +291,7 @@ impl ActorInfo {
             loop_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
             snapshots,
             access: Arc::default(),
+            board: StatusBoard::new(sandbox.queue_capacity, sandbox.recovery),
         }
     }
 
@@ -360,6 +364,10 @@ impl InstanceRef {
 
     pub(crate) fn access(&self) -> &Arc<AccessListeners> {
         &self.info.access
+    }
+
+    pub(crate) fn board(&self) -> &StatusBoard {
+        &self.info.board
     }
 
     pub(crate) fn admit_warning(&self) -> Option<u64> {
@@ -534,6 +542,18 @@ impl PluginActor {
 
     pub(crate) fn plugin_id(&self) -> &str {
         &self.info.plugin_id
+    }
+
+    pub(crate) fn runtime_status(&self) -> PluginRuntimeStatus {
+        let depth = self
+            .jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map_or(0, |jobs| {
+                jobs.max_capacity().saturating_sub(jobs.capacity())
+            });
+        self.info.board.snapshot(depth)
     }
 
     pub(crate) async fn call_lifecycle<T, F>(

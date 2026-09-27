@@ -20,6 +20,7 @@ use crate::events;
 use crate::instance::{InstanceFactory, LiveInstance};
 use crate::rate_limit::RateLimit;
 use crate::recovery::{RestartBudget, Verdict};
+use crate::status::Phase;
 
 const FIRST_GENERATION: u64 = 1;
 
@@ -279,10 +280,10 @@ impl Supervisor {
             return;
         }
         let granted = matches!(self.health, Health::Paused { .. });
-        self.health = Health::Recovering;
         if !granted {
             self.budget.retry(Instant::now());
         }
+        self.set_health(Health::Recovering);
         let chain = CallChain::default().with(self.factory.plugin_id());
         self.attempt(&chain).await;
     }
@@ -293,12 +294,12 @@ impl Supervisor {
         }
         tracing::info!(plugin = %self.factory.plugin_id(),
             "wasm plugin recovery stopped: the plugin is being disabled or unloaded, or the proxy is shutting down");
-        self.health = Health::Halted;
+        self.set_health(Health::Halted);
         true
     }
 
     pub(crate) fn retire(mut self) {
-        let health = std::mem::replace(&mut self.health, Health::Failed);
+        let health = self.replace_health(Health::Failed);
         if let Health::Starting(mut live) | Health::Healthy(mut live) = health {
             live.release_host_resources();
         }
@@ -378,19 +379,19 @@ impl Supervisor {
             return;
         }
         self.report(op, fault);
-        self.last_fault = fault.to_string();
+        self.note_fault(fault);
         let enabled = matches!(self.health, Health::Healthy(_));
         if enabled {
             self.close_access();
         }
-        let health = std::mem::replace(&mut self.health, Health::Recovering);
+        let health = self.replace_health(Health::Recovering);
         if let Health::Starting(live) | Health::Healthy(live) = health {
             self.discard(live);
         }
         if enabled {
             self.recover(chain).await;
         } else {
-            self.health = Health::Failed;
+            self.set_health(Health::Failed);
         }
     }
 
@@ -398,8 +399,7 @@ impl Supervisor {
         if matches!(self.health, Health::Healthy(_)) {
             self.close_access();
         }
-        if let Health::Starting(live) | Health::Healthy(live) =
-            std::mem::replace(&mut self.health, Health::Halted)
+        if let Health::Starting(live) | Health::Healthy(live) = self.replace_health(Health::Halted)
         {
             self.discard(live);
         }
@@ -424,7 +424,7 @@ impl Supervisor {
                     max_restarts = policy.max_restarts, window = ?policy.window,
                     retry_in = ?backoff,
                     "wasm plugin quarantined: it kept failing; retrying after the backoff");
-                self.health = Health::Quarantined { until };
+                self.set_health(Health::Quarantined { until });
                 false
             }
         }
@@ -459,9 +459,9 @@ impl Supervisor {
         tracing::error!(plugin = %plugin, generation, %error, retry_in = ?pause,
             "wasm plugin recovery could not create a fresh instance; trying again after a pause");
         let now = Instant::now();
-        self.health = Health::Paused {
+        self.set_health(Health::Paused {
             until: now.checked_add(pause).unwrap_or(now + FAR_FUTURE),
-        };
+        });
     }
 
     async fn restart(&mut self, chain: &CallChain) -> Restarted {
@@ -499,18 +499,48 @@ impl Supervisor {
                 }
                 tracing::info!(plugin = %self.factory.plugin_id(), generation,
                     "wasm plugin recovered: a fresh instance is enabled");
-                self.health = Health::Healthy(live);
+                self.set_health(Health::Healthy(live));
                 self.instance.access().set_serving(true);
                 self.drop_guards();
                 Restarted::Enabled
             }
             Err(fault) => {
                 self.report("on-enable", &fault);
-                self.last_fault = fault.to_string();
+                self.note_fault(&fault);
                 self.discard(live);
                 Restarted::Faulted
             }
         }
+    }
+
+    fn set_health(&mut self, health: Health) {
+        drop(self.replace_health(health));
+    }
+
+    fn replace_health(&mut self, health: Health) -> Health {
+        let previous = std::mem::replace(&mut self.health, health);
+        self.publish();
+        previous
+    }
+
+    fn publish(&self) {
+        let phase = match &self.health {
+            Health::Starting(_) | Health::Healthy(_) => Phase::Healthy,
+            Health::Recovering => Phase::Recovering(None),
+            Health::Paused { until } => Phase::Recovering(Some(*until)),
+            Health::Quarantined { until } => Phase::Quarantined(*until),
+            Health::Failed | Health::Halted => Phase::Stopped,
+        };
+        self.instance
+            .board()
+            .report(phase, self.generation, self.budget.recent());
+    }
+
+    fn note_fault(&mut self, fault: &Fault) {
+        self.last_fault = fault.to_string();
+        self.instance
+            .board()
+            .faulted(&self.last_fault, self.generation);
     }
 
     fn close_access(&mut self) {

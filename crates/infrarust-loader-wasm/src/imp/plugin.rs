@@ -6,7 +6,7 @@ use crate::error::WasmLoaderError;
 use crate::supervisor::EnableRefused;
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata, PluginRuntimeStatus};
 
 pub(crate) struct WasmPlugin {
     metadata: PluginMetadata,
@@ -135,5 +135,9 @@ impl Plugin for WasmPlugin {
                 ))),
             }
         })
+    }
+
+    fn runtime_status(&self) -> Option<PluginRuntimeStatus> {
+        Some(self.actor.runtime_status())
     }
 }

@@ -59,6 +59,10 @@ impl RestartBudget {
         self.restarts.len()
     }
 
+    pub(crate) fn recent(&self) -> impl Iterator<Item = Instant> + '_ {
+        self.restarts.iter().copied()
+    }
+
     fn forget_before(&mut self, now: Instant) {
         while let Some(&oldest) = self.restarts.front()
             && now.saturating_duration_since(oldest) >= self.policy.window
