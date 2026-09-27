@@ -75,7 +75,6 @@ async fn resident_per_connection(proxy_toml: &str) -> Resident {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-12: instance_pool pins huge pages per connection"]
 async fn under_thp_always_a_pooled_codec_instance_is_not_much_heavier_than_an_on_demand_one() {
     if !thp_always() {
         return;
@@ -94,7 +93,6 @@ async fn under_thp_always_a_pooled_codec_instance_is_not_much_heavier_than_an_on
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-12: instance_pool pins huge pages per connection"]
 async fn under_thp_always_closing_pooled_codec_connections_gives_their_memory_back() {
     if !thp_always() {
         return;
