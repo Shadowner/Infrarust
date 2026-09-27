@@ -7,6 +7,8 @@ const tooltips: Record<string, string> = {
   intercepted: 'The proxy can read and modify packets for this player. Commands like send, message, and server transfer are available.',
   passthrough: 'Traffic is encrypted end-to-end, the proxy forwards packets without inspecting them. Only kick and ban are available.',
   unreachable: 'The last health check could not reach the backend. Nothing here reports the backend as stopped, so it is down rather than idle.',
+  recovering: 'The plugin faulted and the proxy is starting a fresh instance. Its calls are answered without running plugin code until it is back.',
+  quarantined: 'The plugin kept faulting. The proxy answers its calls without running plugin code and tries a fresh instance when the backoff passes.',
 };
 
 const tooltip = computed(() => tooltips[props.status.toLowerCase()]);
@@ -28,13 +30,13 @@ function hideTooltip() {
 
 const config = computed(() => {
   const normalized = props.status.toLowerCase();
-  if (['online', 'enabled', 'ok', 'intercepted'].includes(normalized))
+  if (['online', 'enabled', 'ok', 'intercepted', 'healthy'].includes(normalized))
     return { dot: 'bg-[#5daf50]', classes: 'border-[rgba(93,175,80,0.4)] bg-[rgba(93,175,80,0.16)] text-[#bce5b6]', pulse: normalized !== 'intercepted' };
-  if (['sleeping', 'offline', 'disabled', 'passthrough'].includes(normalized))
+  if (['sleeping', 'offline', 'disabled', 'passthrough', 'stopped'].includes(normalized))
     return { dot: 'bg-slate-400', classes: 'border-[rgba(148,163,184,0.28)] bg-[rgba(148,163,184,0.15)] text-slate-200', pulse: false };
-  if (['starting', 'stopping', 'warn'].includes(normalized))
+  if (['starting', 'stopping', 'warn', 'recovering'].includes(normalized))
     return { dot: 'bg-[#e9a047]', classes: 'border-[rgba(233,160,71,0.34)] bg-[rgba(233,160,71,0.15)] text-[#ffd8ad]', pulse: true };
-  if (['crashed', 'error', 'unreachable'].includes(normalized))
+  if (['crashed', 'error', 'unreachable', 'quarantined'].includes(normalized))
     return { dot: 'bg-[#cc3e38]', classes: 'border-[rgba(204,62,56,0.4)] bg-[rgba(204,62,56,0.16)] text-[#ffc0bc]', pulse: true };
   return { dot: 'bg-[var(--ir-accent)]', classes: 'border-[var(--ir-border-strong)] bg-[var(--ir-accent-soft)] text-[var(--ir-text)]', pulse: false };
 });

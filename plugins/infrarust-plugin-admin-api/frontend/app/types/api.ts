@@ -248,6 +248,36 @@ export type ProxyBackendsDto = Record<string, ServerBackendsDto>;
 
 // ── Plugins ──
 
+export type PluginHealth = 'healthy' | 'recovering' | 'quarantined' | 'stopped';
+
+export interface PluginFaultDto {
+  cause: string;
+  secs_ago: number;
+  generation: number;
+}
+
+export interface PluginQueueDto {
+  depth: number;
+  capacity: number;
+  window_secs: number;
+  taken: number;
+  peak_depth: number;
+  wait_p50_us: number;
+  wait_p99_us: number;
+  wait_max_us: number;
+}
+
+export interface PluginRuntimeDto {
+  health: PluginHealth;
+  retry_in_ms: number | null;
+  generation: number;
+  restarts_in_window: number;
+  max_restarts: number;
+  restart_window_secs: number;
+  last_fault: PluginFaultDto | null;
+  queue: PluginQueueDto;
+}
+
 export interface PluginDto {
   id: string;
   name: string;
@@ -256,6 +286,7 @@ export interface PluginDto {
   description: string | null;
   state: string;
   dependencies: Array<{ id: string; optional: boolean }>;
+  runtime: PluginRuntimeDto | null;
 }
 
 // ── Activity ──

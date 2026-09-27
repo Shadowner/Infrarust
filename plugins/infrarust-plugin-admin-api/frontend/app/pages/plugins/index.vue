@@ -3,7 +3,10 @@ import type { PluginDto, ApiEnvelope, MutationResult } from '~/types/api';
 
 const { request } = useApi();
 const { push } = useToast();
+const { onEvent } = useEventBus();
+const { now } = useTick();
 const rows = ref<PluginDto[]>([]);
+const fetchedAt = ref(Date.now());
 
 const { data: pluginsData } = await useAsyncData('plugins', async () => {
   try {
@@ -15,6 +18,24 @@ const { data: pluginsData } = await useAsyncData('plugins', async () => {
   }
 });
 rows.value = pluginsData.value ?? [];
+
+async function refreshPlugins() {
+  try {
+    const res = await request<ApiEnvelope<PluginDto[]>>('/plugins');
+    rows.value = res.data;
+    fetchedAt.value = Date.now();
+  } catch {
+    return;
+  }
+}
+
+onMounted(() => {
+  fetchedAt.value = Date.now();
+});
+
+onEvent('stats.tick', () => {
+  if (Date.now() - fetchedAt.value >= PLUGIN_REFRESH_MS) refreshPlugins();
+});
 
 async function togglePlugin(plugin: PluginDto) {
   const action = plugin.state === 'enabled' ? 'disable' : 'enable';
@@ -46,15 +67,26 @@ async function togglePlugin(plugin: PluginDto) {
         :to="`/plugins/${plugin.id}`"
         class="glass-pane glass-pane-interactive p-4"
       >
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
           <h3 class="font-semibold">{{ plugin.name }}</h3>
-          <StatusBadge :status="plugin.state" />
+          <div class="flex items-center gap-1.5">
+            <StatusBadge v-if="pluginNeedsAttention(plugin.runtime)" :status="plugin.runtime.health" />
+            <StatusBadge :status="plugin.state" />
+          </div>
         </div>
         <p class="mt-2 text-sm text-[var(--ir-text-muted)]">{{ plugin.description ?? 'No description' }}</p>
         <div class="mt-3 flex items-center justify-between">
-          <span class="rounded border border-[var(--ir-border)] bg-[var(--ir-surface-soft)] px-2 py-0.5 font-mono text-[10px] text-[var(--ir-text-muted)]">
-            v{{ plugin.version }}
-          </span>
+          <div class="flex items-center gap-1.5">
+            <span class="rounded border border-[var(--ir-border)] bg-[var(--ir-surface-soft)] px-2 py-0.5 font-mono text-[10px] text-[var(--ir-text-muted)]">
+              v{{ plugin.version }}
+            </span>
+            <span
+              v-if="pluginNeedsAttention(plugin.runtime) && retryLabel(plugin.runtime, fetchedAt, now)"
+              class="rounded border border-[var(--ir-border)] bg-[var(--ir-surface-soft)] px-2 py-0.5 font-mono text-[10px] text-[var(--ir-text-muted)]"
+            >
+              {{ retryLabel(plugin.runtime, fetchedAt, now) }}
+            </span>
+          </div>
           <button
             class="relative h-6 w-11 rounded-full transition-colors"
             :class="plugin.state === 'enabled' ? 'bg-[#5daf50]' : 'bg-slate-600'"
