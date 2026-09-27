@@ -1,17 +1,19 @@
-//! Player commands: list, find, kick, kick-ip, send, send-all, msg, broadcast.
-
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
-use comfy_table::Cell;
+use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{Component, ServerId};
+use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
 use crate::commands::actions::{broadcast, find_player, kick_player, send_player};
 use crate::console::ConsoleServices;
-use crate::console::commands::{args, table, usage};
+use crate::console::commands::{args, usage};
 use crate::console::dispatcher::ConsoleCommand;
-use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
+use crate::console::output::{
+    Block, CommandCategory, CommandOutput, Fields, Line, OutputLine, Span, Table,
+};
 
 pub struct ListPlayersCommand;
 
@@ -42,40 +44,14 @@ impl ConsoleCommand for ListPlayersCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let players = if let Some(server) = args.first() {
-                services
+            let filter = args.first().copied();
+            let players = match filter {
+                Some(server) => services
                     .player_registry
-                    .get_players_on_server(&ServerId::new(*server))
-            } else {
-                services.player_registry.get_all_players()
+                    .get_players_on_server(&ServerId::new(server)),
+                None => services.player_registry.get_all_players(),
             };
-
-            if players.is_empty() {
-                return CommandOutput::Success("No players online".to_string());
-            }
-
-            let mut table = table(&["Player", "IP", "Server", "Mode", "Protocol"]);
-
-            for player in &players {
-                let server = player
-                    .current_server()
-                    .map(|s| s.as_str().to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                let mode = if player.is_active() {
-                    "active"
-                } else {
-                    "passthrough"
-                };
-                table.row([
-                    Cell::new(player.profile().username.as_str()),
-                    Cell::new(player.remote_addr().ip().to_string()),
-                    Cell::new(server),
-                    Cell::new(mode),
-                    Cell::new(player.protocol_version().to_string()),
-                ]);
-            }
-
-            table.finish("player")
+            players_output(&players, filter)
         })
     }
 }
@@ -110,26 +86,7 @@ impl ConsoleCommand for FindPlayerCommand {
             };
 
             match find_player(&*services.player_registry, name) {
-                Ok(player) => {
-                    let server = player
-                        .current_server()
-                        .map(|s| s.as_str().to_string())
-                        .unwrap_or_else(|| "-".to_string());
-                    let mode = if player.is_active() {
-                        "active"
-                    } else {
-                        "passthrough"
-                    };
-                    CommandOutput::Lines(vec![
-                        OutputLine::Info(format!("  Player: {}", player.profile().username)),
-                        OutputLine::Info(format!("  UUID: {}", player.profile().uuid)),
-                        OutputLine::Info(format!("  IP: {}", player.remote_addr())),
-                        OutputLine::Info(format!("  Server: {server}")),
-                        OutputLine::Info(format!("  Mode: {mode}")),
-                        OutputLine::Info(format!("  Protocol: {}", player.protocol_version())),
-                        OutputLine::Info(format!("  Connected: {}", player.is_connected())),
-                    ])
-                }
+                Ok(player) => player_block(&*player).into(),
                 Err(error) => CommandOutput::error(error.to_string()),
             }
         })
@@ -167,10 +124,9 @@ impl ConsoleCommand for KickCommand {
             let reason = args::rest(reason);
 
             match kick_player(&*services.player_registry, name, reason).await {
-                Ok(kicked) => CommandOutput::Success(format!(
-                    "Kicked {} (reason: {})",
-                    kicked.player, kicked.reason
-                )),
+                Ok(kicked) => {
+                    CommandOutput::Success(format!("Kicked {} ({})", kicked.player, kicked.reason))
+                }
                 Err(error) => CommandOutput::error(error.to_string()),
             }
         })
@@ -232,7 +188,7 @@ impl ConsoleCommand for KickIpCommand {
                 "Players kicked by IP from console"
             );
 
-            CommandOutput::Success(format!("Kicked {count} player(s) from IP {ip}"))
+            CommandOutput::Success(format!("Kicked {count} player(s) from {ip}"))
         })
     }
 }
@@ -339,13 +295,14 @@ impl ConsoleCommand for SendAllCommand {
                 "All players transferred from console"
             );
 
+            let summary = format!("Sent {sent} player(s) to {server}");
             if errors > 0 {
                 CommandOutput::Lines(vec![
-                    OutputLine::Success(format!("Sent {sent} player(s) to {server}")),
+                    OutputLine::Success(summary),
                     OutputLine::Warning(format!("{errors} transfer(s) failed")),
                 ])
             } else {
-                CommandOutput::Success(format!("Sent {sent} player(s) to {server}"))
+                CommandOutput::Success(summary)
             }
         })
     }
@@ -456,6 +413,86 @@ impl ConsoleCommand for BroadcastCommand {
     }
 }
 
+fn players_output(players: &[Arc<dyn Player>], filter: Option<&str>) -> CommandOutput {
+    if players.is_empty() {
+        return CommandOutput::Note(match filter {
+            Some(server) => format!("No players on {server}"),
+            None => "No players online".to_string(),
+        });
+    }
+
+    let mut table = Table::new(&["Player", "Server", "Mode", "Version", "Address"]);
+    for player in players {
+        table.row([
+            Span::entity(player.profile().username.as_str()).into(),
+            server_cell(&**player),
+            Line::from(mode_of(&**player)),
+            Line::from(version_name(player.protocol_version())),
+            Span::muted(player.remote_addr().ip().to_string()).into(),
+        ]);
+    }
+
+    Block::new("Players")
+        .meta(list_meta(players, filter))
+        .table(table)
+        .into()
+}
+
+fn list_meta(players: &[Arc<dyn Player>], filter: Option<&str>) -> String {
+    let online = format!("{} online", players.len());
+    if let Some(server) = filter {
+        return format!("{online} on {server}");
+    }
+    let servers: HashSet<ServerId> = players
+        .iter()
+        .filter_map(|player| player.current_server())
+        .collect();
+    match servers.len() {
+        0 => online,
+        1 => format!("{online} on 1 server"),
+        count => format!("{online} on {count} servers"),
+    }
+}
+
+fn player_block(player: &dyn Player) -> Block {
+    let server = player.current_server();
+    let meta = match &server {
+        Some(server) => format!("online on {}", server.as_str()),
+        None => "online".to_string(),
+    };
+    Block::new(player.profile().username.as_str())
+        .meta(meta)
+        .fields(
+            Fields::new()
+                .field("uuid", player.profile().uuid.to_string())
+                .field("address", player.remote_addr().to_string())
+                .field("server", server_cell(player))
+                .field("mode", mode_of(player))
+                .field("version", version_name(player.protocol_version())),
+        )
+}
+
+fn server_cell(player: &dyn Player) -> Line {
+    player
+        .current_server()
+        .map_or_else(|| Span::muted("-").into(), |server| server.as_str().into())
+}
+
+fn mode_of(player: &dyn Player) -> &'static str {
+    if player.is_active() {
+        "intercepted"
+    } else {
+        "passthrough"
+    }
+}
+
+fn version_name(version: ProtocolVersion) -> String {
+    match infrarust_protocol::version::ProtocolVersion(version.raw()).name() {
+        "unknown" | "legacy" => version.raw().to_string(),
+        name => name.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -473,6 +510,7 @@ mod tests {
     use super::*;
     use crate::ban::manager::BanManager;
     use crate::commands::{CommandServices, SubcommandHandler, subcommands};
+    use crate::console::render::Renderer;
     use crate::event_bus::EventBusImpl;
     use crate::permissions::PermissionService;
     use crate::player::registry::PlayerRegistryImpl;
@@ -488,6 +526,7 @@ mod tests {
     struct Surfaces {
         console: ConsoleServices,
         ir: CommandServices,
+        session: Arc<PlayerSession>,
         _guard: SessionGuard,
         _commands: mpsc::Receiver<PlayerCommand>,
     }
@@ -495,7 +534,7 @@ mod tests {
     fn surfaces(active: bool) -> Surfaces {
         let connection_registry = Arc::new(ConnectionRegistry::new());
         let (session, commands) = PlayerSession::new_test(active);
-        let guard = connection_registry.register(session);
+        let guard = connection_registry.register(Arc::clone(&session));
         let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry)));
         let domain_router = Arc::new(DomainRouter::new());
         domain_router.add(
@@ -540,6 +579,7 @@ mod tests {
         Surfaces {
             console,
             ir,
+            session,
             _guard: guard,
             _commands: commands,
         }
@@ -601,5 +641,73 @@ mod tests {
         .await;
         assert!(console.contains("TestPlayer"), "{console}");
         assert!(ir.contains(&console), "console: {console}\n/ir: {ir}");
+    }
+
+    fn plain(output: &CommandOutput) -> String {
+        Renderer::new(false, None).render(output)
+    }
+
+    #[tokio::test]
+    async fn list_shows_each_player_with_version_and_address() {
+        let world = surfaces(true);
+        world.session.set_current_server(ServerId::new("lobby"));
+        let output = ListPlayersCommand.execute(&[], &world.console).await;
+        assert_eq!(
+            plain(&output),
+            "# Players - 1 online on 1 server\n\
+             | PLAYER       SERVER   MODE          VERSION   ADDRESS\n\
+             | TestPlayer   lobby    intercepted   1.21      127.0.0.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_filtered_by_server_names_the_server() {
+        let world = surfaces(false);
+        world.session.set_current_server(ServerId::new("lobby"));
+        let output = ListPlayersCommand.execute(&["lobby"], &world.console).await;
+        assert_eq!(
+            plain(&output),
+            "# Players - 1 online on lobby\n\
+             | PLAYER       SERVER   MODE          VERSION   ADDRESS\n\
+             | TestPlayer   lobby    passthrough   1.21      127.0.0.1"
+        );
+        let empty = ListPlayersCommand
+            .execute(&["survival"], &world.console)
+            .await;
+        assert_eq!(plain(&empty), "- No players on survival");
+    }
+
+    #[tokio::test]
+    async fn find_describes_the_player_as_fields() {
+        let world = surfaces(true);
+        let uuid = world.session.profile().uuid;
+        let output = FindPlayerCommand
+            .execute(&["TestPlayer"], &world.console)
+            .await;
+        assert_eq!(
+            plain(&output),
+            format!(
+                "# TestPlayer - online\n\
+                 | uuid     {uuid}\n\
+                 | address  127.0.0.1:12345\n\
+                 | server   -\n\
+                 | mode     intercepted\n\
+                 | version  1.21"
+            )
+        );
+    }
+
+    #[test]
+    fn unnamed_protocol_versions_show_their_number() {
+        assert_eq!(version_name(ProtocolVersion::new(767)), "1.21");
+        assert_eq!(version_name(ProtocolVersion::new(99999)), "99999");
+        assert_eq!(
+            version_name(ProtocolVersion::new(
+                infrarust_protocol::version::ProtocolVersion::LEGACY.0
+            )),
+            infrarust_protocol::version::ProtocolVersion::LEGACY
+                .0
+                .to_string()
+        );
     }
 }
