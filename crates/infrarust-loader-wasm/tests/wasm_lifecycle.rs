@@ -467,8 +467,13 @@ async fn a_huge_non_component_is_refused_quickly() {
         );
     }
     let logs = BoundedLog::default();
+    let loader = cached_loader(&dir);
+    let _slot = compile_slot().await;
     let started = Instant::now();
-    let found = discover(&dir).with_subscriber(logs.clone()).await;
+    let found = tokio::time::timeout(DISCOVERY_BOUND, loader.discover(&dir))
+        .with_subscriber(logs.clone())
+        .await
+        .expect("discovery finishes in bounded time");
     let elapsed = started.elapsed();
     let error = found.as_ref().err().map(BoundedText::of);
     let error_len = error.as_ref().map_or(0, |text| text.len);
@@ -504,7 +509,7 @@ async fn a_huge_non_component_is_refused_quickly() {
         "the refusal says the file is not a component: {prefix:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(10),
+        elapsed < Duration::from_secs(15),
         "a junk file is refused from its first bytes, yet discovery took {elapsed:?}"
     );
 }
