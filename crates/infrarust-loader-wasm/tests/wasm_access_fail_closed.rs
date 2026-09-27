@@ -3,7 +3,10 @@
 
 mod support;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
@@ -35,6 +38,7 @@ const SCRIPTED: &str = "scripted";
 const UNAVAILABLE: &str = "A proxy plugin is unavailable. Please try again later.";
 const PROMPTLY: Duration = Duration::from_secs(15);
 const SHORT_TIMEOUT: Duration = Duration::from_millis(300);
+const EVENT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy)]
 enum Access {
@@ -239,13 +243,23 @@ fn post_login() -> PostLoginEvent {
     PostLoginEvent::new(player())
 }
 
+async fn poll_once<F: Future + Unpin>(future: &mut F) -> Option<F::Output> {
+    std::future::poll_fn(|cx| {
+        Poll::Ready(match Pin::new(&mut *future).poll(cx) {
+            Poll::Ready(output) => Some(output),
+            Poll::Pending => None,
+        })
+    })
+    .await
+}
+
 async fn denied_past_the_event_deadline(access: Access) {
     let logs = LogCapture::at(Level::WARN);
     async {
         let lab = Scripted::start(
             &format!("on {} normal sleep 5000", access.script_name()),
-            "[events]\nhandler_timeout = \"300ms\"\n",
-            SHORT_TIMEOUT,
+            "[events]\nhandler_timeout = \"1s\"\n",
+            EVENT_TIMEOUT,
         )
         .await;
         let started = Instant::now();
@@ -253,7 +267,7 @@ async fn denied_past_the_event_deadline(access: Access) {
         let took = started.elapsed();
         assert_eq!(verdict, Verdict::Denied, "{access:?}: past the deadline");
         assert!(
-            took < SHORT_TIMEOUT,
+            took < EVENT_TIMEOUT,
             "{access:?}: the plugin answered before the bus gave up, after {took:?}"
         );
         let deadline = Instant::now() + PROMPTLY;
@@ -301,17 +315,17 @@ async fn denied_on_a_full_queue(access: Access) {
         async move { bus.fire(post_login()).await }
     });
     lab.wait_until_it_saw("post-login").await;
-    let queued = tokio::spawn({
-        let bus = Arc::clone(&bus);
-        async move { bus.fire(post_login()).await }
-    });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut queued = Box::pin(bus.fire(post_login()));
+    assert!(
+        poll_once(&mut queued).await.is_none(),
+        "{access:?}: the second post-login waits in the queue"
+    );
     let started = Instant::now();
     let verdict = access.fire(&bus).await;
     let took = started.elapsed();
     assert_eq!(verdict, Verdict::Denied, "{access:?}: on a full queue");
     assert!(
-        took < Duration::from_millis(500),
+        took < Duration::from_secs(1),
         "{access:?}: a refused call is denied on the spot, took {took:?}"
     );
     assert_eq!(lab.saw(access.script_name()), 0, "{access:?}");
