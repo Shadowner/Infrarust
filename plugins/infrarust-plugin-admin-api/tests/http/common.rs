@@ -138,6 +138,7 @@ fn plugin_registry() -> MockPluginRegistry {
             .description("Test plugin")
             .depends_on("core"),
         state: PluginState::Enabled,
+        runtime: None,
     })
 }
 

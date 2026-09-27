@@ -8,7 +8,7 @@ use std::time::Duration;
 use futures_util::future::join_all;
 use infrarust_api::event::Event;
 use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
-use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata, PluginRuntimeStatus};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
     player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
@@ -89,7 +89,7 @@ pub struct PluginManager {
 }
 
 struct LoadedPlugin {
-    plugin: Box<dyn Plugin>,
+    plugin: Arc<dyn Plugin>,
     context: Arc<PluginContextImpl>,
     metadata: PluginMetadata,
     loader: LoaderIndex,
@@ -259,8 +259,8 @@ impl PluginManager {
                 continue;
             }
 
-            let plugin = match loader.load(plugin_id, factory).await {
-                Ok(p) => p,
+            let plugin: Arc<dyn Plugin> = match loader.load(plugin_id, factory).await {
+                Ok(p) => Arc::from(p),
                 Err(source) => {
                     self.states
                         .insert(plugin_id.clone(), PluginState::Error(source.to_string()));
@@ -283,7 +283,7 @@ impl PluginManager {
                     self.states.insert(plugin_id.clone(), PluginState::Enabled);
                     tracing::info!(plugin = %plugin_id, "Plugin enabled");
                     if let Some(registry) = &self.registry {
-                        registry.insert_enabled(&metadata);
+                        registry.insert_enabled(&metadata, &plugin);
                     }
                     self.announce(PluginEnabledEvent::new(
                         plugin_id.clone(),
@@ -508,6 +508,13 @@ impl PluginManager {
 
     pub fn plugin_state(&self, id: &str) -> Option<&PluginState> {
         self.states.get(id)
+    }
+
+    pub fn plugin_runtime(&self, id: &str) -> Option<PluginRuntimeStatus> {
+        self.plugins
+            .iter()
+            .find(|loaded| loaded.metadata.id == id)
+            .and_then(|loaded| loaded.plugin.runtime_status())
     }
 
     pub fn list_plugins(&self) -> Vec<&PluginMetadata> {

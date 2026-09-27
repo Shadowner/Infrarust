@@ -1,6 +1,6 @@
 //! Plugin registry trait — read-only view of loaded plugins.
 
-use crate::plugin::{PluginMetadata, PluginState};
+use crate::plugin::{PluginMetadata, PluginRuntimeStatus, PluginState};
 
 pub mod private {
     pub trait Sealed {}
@@ -10,6 +10,7 @@ pub mod private {
 pub struct PluginInfo {
     pub metadata: PluginMetadata,
     pub state: PluginState,
+    pub runtime: Option<PluginRuntimeStatus>,
 }
 
 impl PluginInfo {

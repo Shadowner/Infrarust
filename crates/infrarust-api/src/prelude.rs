@@ -24,7 +24,10 @@ pub use crate::event::{
 pub use crate::events::*;
 
 // Plugin lifecycle
-pub use crate::plugin::{Plugin, PluginContext, PluginDependency, PluginMetadata, PluginState};
+pub use crate::plugin::{
+    Plugin, PluginContext, PluginDependency, PluginHealth, PluginMetadata, PluginRuntimeStatus,
+    PluginState,
+};
 
 // Player
 pub use crate::player::{

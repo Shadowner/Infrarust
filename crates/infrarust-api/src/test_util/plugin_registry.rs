@@ -47,6 +47,7 @@ mod tests {
         let info = PluginInfo {
             metadata: PluginMetadata::new("hello", "Hello", "1.0.0"),
             state: PluginState::Enabled,
+            runtime: None,
         };
         let registry = MockPluginRegistry::new().with_plugin(info);
         assert_eq!(registry.list_plugin_info().len(), 1);

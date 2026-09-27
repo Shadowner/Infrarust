@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -74,6 +75,154 @@ impl PluginState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PluginHealth {
+    Healthy,
+    Recovering { retry_in: Option<Duration> },
+    Quarantined { retry_in: Duration },
+    Stopped,
+}
+
+impl PluginHealth {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Recovering { .. } => "recovering",
+            Self::Quarantined { .. } => "quarantined",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    pub const fn retry_in(&self) -> Option<Duration> {
+        match self {
+            Self::Recovering { retry_in } => *retry_in,
+            Self::Quarantined { retry_in } => Some(*retry_in),
+            Self::Healthy | Self::Stopped => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct QueueWindow {
+    pub span: Duration,
+    pub taken: u64,
+    pub peak_depth: usize,
+    pub wait_p50: Duration,
+    pub wait_p99: Duration,
+    pub wait_max: Duration,
+}
+
+impl QueueWindow {
+    pub const fn new(span: Duration, taken: u64, peak_depth: usize) -> Self {
+        Self {
+            span,
+            taken,
+            peak_depth,
+            wait_p50: Duration::ZERO,
+            wait_p99: Duration::ZERO,
+            wait_max: Duration::ZERO,
+        }
+    }
+
+    #[must_use]
+    pub const fn waits(mut self, p50: Duration, p99: Duration, max: Duration) -> Self {
+        self.wait_p50 = p50;
+        self.wait_p99 = p99;
+        self.wait_max = max;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginQueueStats {
+    pub depth: usize,
+    pub capacity: usize,
+    pub recent: QueueWindow,
+}
+
+impl PluginQueueStats {
+    pub const fn new(depth: usize, capacity: usize, recent: QueueWindow) -> Self {
+        Self {
+            depth,
+            capacity,
+            recent,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginRestarts {
+    pub in_window: u32,
+    pub max: u32,
+    pub window: Duration,
+}
+
+impl PluginRestarts {
+    pub const fn new(in_window: u32, max: u32, window: Duration) -> Self {
+        Self {
+            in_window,
+            max,
+            window,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginFault {
+    pub cause: String,
+    pub ago: Duration,
+    pub generation: u64,
+}
+
+impl PluginFault {
+    pub fn new(cause: impl Into<String>, ago: Duration, generation: u64) -> Self {
+        Self {
+            cause: cause.into(),
+            ago,
+            generation,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginRuntimeStatus {
+    pub health: PluginHealth,
+    pub generation: u64,
+    pub queue: PluginQueueStats,
+    pub restarts: PluginRestarts,
+    pub last_fault: Option<PluginFault>,
+}
+
+impl PluginRuntimeStatus {
+    pub const fn new(health: PluginHealth, generation: u64, queue: PluginQueueStats) -> Self {
+        Self {
+            health,
+            generation,
+            queue,
+            restarts: PluginRestarts::new(0, 0, Duration::ZERO),
+            last_fault: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_restarts(mut self, restarts: PluginRestarts) -> Self {
+        self.restarts = restarts;
+        self
+    }
+
+    #[must_use]
+    pub fn with_last_fault(mut self, fault: PluginFault) -> Self {
+        self.last_fault = Some(fault);
+        self
+    }
+}
+
 /// A dependency on another plugin.
 #[derive(Debug, Clone)]
 pub struct PluginDependency {
@@ -124,6 +273,10 @@ pub trait Plugin: Send + Sync {
     /// does nothing.
     fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
         Box::pin(async { Ok(()) })
+    }
+
+    fn runtime_status(&self) -> Option<PluginRuntimeStatus> {
+        None
     }
 }
 
