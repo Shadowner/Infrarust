@@ -25,7 +25,7 @@ These are not faults, and the instance keeps running:
 - A host call that fails or runs out of time. The plugin gets an error value and decides what to do.
 - A callback that returns an error, and a call refused because the plugin's queue is full.
 
-Codec filters are separate instances, one per connection side, and have their own rule: a trap there only disables that one instance, which lets packets through from then on. See [Codec Filters](./codec-filters).
+Codec filters are separate instances, one per connection side, and have their own rule: a trap there only disables that one instance, which lets packets through from then on (or closes its connection, for a required filter), and repeated traps for one client address quarantine the filter for that address only. See [Codec Filters](./codec-filters#trap-behavior).
 
 ## What happens to the call that faulted
 

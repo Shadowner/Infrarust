@@ -265,14 +265,15 @@ Every WASM plugin runs under limits enforced by the wasmtime runtime and the hos
 
 | Key | Default | Applies to |
 |-----|---------|------------|
-| `epoch_tick` | `50ms` | The whole proxy: how often the epoch thread ticks |
+| `epoch_tick` | `1ms` | The whole proxy: how often the epoch thread ticks |
 | `cpu_budget` | `3s` | CPU time per guest call before an `Interrupt` trap |
-| `codec_cpu_budget` | `800ms` | CPU time per codec filter call before a trap |
+| `codec_cpu_budget` | `5ms` | CPU time per codec filter call before a trap |
 | `memory_limit_mb` | `64` | Linear memory per plugin instance |
 | `host_call_timeout` | `30s` | One host call that waits on the proxy: server-manager `start` and `stop`, ban-service calls, `connect`, `transfer`, `request-cookie`, `refresh-permissions`, `fire-named`, `set-snapshot`, `release`, and HTTP request timeouts. `switch-server` has its own 250 ms cap |
 | `max_call_duration` | `60s` | Wall-clock time of one guest call, host calls included |
 | `queue_capacity` | `1024` | Calls waiting for a busy plugin |
 | `[wasm.quotas]` | see below | Registrations one plugin holds at once |
+| `[wasm.codec_quarantine]` | 5 traps in `10s` | Traps of one codec filter from one client address before the filter is quarantined for that address (`10s`, doubling up to `5m`) |
 
 ```toml
 [wasm]
@@ -302,11 +303,11 @@ flowchart LR
 
 ### CPU budget (epoch interruption)
 
-A dedicated OS thread bumps the engine epoch every `epoch_tick`. Each guest call gets one tick before the deadline callback fires; the callback then either re-grants a tick (a cooperative yield) or, once the call has used `cpu_budget` worth of ticks, interrupts the guest with a hard trap. The budget is converted to ticks by rounding up, so the defaults give 60 yields of 50 ms.
+A dedicated OS thread bumps the engine epoch every `epoch_tick`. Each guest call is armed for one tick when it starts; at each tick the guest is still running, the deadline callback either re-grants a tick (a cooperative yield: the actor task goes behind the tasks already waiting and the worker checks the network before resuming it) or, once the call has used `cpu_budget` worth of ticks, interrupts the guest with a hard trap. The budget is converted to ticks by rounding up, so the defaults give 3000 yields of 1 ms. A stretch during which the thread was preempted by the operating system counts as one tick.
 
 A plugin that spins past the budget is interrupted and its instance is replaced by a fresh one (see [Fault model](./fault-model)). The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
 
-Codec filters run on their own budget, `codec_cpu_budget`, since each filter call is synchronous and normally finishes in microseconds. It is re-armed before every `create`/`filter`/lifecycle call; with the defaults that is 16 ticks. See [Codec Filters](./codec-filters) for the filter contract.
+Codec filters run on their own budget, `codec_cpu_budget`, since each filter call is synchronous, holds a network worker thread and normally finishes in microseconds. It is counted the same way, in ticks of running time, and re-armed before every `create`/`filter`/lifecycle call; with the defaults that is 5 ticks of 1 ms. A codec call does not yield, so it traps at the end of its budget. A filter that keeps trapping for one client address is quarantined for that address (`[wasm.codec_quarantine]`). See [Codec Filters](./codec-filters#hot-path-and-the-cpu-budget) for the filter contract.
 
 ::: info Host calls have their own timeout
 Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start), and that waiting time does not count against `cpu_budget`. Each such host call is wrapped in `host_call_timeout`, and cut shorter when the deadline of the guest call that made it is closer; on expiry the guest sees a `timeout` host error instead of hanging. See [Lifecycle](./lifecycle#deadlines).

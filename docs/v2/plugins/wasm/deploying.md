@@ -221,7 +221,7 @@ queue_capacity = 4096
 scheduled_tasks = 4096
 ```
 
-Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. `[plugins.<id>.wasm.recovery]` and `[plugins.<id>.wasm.quotas]` override `[wasm.recovery]` and `[wasm.quotas]` the same way, key by key. A plugin that schedules a delay per player, for example, may need a larger `scheduled_tasks` quota than the rest. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range, and [Registration quotas](../../configuration/global#registration-quotas) for what each quota counts.
+Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. `[plugins.<id>.wasm.recovery]`, `[plugins.<id>.wasm.quotas]` and `[plugins.<id>.wasm.codec_quarantine]` override `[wasm.recovery]`, `[wasm.quotas]` and `[wasm.codec_quarantine]` the same way, key by key. A plugin that schedules a delay per player, for example, may need a larger `scheduled_tasks` quota than the rest. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range, and [Registration quotas](../../configuration/global#registration-quotas) for what each quota counts.
 
 Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy, or reach files and hosts you did not list. Capability details are in [Capabilities](./capabilities).
 

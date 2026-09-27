@@ -8,7 +8,7 @@ outline: [2, 3]
 
 A codec filter runs on every decoded Minecraft frame for a single connection. From a WASM plugin you register a filter, and the host calls it for each packet so you can read it, mutate it, drop it, replace it, or inject extra frames around it. This is the lowest-level packet hook the WASM plugin API exposes.
 
-The filter runs synchronously on the proxy's data path. Keep each call cheap.
+The filter runs synchronously on the proxy's data path, and a slow call delays other connections too (see [What a filter costs the other connections](#what-a-filter-costs-the-other-connections)). Keep each call cheap.
 
 ## Capability
 
@@ -65,6 +65,8 @@ impl Plugin for MyPlugin {
 | `id` | `&str` | Unique id for the filter, used for ordering and unregistration. |
 | `priority` | `FilterPriority` | Ordering bucket across all registered filters. |
 | `constructor` | `impl Fn(&CodecSessionInit) -> Box<dyn CodecFilter> + 'static` | Per-connection factory. |
+
+`reg.add_required` takes the same arguments and declares a [required filter](#required-filters): when it cannot filter a connection, the proxy closes that connection instead of letting its packets through unfiltered. At the WIT level this is the `required` field of `codec-filter-metadata`.
 
 `FilterPriority` is `First`, `Early`, `Normal` (the default), `Late`, or `Last`, the same names as the WIT `filter-priority` enum. When the host refuses the registration (no `codec-filter` capability, no codec registry, or an id another plugin or the proxy already owns), the filter is simply not part of the chain and the host logs why.
 
@@ -244,7 +246,7 @@ A codec filter instance runs in its own synchronous store, separate from the plu
 | stdin | Always at end of stream. |
 | Everything else | Traps: the filesystem (there is no preopened directory), sockets and `wasi:http` (even when the plugin has the `network` capability), `exit`, sleeping on a clock (`subscribe-duration`, `subscribe-instant`), and every other `infrarust:plugin` interface. |
 
-A trap poisons that connection-side instance as described in [Trap behavior](#trap-behavior), so a filter that calls a trapping import passes every later packet through unchanged. The plugin's other host services (players, bans, config, the scheduler) are not reachable from a filter; read what you need in `on_enable` and pass it through the constructor, or reconstruct it from the [`CodecSessionInit`](#codecsessioninit).
+A trap discards that connection-side instance as described in [Trap behavior](#trap-behavior), so a filter that calls a trapping import passes every later packet through unchanged (or closes its connection, for a required filter). The plugin's other host services (players, bans, config, the scheduler) are not reachable from a filter; read what you need in `on_enable` and pass it through the constructor, or reconstruct it from the [`CodecSessionInit`](#codecsessioninit).
 
 ```rust
 struct Tally {
@@ -263,9 +265,13 @@ impl CodecFilter for Tally {
 
 ## Hot path and the CPU budget
 
-`filter` runs synchronously for every frame on every connection that the filter applies to. A per-packet filter completes in microseconds. Treat it as a hot path: avoid allocations you do not need, and do not block.
+`filter` runs synchronously for every frame on every connection that the filter applies to, on the tokio worker thread that runs the connection. A per-packet filter completes in microseconds: crossing the boundary costs about 0.3 µs for a small packet and 55 to 85 µs for a 2 MiB one. Treat it as a hot path: avoid allocations you do not need, and do not block.
 
-Each guest call (`create`, `filter`, and the lifecycle hooks) gets an epoch deadline worth `codec_cpu_budget` (the `[wasm]` table, 800 ms by default, which is 16 ticks of 50 ms), reset before every call. That is pure CPU headroom that only a runaway filter can exceed. When a call exceeds it, the guest traps.
+Each guest call (`create`, `filter`, the lifecycle hooks and the instance's final drop) gets `codec_cpu_budget`, 5 ms by default, set in `[wasm]` or per plugin under `[plugins.<id>.wasm]`. The budget is counted in epoch ticks (`epoch_tick`, 1 ms by default) during which the guest is running, re-armed at the start of every call. A stretch the thread spends preempted by the operating system counts as one tick, so a filter is not cut because the host was busy. A call that runs past its budget traps; see [Trap behavior](#trap-behavior). The budget is headroom for a runaway filter, not a time slice to plan for: a filter that needs more for a large packet can have its plugin's `codec_cpu_budget` raised.
+
+### What a filter costs the other connections
+
+A filter call does not yield. While it runs, it holds its worker thread, and when the proxy is lightly loaded that worker is often the one watching the network for the whole proxy: no other socket is read until the call returns. Every millisecond a filter spends is therefore a millisecond of added latency for other players, not only for its own connection. The 5 ms budget bounds that cost per call, and the [quarantine](#quarantine) bounds how many such calls one client address can cause.
 
 :::warning
 The codec filter has no async runtime and no `.await`. It is single-threaded guest code. Keep per-packet work small.
@@ -273,13 +279,48 @@ The codec filter has no async runtime and no `.await`. It is single-threaded gue
 
 ## Trap behavior
 
-If a guest codec call traps (including exhausting the epoch budget), the host poisons that connection-side instance. From then on, every `filter` call on that side returns `Verdict::Pass` (the packet passes through unchanged) and the lifecycle hooks become no-ops. The trap is logged with the plugin id and the operation that trapped. The other connection-side and other connections are not affected.
+If a guest codec call traps (a panic, running past `codec_cpu_budget`, running out of memory, or calling an import a filter cannot use), the host discards that connection-side instance. From then on, every `filter` call on that side returns `Verdict::Pass` (the packet passes through unchanged) and the lifecycle hooks become no-ops. The proxy logs a warning with the plugin id, the filter id, the operation that trapped, the client address and the cause, for example `ran past codec_cpu_budget (5ms)` or `hit an unreachable instruction (a panic in the filter ends this way)`. These warnings are limited to 10 per minute per filter; the next one that gets through carries a `suppressed` count. The other connection side and other connections keep their instances, unless the fault puts the client address in [quarantine](#quarantine).
 
-If the host fails to create the filter instance for a connection (for example instantiation fails), that connection-side passes through for its entire lifetime.
+If the host cannot create the filter instance for a connection side (for example `instance_pool` has no free slot, or the process cannot reserve more address space), that side passes through for its entire lifetime. The proxy logs an error for it, at most 10 per minute per filter with a `suppressed` count. Running out of slots is not counted as a fault of the client.
+
+A required filter closes the connection instead of passing its packets through; see [Required filters](#required-filters).
 
 :::info
 The WIT contract also defines a `filter-output::error(codec-filter-error)` variant for translation and payload failures. The SDK's `Verdict` does not expose it; surface errors through your own logging and return `Pass`, `Drop`, or `Replace`.
 :::
+
+## Quarantine
+
+Every trap of a filter is also counted against the client address of its connection (the real client IP when the proxy knows it, otherwise the peer address). When one address reaches `faults` traps of the same filter within `window`, that filter is quarantined for that address:
+
+- its live instances on connections from that address stop filtering (they pass through, or close their connection if the filter is required);
+- new connections from that address get no instance of the filter for `backoff_initial`, and pass through unfiltered (or are refused if the filter is required);
+- the proxy logs one warning naming the plugin, the filter, the address, the threshold, the time until retry and the cause of the fault that tripped it. Quarantine warnings are limited to 10 per minute per filter.
+
+A client who makes a filter fault only affects its own connections; other addresses keep the filter. When the backoff has passed, the address gets the filter again. If the address faults again within `window` after its quarantine ended, its next quarantine lasts twice as long, up to `backoff_max`; a whole `window` without a fault after a quarantine ended starts the backoff over at `backoff_initial`. A filter that is buggy for everyone is still bounded per call by `codec_cpu_budget`.
+
+```toml
+[wasm.codec_quarantine]
+faults = 5              # traps of one filter from one address; 0 turns the quarantine off
+window = "10s"
+backoff_initial = "10s"
+backoff_max = "5m"
+
+[plugins.anticheat.wasm.codec_quarantine]
+faults = 3
+```
+
+See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for the ranges.
+
+## Required filters
+
+A filter registered with `reg.add_required` is required: the proxy does not let a connection through without it.
+
+- If the instance cannot be created for a connection side (a trap in `create`, no free instance slot, no address space left), the player is disconnected before the proxy connects to a backend, with `Connection refused: a required packet filter is not available.`
+- If the instance traps later, or its client address is quarantined while the connection is open, the connection is closed at its next packet with `Disconnected: a required packet filter failed.` Other connections are not affected.
+- While the filter is quarantined for an address, new connections from that address are refused the same way.
+
+The proxy logs the refusal or the close with the reason, next to the trap or quarantine warning. Use it for filters whose absence would be a security problem (packet sanitising, anti-cheat); leave cosmetic filters optional, since a required filter that fails for everyone refuses everyone.
 
 ## Connection-state transitions
 
