@@ -1,11 +1,6 @@
-//! Ahead-of-time compile cache (§10). Each `*.wasm` is precompiled to a `.cwasm` keyed by
-//! its content hash plus the wasmtime/world version, so subsequent loads skip compilation.
-//!
-//! SAFETY model: `Component::deserialize*` is `unsafe`, and is invoked ONLY on artifacts
-//! this loader produced via `precompile_component` and wrote atomically into its own cache
-//! directory. Users deposit `*.wasm`; they never supply a `.cwasm`.
-
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
 use wasmtime::component::Component;
@@ -18,11 +13,15 @@ const WASM_MAGIC: &[u8; 4] = b"\0asm";
 const COMPONENT_HEADER: [u8; 4] = [0x0d, 0x00, 0x01, 0x00];
 const CORE_MODULE_HEADER: [u8; 4] = [0x01, 0x00, 0x00, 0x00];
 const PREAMBLE_LEN: usize = 8;
+const ENTRY_SUFFIX: &str = ".cwasm";
+const TEMP_SUFFIX: &str = ".cwasm.tmp";
+const TEMP_RANDOM_CHARS: usize = 12;
 
 #[derive(Clone)]
 pub(crate) struct AotCache {
     dir: PathBuf,
     engine_tag: String,
+    write_warned: Arc<AtomicBool>,
 }
 
 impl AotCache {
@@ -30,6 +29,7 @@ impl AotCache {
         Self {
             dir,
             engine_tag: engine_tag(engine),
+            write_warned: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -43,6 +43,10 @@ impl AotCache {
         hex(&hasher.finalize())
     }
 
+    fn entry_path(&self, key: &str) -> PathBuf {
+        self.dir.join(format!("{key}{ENTRY_SUFFIX}"))
+    }
+
     pub(crate) fn compile_or_load(
         &self,
         engine: &Engine,
@@ -50,61 +54,129 @@ impl AotCache {
     ) -> Result<Component, WasmLoaderError> {
         let bytes = read_component(wasm_path)?;
         let key = self.cache_key(&bytes);
-        let cwasm = self.dir.join(format!("{key}.cwasm"));
+        let entry = self.entry_path(&key);
 
-        if cwasm.is_file() {
-            match Engine::detect_precompiled_file(&cwasm) {
-                Ok(Some(Precompiled::Component)) => match deserialize_trusted(engine, &cwasm) {
-                    Ok(component) => return Ok(component),
-                    Err(e) => {
-                        tracing::warn!(path = %cwasm.display(), error = %e,
-                            "stale or corrupt .cwasm, recompiling");
-                        let _ = std::fs::remove_file(&cwasm);
-                    }
-                },
-                _ => {
-                    let _ = std::fs::remove_file(&cwasm);
-                }
-            }
-        }
+        let stale = match self.read_entry(&entry) {
+            Some(artifact) => match load_artifact(engine, &artifact) {
+                Ok(component) => return Ok(component),
+                Err(error) => Some(error),
+            },
+            None => None,
+        };
 
-        let serialized =
+        let artifact =
             engine
                 .precompile_component(&bytes)
                 .map_err(|e| WasmLoaderError::Precompile {
                     path: wasm_path.to_path_buf(),
                     reason: bounded(format_args!("{e:#}")),
                 })?;
-        self.atomic_write(&cwasm, &serialized)?;
-
-        deserialize_trusted(engine, &cwasm).map_err(|e| WasmLoaderError::Deserialize {
-            path: cwasm,
+        let loaded = load_artifact(engine, &artifact);
+        match (&stale, &loaded) {
+            (Some(_), Err(_)) => {}
+            (Some(error), Ok(_)) => {
+                tracing::warn!(
+                    path = %entry.display(),
+                    error = %bounded(format_args!("{error:#}")),
+                    "AOT cache entry could not be loaded; replaced by a fresh compilation"
+                );
+                self.store(&key, &artifact);
+            }
+            (None, _) => self.store(&key, &artifact),
+        }
+        loaded.map_err(|e| WasmLoaderError::Deserialize {
+            path: wasm_path.to_path_buf(),
             reason: bounded(format_args!("{e:#}")),
         })
     }
 
-    fn atomic_write(&self, dst: &Path, data: &[u8]) -> Result<(), WasmLoaderError> {
-        use std::io::Write;
-        std::fs::create_dir_all(&self.dir).map_err(|source| WasmLoaderError::CacheIo {
-            path: self.dir.clone(),
-            source,
-        })?;
-        let tmp = dst.with_extension(format!("cwasm.tmp.{}", std::process::id()));
-        let mut file = std::fs::File::create(&tmp).map_err(|source| WasmLoaderError::CacheIo {
-            path: tmp.clone(),
-            source,
-        })?;
-        file.write_all(data)
-            .and_then(|()| file.sync_all())
-            .map_err(|source| WasmLoaderError::CacheIo {
-                path: tmp.clone(),
-                source,
-            })?;
-        std::fs::rename(&tmp, dst).map_err(|source| WasmLoaderError::CacheIo {
-            path: dst.to_path_buf(),
-            source,
-        })
+    fn read_entry(&self, entry: &Path) -> Option<Vec<u8>> {
+        match std::fs::symlink_metadata(entry) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => {
+                tracing::warn!(
+                    path = %entry.display(),
+                    "AOT cache entry is not a regular file; ignored"
+                );
+                return None;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                tracing::warn!(
+                    path = %entry.display(),
+                    error = %error,
+                    "AOT cache entry cannot be read; ignored"
+                );
+                return None;
+            }
+        }
+        match std::fs::read(entry) {
+            Ok(artifact) => Some(artifact),
+            Err(error) => {
+                tracing::warn!(
+                    path = %entry.display(),
+                    error = %error,
+                    "AOT cache entry cannot be read; ignored"
+                );
+                None
+            }
+        }
     }
+
+    fn store(&self, key: &str, artifact: &[u8]) {
+        if let Err(error) = self.write_entry(key, artifact)
+            && !self.write_warned.swap(true, Ordering::Relaxed)
+        {
+            tracing::warn!(
+                cache_dir = %self.dir.display(),
+                error = %error,
+                "AOT cache directory cannot be written; plugins are compiled in memory and compiled again at the next start"
+            );
+        }
+    }
+
+    fn write_entry(&self, key: &str, artifact: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        create_private_dir(&self.dir)?;
+        let mut temp = tempfile::Builder::new()
+            .prefix(&format!("{key}."))
+            .suffix(TEMP_SUFFIX)
+            .rand_bytes(TEMP_RANDOM_CHARS)
+            .tempfile_in(&self.dir)?;
+        temp.write_all(artifact)?;
+        temp.as_file().sync_all()?;
+        temp.persist(self.entry_path(key))
+            .map(drop)
+            .map_err(|error| error.error)
+    }
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+fn load_artifact(engine: &Engine, artifact: &[u8]) -> Result<Component, wasmtime::Error> {
+    if Engine::detect_precompiled(artifact) != Some(Precompiled::Component) {
+        return Err(wasmtime::Error::msg(
+            "not a precompiled component of this engine",
+        ));
+    }
+    deserialize(engine, artifact)
+}
+
+#[allow(unsafe_code)]
+fn deserialize(engine: &Engine, artifact: &[u8]) -> Result<Component, wasmtime::Error> {
+    unsafe { Component::deserialize(engine, artifact) }
 }
 
 fn engine_tag(engine: &Engine) -> String {
@@ -222,14 +294,6 @@ fn looks_like_text(preamble: &[u8]) -> bool {
         .iter()
         .find(|byte| !byte.is_ascii_whitespace())
         .is_some_and(|first| matches!(first, b'(' | b';'))
-}
-
-/// SAFETY: only ever called on artifacts written by `AotCache::compile_or_load` into our
-/// own cache dir (see module docs). We never deserialize a user-supplied `.cwasm`, and the
-/// caller has confirmed via `detect_precompiled_file` that the file is a component.
-#[allow(unsafe_code)]
-fn deserialize_trusted(engine: &Engine, path: &Path) -> Result<Component, wasmtime::Error> {
-    unsafe { Component::deserialize_file(engine, path) }
 }
 
 #[cfg(test)]

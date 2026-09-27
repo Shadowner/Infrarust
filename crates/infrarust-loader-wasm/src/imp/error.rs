@@ -33,16 +33,8 @@ pub enum WasmLoaderError {
     #[error("failed to precompile component at {path}: {reason}")]
     Precompile { path: PathBuf, reason: String },
 
-    /// Deserializing a cached `.cwasm` artifact failed (version mismatch / corruption).
-    #[error("failed to deserialize cached artifact at {path}: {reason}")]
+    #[error("failed to load the compiled component of {path}: {reason}")]
     Deserialize { path: PathBuf, reason: String },
-
-    #[error("cache io error at {path}: {source}")]
-    CacheIo {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
 
     /// Failed to set up the per-plugin WASI context (e.g. preopen of `data_dir`).
     #[error("wasi setup failed for {path}: {source}")]
@@ -108,7 +100,6 @@ impl WasmLoaderError {
             | Self::TooLarge { .. }
             | Self::Precompile { .. }
             | Self::Deserialize { .. }
-            | Self::CacheIo { .. }
             | Self::WasiSetup { .. }
             | Self::Trap { .. }
             | Self::CallFailed { .. }

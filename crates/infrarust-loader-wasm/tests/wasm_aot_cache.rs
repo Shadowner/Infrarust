@@ -8,7 +8,10 @@ use std::time::Duration;
 
 use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::PluginMetadata;
+use tracing::Level;
+use tracing::instrument::WithSubscriber;
 
+use support::log_capture::LogCapture;
 use support::{add_fixture, fixture_path, fresh_loader, loader_from_toml, make_env};
 
 const MARKER: &[u8] = b"LIFPROBE-BLOB-V1";
@@ -210,7 +213,6 @@ async fn a_cache_entry_is_bound_to_the_component_it_was_compiled_from() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-11: unwritable AOT cache refuses every plugin"]
 async fn a_read_only_cache_dir_does_not_stop_loading() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
@@ -232,7 +234,6 @@ async fn a_read_only_cache_dir_does_not_stop_loading() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-11: unwritable AOT cache refuses every plugin"]
 async fn a_read_only_plugins_dir_still_loads_its_plugins() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
@@ -252,7 +253,6 @@ async fn a_read_only_plugins_dir_still_loads_its_plugins() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-18: cache temp files named by PID"]
 async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
@@ -341,5 +341,90 @@ async fn toggling_instance_pool_does_not_recompile_on_every_start() {
     assert!(
         rebuilds.iter().skip(1).all(|(_, changed)| !changed),
         "the cache is recompiled whenever instance_pool changes: {rebuilds:?}"
+    );
+}
+
+fn leb128(mut value: u32, out: &mut Vec<u8>) {
+    loop {
+        let byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+fn section(id: u8, body: &[u8], out: &mut Vec<u8>) {
+    out.push(id);
+    leb128(u32::try_from(body.len()).unwrap(), out);
+    out.extend_from_slice(body);
+}
+
+fn component_with_a_table_of(elements: u32) -> Vec<u8> {
+    let mut tables = vec![1, 0x70, 1];
+    leb128(elements, &mut tables);
+    leb128(elements, &mut tables);
+    let mut module = b"\0asm\x01\0\0\0".to_vec();
+    section(4, &tables, &mut module);
+    let mut component = b"\0asm\x0d\0\x01\0".to_vec();
+    section(1, &module, &mut component);
+    section(2, &[1, 0, 0, 0], &mut component);
+    component
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_component_the_pool_cannot_hold_keeps_its_cache_entry_and_names_the_pool_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    std::fs::write(dir.join("wide.wasm"), component_with_a_table_of(20_000)).unwrap();
+    let pooled = || loader_from_toml("[wasm]\ninstance_pool = 8\n");
+    let logs = LogCapture::at(Level::WARN);
+
+    let found = discover_with(&pooled(), &dir)
+        .with_subscriber(logs.clone())
+        .await
+        .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+    let entry = only_cwasm(&dir);
+    let written = std::fs::metadata(&entry).unwrap().modified().unwrap();
+    discover_with(&pooled(), &dir)
+        .with_subscriber(logs.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::metadata(&entry).unwrap().modified().unwrap(),
+        written,
+        "an entry the pool cannot load is kept, not rewritten"
+    );
+    let refusals = logs.matching("WASM plugin refused");
+    assert_eq!(refusals.len(), 2, "{:?}", logs.lines());
+    assert!(
+        refusals
+            .iter()
+            .all(|line| line.contains("exceeds the limit of")),
+        "the refusal names the pooled table limit: {refusals:?}"
+    );
+    assert!(
+        logs.matching("replaced by a fresh compilation").is_empty(),
+        "{:?}",
+        logs.lines()
+    );
+
+    discover_with(&fresh_loader(), &dir)
+        .with_subscriber(logs.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::metadata(&entry).unwrap().modified().unwrap(),
+        written,
+        "without a pool the same entry loads"
+    );
+    assert_eq!(
+        logs.matching("not an Infrarust plugin").len(),
+        1,
+        "{:?}",
+        logs.lines()
     );
 }

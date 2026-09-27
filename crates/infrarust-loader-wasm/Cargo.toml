@@ -28,6 +28,7 @@ thiserror = { workspace = true }
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
@@ -65,6 +66,7 @@ wasm = [
     "dep:wasmtime",
     "dep:wasmtime-wasi",
     "dep:sha2",
+    "dep:tempfile",
     "dep:tokio",
     "dep:tokio-util",
     "dep:futures-util",
