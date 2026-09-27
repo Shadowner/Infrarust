@@ -606,6 +606,17 @@ async fn a_deny_listener_busy_with_one_slow_login_still_decides_the_logins_behin
     tokio::time::sleep(Duration::from_millis(50)).await;
     let mut outcomes = Vec::new();
     for name in ["Intruder", "Griefer", "Friend"] {
+        if name == "Griefer" {
+            let deadline = Instant::now() + PROMPTLY;
+            while probe.lines_starting("enable recovered").is_empty() {
+                assert!(
+                    Instant::now() < deadline,
+                    "the slow call was never replaced: {:?}",
+                    probe.log()
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
         let event = probe.env.event_bus.fire(pre_login(name)).await;
         outcomes.push(format!(
             "{name}={}",
