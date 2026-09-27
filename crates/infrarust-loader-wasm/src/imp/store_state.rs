@@ -553,7 +553,10 @@ pub(crate) fn install_epoch_control(store: &mut Store<PluginStoreState>, max_epo
             );
             Ok(UpdateDeadline::Interrupt)
         } else {
-            Ok(UpdateDeadline::Yield(EPOCH_DEADLINE_TICKS))
+            Ok(UpdateDeadline::YieldCustom(
+                EPOCH_DEADLINE_TICKS,
+                Box::pin(tokio::task::yield_now()),
+            ))
         }
     });
 }
