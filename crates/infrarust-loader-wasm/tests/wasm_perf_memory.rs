@@ -92,12 +92,13 @@ async fn under_thp_always_a_pooled_codec_instance_is_not_much_heavier_than_an_on
     );
 }
 
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test(flavor = "current_thread")]
 async fn under_thp_always_closing_pooled_codec_connections_gives_their_memory_back() {
     if !thp_always() {
         return;
     }
     let _serial = SERIAL.lock().await;
+    let _allocator_warm_up = resident_per_connection("").await;
     let pooled = resident_per_connection(POOL).await;
     assert!(
         pooled.left_per_connection <= 16.0,
