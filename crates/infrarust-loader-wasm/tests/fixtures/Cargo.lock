@@ -76,6 +76,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-fault-lab"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
+name = "fixture-fault-lab-peer"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-host-caller"
 version = "0.0.0"
 dependencies = [
@@ -91,6 +105,22 @@ dependencies = [
 
 [[package]]
 name = "fixture-memory-bomb"
+version = "0.0.0"
+dependencies = [
+ "fixture-common",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "fixture-metadata-sleep"
+version = "0.0.0"
+dependencies = [
+ "fixture-common",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "fixture-metadata-trap"
 version = "0.0.0"
 dependencies = [
  "fixture-common",

@@ -20,6 +20,10 @@ members = [
     "provider",
     "net-probe",
     "net-codec",
+    "fault-lab",
+    "fault-lab-peer",
+    "metadata-trap",
+    "metadata-sleep",
 ]
 
 [workspace.dependencies]

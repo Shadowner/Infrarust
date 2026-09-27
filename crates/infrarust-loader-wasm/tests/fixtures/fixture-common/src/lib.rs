@@ -8,8 +8,28 @@ macro_rules! raw_fixture {
         description: $desc:expr,
         on_enable: $on_enable:block $(,)?
     ) => {
-        impl crate::exports::infrarust::plugin::guest::Guest for $comp {
-            fn metadata() -> crate::exports::infrarust::plugin::guest::PluginMetadata {
+        $crate::raw_fixture!(
+            $comp,
+            id: $id,
+            name: $name,
+            description: $desc,
+            on_enable: $on_enable,
+            handle_event: |_listener: u64, _ev: crate::exports::infrarust::plugin::guest::Event| {
+                crate::exports::infrarust::plugin::guest::EventOutcome::Unchanged
+            },
+        );
+    };
+    (
+        $comp:ident,
+        id: $id:literal,
+        name: $name:literal,
+        description: $desc:expr,
+        on_enable: $on_enable:block,
+        handle_event: $handle:expr $(,)?
+    ) => {
+        $crate::raw_fixture_with_metadata!(
+            $comp,
+            metadata: {
                 crate::exports::infrarust::plugin::guest::PluginMetadata {
                     id: ::std::string::String::from($id),
                     name: ::std::string::String::from($name),
@@ -18,7 +38,38 @@ macro_rules! raw_fixture {
                     description: $desc,
                     dependencies: ::std::vec::Vec::new(),
                 }
-            }
+            },
+            on_enable: $on_enable,
+            handle_event: $handle,
+        );
+    };
+}
+
+#[allow(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! raw_fixture_with_metadata {
+    (
+        $comp:ident,
+        metadata: $metadata:block,
+        on_enable: $on_enable:block $(,)?
+    ) => {
+        $crate::raw_fixture_with_metadata!(
+            $comp,
+            metadata: $metadata,
+            on_enable: $on_enable,
+            handle_event: |_listener: u64, _ev: crate::exports::infrarust::plugin::guest::Event| {
+                crate::exports::infrarust::plugin::guest::EventOutcome::Unchanged
+            },
+        );
+    };
+    (
+        $comp:ident,
+        metadata: $metadata:block,
+        on_enable: $on_enable:block,
+        handle_event: $handle:expr $(,)?
+    ) => {
+        impl crate::exports::infrarust::plugin::guest::Guest for $comp {
+            fn metadata() -> crate::exports::infrarust::plugin::guest::PluginMetadata $metadata
             fn on_enable(
                 _reason: crate::exports::infrarust::plugin::guest::EnableReason,
             ) -> ::core::result::Result<(), ::std::string::String> $on_enable
@@ -28,10 +79,10 @@ macro_rules! raw_fixture {
                 ::core::result::Result::Ok(())
             }
             fn handle_event(
-                _listener: u64,
-                _ev: crate::exports::infrarust::plugin::guest::Event,
+                listener: u64,
+                ev: crate::exports::infrarust::plugin::guest::Event,
             ) -> crate::exports::infrarust::plugin::guest::EventOutcome {
-                crate::exports::infrarust::plugin::guest::EventOutcome::Unchanged
+                ($handle)(listener, ev)
             }
             fn handle_command(
                 _handler: u64,
