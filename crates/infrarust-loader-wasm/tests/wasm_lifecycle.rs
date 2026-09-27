@@ -19,6 +19,15 @@ const MARKER: &[u8] = b"LIFPROBE-BLOB-V1";
 const BLOB_PAYLOAD: usize = 8192 - 16;
 const DISCOVERY_BOUND: Duration = Duration::from_secs(30);
 
+static COMPILE_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+async fn compile_slot() -> tokio::sync::SemaphorePermit<'static> {
+    COMPILE_SLOTS
+        .acquire()
+        .await
+        .expect("the compile slots are never closed")
+}
+
 fn probe_bytes(settings: &str) -> Vec<u8> {
     let mut bytes = std::fs::read(fixture_path("lif-probe")).unwrap();
     let at = bytes
@@ -42,6 +51,7 @@ fn add_probe(plugins_dir: &Path, file_stem: &str, settings: &str) -> PathBuf {
 }
 
 async fn discover(plugins_dir: &Path) -> Result<Vec<PluginMetadata>, LoaderError> {
+    let _slot = compile_slot().await;
     tokio::time::timeout(DISCOVERY_BOUND, fresh_loader().discover(plugins_dir))
         .await
         .expect("discovery finishes in bounded time")
@@ -69,16 +79,58 @@ async fn assert_good_plugin_survives(plugins_dir: &Path, what: &str) {
     assert_eq!(ids(&metas), ["good"], "{what}");
 }
 
-fn staged_with_good() -> (tempfile::TempDir, PathBuf) {
+type Artifacts = Vec<(std::ffi::OsString, Vec<u8>)>;
+
+async fn add_precompiled_probe(plugins_dir: &Path, file_stem: &str, settings: &str) -> PathBuf {
+    static COMPILED: std::sync::Mutex<
+        std::collections::BTreeMap<String, std::sync::Arc<tokio::sync::OnceCell<Artifacts>>>,
+    > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+    let path = add_probe(plugins_dir, file_stem, settings);
+    let cell = std::sync::Arc::clone(
+        COMPILED
+            .lock()
+            .unwrap()
+            .entry(settings.to_owned())
+            .or_default(),
+    );
+    let artifacts = cell
+        .get_or_init(|| async {
+            let _slot = compile_slot().await;
+            let tmp = tempfile::tempdir().unwrap();
+            add_probe(tmp.path(), file_stem, settings);
+            fresh_loader().discover(tmp.path()).await.unwrap();
+            std::fs::read_dir(tmp.path().join(".cache"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "cwasm"))
+                .map(|path| {
+                    (
+                        path.file_name().unwrap().to_owned(),
+                        std::fs::read(&path).unwrap(),
+                    )
+                })
+                .collect()
+        })
+        .await;
+    let cache = plugins_dir.join(".cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    for (name, bytes) in artifacts {
+        std::fs::write(cache.join(name), bytes).unwrap();
+    }
+    path
+}
+
+async fn staged_with_good() -> (tempfile::TempDir, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "good", "id=good\n");
+    add_precompiled_probe(&dir, "good", "id=good\n").await;
     (tmp, dir)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_healthy_probe_is_discovered_with_its_patched_metadata() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let metas = discover(&dir).await.unwrap();
     assert_eq!(ids(&metas), ["good"]);
     assert_eq!(metas[0].version, "0.1.0");
@@ -86,14 +138,14 @@ async fn a_healthy_probe_is_discovered_with_its_patched_metadata() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_zero_byte_wasm_does_not_stop_the_other_plugins() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::write(dir.join("empty.wasm"), b"").unwrap();
     assert_good_plugin_survives(&dir, "zero-byte .wasm").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn random_bytes_do_not_stop_the_other_plugins() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let noise: Vec<u8> = (0..4096u32)
         .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
         .collect();
@@ -103,14 +155,14 @@ async fn random_bytes_do_not_stop_the_other_plugins() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_core_module_does_not_stop_the_other_plugins() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::write(dir.join("core.wasm"), b"\0asm\x01\0\0\0").unwrap();
     assert_good_plugin_survives(&dir, "core module").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_truncated_component_does_not_stop_the_other_plugins() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let bytes = probe_bytes("id=truncated\n");
     std::fs::write(dir.join("truncated.wasm"), &bytes[..bytes.len() / 2]).unwrap();
     assert_good_plugin_survives(&dir, "truncated component").await;
@@ -118,7 +170,7 @@ async fn a_truncated_component_does_not_stop_the_other_plugins() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn each_refused_file_is_logged_once_with_its_path() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let empty = dir.join("empty.wasm");
     std::fs::write(&empty, b"").unwrap();
     let core = dir.join("core.wasm");
@@ -140,7 +192,7 @@ async fn each_refused_file_is_logged_once_with_its_path() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_directory_named_like_a_plugin_is_skipped() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::create_dir(dir.join("folder.wasm")).unwrap();
     assert_good_plugin_survives(&dir, "directory named x.wasm").await;
 }
@@ -149,7 +201,7 @@ async fn a_directory_named_like_a_plugin_is_skipped() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreadable_wasm_does_not_stop_the_other_plugins() {
     use std::os::unix::fs::PermissionsExt;
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let locked = add_probe(&dir, "locked", "id=locked\n");
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
     if std::fs::read(&locked).is_ok() {
@@ -161,7 +213,7 @@ async fn an_unreadable_wasm_does_not_stop_the_other_plugins() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dangling_symlink_does_not_stop_the_other_plugins() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::os::unix::fs::symlink(dir.join("missing-target"), dir.join("dangling.wasm")).unwrap();
     assert_good_plugin_survives(&dir, "dangling symlinked .wasm").await;
 }
@@ -181,7 +233,7 @@ async fn a_symlinked_wasm_is_loaded_once() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_directory_symlink_loop_does_not_stop_discovery() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
     assert_good_plugin_survives(&dir, "symlink loop to plugins_dir").await;
 }
@@ -189,9 +241,9 @@ async fn a_directory_symlink_loop_does_not_stop_discovery() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_directory_reached_through_two_links_is_scanned_once() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::create_dir(dir.join("real")).unwrap();
-    add_probe(&dir.join("real"), "shared", "id=shared\n");
+    add_precompiled_probe(&dir.join("real"), "shared", "id=shared\n").await;
     std::os::unix::fs::symlink(dir.join("real"), dir.join("alias")).unwrap();
     std::os::unix::fs::symlink(&dir, dir.join("real").join("up")).unwrap();
     let (found, logs) = discover_logged(&dir).await;
@@ -207,7 +259,7 @@ async fn a_directory_reached_through_two_links_is_scanned_once() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_wasm_file_reached_through_two_paths_is_probed_once() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::create_dir(dir.join("links")).unwrap();
     std::os::unix::fs::symlink(dir.join("good.wasm"), dir.join("links").join("again.wasm"))
         .unwrap();
@@ -220,7 +272,7 @@ async fn a_wasm_file_reached_through_two_paths_is_probed_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreadable_subdirectory_is_skipped_and_logged() {
     use std::os::unix::fs::PermissionsExt;
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let locked = dir.join("locked");
     std::fs::create_dir(&locked).unwrap();
     add_probe(&locked, "hidden", "id=hidden\n");
@@ -288,7 +340,7 @@ impl std::fmt::Write for BoundedText {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-21: no file header check, huge or misleading errors"]
 async fn a_huge_non_component_is_refused_quickly() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     let huge = dir.join("huge.wasm");
     let file = std::fs::File::create(&huge).unwrap();
     file.set_len(HUGE_SPARSE_LEN).unwrap();
@@ -341,6 +393,7 @@ async fn manage(dir: &Path, proxy_toml: &str, extra: Vec<Box<dyn PluginLoader>>)
     let mut loaders = extra;
     loaders.push(Box::new(support::loader_from_toml(proxy_toml)));
     let mut manager = infrarust_core::plugin::manager::PluginManager::new(loaders);
+    let _slot = compile_slot().await;
     let discovery = tokio::time::timeout(DISCOVERY_BOUND, manager.discover_all(dir))
         .await
         .expect("discovery finishes in bounded time")
@@ -390,7 +443,7 @@ fn stamp_of(dir: &Path, id: &str, prefix: &str) -> u128 {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_zero_byte_wasm_does_not_stop_the_plugin_manager() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::write(dir.join("empty.wasm"), b"").unwrap();
     let managed = manage(&dir, "", Vec::new()).await;
     assert!(
@@ -403,9 +456,10 @@ async fn a_zero_byte_wasm_does_not_stop_the_plugin_manager() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_proxy_starts_with_its_good_plugins_when_plugins_dir_holds_a_zero_byte_wasm() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     std::fs::write(dir.join("empty.wasm"), b"").unwrap();
     let plugins_dir = dir.clone();
+    let _slot = compile_slot().await;
     let started = infrarust_test_harness::TestProxy::builder()
         .loader(Box::new(fresh_loader()))
         .patch_config(move |table| {
@@ -428,8 +482,8 @@ async fn the_proxy_starts_with_its_good_plugins_when_plugins_dir_holds_a_zero_by
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missing_hard_dependency_fails_only_the_plugin_that_needs_it() {
-    let (_tmp, dir) = staged_with_good();
-    add_probe(&dir, "needy", "id=needy\ndep=absent\n");
+    let (_tmp, dir) = staged_with_good().await;
+    add_precompiled_probe(&dir, "needy", "id=needy\ndep=absent\n").await;
     let managed = manage(&dir, "", Vec::new()).await;
     assert!(
         managed.discovery.is_ok(),
@@ -449,8 +503,8 @@ async fn a_missing_hard_dependency_fails_only_the_plugin_that_needs_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missing_optional_dependency_is_ignored() {
-    let (_tmp, dir) = staged_with_good();
-    add_probe(&dir, "relaxed", "id=relaxed\nsoftdep=absent\n");
+    let (_tmp, dir) = staged_with_good().await;
+    add_precompiled_probe(&dir, "relaxed", "id=relaxed\nsoftdep=absent\n").await;
     let managed = manage(&dir, "", Vec::new()).await;
     managed.discovery.as_ref().unwrap();
     assert!(managed.enabled("good") && managed.enabled("relaxed"));
@@ -458,9 +512,9 @@ async fn a_missing_optional_dependency_is_ignored() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dependency_cycle_fails_only_the_plugins_in_the_cycle() {
-    let (_tmp, dir) = staged_with_good();
-    add_probe(&dir, "ping", "id=ping\ndep=pong\n");
-    add_probe(&dir, "pong", "id=pong\ndep=ping\n");
+    let (_tmp, dir) = staged_with_good().await;
+    add_precompiled_probe(&dir, "ping", "id=ping\ndep=pong\n").await;
+    add_precompiled_probe(&dir, "pong", "id=pong\ndep=ping\n").await;
     let managed = manage(&dir, "", Vec::new()).await;
     assert!(
         managed.discovery.is_ok(),
@@ -480,10 +534,10 @@ async fn a_dependency_cycle_fails_only_the_plugins_in_the_cycle() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_wasm_files_with_the_same_id_do_not_stop_the_other_plugins() {
-    let (_tmp, dir) = staged_with_good();
-    add_probe(&dir, "twin-a", "id=twin\n");
+    let (_tmp, dir) = staged_with_good().await;
+    add_precompiled_probe(&dir, "twin-a", "id=twin\n").await;
     std::fs::create_dir(dir.join("backup")).unwrap();
-    add_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n");
+    add_precompiled_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n").await;
     let managed = manage(&dir, "", Vec::new()).await;
     assert!(
         managed.discovery.is_ok(),
@@ -496,10 +550,11 @@ async fn two_wasm_files_with_the_same_id_do_not_stop_the_other_plugins() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_wasm_files_with_the_same_id_are_refused_by_one_error_naming_both() {
-    let (_tmp, dir) = staged_with_good();
-    let first = add_probe(&dir, "twin-a", "id=twin\n");
+    let (_tmp, dir) = staged_with_good().await;
+    let first = add_precompiled_probe(&dir, "twin-a", "id=twin\n").await;
     std::fs::create_dir(dir.join("backup")).unwrap();
-    let second = add_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n");
+    let second =
+        add_precompiled_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n").await;
     let (found, logs) = discover_logged(&dir).await;
     assert_eq!(ids(&found.unwrap()), ["good"]);
     let refusals = logs.matching("same plugin id");
@@ -514,8 +569,8 @@ async fn two_wasm_files_with_the_same_id_are_refused_by_one_error_naming_both() 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_wasm_id_colliding_with_a_native_plugin_does_not_stop_the_native_one() {
-    let (_tmp, dir) = staged_with_good();
-    let impostor = add_probe(&dir, "impostor", "id=native-core\n");
+    let (_tmp, dir) = staged_with_good().await;
+    let impostor = add_precompiled_probe(&dir, "impostor", "id=native-core\n").await;
     let managed = manage(&dir, "", vec![native_loader("native-core")]).await;
     assert!(
         managed.discovery.is_ok(),
@@ -536,8 +591,8 @@ async fn a_wasm_id_colliding_with_a_native_plugin_does_not_stop_the_native_one()
 async fn a_plugin_whose_hard_dependency_failed_to_enable_is_not_enabled() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "base", "id=base\nenable=fail\n");
-    add_probe(&dir, "dependent", "id=dependent\ndep=base\n");
+    add_precompiled_probe(&dir, "base", "id=base\nenable=fail\n").await;
+    add_precompiled_probe(&dir, "dependent", "id=dependent\ndep=base\n").await;
     let managed = manage(&dir, "", Vec::new()).await;
     managed.discovery.as_ref().unwrap();
     assert!(!managed.enabled("base"), "base refused its own enable");
@@ -553,12 +608,14 @@ async fn a_plugin_whose_hard_dependency_failed_to_enable_is_not_enabled() {
 async fn a_plugin_depending_on_a_config_disabled_plugin_is_not_enabled() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "base", "id=base\n");
-    add_probe(&dir, "dependent", "id=dependent\ndep=base\n");
+    add_precompiled_probe(&dir, "base", "id=base\n").await;
+    add_precompiled_probe(&dir, "dependent", "id=dependent\ndep=base\n").await;
     let loader = support::loader_from_toml("");
     let mut manager = infrarust_core::plugin::manager::PluginManager::new(vec![Box::new(loader)]);
     manager.set_disabled_plugins(std::collections::HashSet::from(["base".to_owned()]));
+    let slot = compile_slot().await;
     manager.discover_all(&dir).await.unwrap();
+    drop(slot);
     let factory = std::sync::Arc::new(support::make_env(dir.clone()).factory);
     manager.load_and_enable_all(factory).await;
     assert!(!manager.is_plugin_loaded("base"));
@@ -573,7 +630,7 @@ async fn a_plugin_depending_on_a_config_disabled_plugin_is_not_enabled() {
 async fn a_wasm_plugin_depending_on_a_native_plugin_enables_after_it() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "rider", "id=rider\ndep=native-core\n");
+    add_precompiled_probe(&dir, "rider", "id=rider\ndep=native-core\n").await;
     let managed = manage(&dir, "", vec![native_loader("native-core")]).await;
     managed.discovery.as_ref().unwrap();
     assert!(managed.enabled("native-core") && managed.enabled("rider"));
@@ -583,9 +640,9 @@ async fn a_wasm_plugin_depending_on_a_native_plugin_enables_after_it() {
 async fn shutdown_disables_a_dependent_before_its_dependency() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "zz-base", "id=zz-base\n");
-    add_probe(&dir, "aa-top", "id=aa-top\ndep=mid\n");
-    add_probe(&dir, "mid", "id=mid\ndep=zz-base\n");
+    add_precompiled_probe(&dir, "zz-base", "id=zz-base\n").await;
+    add_precompiled_probe(&dir, "aa-top", "id=aa-top\ndep=mid\n").await;
+    add_precompiled_probe(&dir, "mid", "id=mid\ndep=zz-base\n").await;
     let mut managed = manage(&dir, "", Vec::new()).await;
     managed.discovery.as_ref().unwrap();
     assert!(managed.enabled("aa-top"));
@@ -598,9 +655,10 @@ async fn shutdown_disables_a_dependent_before_its_dependency() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_sleeping_metadata_export_does_not_hang_discovery() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     add_probe(&dir, "sleeper", "id=sleeper\nmeta=sleep:3600000\n");
     let loader = support::loader_from_toml("[wasm]\nmax_call_duration = \"2s\"\n");
+    let _slot = compile_slot().await;
     let started = Instant::now();
     let outcome = tokio::time::timeout(Duration::from_secs(20), loader.discover(&dir)).await;
     let elapsed = started.elapsed();
@@ -613,9 +671,10 @@ async fn a_sleeping_metadata_export_does_not_hang_discovery() {
 }
 
 async fn discover_with_a_sleeper(proxy_toml: &str, warm_first: bool) -> (Duration, LogCapture) {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     add_probe(&dir, "sleeper", "id=sleeper\nmeta=sleep:3600000\n");
     let loader = support::loader_from_toml(proxy_toml);
+    let _slot = compile_slot().await;
     if warm_first {
         loader.discover(&dir).await.unwrap();
     }
@@ -656,7 +715,7 @@ async fn metadata_is_cut_at_five_seconds_under_the_default_max_call_duration() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spinning_metadata_export_is_cut_and_does_not_stop_the_others() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     add_probe(&dir, "spinner", "id=spinner\nmeta=spin\n");
     let started = Instant::now();
     let found = discover(&dir).await;
@@ -668,7 +727,7 @@ async fn a_spinning_metadata_export_is_cut_and_does_not_stop_the_others() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_panicking_metadata_export_does_not_stop_the_others() {
-    let (_tmp, dir) = staged_with_good();
+    let (_tmp, dir) = staged_with_good().await;
     add_probe(&dir, "panicker", "id=panicker\nmeta=panic\n");
     let metas = discover(&dir)
         .await
@@ -683,11 +742,13 @@ async fn load_probe_with_id(id_settings: &str) -> Result<(tempfile::TempDir, Pat
     add_probe(&plugins_dir, "probe", id_settings);
     let loader = fresh_loader();
     let logs = LogCapture::at(Level::ERROR);
+    let slot = compile_slot().await;
     let metas = tokio::time::timeout(DISCOVERY_BOUND, loader.discover(&plugins_dir))
         .with_subscriber(logs.clone())
         .await
         .map_err(|_| "discover hung".to_owned())?
         .map_err(|e| format!("discover: {e}"))?;
+    drop(slot);
     let id = metas.iter().map(|m| m.id.clone()).next().ok_or_else(|| {
         format!(
             "refused at discovery: {}",
