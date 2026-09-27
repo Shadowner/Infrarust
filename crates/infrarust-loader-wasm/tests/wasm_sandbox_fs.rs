@@ -7,9 +7,9 @@ mod support;
 
 use std::path::Path;
 
-use infrarust_api::loader::PluginContextFactory;
+use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use net::{PROBE, enable_probe};
-use support::{EnvOptions, make_env_with};
+use support::{EnvOptions, fixture_path, fresh_loader, make_env_with};
 
 fn mounts_toml(host: &Path, guest: &str, read_only: bool) -> String {
     format!(
@@ -170,5 +170,37 @@ async fn a_hostile_plugin_id_cannot_place_the_data_dir_outside_plugins_dir() {
         !escaped,
         "a hostile plugin id placed its data dir outside plugins_dir: {}",
         data_dir.display()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_component_a_plugin_writes_into_its_data_dir_is_not_loaded_at_the_next_start() {
+    let root = tempfile::tempdir().unwrap();
+    let staging = root.path().join("staging");
+    std::fs::create_dir(&staging).unwrap();
+    let component = std::fs::read(fixture_path("scripted")).unwrap();
+    std::fs::write(staging.join("planted.wasm"), &component).unwrap();
+    let probe = enable_probe(
+        &["filesystem-extended"],
+        &mounts_toml(&staging, "/staging", true),
+    )
+    .await;
+
+    let copied = probe.run("copy /staging/planted.wasm /planted.wasm").await;
+    assert_eq!(copied, format!("ok {}", component.len()));
+    let planted = probe.data.join("planted.wasm");
+    assert_eq!(
+        std::fs::read(&planted).unwrap(),
+        component,
+        "the guest wrote a whole component, id `scripted`, into {}",
+        planted.display()
+    );
+
+    let discovered = fresh_loader().discover(&probe.plugins_dir).await.unwrap();
+    let ids: Vec<&str> = discovered.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [PROBE],
+        "a component written into a data directory must not become a plugin at the next start"
     );
 }

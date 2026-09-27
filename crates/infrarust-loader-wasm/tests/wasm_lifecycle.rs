@@ -230,65 +230,106 @@ async fn a_symlinked_wasm_is_loaded_once() {
     assert_eq!(ids(&metas), ["linked"]);
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_directory_symlink_loop_does_not_stop_discovery() {
+async fn a_wasm_file_in_a_subdirectory_is_ignored_and_not_logged() {
     let (_tmp, dir) = staged_with_good().await;
+    std::fs::create_dir_all(dir.join("sub").join("deeper")).unwrap();
+    add_probe(&dir.join("sub"), "nested", "id=nested\n");
+    std::fs::write(dir.join("sub").join("deeper").join("junk.wasm"), b"").unwrap();
+    std::fs::create_dir(dir.join("old")).unwrap();
+    add_probe(&dir.join("old"), "good", "id=good\nversion=0.0.9\n");
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
-    assert_good_plugin_survives(&dir, "symlink loop to plugins_dir").await;
-}
+    #[cfg(unix)]
+    let locked = {
+        use std::os::unix::fs::PermissionsExt;
+        let locked = dir.join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        add_probe(&locked, "hidden", "id=hidden\n");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        locked
+    };
 
-#[cfg(unix)]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_directory_reached_through_two_links_is_scanned_once() {
-    let (_tmp, dir) = staged_with_good().await;
-    std::fs::create_dir(dir.join("real")).unwrap();
-    add_precompiled_probe(&dir.join("real"), "shared", "id=shared\n").await;
-    std::os::unix::fs::symlink(dir.join("real"), dir.join("alias")).unwrap();
-    std::os::unix::fs::symlink(&dir, dir.join("real").join("up")).unwrap();
     let (found, logs) = discover_logged(&dir).await;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let metas = found.unwrap();
+    assert_eq!(ids(&metas), ["good"], "{:?}", logs.lines());
     assert_eq!(
-        ids(&found.unwrap()),
-        ["good", "shared"],
-        "{:?}",
+        metas[0].version, "0.1.0",
+        "the top-level copy is the one loaded"
+    );
+    assert!(
+        logs.lines().is_empty(),
+        "nothing below plugins_dir is looked at, so nothing is refused: {:?}",
         logs.lines()
     );
-    assert!(logs.lines().is_empty(), "{:?}", logs.lines());
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_wasm_file_reached_through_two_paths_is_probed_once() {
+async fn a_symlink_loop_among_the_plugin_files_is_refused_on_its_own() {
     let (_tmp, dir) = staged_with_good().await;
-    std::fs::create_dir(dir.join("links")).unwrap();
-    std::os::unix::fs::symlink(dir.join("good.wasm"), dir.join("links").join("again.wasm"))
-        .unwrap();
+    let first = dir.join("ping.wasm");
+    let second = dir.join("pong.wasm");
+    std::os::unix::fs::symlink(&second, &first).unwrap();
+    std::os::unix::fs::symlink(&first, &second).unwrap();
     let (found, logs) = discover_logged(&dir).await;
     assert_eq!(ids(&found.unwrap()), ["good"]);
+    let refusals = logs.matching("WASM plugin refused");
+    assert_eq!(refusals.len(), 2, "{:?}", logs.lines());
+    for path in [&first, &second] {
+        assert!(
+            refusals
+                .iter()
+                .any(|line| line.contains(&path.display().to_string())),
+            "{path:?}: {refusals:?}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wasm_file_reached_through_two_top_level_links_is_probed_once() {
+    let (tmp, dir) = staged_with_good().await;
+    std::os::unix::fs::symlink(dir.join("good.wasm"), dir.join("again.wasm")).unwrap();
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let linked = add_precompiled_probe(&outside, "linked", "id=linked\n").await;
+    for artifact in std::fs::read_dir(outside.join(".cache")).unwrap() {
+        let artifact = artifact.unwrap().path();
+        std::fs::copy(
+            &artifact,
+            dir.join(".cache").join(artifact.file_name().unwrap()),
+        )
+        .unwrap();
+    }
+    std::os::unix::fs::symlink(&linked, dir.join("first-link.wasm")).unwrap();
+    std::os::unix::fs::symlink(&linked, dir.join("second-link.wasm")).unwrap();
+    let (found, logs) = discover_logged(&dir).await;
+    assert_eq!(ids(&found.unwrap()), ["good", "linked"]);
     assert!(logs.lines().is_empty(), "{:?}", logs.lines());
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-async fn an_unreadable_subdirectory_is_skipped_and_logged() {
-    use std::os::unix::fs::PermissionsExt;
+async fn a_fifo_named_like_a_plugin_is_refused_without_blocking_discovery() {
     let (_tmp, dir) = staged_with_good().await;
-    let locked = dir.join("locked");
-    std::fs::create_dir(&locked).unwrap();
-    add_probe(&locked, "hidden", "id=hidden\n");
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-    if std::fs::read_dir(&locked).is_ok() {
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let fifo = dir.join("pipe.wasm");
+    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+    if !made.is_ok_and(|status| status.success()) {
         return;
     }
     let (found, logs) = discover_logged(&dir).await;
-    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(ids(&found.unwrap()), ["good"]);
-    let skipped = logs.matching("cannot be read");
-    assert_eq!(skipped.len(), 1, "{:?}", logs.lines());
+    let refusals = logs.matching("not a regular file");
+    assert_eq!(refusals.len(), 1, "{:?}", logs.lines());
     assert!(
-        skipped[0].contains(&locked.display().to_string()),
-        "{skipped:?}"
+        refusals[0].contains(&fifo.display().to_string()),
+        "{refusals:?}"
     );
 }
 
@@ -536,8 +577,7 @@ async fn a_dependency_cycle_fails_only_the_plugins_in_the_cycle() {
 async fn two_wasm_files_with_the_same_id_do_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good().await;
     add_precompiled_probe(&dir, "twin-a", "id=twin\n").await;
-    std::fs::create_dir(dir.join("backup")).unwrap();
-    add_precompiled_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n").await;
+    add_precompiled_probe(&dir, "twin-b", "id=twin\nversion=0.0.9\n").await;
     let managed = manage(&dir, "", Vec::new()).await;
     assert!(
         managed.discovery.is_ok(),
@@ -552,9 +592,7 @@ async fn two_wasm_files_with_the_same_id_do_not_stop_the_other_plugins() {
 async fn two_wasm_files_with_the_same_id_are_refused_by_one_error_naming_both() {
     let (_tmp, dir) = staged_with_good().await;
     let first = add_precompiled_probe(&dir, "twin-a", "id=twin\n").await;
-    std::fs::create_dir(dir.join("backup")).unwrap();
-    let second =
-        add_precompiled_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n").await;
+    let second = add_precompiled_probe(&dir, "twin-b", "id=twin\nversion=0.0.9\n").await;
     let (found, logs) = discover_logged(&dir).await;
     assert_eq!(ids(&found.unwrap()), ["good"]);
     let refusals = logs.matching("same plugin id");

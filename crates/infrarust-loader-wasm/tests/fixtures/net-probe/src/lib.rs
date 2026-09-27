@@ -63,6 +63,9 @@ fn run(args: &[String]) -> Result<String, String> {
             .map(|()| String::new())
             .map_err(io_error),
         "append" => append(arg(1)?, arg(2)?),
+        "copy" => std::fs::copy(arg(1)?, arg(2)?)
+            .map(|bytes| bytes.to_string())
+            .map_err(io_error),
         "truncate" => truncate(arg(1)?),
         "rename" => std::fs::rename(arg(1)?, arg(2)?)
             .map(|()| String::new())

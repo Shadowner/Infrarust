@@ -254,79 +254,54 @@ impl PluginLoader for WasmPluginLoader {
     }
 }
 
-fn scan_wasm_files(root: &Path) -> Result<Vec<PathBuf>, LoaderError> {
-    let top = sorted_entries(root).map_err(|source| LoaderError::DirectoryNotAccessible {
-        path: root.to_path_buf(),
-        source,
-    })?;
-    let mut scan = Scan::default();
-    scan.dirs.insert(identity(root));
-    let mut stack = Vec::new();
-    push_in_order(&mut stack, scan.take(top));
-    while let Some(dir) = stack.pop() {
-        match sorted_entries(&dir) {
-            Ok(entries) => push_in_order(&mut stack, scan.take(entries)),
-            Err(error) => tracing::error!(
-                path = %dir.display(),
-                error = %error,
-                "WASM plugin directory skipped: it cannot be read"
-            ),
+fn scan_wasm_files(dir: &Path) -> Result<Vec<PathBuf>, LoaderError> {
+    let mut entries = std::fs::read_dir(dir)
+        .and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<_>>>()
+        })
+        .map_err(|source| LoaderError::DirectoryNotAccessible {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+    entries.sort();
+
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+    for path in entries {
+        if path.extension().and_then(|e| e.to_str()) != Some("wasm") {
+            continue;
         }
-    }
-    Ok(scan.files)
-}
-
-#[derive(Default)]
-struct Scan {
-    dirs: HashSet<PathBuf>,
-    file_ids: HashSet<PathBuf>,
-    files: Vec<PathBuf>,
-}
-
-impl Scan {
-    fn take(&mut self, entries: Vec<PathBuf>) -> Vec<PathBuf> {
-        let mut subdirs = Vec::new();
-        for path in entries {
-            if path.is_dir() {
-                if path.file_name().and_then(|n| n.to_str()) == Some(CACHE_SUBDIR) {
-                    continue;
-                }
-                if self.dirs.insert(identity(&path)) {
-                    subdirs.push(path);
-                } else {
-                    tracing::debug!(
-                        path = %path.display(),
-                        "plugin directory already scanned through another path, skipped"
-                    );
-                }
-            } else if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
-                if self.file_ids.insert(identity(&path)) {
-                    self.files.push(path);
-                } else {
-                    tracing::debug!(
-                        path = %path.display(),
-                        "plugin file already found through another path, skipped"
-                    );
-                }
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(metadata) if metadata.is_dir() => continue,
+            Ok(_) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = "not a regular file",
+                    "WASM plugin refused"
+                );
+                continue;
+            }
+            Err(error) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = %error,
+                    "WASM plugin refused"
+                );
+                continue;
             }
         }
-        subdirs
+        let identity = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if seen.insert(identity) {
+            files.push(path);
+        } else {
+            tracing::debug!(
+                path = %path.display(),
+                "plugin file already found through another link, skipped"
+            );
+        }
     }
-}
-
-fn push_in_order(stack: &mut Vec<PathBuf>, mut subdirs: Vec<PathBuf>) {
-    subdirs.reverse();
-    stack.extend(subdirs);
-}
-
-fn sorted_entries(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut entries = std::fs::read_dir(dir)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort();
-    Ok(entries)
-}
-
-fn identity(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    Ok(files)
 }
