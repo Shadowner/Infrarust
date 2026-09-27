@@ -34,6 +34,20 @@ fn rss_kib() -> u64 {
         .unwrap()
 }
 
+#[cfg(target_env = "gnu")]
+#[allow(unsafe_code)]
+fn release_free_heap() {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+    unsafe {
+        malloc_trim(0);
+    }
+}
+
+#[cfg(not(target_env = "gnu"))]
+fn release_free_heap() {}
+
 struct Resident {
     open_per_connection: f64,
     left_per_connection: f64,
@@ -67,6 +81,7 @@ async fn resident_per_connection(proxy_toml: &str) -> Resident {
         client.close();
         server.close();
     }
+    release_free_heap();
     let left_per_connection = rss_kib().saturating_sub(before) as f64 / CONNECTIONS as f64;
     Resident {
         open_per_connection,

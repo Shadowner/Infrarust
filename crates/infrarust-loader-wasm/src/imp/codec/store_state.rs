@@ -82,10 +82,12 @@ pub(crate) struct CodecStoreState {
     limits: StoreLimits,
     log: Arc<CodecLog>,
     rng: Option<Box<dyn Rng + Send>>,
+    pub(crate) ticks: u64,
+    pub(crate) budget_ticks: u64,
 }
 
 impl CodecStoreState {
-    pub(crate) fn new(memory_bytes: usize, log: Arc<CodecLog>) -> Self {
+    pub(crate) fn new(memory_bytes: usize, log: Arc<CodecLog>, budget_ticks: u64) -> Self {
         Self {
             limits: StoreLimitsBuilder::new()
                 .memory_size(memory_bytes)
@@ -93,6 +95,8 @@ impl CodecStoreState {
                 .build(),
             log,
             rng: None,
+            ticks: 0,
+            budget_ticks,
         }
     }
 

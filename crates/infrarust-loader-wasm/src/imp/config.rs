@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use infrarust_config::{
-    EventsConfig, ProxyConfig, WasmConfig, WasmLimits, WasmMount, WasmNetworkConfig,
-    WasmQuotasConfig, WasmRecoveryConfig,
+    EventsConfig, ProxyConfig, WasmCodecQuarantineConfig, WasmConfig, WasmLimits, WasmMount,
+    WasmNetworkConfig, WasmQuotasConfig, WasmRecoveryConfig,
 };
 
 #[derive(Debug, Clone)]
@@ -146,6 +146,8 @@ pub(crate) struct SandboxLimits {
     pub(crate) event_budget: Duration,
     pub(crate) recovery: WasmRecoveryConfig,
     pub(crate) quotas: WasmQuotasConfig,
+    pub(crate) codec_cpu_budget: Duration,
+    pub(crate) codec_quarantine: WasmCodecQuarantineConfig,
 }
 
 impl SandboxLimits {
@@ -163,6 +165,8 @@ impl SandboxLimits {
             event_budget,
             recovery: limits.recovery,
             quotas: limits.quotas,
+            codec_cpu_budget: limits.codec_cpu_budget,
+            codec_quarantine: limits.codec_quarantine,
         }
     }
 }

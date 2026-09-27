@@ -155,7 +155,6 @@ async fn a_memory_storm_in_two_plugins_leaves_a_healthy_plugin_correct_and_fast(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "W-04: codec filters run on the tokio workers"]
 async fn spinning_codec_filters_do_not_stall_a_healthy_plugin() {
     let lab = Arc::new(
         Lab::start(
@@ -214,6 +213,10 @@ async fn spinning_codec_filters_do_not_stall_a_healthy_plugin() {
     assert!(
         stalled < Duration::from_millis(250),
         "a healthy plugin's command waited {stalled:?} behind codec filters of another plugin"
+    );
+    assert!(
+        setup < Duration::from_millis(250),
+        "a connection whose codec filter spins in create took {setup:?} to set up"
     );
 }
 

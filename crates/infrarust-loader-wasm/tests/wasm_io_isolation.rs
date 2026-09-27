@@ -9,8 +9,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+use infrarust_api::types::{ProtocolVersion, RawPacket};
+use infrarust_core::filter::codec_chain::build_codec_chains;
 use tokio::io::AsyncReadExt;
 
+use fault_lab::faults::{self, Mode};
 use fault_lab::{LAB, Lab, LabOptions, LabPlugin};
 
 const VICTIMS: usize = 16;
@@ -178,4 +182,38 @@ async fn spinning_listener_against_sockets() {
         fault_lab::count_prefix(&lab.log(LAB), "enable recovered") >= 1
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_spinning_codec_filter_does_not_stop_the_proxy_from_reading_its_sockets() {
+    let lab = Arc::new(
+        Lab::start(
+            vec![LabPlugin::lab("").grant("codec-filter")],
+            LabOptions::default(),
+        )
+        .await,
+    );
+    let codecs = Arc::clone(&lab.codecs);
+    let mut victims = Victims::start(move || {
+        let (mut client, mut server) = build_codec_chains(
+            &codecs,
+            ProtocolVersion::new(767),
+            7,
+            "127.0.0.2:1".parse().unwrap(),
+            None,
+        );
+        let mut packet = RawPacket::new(
+            faults::CODEC_FAULT_PACKET_BASE + i32::try_from(Mode::Spin.code()).unwrap(),
+            Bytes::from_static(b"x"),
+        );
+        let _ = client.process(&mut packet);
+        client.close();
+        server.close();
+    });
+    let fired = victims.fire();
+    let worst = victims.worst_since(fired, Duration::from_millis(800)).await;
+    assert!(
+        worst < Duration::from_millis(60),
+        "sockets waited {worst:?} while a codec filter spun on another task"
+    );
 }

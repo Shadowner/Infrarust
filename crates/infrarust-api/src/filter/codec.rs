@@ -45,6 +45,10 @@ pub trait CodecFilterInstance: Send {
 
     /// Cleanup when the connection terminates.
     fn on_close(&mut self) {}
+
+    fn close_reason(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Information passed to the factory when creating a filter instance.
