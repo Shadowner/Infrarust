@@ -74,7 +74,7 @@ Multiple handlers, native or WASM, can share one event kind. The proxy runs them
 A resulted event carries the proxy's next action. The SDK hands the handler the **current** result, the one set by the handlers that ran before it, and tracks whether the handler changed it:
 
 - `event.result()` reads the current result.
-- The helpers (`allow`, `deny`, `redirect_to`, `modify`, ...) and `set_result` set a new result. So does editing the ping response through `response_mut`.
+- The helpers (`allow`, `deny`, `redirect_to`, `modify`, ...) and `set_result` set a new result. So do the ping response setters (`set_max_players`, `set_description`, ...) and `set_response`.
 - A handler that only reads leaves the result as it is. Setting a result always applies, even when it equals the current one.
 
 That makes the WASM behaviour match a native handler: a later handler can undo an earlier one.
@@ -124,7 +124,7 @@ Native listeners are not held to this rule: a native listener that panics or run
 
 ## What a listener costs
 
-A plugin handles its events one at a time, through one queue shared by every event type it listens to and by its commands and tasks. A listener's cost is therefore paid by every event of the plugin, for every player: a listener that takes 20 ms caps the plugin at 50 events per second, and a slow `ServerPreConnectEvent` listener delays the same plugin's chat listener. A cheap event costs about 2.5 µs and a full `ProxyPingEvent` about 7 µs, which puts one plugin's ceiling near 500,000 cheap events or 116,000 pings per second. [What one actor costs](./threading#what-one-actor-costs) gives the measurements and a worked example, and [Watching the queue](./threading#watching-the-queue) how to see a plugin's queue depth and wait in the admin API and the console.
+A plugin handles its events one at a time, through one queue shared by every event type it listens to and by its commands and tasks. A listener's cost is therefore paid by every event of the plugin, for every player: a listener that takes 20 ms caps the plugin at 50 events per second, and a slow `ServerPreConnectEvent` listener delays the same plugin's chat listener. A cheap event costs about 2.8 µs, and a `ProxyPingEvent` about 3 to 4 µs whether the handler changes the counts or not, as long as it leaves the description, favicon and sample alone; reading one of those adds a host call that copies it. That puts one plugin's ceiling near 415,000 cheap events or 340,000 pings per second. [What one actor costs](./threading#what-one-actor-costs) gives the measurements and a worked example, and [Watching the queue](./threading#watching-the-queue) how to see a plugin's queue depth and wait in the admin API and the console.
 
 ## Event reference
 
@@ -172,7 +172,7 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | `ServerPreConnectEvent` | `player`, `server`, `previous_server`, `cause: ConnectCause` | `ServerPreConnectResult`: `allow()`, `redirect_to(server)`, `send_to_limbo(handlers)`, `deny(reason)` |
 | `KickedFromServerEvent` | `player`, `server`, `reason: Option<Component>`, `cause: KickCause`, `during_connect`, `previous_server` | `KickedFromServerResult`: `disconnect(reason)`, `redirect_to(server)`, `send_to_limbo(handlers)`, `notify(message)` |
 | `ChatMessageEvent` | `player`, `message`, `signed`, `server` | `ChatMessageResult`: `allow()`, `deny(reason)`, `deny_silently()`, `modify(message)`. Needs `chat-intercept` |
-| `ProxyPingEvent` | `remote_addr`, `server`, `virtual_host`, `protocol`, `legacy` | the `PingResponse`: `response()`, `response_mut()`, `set_response(r)` |
+| `ProxyPingEvent` | `remote_addr`, `server`, `virtual_host`, `protocol`, `legacy` | the ping response, field by field: `max_players()`, `online_players()`, `version_name()`, `version_protocol()`, `description()`, `favicon()`, `player_sample()` and a `set_` for each; `response()` and `set_response(r)` for the whole `PingResponse` |
 | `ConnectionHandshakeEvent` | `remote_addr`, `virtual_host`, `raw_host`, `port`, `protocol`, `intent: HandshakeIntent`, `legacy`, `server` | `ConnectionHandshakeResult`: `allow()`, `deny(reason)`, `deny_silently()`, `drop_silently()` |
 | `GameProfileRequestEvent` | `original: GameProfile`, `online_mode`, `remote_addr`, `virtual_host`, `protocol` | the profile the player gets: `profile()`, `profile_mut()`, `set_profile(p)`, `is_modified()` |
 | `LoginEvent` | `player`, `online_mode` | `LoginResult`: `allow()`, `deny(reason)` |
@@ -186,15 +186,16 @@ Every reason and message is anything that converts into a `Component`, so `deny(
 
 `ConnectCause` is `Initial`, `Switch`, `LimboExit`, `KickRedirect` or `PluginMessage`. `KickCause` is `Unreachable(error)`, `LoginRefused`, `ConfigDisconnect`, `PlayDisconnect` or `ConnectionLost`. `KickedFromServerEvent` starts with the proxy's default, which depends on the case: `DisconnectPlayer(None)` for a kick from a server the player had finished joining; for a connection that failed, `Notify` with the reason when the player can stay on their current server, `SendToLimbo` with the server's `limbo_handlers` when those handlers resolve, and `DisconnectPlayer(None)` otherwise.
 
-`PingResponse` has `description`, `max_players`, `online_players`, `protocol`, `version_name`, `favicon` and `player_sample` (name and UUID pairs). Reading it leaves the response alone; `response_mut()` sends the whole response back. A description you did not change keeps the native component exactly as it was, including parts the contract cannot carry.
+`ProxyPingEvent` hands out the ping response one field at a time. `max_players()`, `online_players()`, `version_name()` and `version_protocol()` arrive with the event. `description()`, `favicon()` and `player_sample()` stay on the host until the handler first reads them: each first read is one host call that copies that field into the plugin, and a handler that never reads them never pays for them. Each setter records the new value, and the SDK sends back only what the handler set: a description, favicon or sample you did not set keeps the native value exactly as it was, including parts of the description the contract cannot carry.
 
 ```rust
 ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
-    let response = event.response_mut();
-    response.max_players = 1000;
-    response.description = Component::text("Welcome").color(NamedColor::Gold);
+    event.set_max_players(1000);
+    event.set_description(Component::text("Welcome").color(NamedColor::Gold));
 })?;
 ```
+
+`response()` reads every field into a `PingResponse` (`description`, `max_players`, `online_players`, `protocol`, `version_name`, `favicon`, `player_sample`), and `set_response(r)` writes one back, sending the heavy fields that differ from the current ones. Both read the three heavy fields, so prefer the per-field methods in a handler that runs on every ping. Read the heavy fields during the handler: they can only be fetched while the host is handling the ping. Cloning the event reads them first, so a clone kept after the handler returns still has them.
 
 `PermissionsSetupEvent::provide(snapshot)` replaces the player's checker with a `PermissionSnapshot` for this session; `use_default()` keeps the checker of the active provider. The host holds the snapshot, so `Permissions::set_snapshot` can change it while the player is online. See [Permissions](./permissions).
 

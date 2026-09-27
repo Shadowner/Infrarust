@@ -79,7 +79,18 @@ In 0.2.3 each handler started from an empty result and `allow()` meant "no chang
 | result invisible to the handler | `event.result()` reads it |
 | `allow()` cleared the guest's own result: no effect on the event | `allow()` sets the result to allowed, overriding earlier handlers |
 | untouched handler sent `none` | untouched handler sends `unchanged` (no effect), as before |
-| `ProxyPingEvent::response` field, always sent back | `response()` reads, `response_mut()` or `set_response()` changes and sends it back |
+| `ProxyPingEvent::response` field, always sent back | one method per field (`max_players()`, `set_max_players(n)`, `description()`, `set_description(c)`, ...); only the fields you set are sent back. `response()` and `set_response(r)` handle the whole `PingResponse` |
+
+A ping handler written against `response_mut()` becomes, for example:
+
+```rust
+ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
+    event.set_max_players(event.online_players() + 1);
+    event.set_description("Welcome");
+})?;
+```
+
+The description, favicon and player sample are read from the host the first time the handler asks for them, so a handler that only changes the counts no longer copies them into the plugin on every ping. At the WIT level, `proxy-ping-result` carries `max-players`, `online-players`, `protocol` and `version-name`; its `description`, `favicon` and `player-sample` are `none` in the event and set only what changed in an outcome, and the guest reads the current ones with `events.ping-description`, `ping-favicon` and `ping-player-sample`. See [The ping response](./api-reference#the-ping-response).
 
 A handler that only logs is unchanged in behaviour. A handler that called `allow()` to express "I have no objection" now actively allows: remove the call if it should not override other plugins.
 

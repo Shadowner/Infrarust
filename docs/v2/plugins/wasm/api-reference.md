@@ -52,7 +52,7 @@ world plugin {
 | Import | Capability gate | Purpose |
 |--------|-----------------|---------|
 | `types` | none | Shared ids, errors, profiles, addresses and the text-component arena. |
-| `events` | none | The event records, results and the `event` / `event-outcome` variants. Types only. |
+| `events` | none | The event records, results and the `event` / `event-outcome` variants, and the three reads of the ping being handled. |
 | `log` | none | `trace`/`debug`/`info`/`warn`/`error` to the host log. |
 | `text` | none | Parse and serialize text components with the proxy's own parser. |
 | `event-bus` | `event-bus` (`chat-intercept` for `chat-message` and `command-execute`, `plugin-messaging` for `plugin-message`, `raw-packet` for packets) | Subscribe to event kinds, named events and packets by priority; fire named events. |
@@ -552,13 +552,13 @@ interface events {
     }
 
     record proxy-ping-result {
-        description: component,
         max-players: s32,
         online-players: s32,
         protocol: protocol-version,
         version-name: string,
-        favicon: option<string>,
-        player-sample: list<ping-player>,
+        description: option<component>,
+        favicon: option<option<string>>,
+        player-sample: option<list<ping-player>>,
     }
 
     record config-reload-event {
@@ -882,10 +882,14 @@ interface events {
         named-event(named-event-result),
         raw-packet(raw-packet-result),
     }
+
+    ping-description: func() -> option<component>;
+    ping-favicon: func() -> option<string>;
+    ping-player-sample: func() -> list<ping-player>;
 }
 ```
 
-`permissions-setup-result` is `use-default` or `custom(permission-snapshot)`: a custom snapshot becomes the player's checker, held by the host so that `permissions.set-snapshot` can change it later (see [Permissions](./permissions)). A custom checker set by a native plugin reaches the guest as `custom` with the snapshot it describes, or an empty one when the native checker cannot describe itself. `proxy-ping-result` is the whole response: returning it replaces the response, and a description that comes back unchanged keeps the native component untouched. `game-profile-request-result` wraps the profile the player gets, and the record's `original` is the profile the proxy started from. `named-event-result` is the pair the listeners leave behind, `cancelled` and `response`, and returning it replaces both. `raw-packet-event` carries only the player id, like the native `RawPacketEvent`.
+`permissions-setup-result` is `use-default` or `custom(permission-snapshot)`: a custom snapshot becomes the player's checker, held by the host so that `permissions.set-snapshot` can change it later (see [Permissions](./permissions)). A custom checker set by a native plugin reaches the guest as `custom` with the snapshot it describes, or an empty one when the native checker cannot describe itself. `game-profile-request-result` wraps the profile the player gets, and the record's `original` is the profile the proxy started from. `named-event-result` is the pair the listeners leave behind, `cancelled` and `response`, and returning it replaces both. `raw-packet-event` carries only the player id, like the native `RawPacketEvent`.
 
 `ban-issued` and `ban-revoked` reuse `ban-entry` and `ban-source` from `ban-service`, and `limbo-enter` reuses `limbo-entry-context` from `limbo`. A plugin that only reads those events imports the types, not the functions, so it needs neither `ban` nor `limbo`.
 

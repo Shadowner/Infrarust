@@ -71,14 +71,16 @@ All the calls into a plugin share its one queue and run one after the other, wha
 - **A plugin handles at most 1 / (time per call) calls per second.** A listener that spends 20 ms on each event caps that plugin at 50 events per second, and the proxy's other events for that plugin wait their turn. When events arrive faster, the queue grows until calls pass their deadline (an access event is then denied) or the queue is full (the call is refused).
 - **One slow event type delays the others.** A slow `ServerPreConnectEvent` listener delays the same plugin's `ChatMessageEvent` listener, even though chat has nothing to do with connecting.
 
-Measured on a 16-thread AMD machine (release build, medians of three runs; absolute values vary with the machine, the ratios do not):
+Measured on a 16-thread AMD machine (release build, medians of three runs; absolute values vary with the machine, the ratios do not). The `wasm_contract` bench ([Benchmarking](../../reference/benchmarking#wasm-plugins-what-the-contract-costs)) reproduces the first three rows:
 
 | Case | Cost per call | Ceiling for one plugin |
 |------|---------------|------------------------|
-| Cheap event (`PlayerClientBrandEvent`, empty handler), back to back | 2.45 µs (p99 5.3 µs) | about 534,000 events/s with 16 proxy tasks feeding it |
-| Heavy event (`ProxyPingEvent` with a full ping response), unchanged | 7.3 µs (p99 11.2 µs) | about 116,000 events/s |
-| Heavy event, response modified | 11.9 µs (p99 19.9 µs) | |
+| Cheap event (`PlayerClientBrandEvent`, empty handler), back to back | 2.8 µs (p99 6.0 µs) | about 415,000 events/s with 16 proxy tasks feeding it |
+| `ProxyPingEvent` with a full ping response, the handler reads the virtual host only | 3.8 µs (p99 5.5 µs) | about 340,000 events/s |
+| `ProxyPingEvent`, the handler changes the max players | 3.1 µs (p99 5.8 µs) | |
 | First cheap event after 60 ms without calls | 17 to 22 µs (p99 52 to 71 µs) | |
+
+A `ProxyPingEvent` handler that reads the description, the favicon or the player sample pays one host call per field it reads, which copies that field into the plugin: the sample costs about 110 ns per player and the description about 400 ns per text node.
 
 The first event after a quiet spell costs more because the actor task has to wake up and its caches are cold, which is the usual case in a calm proxy. These costs are the floor: the time your handler spends comes on top, and past a few microseconds it sets the ceiling alone.
 
