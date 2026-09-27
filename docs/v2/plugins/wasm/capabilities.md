@@ -51,7 +51,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `PlayerWrite` | `player-write` | Act on a player (message, title, kick, switch-server) | Yes |
 | `Command` | `command` | Register commands | Yes |
 | `Scheduler` | `scheduler` | Schedule tasks | Yes |
-| `ConfigRead` | `config-read` | Read the proxy configuration | Yes |
+| `ConfigRead` | `config-read` | Read the proxy configuration, without the other plugins' `[plugins.<id>]` blocks (see [`config-read` sees only the plugin's own block](#config-read-sees-only-the-plugin-s-own-block)) | Yes |
 | `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` with `config-service.write-proxy-config-document` | No |
 | `RawPacket` | `raw-packet` | Send raw packets with `players.send-packet` and receive them with `event-bus.subscribe-packets` | No |
 | `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message` and `command-execute`: read, deny and rewrite what players type | No |
@@ -230,6 +230,16 @@ permissions = ["plugin-messaging"]
 ```
 
 Without it `Messaging::register` and the send functions return `permission-denied`, `ctx.on::<PluginMessageEvent>` is refused, and the host logs the refusal with `capability="plugin-messaging"`. Compiled-in plugins hold it unless their config denies it.
+
+### `config-read` sees only the plugin's own block
+
+`config-read` is baseline, so every WASM plugin reads the proxy configuration. It does not read the other plugins' configuration:
+
+- `get-proxy-config-document` and `get-effective-proxy-config-document` leave out every `[plugins.<id>]` block except the caller's own, with its subtables (`[plugins.<id>.wasm]` and below). A removed block takes its keys, the comments between them and the comments above its header. A comment written after a block's last key belongs to the next header in the TOML model, so it stays when that header stays.
+- `get-value` refuses a key under another plugin, `plugins.<other-id>` or anything below it, with `permission-denied`, whether or not that plugin exists. `get-value("plugins")` answers an inline table that holds the caller's own entry only.
+- `write-proxy-config-document` (which needs `config-write`) puts the other plugins' blocks back from the file as it stands before handing the document to the proxy, so a document read with `get-proxy-config-document`, edited and written back keeps them. A document that carries a block for another plugin is refused with `permission-denied` and nothing is written.
+
+Everything else stays readable: the backends, `[web]` and the other sections (with the secret fields redacted as for every reader, see [Services](./services#config)), and the plugin's own `[plugins.<id>]` block. The layout of a block does not matter: `[plugins.<id>]` tables, dotted keys (`plugins.<id>.enabled = false`) and inline tables are all hidden. When the host cannot parse the document the config service hands it, the call answers `internal` instead of the unfiltered text. Compiled-in plugins read the whole document.
 
 ### Strict mode
 

@@ -60,7 +60,7 @@ The baseline every WASM plugin receives:
 - `player-write`: send messages, titles, and kicks
 - `command`: register in-game commands
 - `scheduler`: run periodic tasks
-- `config-read`: read the proxy configuration
+- `config-read`: read the proxy configuration, except the other plugins' `[plugins.<id>]` blocks
 
 Additional capabilities that require an explicit grant:
 

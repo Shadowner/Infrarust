@@ -302,7 +302,7 @@ impl Config {
 }
 ```
 
-`get` reads one value of the configuration the proxy runs on by its dotted path, as the native `ConfigService::get_value` does: a string comes back as its text, a number or a boolean as its `to_string()`, a table or an array as inline TOML, a secret field as `<redacted>`, and a path with nothing at it as `None`. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager).
+`get` reads one value of the configuration the proxy runs on by its dotted path, as the native `ConfigService::get_value` does: a string comes back as its text, a number or a boolean as its `to_string()`, a table or an array as inline TOML, a secret field as `<redacted>`, and a path with nothing at it as `None`. A path under another plugin's block (`plugins.<other-id>` and below) returns `PermissionDenied`, whether or not that plugin exists, and `get("plugins")` holds the plugin's own entry only. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager).
 
 ```rust
 let retries: u32 = Config::get("keepalive.retries")?
@@ -310,7 +310,7 @@ let retries: u32 = Config::get("keepalive.retries")?
     .unwrap_or(3);
 ```
 
-The documents mirror the native `ConfigService`, with every secret field redacted:
+The documents mirror the native `ConfigService`, with every secret field redacted and without the other plugins' `[plugins.<id>]` blocks (see [Capabilities](./capabilities#config-read-sees-only-the-plugin-s-own-block)):
 
 ```rust
 impl Config {
@@ -324,7 +324,7 @@ impl Config {
 
 `server_document` is the full TOML of one server, whatever provider supplied it. `server_sources` says where each server came from (`provider_id`, `provider_type`) and whether a plugin may rewrite it (`editable`). `proxy_document` is the global configuration file as written, `effective_proxy_document` the configuration the proxy runs on, with CLI overrides and defaults applied.
 
-`write_proxy_document` replaces the configuration file and needs the opt-in `config-write` capability. Secret fields the document leaves out or carries redacted keep their value on disk, so a document read with `proxy_document` can be edited and written back. The file is validated first: a document that does not parse or that the proxy refuses returns `InvalidArgument`, a failed write `Unavailable`. Nothing changes in the running proxy; the new file applies on restart.
+`write_proxy_document` replaces the configuration file and needs the opt-in `config-write` capability. Secret fields the document leaves out or carries redacted keep their value on disk, and the host puts the other plugins' blocks back before writing, so a document read with `proxy_document` can be edited and written back. A document that carries another plugin's block returns `PermissionDenied` and nothing is written. The file is validated first: a document that does not parse or that the proxy refuses returns `InvalidArgument`, a failed write `Unavailable`. Nothing changes in the running proxy; the new file applies on restart.
 
 ## Load balancer
 
