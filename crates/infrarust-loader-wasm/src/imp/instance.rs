@@ -10,7 +10,9 @@ use crate::config::SandboxLimits;
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
 use crate::registrations::Registrations;
-use crate::store_state::{PluginSetup, PluginStoreState, build_load_state, install_epoch_control};
+use crate::store_state::{
+    PluginSetup, PluginStoreState, begin_guest_call, build_load_state, install_epoch_control,
+};
 
 pub(crate) struct LiveInstance {
     pub(crate) store: Store<PluginStoreState>,
@@ -19,7 +21,7 @@ pub(crate) struct LiveInstance {
 
 impl LiveInstance {
     pub(crate) fn begin_call(&mut self, deadline: Option<Deadline>) {
-        self.store.data_mut().begin_call(deadline);
+        begin_guest_call(&mut self.store, deadline);
     }
 
     pub(crate) fn end_call(&mut self) {

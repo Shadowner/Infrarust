@@ -557,3 +557,59 @@ pub(crate) fn install_epoch_control(store: &mut Store<PluginStoreState>, max_epo
         }
     });
 }
+
+pub(crate) fn begin_guest_call(store: &mut Store<PluginStoreState>, deadline: Option<Deadline>) {
+    store.set_epoch_deadline(EPOCH_DEADLINE_TICKS);
+    store.data_mut().begin_call(deadline);
+}
+
+#[cfg(test)]
+mod epoch_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    use wasmtime::{Config, Engine, Linker, Module};
+
+    const SHORT: &str = r#"
+        (module
+            (func (export "run") (param $spins i32)
+                (loop $again
+                    (local.set $spins (i32.sub (local.get $spins) (i32.const 1)))
+                    (br_if $again (i32.gt_s (local.get $spins) (i32.const 0))))))
+    "#;
+
+    fn store(engine: &Engine) -> Store<PluginStoreState> {
+        let mut store = Store::new(
+            engine,
+            build_probe_state("epoch-test".to_owned(), &SandboxLimits::default()),
+        );
+        install_epoch_control(&mut store, 5);
+        store
+    }
+
+    async fn run_short(engine: &Engine, store: &mut Store<PluginStoreState>) -> u32 {
+        let module = Module::new(engine, SHORT).unwrap();
+        let instance = Linker::new(engine)
+            .instantiate_async(&mut *store, &module)
+            .await
+            .unwrap();
+        let run = instance
+            .get_typed_func::<i32, ()>(&mut *store, "run")
+            .unwrap();
+        for _ in 0..3 {
+            engine.increment_epoch();
+        }
+        begin_guest_call(store, None);
+        run.call_async(&mut *store, 1_000).await.unwrap();
+        store.data().sandbox.epoch_yields
+    }
+
+    #[tokio::test]
+    async fn a_guest_call_after_idle_ticks_starts_with_its_whole_budget() {
+        let mut config = Config::new();
+        config.epoch_interruption(true);
+        let engine = Engine::new(&config).unwrap();
+        let mut store = store(&engine);
+        assert_eq!(run_short(&engine, &mut store).await, 0);
+    }
+}
