@@ -2,6 +2,7 @@ use std::future::Future;
 use std::io::IsTerminal;
 use std::pin::Pin;
 
+use console::measure_text_width;
 use infrarust_api::command::CommandInfo as PluginCommandInfo;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
@@ -11,7 +12,7 @@ use crate::console::ConsoleServices;
 use crate::console::commands::servers::StateCounts;
 use crate::console::dispatcher::{CommandInfo, ConsoleCommand};
 use crate::console::output::{
-    Block, CommandCategory, CommandOutput, Failure, Fields, Hint, Line, Span, Table,
+    Block, CommandCategory, CommandOutput, Failure, Fields, Hint, Line, Node, Span, Table,
 };
 use crate::console::parser::format_duration_short;
 use crate::console::render::usage_line;
@@ -71,7 +72,46 @@ pub(crate) fn help_block(commands: &[CommandInfo], plugin_commands: &[PluginComm
         block = block.heading("Plugin commands").table(table);
     }
 
+    align_first_column(&mut block);
     block
+}
+
+fn align_first_column(block: &mut Block) {
+    let text_width = |line: &Line| -> usize {
+        line.0
+            .iter()
+            .map(|span| measure_text_width(&span.text))
+            .sum()
+    };
+    let tables = |block: &Block| -> Vec<usize> {
+        block
+            .body
+            .iter()
+            .filter_map(|node| match node {
+                Node::Table(table) => Some(
+                    table
+                        .rows
+                        .iter()
+                        .filter_map(|row| row.first())
+                        .map(text_width)
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    };
+    let width = tables(block).into_iter().max().unwrap_or(0);
+    for node in &mut block.body {
+        if let Node::Table(table) = node {
+            for cell in table.rows.iter_mut().filter_map(|row| row.first_mut()) {
+                let missing = width - text_width(cell);
+                if missing > 0 {
+                    cell.0.push(Span::plain(" ".repeat(missing)));
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn command_block(info: &CommandInfo) -> Block {
@@ -461,19 +501,19 @@ mod tests {
     }
 
     #[test]
-    fn help_groups_commands_by_category() {
+    fn help_aligns_descriptions_across_categories() {
         assert_eq!(
             render(help_block(&builtins(), &[])),
             "# Commands - 4 built-in, help <command> for details\n\
              | PLAYERS\n\
-             | list [server]               List online players\n\
-             | kick <player> [reason...]   Kick a player\n\
+             | list [server]                         List online players\n\
+             | kick <player> [reason...]             Kick a player\n\
              |\n\
              | BANS\n\
              | ban <player> [duration] [reason...]   Ban a player\n\
              |\n\
              | SYSTEM\n\
-             | status   Proxy overview"
+             | status                                Proxy overview"
         );
     }
 
@@ -491,7 +531,7 @@ mod tests {
             rendered,
             "# Commands - 1 built-in, 1 from plugins, help <command> for details\n\
              | SYSTEM\n\
-             | status   Proxy overview\n\
+             | status              Proxy overview\n\
              |\n\
              | PLUGIN COMMANDS\n\
              | lobby (hub:lobby)   Go to the lobby"
@@ -600,7 +640,7 @@ mod tests {
             sleeping: 0,
             crashed: 2,
         })));
-        let crate::console::output::Node::Fields(fields) = &block.body[0] else {
+        let Node::Fields(fields) = &block.body[0] else {
             panic!("status is a list of fields");
         };
         let (_, servers) = &fields.0[2];
