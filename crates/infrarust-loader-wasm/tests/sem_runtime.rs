@@ -384,7 +384,6 @@ async fn command_names_and_aliases_follow_the_shared_ownership_rules() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-44: unregister_command by alias answers Ok(false)"]
 async fn a_command_can_be_unregistered_by_any_label_it_answers_to() {
     let probe =
         Probe::start("cmd Warp alias w\nunregister warp\ncmd Home alias h\nunregister h").await;

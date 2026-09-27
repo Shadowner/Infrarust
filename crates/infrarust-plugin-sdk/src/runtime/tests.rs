@@ -458,6 +458,39 @@ fn unregister_command_drops_the_closure_and_tells_the_host() {
 }
 
 #[test]
+fn unregister_command_accepts_every_label_the_command_answers_to() {
+    let ctx = Context::new();
+    for label in ["H", "home", "fake:home", "Hm"] {
+        let (token, dropped) = probe();
+        ctx.command("Home")
+            .aliases(["h", "HM"])
+            .handler(move |_| {
+                let _ = &token;
+            })
+            .register()
+            .unwrap();
+        assert_eq!(ctx.unregister_command(label), Ok(true), "{label}");
+        assert!(dropped.get(), "{label}");
+        assert!(
+            host::with_fake(|h| !h.commands.contains_key("home")),
+            "{label}"
+        );
+        assert_eq!(ctx.unregister_command("home"), Ok(false), "{label}");
+    }
+}
+
+#[test]
+fn unregister_command_by_an_alias_leaves_the_other_commands_alone() {
+    let ctx = Context::new();
+    ctx.command("warp").alias("w").register().unwrap();
+    ctx.command("home").alias("h").register().unwrap();
+    assert_eq!(ctx.unregister_command("h"), Ok(true));
+    assert!(host::with_fake(|h| h.commands.contains_key("warp")));
+    assert_eq!(ctx.unregister_command("w"), Ok(true));
+    assert!(host::with_fake(|h| h.commands.is_empty()));
+}
+
+#[test]
 fn unregister_leaves_commands_this_plugin_does_not_own_alone() {
     host::with_fake(|h| h.commands.insert("foreign".to_owned(), 77));
     assert_eq!(Context::new().unregister_command("foreign"), Ok(false));

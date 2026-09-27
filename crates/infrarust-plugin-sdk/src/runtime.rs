@@ -40,8 +40,15 @@ type CodecConstructor = dyn Fn(&CodecSessionInit) -> Box<dyn CodecFilter>;
 
 struct CommandEntry {
     name: String,
+    labels: Vec<String>,
     handler: RefCell<CommandClosure>,
     completer: Option<CompletionClosure>,
+}
+
+impl CommandEntry {
+    fn answers_to(&self, label: &str) -> bool {
+        self.name == label || self.labels.iter().any(|known| known == label)
+    }
 }
 
 enum Task {
@@ -134,12 +141,18 @@ pub(crate) fn register_command(
     let key = spec.name.to_lowercase();
     let id = next_id();
     let registration = crate::host::register_command(&spec, id)?;
+    let labels = [&registration.name, &registration.namespaced]
+        .into_iter()
+        .chain(&registration.aliases)
+        .map(|label| label.to_lowercase())
+        .collect();
     let replaced = COMMANDS.with(|commands| {
         let previous = commands.find(|entry| entry.name == key);
         commands.insert(
             id,
             Rc::new(CommandEntry {
                 name: key,
+                labels,
                 handler: RefCell::new(handler),
                 completer,
             }),
@@ -154,13 +167,13 @@ pub(crate) fn unregister_command(name: &str) -> Result<bool, Error> {
     let key = name.to_lowercase();
     let removed = COMMANDS.with(|commands| {
         commands
-            .find(|entry| entry.name == key)
+            .find(|entry| entry.answers_to(&key))
             .and_then(|id| commands.remove(id))
     });
     let Some(removed) = removed else {
         return Ok(false);
     };
-    let answer = crate::host::unregister_command(&key);
+    let answer = crate::host::unregister_command(&removed.name);
     drop(removed);
     answer?;
     Ok(true)
