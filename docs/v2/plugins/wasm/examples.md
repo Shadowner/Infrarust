@@ -265,17 +265,28 @@ impl Plugin for CodecStateful {
 
 ## limbo-handler
 
-What it shows: holding a player in limbo, completing on a command, timing out, and completing from a scheduled closure after the dispatch returns. This is the `limbo-handler` fixture; it registers four handlers to cover each case and needs the `limbo` capability.
+What it shows: holding a player in limbo, completing on a command, timing out, completing from a scheduled closure after the dispatch returns, and a handler name that only the first instance registers. This is the `limbo-handler` fixture and needs the `limbo` capability. It registers five handlers: `gate` completes on a command, `boom` traps, `timed-gate` times out, `delayed-gate` completes from a scheduled closure, and `first-boot-gate` holds every player and never completes, which only the loader tests need.
 
 ```rust
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
 struct LimboPlugin;
+
+static RECOVERED: AtomicBool = AtomicBool::new(false);
+
+struct FirstBootGate;
+
+impl LimboHandler for FirstBootGate {
+    fn on_player_enter(&self, _session: &LimboSession) -> HandlerOutcome {
+        HandlerOutcome::Hold
+    }
+}
 
 struct Gate {
     waiting: RefCell<HashSet<PlayerId>>,
@@ -362,11 +373,16 @@ impl LimboHandler for DelayedGate {
 
 #[plugin(id = "limbo-handler", name = "Limbo Handler Fixture")]
 impl Plugin for LimboPlugin {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
+    fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+        let recovered = matches!(ctx.enable_reason(), Some(EnableReason::Recovered(_)));
+        RECOVERED.store(recovered, Ordering::SeqCst);
         Ok(())
     }
 
     fn register_limbo_handlers(reg: &mut LimboRegistrar) {
+        if !RECOVERED.load(Ordering::SeqCst) {
+            reg.add("first-boot-gate", FirstBootGate);
+        }
         reg.add(
             "gate",
             Gate {
@@ -381,6 +397,8 @@ impl Plugin for LimboPlugin {
 ```
 
 `DelayedGate` accepts the player at once when the task cannot be scheduled, so nobody is held with nothing to release them.
+
+`on_enable` runs before `register_limbo_handlers`, which gets no `Context`, so the fixture keeps whether this instance is a recovery in a static. A recovered instance does not register `first-boot-gate` again. The players that handler still held are denied when the first instance is discarded, and the players who reach the name afterwards are denied too (see [Fail-closed behavior](./limbo#fail-closed-behavior)). The loader tests use it to check that a name the fresh instance leaves out stops routing to the plugin.
 
 ## host-caller
 

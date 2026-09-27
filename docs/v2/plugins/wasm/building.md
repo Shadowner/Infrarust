@@ -221,17 +221,27 @@ impl Plugin for StatsPlugin {
         ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
             info!("[stats] {}", core::join_log(&event.profile.username));
         })?;
-        ctx.command(core::COMMAND_NAME)
+        ctx.on::<DisconnectEvent>(EventPriority::Normal, |event| {
+            info!("[stats] {}", core::leave_log(&event.player.username));
+        })?;
+        let registered = ctx
+            .command(core::COMMAND_NAME)
             .aliases(core::COMMAND_ALIASES.iter().copied())
             .description(core::COMMAND_DESCRIPTION)
             .handler(|invocation| {
-                let _ = invocation.reply(Component::text(core::format_count(Players::count())));
+                let reply = core::format_count(Players::count());
+                let _ = invocation.reply(Component::text(reply));
             })
-            .register()?;
+            .register();
+        if let Err(e) = registered {
+            warn!("[stats] /{} was not registered: {e}", core::COMMAND_NAME);
+        }
         Ok(())
     }
 }
 ```
+
+When another plugin already owns `/count`, both builds log a warning and stay enabled with their join and leave logging. The WASM adapter logs the registration error instead of returning it with `?`, which would fail `on_enable` and disable the plugin.
 
 ::: info
 The guest `Plugin` trait is synchronous: `on_enable(&self, ctx: &Context) -> Result<(), PluginError>`. There is no `async`/`BoxFuture` in the WASM API. That signature belongs to the native `Plugin` trait. The guest is single-threaded with no async runtime, so keep mutable plugin state in `Cell`/`RefCell` fields. See [Getting Started](./getting-started).

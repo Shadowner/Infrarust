@@ -231,17 +231,25 @@ ctx.on::<PluginMessageEvent>(EventPriority::Normal, |event| {
 
 A named event is a custom event any plugin, native or WASM, can fire and answer. It carries a name, the id of the plugin that fired it, a content type and raw bytes; the listeners can cancel it and leave a response. The SDK stays serde-free: you choose the encoding, and `fire_named_text`, `text()` and `respond_text` cover plain text.
 
+A relay plugin listens and answers:
+
 ```rust
 ctx.on_named("chat:relay", EventPriority::Normal, |event| {
     info!("{} relayed {:?}", event.source_plugin, event.text());
     event.respond_text("received");
 })?;
+```
 
+Another plugin fires the event and reads the answer:
+
+```rust
 let outcome = ctx.fire_named("chat:relay", "application/json", br#"{"text":"hi"}"#)?;
 if let Some(response) = outcome.response {
     info!("answered with {} bytes of {}", response.payload.len(), response.content_type);
 }
 ```
+
+The listener and the firing code sit in two plugins because a WASM plugin never gets its own listener's answer in the outcome it fires (see the warning below).
 
 `on_named(name, priority, handler)` only sees events with that name. `ctx.on::<NamedEvent>` sees every named event, like a native subscription to `NamedEvent`. `fire_named` runs the listeners in priority order and returns the final `NamedOutcome` (`cancelled`, `response`); it waits for them within the call's deadline and returns a `Timeout` error if they take longer. Firing and subscribing both need only `event-bus`.
 
@@ -271,10 +279,20 @@ The proxy only builds the event for the packet ids someone subscribed to, and th
 
 ## Multiple handlers and ordering
 
-This plugin registers several handlers on `PostLoginEvent` at different priorities and cancels one before any event fires.
+This plugin registers several handlers on `PostLoginEvent` at different priorities and cancels one before any event fires. Each handler appends its letter to a string the plugin keeps.
 
 ```rust
+use std::cell::RefCell;
+
 use infrarust_plugin_sdk::prelude::*;
+
+thread_local! {
+    static ORDER: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+fn append(tag: &str) {
+    ORDER.with(|order| order.borrow_mut().push_str(tag));
+}
 
 #[derive(Default)]
 struct MultiHandler;

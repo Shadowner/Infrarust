@@ -28,13 +28,15 @@ let moderator = PermissionSnapshot::new()
 let operator = PermissionSnapshot::admin();
 ```
 
-A snapshot answers a node like the native `PermissionMap`:
+Once a snapshot is installed, the host answers a node from it like the native `PermissionMap`:
 
 - The node is looked up exactly, then as `a.b.*`, `a.*` and finally `*`, one segment at a time. The first rule found wins, so the most specific rule beats a broader one.
 - A node no rule covers is `Undefined`, and the proxy falls back to the node's registered default.
 - `admin` answers `True` for every node, like an admin of the built-in provider or the console.
 
 Node names are trimmed and lowercased on both sides of the boundary. A snapshot holds at most 65,536 rules.
+
+Inside the guest, a snapshot is a list of rules, not a checker: `get(node)` returns the rule stored for that exact node, or `None`. It resolves no wildcard and ignores `admin`; `is_admin()` reads that flag. Only the host resolves nodes.
 
 | Rules | `warps.use` | `warps.admin` | `warps` | `other` |
 |-------|-------------|---------------|---------|---------|
@@ -151,15 +153,22 @@ The host never calls back into an instance that is still running. When a refresh
 
 ## Recovery
 
-A trap does not unregister the provider. While the plugin is quarantined, players who log in get the node defaults and the console keeps every permission; online players keep the snapshot they had. The recovered instance runs `on_enable` again, and its `provide_permissions` succeeds without a second registration and without refreshing anyone. It starts from empty memory, so if it keeps state outside its data directory it can push fresh snapshots:
+A trap does not unregister the provider. While the plugin is quarantined, players who log in get the node defaults and the console keeps every permission; online players keep the snapshot they had. The recovered instance runs `on_enable` again, and its `provide_permissions` succeeds without a second registration and without refreshing anyone. It starts from empty memory. A plugin that keeps its groups somewhere that outlives the instance, such as a file in its data directory, can load them again and push fresh snapshots. Here `Groups::load` stands for that reading:
 
 ```rust
-if let Some(EnableReason::Recovered(_)) = ctx.enable_reason() {
-    for player in Players::list() {
-        let _ = Permissions::set_snapshot(player.id(), &groups.of(&player.profile.username));
+fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+    let groups = Groups::load();
+    ctx.provide_permissions(groups.clone())?;
+    if let Some(EnableReason::Recovered(_)) = ctx.enable_reason() {
+        for player in Players::list() {
+            let _ = Permissions::set_snapshot(player.id(), &groups.of(&player.profile.username));
+        }
     }
+    Ok(())
 }
 ```
+
+A recovered instance that pushed the empty groups of `Groups::default()` would strip every online player of their permissions, so push only what was loaded.
 
 Every player the provider answered for holds a snapshot from it, so these calls only answer `NotFound` for a player whose checker another plugin replaced at login.
 
