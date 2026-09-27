@@ -411,6 +411,10 @@ pub enum HandlerResult {
 
 When a handler returns `Hold`, the player stays in the void world. The handler uses the `LimboSession` to communicate: send chat messages, display titles, show action bar text. When it's done (player authenticated, server finished booting), it calls `session.complete(result)` to release the player. `HoldWithTimeout` is the same, except the engine owns a timer and applies `on_timeout` if `complete()` is not called within `after`. The deadline holds even if the handler's own task dies, and `on_timeout` must be a terminal result (`Accept`, `Deny`, `Redirect`, or `SendToLimbo`); a nested hold there is treated as `Accept`.
 
+`complete()` ends a hold and cannot start another. Passing it `Hold` or `HoldWithTimeout` does nothing but log a warning: the player stays held, a `HoldWithTimeout` deadline keeps its time and `on_timeout`, and a later `complete()` with a terminal result still releases the player. A handle's `complete()` behaves the same. To extend a wait, return `Hold` and keep your own timer, then complete with `Deny` when it runs out.
+
+The session's `send_message`, `send_title` and `send_action_bar` return `PlayerError::Disconnected` once the limbo session has ended (the player left, or was released or sent elsewhere), and `PlayerError::SendFailed` when the player's outgoing queue is full or the packet cannot be built. A `SessionHandle` kept past the session gets the same answers, so `Disconnected` tells a background task to stop.
+
 Limbo handlers are chained. Each server configuration lists which limbo handlers run and in what order. A player passes through them sequentially.
 
 ### Registering a limbo handler

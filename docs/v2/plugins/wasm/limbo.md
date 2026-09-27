@@ -196,13 +196,23 @@ Branch on this to vary the gate, for example a maintenance message for `InitialC
 
 `complete` on a stale handle is a safe no-op: the host captures the hold generation when the handle is minted, so a completion that arrives after the session advanced or ended does nothing. `cancelled()` returns `true` once the engine has ended the session, which lets a repeating task know to stop.
 
+The `send_*` methods of a `LimboSession` and a `SessionHandle` return these error kinds:
+
+| `ErrorKind` | When |
+|-------------|------|
+| `PlayerGone` | The limbo session has ended: the player left, or was released, redirected or sent to another chain. The player can no longer be reached through this session; `cancelled()` is `true` or about to be. |
+| `Unavailable` | The message could not be queued: the player's outgoing queue is full, or the proxy could not encode it for the player's version. The session is still live and a later send may go through. |
+| `InvalidArgument` | The text component or title is invalid, such as a component nested deeper than 64 levels. |
+
+`PlayerGone` is the kind every player-facing call uses for a player who left, so a stored handle can tell "stop" from "try again".
+
 ### Completing a hold
 
 `complete` ends a hold with `Accept`, `Deny`, `Redirect` or `SendToLimbo`. It cannot start another hold: `complete(Hold)` and `complete(HoldWithTimeout { .. })` return an `InvalidArgument` error and change nothing. The player stays held, and a deadline set by `HoldWithTimeout` keeps its original time and `on_timeout`; the handle can still complete the hold later.
 
 A `HoldWithTimeout` deadline cannot be moved. A gate that needs to extend its wait returns `Hold` from `on_player_enter` and keeps its own deadline: a `Context::new().delay` task that completes the hold with `Deny`, which the gate cancels and schedules again to extend the wait.
 
-The native engine differs here: a native handler that passes a hold to `LimboSession::complete` gets no error, and the engine releases the player as for `Accept` with a warning in the log.
+A native handler gets the same treatment. `LimboSession::complete` and `SessionHandle::complete` return `()`, so they cannot report the refusal: a hold passed to them is ignored with a warning in the log, the player stays held, and the current deadline keeps its time.
 
 ### Async hold pattern
 
