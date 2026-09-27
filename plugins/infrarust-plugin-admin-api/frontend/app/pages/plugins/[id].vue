@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeftIcon, CpuChipIcon } from '@heroicons/vue/24/outline';
-import type { PluginDto, ApiEnvelope, MutationResult } from '~/types/api';
+import type { PluginDto, ApiEnvelope } from '~/types/api';
 
 const route = useRoute();
 const { request } = useApi();
@@ -54,18 +54,6 @@ const faultAge = computed(() => {
   if (!fault) return null;
   return formatDuration(fault.secs_ago + Math.floor((now.value - fetchedAt.value) / 1000));
 });
-
-async function togglePlugin(action: 'enable' | 'disable') {
-  try {
-    await request<ApiEnvelope<MutationResult>>(`/plugins/${encodeURIComponent(pluginId)}/${action}`, {
-      method: 'POST', body: {},
-    });
-    push({ type: 'success', title: `Plugin ${action}d` });
-  } catch (e: unknown) {
-    const msg = (e as { data?: { error?: { message?: string } } })?.data?.error?.message ?? `Failed to ${action} plugin`;
-    push({ type: 'error', title: msg });
-  }
-}
 </script>
 
 <template>
@@ -148,9 +136,5 @@ async function togglePlugin(action: 'enable' | 'disable') {
       <p v-else class="text-sm text-[var(--ir-text-muted)]">No dependencies declared.</p>
     </div>
 
-    <div class="flex gap-2">
-      <button class="btn btn-secondary" @click="togglePlugin('enable')">Enable</button>
-      <button class="btn btn-danger" @click="togglePlugin('disable')">Disable</button>
-    </div>
   </div>
 </template>

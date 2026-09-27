@@ -479,7 +479,7 @@ Streams log entries in real time. Filter by minimum `level` (`trace`, `debug`, `
 
 When `enable_webui` is `true`, the plugin serves an embedded web frontend at the root URL (`http://127.0.0.1:8080/`). The frontend is a Nuxt SPA bundled into the binary at compile time.
 
-The Plugins page shows each plugin's state and enable toggle. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
+The Plugins page shows each plugin's state; it has no enable or disable action, since a plugin is turned on or off with `enabled` in its `[plugins.<id>]` table and a restart. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
 
 Non-API routes serve static files from the embedded bundle. If a requested file doesn't exist, the server returns `index.html` for client-side routing. API routes (`/api/*`) that don't match a defined endpoint return 404.
 
