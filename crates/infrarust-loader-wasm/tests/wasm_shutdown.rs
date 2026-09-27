@@ -1,18 +1,21 @@
 #![cfg(all(feature = "wasm", wasm_fixtures_available))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod fault_lab;
 mod support;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use infrarust_api::events::lifecycle::PostLoginEvent;
+use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::lifecycle::{PostLoginEvent, PreLoginResult};
 use infrarust_api::types::ProtocolVersion;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::{PluginManager, ShutdownLimits};
 use infrarust_core::services::command_manager::CommandManagerImpl;
 
+use fault_lab::{LAB, Lab, LabOptions, LabPlugin};
 use support::{fixture_path, loader_from_toml, make_env, nil_profile};
 
 const MARKER: &[u8] = b"LIFPROBE-BLOB-V1";
@@ -343,4 +346,46 @@ async fn shutdown_with_a_full_queue_is_bounded() {
     let took = timed_shutdown(&mut running.manager).await;
     eprintln!("full queue: shutdown took {took:?}");
     assert!(took < MAX_CALL * 3, "{took:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_access_event_in_flight_when_the_shutdown_starts_is_denied_at_once() {
+    let lab = Arc::new(
+        Lab::start(
+            vec![LabPlugin::lab("event:pre-login sleep")],
+            LabOptions::default(),
+        )
+        .await,
+    );
+    let firing = Arc::clone(&lab);
+    let fired = tokio::spawn(async move { firing.event_bus.fire(fault_lab::pre_login()).await });
+    lab.wait_for("the pre-login listener to start", || {
+        lab.log(LAB).iter().any(|line| line == "event:pre-login")
+    })
+    .await;
+
+    let started = Instant::now();
+    lab.context(LAB).proxy_shutdown().cancel();
+    let event = tokio::time::timeout(Duration::from_secs(5), fired)
+        .await
+        .expect("the event is answered once the shutdown starts")
+        .unwrap();
+    let took = started.elapsed();
+    eprintln!("pre-login in flight at the start of the shutdown answered after {took:?}");
+    assert!(
+        took < Duration::from_secs(1),
+        "the event waited {took:?} instead of its call being cut"
+    );
+    assert!(
+        matches!(event.result(), PreLoginResult::Denied { reason } if reason.to_plain().contains("unavailable")),
+        "{:?}",
+        event.result()
+    );
+    let chats_before = fault_lab::count(&lab.log(LAB), "event:chat-message");
+    lab.event_bus.fire(fault_lab::chat()).await;
+    assert_eq!(
+        fault_lab::count(&lab.log(LAB), "event:chat-message"),
+        chats_before,
+        "the plugin whose call was cut has no instance left"
+    );
 }
