@@ -227,6 +227,7 @@ struct ActorInfo {
     next_full_warning_ms: AtomicU64,
     suppressed_full_warnings: AtomicU64,
     guest_warnings: SharedRateLimit,
+    loop_warnings: SharedRateLimit,
     snapshots: Arc<PermissionSnapshots>,
     access: Arc<AccessListeners>,
 }
@@ -246,6 +247,7 @@ impl ActorInfo {
             next_full_warning_ms: AtomicU64::new(0),
             suppressed_full_warnings: AtomicU64::new(0),
             guest_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
+            loop_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
             snapshots,
             access: Arc::default(),
         }
@@ -324,6 +326,10 @@ impl InstanceRef {
 
     pub(crate) fn admit_warning(&self) -> Option<u64> {
         self.info.guest_warnings.admit(Instant::now())
+    }
+
+    pub(crate) fn admit_loop_warning(&self) -> Option<u64> {
+        self.info.loop_warnings.admit(Instant::now())
     }
 
     pub(crate) fn is_upstream(&self) -> bool {

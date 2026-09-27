@@ -4,13 +4,21 @@ use std::sync::Arc;
 use infrarust_api::player::session_task;
 use infrarust_api::types::PlayerId;
 
+pub(crate) const MAX_ENTRIES: u32 = 8;
+
 tokio::task_local! {
     static CHAIN: CallChain;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Caller {
+    plugin: Arc<str>,
+    entries: u32,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CallChain {
-    callers: Arc<[Arc<str>]>,
+    callers: Arc<[Caller]>,
     session: Option<PlayerId>,
 }
 
@@ -26,15 +34,28 @@ impl CallChain {
     }
 
     pub(crate) fn contains(&self, plugin_id: &str) -> bool {
-        self.callers.iter().any(|caller| &**caller == plugin_id)
+        self.entries(plugin_id) > 0
+    }
+
+    pub(crate) fn entries(&self, plugin_id: &str) -> u32 {
+        self.callers
+            .iter()
+            .find(|caller| &*caller.plugin == plugin_id)
+            .map_or(0, |caller| caller.entries)
     }
 
     pub(crate) fn with(&self, plugin_id: &str) -> Self {
-        if self.contains(plugin_id) {
-            return self.clone();
+        let mut callers: Vec<Caller> = self.callers.to_vec();
+        match callers
+            .iter_mut()
+            .find(|caller| &*caller.plugin == plugin_id)
+        {
+            Some(caller) => caller.entries = caller.entries.saturating_add(1),
+            None => callers.push(Caller {
+                plugin: Arc::from(plugin_id),
+                entries: 1,
+            }),
         }
-        let mut callers: Vec<Arc<str>> = self.callers.to_vec();
-        callers.push(Arc::from(plugin_id));
         Self {
             callers: callers.into(),
             session: self.session,
@@ -78,8 +99,23 @@ mod tests {
         assert_eq!(seen.0, outer);
         assert!(seen.1.0, "the outer caller is still in the chain");
         assert!(seen.1.1.contains("b"));
-        assert_eq!(outer.with("a"), outer, "a caller is recorded once");
         assert!(!CallChain::current().contains("a"), "the scope ended");
+    }
+
+    #[test]
+    fn a_caller_is_recorded_once_with_the_number_of_times_the_chain_entered_it() {
+        let chain = CallChain::default().with("a").with("b").with("a");
+        assert_eq!(chain.entries("a"), 2);
+        assert_eq!(chain.entries("b"), 1);
+        assert_eq!(chain.entries("c"), 0);
+        assert!(!chain.contains("c"));
+        assert_eq!(chain.callers.len(), 2, "a plugin is listed once: {chain:?}");
+        let mut relay = CallChain::default();
+        for _ in 0..MAX_ENTRIES {
+            relay = relay.with("a").with("b");
+        }
+        assert_eq!(relay.entries("a"), MAX_ENTRIES);
+        assert_eq!(relay.callers.len(), 2);
     }
 
     #[tokio::test]

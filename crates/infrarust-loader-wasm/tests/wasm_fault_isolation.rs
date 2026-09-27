@@ -246,25 +246,40 @@ async fn a_named_event_chain_through_two_wasm_plugins_and_back_completes_without
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-34: event relay between plugins has no hop limit"]
 async fn two_plugins_relaying_to_each_other_stop_by_themselves() {
-    let lab = Lab::start(
-        vec![
-            LabPlugin::lab("relay lab-pong lab-ping"),
-            LabPlugin::peer("relay lab-ping lab-pong"),
-        ],
-        LabOptions::default(),
-    )
+    let logs = LogCapture::at(Level::WARN);
+    let (first, second) = async {
+        let lab = Lab::start(
+            vec![
+                LabPlugin::lab("relay lab-pong lab-ping"),
+                LabPlugin::peer("relay lab-ping lab-pong"),
+            ],
+            LabOptions::default(),
+        )
+        .await;
+        lab.dispatch("labfire lab-ping").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let first = fault_lab::count(&lab.log(LAB), "named:lab-pong");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let second = fault_lab::count(&lab.log(LAB), "named:lab-pong");
+        (first, second)
+    }
+    .with_subscriber(logs.clone())
     .await;
-    lab.dispatch("labfire lab-ping").await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let first = fault_lab::count(&lab.log(LAB), "named:lab-pong");
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let second = fault_lab::count(&lab.log(LAB), "named:lab-pong");
     println!("relay hops seen by A: after 1s {first}, after 2s {second}");
     assert_eq!(
         first, second,
         "the relay between two busy plugins keeps going on its own ({first} then {second} hops)"
+    );
+    assert!(
+        (1..=8).contains(&first),
+        "the relay stops after a few hops: {first}"
+    );
+    assert_eq!(
+        logs.matching("wasm plugin event dropped").len(),
+        1,
+        "the cut is logged once: {:?}",
+        logs.lines()
     );
     let _ = PROMPTLY;
 }

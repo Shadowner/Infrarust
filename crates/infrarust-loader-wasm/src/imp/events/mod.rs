@@ -47,6 +47,7 @@ use infrarust_plugin_wit::arena::ArenaError;
 use crate::actor::{CallFailure, InstanceRef};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::bindings::infrarust::plugin::types as wt;
+use crate::chain::{CallChain, MAX_ENTRIES};
 use crate::component;
 use crate::snapshots::SnapshotError;
 
@@ -311,6 +312,20 @@ fn report_denied(instance: &InstanceRef, kind: EventKind, failure: &CallFailure)
 }
 
 fn post(instance: &InstanceRef, kind: EventKind, listener: u64, wit: we::Event) {
+    let entries = CallChain::current().entries(instance.plugin_id());
+    if entries >= MAX_ENTRIES {
+        if let Some(suppressed) = instance.admit_loop_warning() {
+            tracing::warn!(
+                plugin = instance.plugin_id(),
+                event = kind_name(kind),
+                entries,
+                suppressed,
+                "wasm plugin event dropped: the call that led to it already entered this plugin \
+                 {entries} times; plugins may be passing events back and forth"
+            );
+        }
+        return;
+    }
     if let Some(suppressed) = instance.admit_warning() {
         tracing::warn!(
             plugin = instance.plugin_id(),
