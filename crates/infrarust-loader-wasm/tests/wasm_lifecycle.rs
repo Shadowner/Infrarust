@@ -234,10 +234,10 @@ async fn a_huge_non_component_is_refused_quickly() {
     let shown = error.map(|text| text.prefix).unwrap_or_default();
     assert!(
         error_len < 4096,
-        "the refusal of one junk file carries a {error_len}-byte error message starting with: {shown}"
+        "the refusal of one junk file carries a {error_len}-byte error message starting with: {shown:?}"
     );
     let metas =
-        found.unwrap_or_else(|_| panic!("a 512 MiB junk file must not fail discovery: {shown}"));
+        found.unwrap_or_else(|_| panic!("a 512 MiB junk file must not fail discovery: {shown:?}"));
     assert_eq!(ids(&metas), ["good"]);
 }
 
