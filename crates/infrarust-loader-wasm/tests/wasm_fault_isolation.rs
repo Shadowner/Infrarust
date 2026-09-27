@@ -133,9 +133,9 @@ async fn storm(mode: Mode, faulty_budget: &str) {
     .with_subscriber(logs.clone())
     .await;
     assert!(
-        logs.matching("panicked").is_empty(),
+        logs.matching("a host function panicked").is_empty(),
         "{:?}",
-        logs.matching("panicked")
+        logs.matching("a host function panicked")
     );
 }
 

@@ -464,7 +464,6 @@ async fn events_queued_for_a_replaced_instance_never_reach_the_fresh_instance() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-15: fault cause loses the guest panic message"]
 async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault() {
     let lab = Lab::start(
         vec![LabPlugin::lab("")],
@@ -472,9 +471,14 @@ async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault(
     )
     .await;
     let mut causes = Vec::new();
-    for mode in ["panic", "sleep", "spin", "grow"] {
+    for (attempt, mode) in (1..).zip(["panic", "sleep", "spin", "grow"]) {
         lab.set_faults(LAB, &format!("command {mode}"));
         lab.dispatch("lab").await;
+        let recovered = format!("enable recovered {attempt} ");
+        lab.wait_for("the fresh instance's on_enable", || {
+            lab.log(LAB).iter().any(|line| line.starts_with(&recovered))
+        })
+        .await;
         let line = lab
             .log(LAB)
             .into_iter()
@@ -489,7 +493,7 @@ async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault(
         "{causes:?}"
     );
     assert!(
-        causes[2].starts_with("enable recovered 3 ") && causes[2].contains("interrupt"),
+        causes[2].starts_with("enable recovered 3 ") && causes[2].contains("ran past cpu_budget"),
         "{causes:?}"
     );
     assert!(causes[3].starts_with("enable recovered 4 "), "{causes:?}");
@@ -501,7 +505,6 @@ async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-15: fault cause loses the guest panic message"]
 async fn the_fault_error_carries_the_guest_panic_message() {
     let logs = LogCapture::at(Level::ERROR);
     async {

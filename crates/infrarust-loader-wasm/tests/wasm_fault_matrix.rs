@@ -52,7 +52,10 @@ struct Site {
 fn cause_matches(mode: Mode, error: &str) -> bool {
     match mode {
         Mode::Sleep => error.contains("max_call_duration"),
-        Mode::Spin => error.contains("interrupt"),
+        Mode::Spin => error.contains("ran past cpu_budget"),
+        Mode::Panic => {
+            error.contains("trapped: panicked at ") && error.contains("panics on purpose")
+        }
         _ => error.contains("trapped"),
     }
 }
@@ -125,7 +128,7 @@ async fn drive(site: &Site, trigger: &Trigger, options: LabOptions) {
                 site.key
             );
         }
-        let panics = logs.matching("panicked");
+        let panics = logs.matching("a host function panicked");
         assert!(panics.is_empty(), "no host panic: {panics:?}");
     }
     .with_subscriber(logs.clone())

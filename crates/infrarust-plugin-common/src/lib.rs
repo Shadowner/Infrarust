@@ -1,6 +1,7 @@
 pub mod ban;
 pub mod capability;
 pub mod enums;
+pub mod guest_panic;
 pub mod plugin_id;
 pub mod text;
 

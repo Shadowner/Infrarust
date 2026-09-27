@@ -104,7 +104,7 @@ impl fmt::Display for CallFailure {
             Self::Expired => f.write_str("the call's deadline passed while it was queued"),
             Self::TimedOut => f.write_str("the plugin did not answer before the call's deadline"),
             Self::Trapped(trap) => write!(f, "the guest trapped: {}", trap.root_cause()),
-            Self::Abandoned(fault) => write!(f, "the call was abandoned: {fault}"),
+            Self::Abandoned(fault) => write!(f, "{fault}"),
             Self::Dropped => f.write_str("the call was dropped before it completed"),
         }
     }

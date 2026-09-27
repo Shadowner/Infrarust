@@ -263,7 +263,27 @@ pub fn on_scheduled_task(handler: u64) {
     }
 }
 
+#[cfg(target_family = "wasm")]
+fn report_panics_to_host() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let message = info
+                .payload_as_str()
+                .unwrap_or("a panic with a non-text payload");
+            let location = info
+                .location()
+                .map(|at| (at.file(), at.line(), at.column()));
+            crate::bindings::log::error(&infrarust_plugin_common::guest_panic::guest_panic_line(
+                location, message,
+            ));
+        }));
+    });
+}
+
 pub fn on_enable<P: Plugin + Default>(reason: wg::EnableReason) -> Result<(), String> {
+    #[cfg(target_family = "wasm")]
+    report_panics_to_host();
     let plugin = P::default();
     let result = plugin.on_enable(&Context::enabling(EnableReason::from_wit(reason)));
     if result.is_ok() {

@@ -10,6 +10,7 @@ use infrarust_api::player::BossBarHandle;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_config::WasmQuotasConfig;
+use infrarust_plugin_common::guest_panic::bounded_guest_panic;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -96,6 +97,7 @@ struct Sandbox {
     limits: StoreLimits,
     deadline: Option<Deadline>,
     epoch_yields: u32,
+    guest_panic: Option<String>,
 }
 
 impl Sandbox {
@@ -111,6 +113,7 @@ impl Sandbox {
                 .build(),
             deadline: None,
             epoch_yields: 0,
+            guest_panic: None,
         }
     }
 }
@@ -322,6 +325,15 @@ impl PluginStoreState {
     pub(crate) fn begin_call(&mut self, deadline: Option<Deadline>) {
         self.sandbox.epoch_yields = 0;
         self.sandbox.deadline = deadline;
+        self.sandbox.guest_panic = None;
+    }
+
+    pub(crate) fn record_guest_panic(&mut self, line: String) {
+        self.sandbox.guest_panic = Some(bounded_guest_panic(line));
+    }
+
+    pub(crate) fn take_guest_panic(&mut self) -> Option<String> {
+        self.sandbox.guest_panic.take()
     }
 
     pub(crate) fn end_call(&mut self) {

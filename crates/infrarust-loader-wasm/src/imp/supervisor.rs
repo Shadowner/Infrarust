@@ -46,6 +46,11 @@ impl std::error::Error for EnableRefused {}
 #[derive(Debug)]
 pub(crate) enum Fault {
     Trapped(Arc<wasmtime::Error>),
+    GuestPanicked {
+        message: String,
+        trap: Arc<wasmtime::Error>,
+    },
+    CpuBudget(Arc<wasmtime::Error>),
     Panicked(String),
     Overran(Duration),
     PastDeadline(CallKind),
@@ -57,6 +62,8 @@ impl fmt::Display for Fault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Trapped(trap) => write!(f, "the guest trapped: {}", trap.root_cause()),
+            Self::GuestPanicked { message, .. } => write!(f, "the guest trapped: {message}"),
+            Self::CpuBudget(_) => f.write_str("the call ran past cpu_budget"),
             Self::Panicked(message) => write!(f, "a host function panicked: {message}"),
             Self::Overran(limit) => write!(f, "the call ran past max_call_duration ({limit:?})"),
             Self::PastDeadline(CallKind::Event) => {
@@ -82,6 +89,28 @@ impl Fault {
     pub(crate) fn refusal(&self) -> Option<&str> {
         match self {
             Self::Refused(message) => Some(message),
+            _ => None,
+        }
+    }
+
+    fn explained(self, panic: Option<String>) -> Self {
+        let Self::Trapped(trap) = self else {
+            return self;
+        };
+        match panic {
+            Some(message) => Self::GuestPanicked { message, trap },
+            None if trap.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) => {
+                Self::CpuBudget(trap)
+            }
+            None => Self::Trapped(trap),
+        }
+    }
+
+    fn trap(&self) -> Option<&wasmtime::Error> {
+        match self {
+            Self::Trapped(trap) | Self::GuestPanicked { trap, .. } | Self::CpuBudget(trap) => {
+                Some(trap)
+            }
             _ => None,
         }
     }
@@ -450,7 +479,7 @@ impl Supervisor {
     fn report(&self, op: &'static str, fault: &Fault) {
         tracing::error!(plugin = %self.factory.plugin_id(), op, generation = self.generation,
             cause = %fault, "wasm plugin instance failed; discarding it");
-        if let Fault::Trapped(trap) = fault {
+        if let Some(trap) = fault.trap() {
             tracing::debug!(plugin = %self.factory.plugin_id(), op, generation = self.generation,
                 trap = ?trap, "wasm trap details");
         }
@@ -466,7 +495,10 @@ async fn run_guest(
 ) -> Result<(), Fault> {
     live.begin_call(deadline);
     let running = call.run(&mut live.store, &live.bindings);
-    let outcome = chain.scope(contain(bound, running)).await;
+    let outcome = chain
+        .scope(contain(bound, running))
+        .await
+        .map_err(|fault| fault.explained(live.store.data_mut().take_guest_panic()));
     live.end_call();
     outcome
 }
@@ -481,7 +513,9 @@ async fn enable(
         .bindings
         .infrarust_plugin_guest()
         .call_on_enable(&mut live.store, reason);
-    let outcome = contain(Bound::new(limit, None), enabling).await;
+    let outcome = contain(Bound::new(limit, None), enabling)
+        .await
+        .map_err(|fault| fault.explained(live.store.data_mut().take_guest_panic()));
     live.end_call();
     outcome?.map_err(Fault::Refused)
 }
