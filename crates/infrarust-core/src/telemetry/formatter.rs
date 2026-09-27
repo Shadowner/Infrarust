@@ -4,7 +4,7 @@ use console::Term;
 use tracing::Level;
 use tracing::field::{Field as TracingField, Visit};
 use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
+use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, FormattedFields};
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::terminal::{Tone, color};
@@ -134,10 +134,85 @@ where
     let Some(scope) = ctx.event_scope() else {
         return;
     };
-    let names: Vec<&str> = scope.from_root().map(|span| span.name()).collect();
+    let mut names = Vec::new();
+    for span in scope.from_root() {
+        names.push(span.name());
+        if let Some(recorded) = span.extensions().get::<FormattedFields<N>>() {
+            merge(
+                fields,
+                parse_span_fields(&console::strip_ansi_codes(recorded)),
+            );
+        }
+    }
     if !names.is_empty() {
         fields.push(Field::pair("span", names.join(">")));
     }
+}
+
+fn merge(fields: &mut Vec<Field>, extra: Vec<Field>) {
+    for field in extra {
+        if !fields.iter().any(|known| known.key == field.key) {
+            fields.push(field);
+        }
+    }
+}
+
+fn parse_span_fields(text: &str) -> Vec<Field> {
+    tokens(text)
+        .into_iter()
+        .map(|token| match token.split_once('=') {
+            Some((key, value)) => Field::pair(key, unquote(value)),
+            None => Field::bare(token),
+        })
+        .collect()
+}
+
+fn tokens(text: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, c) in text.char_indices() {
+        if c.is_whitespace() && !quoted {
+            if let Some(from) = start.take() {
+                tokens.push(&text[from..index]);
+            }
+            continue;
+        }
+        start.get_or_insert(index);
+        if escaped {
+            escaped = false;
+        } else if c == '\\' && quoted {
+            escaped = true;
+        } else if c == '"' {
+            quoted = !quoted;
+        }
+    }
+    if let Some(from) = start {
+        tokens.push(&text[from..]);
+    }
+    tokens
+}
+
+fn unquote(value: &str) -> String {
+    let Some(inner) = value
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+    else {
+        return value.to_string();
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match (c, chars.clone().next()) {
+            ('\\', Some(next @ ('"' | '\\'))) => {
+                out.push(next);
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 struct Record<'a> {
@@ -158,6 +233,13 @@ impl Field {
         Self {
             key: key.into(),
             value: Some(value.into()),
+        }
+    }
+
+    fn bare(token: impl Into<String>) -> Self {
+        Self {
+            key: token.into(),
+            value: None,
         }
     }
 
@@ -309,7 +391,7 @@ mod tests {
     use tracing_subscriber::fmt::MakeWriter;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::{Field, InfrarustFormatter, Record};
+    use super::{Field, InfrarustFormatter, Record, merge, parse_span_fields};
 
     fn render(fields: &[Field], colored: bool, width: Option<usize>) -> String {
         render_with(Level::INFO, "player joined", fields, colored, width)
@@ -445,6 +527,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn span_fields_are_read_token_by_token() {
+        let parsed =
+            parse_span_fields(r#"server="lobby" reason="timed out" said="a \"b\"" id=7 flag"#);
+        assert_eq!(
+            parsed,
+            vec![
+                Field::pair("server", "lobby"),
+                Field::pair("reason", "timed out"),
+                Field::pair("said", "a \"b\""),
+                Field::pair("id", "7"),
+                Field::bare("flag"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bare_span_token_renders_as_is() {
+        let line = render(&[Field::bare("flag")], false, None);
+        assert_eq!(line, "12:00:00 INFO  player joined  flag");
+    }
+
+    #[test]
+    fn event_fields_win_over_span_fields() {
+        let mut fields = vec![Field::pair("server", "survival")];
+        merge(
+            &mut fields,
+            vec![
+                Field::pair("server", "lobby"),
+                Field::pair("player", "Notch"),
+            ],
+        );
+        assert_eq!(
+            fields,
+            vec![
+                Field::pair("server", "survival"),
+                Field::pair("player", "Notch")
+            ]
+        );
+    }
+
     #[derive(Clone, Default)]
     struct Buffer(Arc<Mutex<Vec<u8>>>);
 
@@ -497,6 +620,24 @@ mod tests {
         assert!(
             out.trim_end()
                 .ends_with("WARN  slow login  player=Notch span=session>login"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_real_subscriber_appends_span_fields_after_the_event_ones() {
+        let out = capture(|| {
+            let session =
+                tracing::info_span!("session", player = "Steve", addr = "203.0.113.7:51234");
+            let _session = session.enter();
+            let login = tracing::info_span!("login", server = "lobby", reason = "first join");
+            let _login = login.enter();
+            tracing::info!(player = "Notch", "connected");
+        });
+        assert!(
+            out.trim_end().ends_with(
+                r#"INFO  connected  player=Notch addr=203.0.113.7:51234 server=lobby reason="first join" span=session>login"#
+            ),
             "{out}"
         );
     }
