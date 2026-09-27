@@ -105,7 +105,7 @@ A player's command does not run in that player's session: the host hands it to t
 
 ## Tab-completion
 
-The completer receives a `Completion` with the `sender`, the argument tokens typed so far (`args`), and the `cursor`. The last token of `args` is the one under the cursor: it is empty after a trailing space, so `args` is never empty and `args.len()` is the position of the argument being completed.
+The completer receives a `Completion` with the `sender`, the argument tokens typed so far (`args`), and the `cursor`. The last token of `args` is the one under the cursor: it is empty after a trailing space, so `args` is never empty and `args.len()` is the 1-based position of the argument being completed.
 
 | Typed | `args` | `cursor` | `partial()` |
 |-------|--------|----------|-------------|

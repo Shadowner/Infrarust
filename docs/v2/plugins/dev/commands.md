@@ -217,7 +217,7 @@ impl CommandHandler for WarpCommand {
 }
 ```
 
-`SuggestContext` has the same `source`, `label`, and `raw_args` as `CommandContext`, and `args` holds the arguments typed so far. When the input ends with a space the last element is an empty string, so you can tell that a new argument has started. That holds right after the command name too: `/warp ` gives `[""]` and `/warp spawn ` gives `["spawn", ""]`, so `args` is never empty and `args.len()` is the position of the argument being completed. `partial()` returns that last element. Each `Suggestion` carries its text and an optional tooltip `Component`, which the client shows on hover.
+`SuggestContext` has the same `source`, `label`, and `raw_args` as `CommandContext`, and `args` holds the arguments typed so far. When the input ends with a space the last element is an empty string, so you can tell that a new argument has started. That holds right after the command name too: `/warp ` gives `[""]` and `/warp spawn ` gives `["spawn", ""]`, so `args` is never empty and `args.len()` is the 1-based position of the argument being completed. `partial()` returns that last element. Each `Suggestion` carries its text and an optional tooltip `Component`, which the client shows on hover.
 
 The proxy answers a completion request for a proxy command itself and never forwards it to the backend. If the player lacks the command's permission node, `suggest` is not called and the answer is empty. `suggest` runs on the player's command queue, after the commands typed before it, and the proxy sends its answer when it returns.
 
