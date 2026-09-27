@@ -4,8 +4,6 @@ pub(crate) const EPOCH_DEADLINE_TICKS: u64 = 1;
 
 pub(crate) const CACHE_SUBDIR: &str = ".cache";
 
-pub(crate) const WASMTIME_CACHE_TAG: &str = "wasmtime-45";
-
 pub(crate) const MAX_COMPONENT_BYTES: u64 = 256 * 1024 * 1024;
 
 pub(crate) const ERROR_TEXT_LIMIT: usize = 1024;

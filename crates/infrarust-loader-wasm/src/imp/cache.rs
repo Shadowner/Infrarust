@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use wasmtime::component::Component;
 use wasmtime::{Engine, Precompiled};
 
-use crate::consts::{MAX_COMPONENT_BYTES, WASMTIME_CACHE_TAG, WORLD_VERSION};
+use crate::consts::{MAX_COMPONENT_BYTES, WORLD_VERSION};
 use crate::error::{WasmLoaderError, bounded};
 
 const WASM_MAGIC: &[u8; 4] = b"\0asm";
@@ -22,28 +22,25 @@ const PREAMBLE_LEN: usize = 8;
 #[derive(Clone)]
 pub(crate) struct AotCache {
     dir: PathBuf,
+    engine_tag: String,
 }
 
 impl AotCache {
-    pub(crate) fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    pub(crate) fn new(engine: &Engine, dir: PathBuf) -> Self {
+        Self {
+            dir,
+            engine_tag: engine_tag(engine),
+        }
     }
 
-    fn cache_key(wasm: &[u8]) -> String {
-        use std::fmt::Write;
+    fn cache_key(&self, wasm: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(wasm);
         hasher.update(b"\0");
-        hasher.update(WASMTIME_CACHE_TAG.as_bytes());
+        hasher.update(self.engine_tag.as_bytes());
         hasher.update(b"\0");
         hasher.update(WORLD_VERSION.as_bytes());
-        let digest = hasher.finalize();
-        digest
-            .iter()
-            .fold(String::with_capacity(digest.len() * 2), |mut key, b| {
-                let _ = write!(key, "{b:02x}");
-                key
-            })
+        hex(&hasher.finalize())
     }
 
     pub(crate) fn compile_or_load(
@@ -52,7 +49,7 @@ impl AotCache {
         wasm_path: &Path,
     ) -> Result<Component, WasmLoaderError> {
         let bytes = read_component(wasm_path)?;
-        let key = Self::cache_key(&bytes);
+        let key = self.cache_key(&bytes);
         let cwasm = self.dir.join(format!("{key}.cwasm"));
 
         if cwasm.is_file() {
@@ -108,6 +105,38 @@ impl AotCache {
             source,
         })
     }
+}
+
+fn engine_tag(engine: &Engine) -> String {
+    use std::hash::Hash;
+    let mut hasher = DigestHasher(Sha256::new());
+    engine.precompile_compatibility_hash().hash(&mut hasher);
+    hex(&hasher.0.finalize())
+}
+
+struct DigestHasher(Sha256);
+
+impl std::hash::Hasher for DigestHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        let digest = self.0.clone().finalize();
+        let mut first = [0u8; 8];
+        first.copy_from_slice(&digest[..8]);
+        u64::from_le_bytes(first)
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut text, b| {
+            let _ = write!(text, "{b:02x}");
+            text
+        })
 }
 
 pub(crate) fn read_component(path: &Path) -> Result<Vec<u8>, WasmLoaderError> {
@@ -210,6 +239,87 @@ mod tests {
 
     fn refusal(bytes: &[u8]) -> String {
         check_preamble(bytes).expect_err("refused")
+    }
+
+    fn engine_with(settings: impl FnOnce(&mut wasmtime::Config)) -> Engine {
+        let mut config = wasmtime::Config::new();
+        config.epoch_interruption(true);
+        config.wasm_component_model(true);
+        config.consume_fuel(false);
+        config.concurrency_support(false);
+        settings(&mut config);
+        Engine::new(&config).unwrap()
+    }
+
+    fn key_under(engine: &Engine) -> String {
+        AotCache::new(engine, PathBuf::new()).cache_key(b"\0asm\x0d\0\x01\0")
+    }
+
+    fn released_with(version: &str) -> Engine {
+        engine_with(|config| {
+            config
+                .module_version(wasmtime::ModuleVersionStrategy::Custom(version.to_owned()))
+                .unwrap();
+        })
+    }
+
+    fn wasmtime_version_in_the_lockfile() -> Option<String> {
+        let lock =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"))
+                .ok()?;
+        let versions: Vec<String> = lock
+            .split("[[package]]")
+            .filter(|package| package.contains("\nname = \"wasmtime\"\n"))
+            .filter_map(|package| {
+                package
+                    .lines()
+                    .find_map(|line| line.strip_prefix("version = \""))
+                    .map(|version| version.trim_end_matches('"').to_owned())
+            })
+            .collect();
+        assert_eq!(
+            versions.len(),
+            1,
+            "one wasmtime in Cargo.lock: {versions:?}"
+        );
+        versions.into_iter().next()
+    }
+
+    #[test]
+    fn the_cache_key_follows_the_wasmtime_version_the_proxy_is_built_with() {
+        let Some(version) = wasmtime_version_in_the_lockfile() else {
+            return;
+        };
+        let built = key_under(&engine_with(|_| {}));
+        assert_eq!(
+            built,
+            key_under(&released_with(&version)),
+            "the key must be the one of wasmtime {version}, the version in Cargo.lock"
+        );
+        assert_ne!(built, key_under(&released_with("45.0.3")));
+    }
+
+    #[test]
+    fn the_cache_key_changes_with_the_engine_settings_that_shape_the_code() {
+        let base = key_under(&engine_with(|_| {}));
+        assert_ne!(
+            base,
+            key_under(&engine_with(|config| {
+                config.epoch_interruption(false);
+            }))
+        );
+        assert_eq!(base, key_under(&engine_with(|_| {})));
+    }
+
+    #[test]
+    fn the_cache_key_does_not_change_with_the_instance_pool() {
+        let on_demand: infrarust_config::ProxyConfig = toml::from_str("").unwrap();
+        let pooled: infrarust_config::ProxyConfig =
+            toml::from_str("[wasm]\ninstance_pool = 8\n").unwrap();
+        assert_eq!(
+            key_under(&crate::engine::build_engine(&on_demand).unwrap()),
+            key_under(&crate::engine::build_engine(&pooled).unwrap())
+        );
     }
 
     #[test]

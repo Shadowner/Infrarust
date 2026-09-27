@@ -133,7 +133,7 @@ impl PluginLoader for WasmPluginLoader {
             if !plugin_dir.exists() {
                 return Ok(Vec::new());
             }
-            let cache = AotCache::new(plugin_dir.join(CACHE_SUBDIR));
+            let cache = AotCache::new(&self.engine, plugin_dir.join(CACHE_SUBDIR));
             let wasm_files = scan_wasm_files(plugin_dir)?;
 
             let mut probed = Vec::new();
