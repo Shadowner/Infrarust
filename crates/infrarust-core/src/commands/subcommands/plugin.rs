@@ -1,6 +1,7 @@
 use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
+use infrarust_api::plugin::{PluginHealth, PluginRuntimeStatus};
 
 use crate::commands::{CommandServices, SubcommandAlias, SubcommandHandler};
 use crate::services::command_manager::DispatchOutcome;
@@ -54,8 +55,11 @@ impl SubcommandHandler for PluginSubcommand {
                         let meta = &info.metadata;
                         let desc = meta.description.as_deref().unwrap_or("No description");
                         player.send_message(ProxyMessage::detail(&format!(
-                            "  {} v{} - {}",
-                            meta.name, meta.version, desc
+                            "  {} v{} - {}{}",
+                            meta.name,
+                            meta.version,
+                            desc,
+                            health_note(info.runtime.as_ref())
                         )));
                     }
                 }
@@ -143,6 +147,54 @@ impl SubcommandHandler for PluginSubcommand {
     }
 }
 
+fn health_note(runtime: Option<&PluginRuntimeStatus>) -> String {
+    let Some(runtime) = runtime else {
+        return String::new();
+    };
+    match (runtime.health, runtime.health.retry_in()) {
+        (PluginHealth::Healthy, _) => String::new(),
+        (health, Some(retry_in)) => format!(
+            " [{}, next attempt in {}s]",
+            health.as_str(),
+            retry_in.as_secs() + u64::from(retry_in.subsec_nanos() > 0)
+        ),
+        (health, None) => format!(" [{}]", health.as_str()),
+    }
+}
+
 fn namespaced_input(plugin_id: &str, command: &str, rest: &[String]) -> String {
     format!("{plugin_id}:{command} {}", rest.join(" "))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use infrarust_api::plugin::PluginQueueStats;
+
+    use super::*;
+
+    fn status(health: PluginHealth) -> PluginRuntimeStatus {
+        PluginRuntimeStatus::new(health, 2, PluginQueueStats::default())
+    }
+
+    #[test]
+    fn only_an_unhealthy_supervised_plugin_gets_a_health_note() {
+        assert_eq!(health_note(None), "");
+        assert_eq!(health_note(Some(&status(PluginHealth::Healthy))), "");
+        assert_eq!(
+            health_note(Some(&status(PluginHealth::Recovering { retry_in: None }))),
+            " [recovering]"
+        );
+        assert_eq!(
+            health_note(Some(&status(PluginHealth::Quarantined {
+                retry_in: Duration::from_millis(29_100)
+            }))),
+            " [quarantined, next attempt in 30s]"
+        );
+        assert_eq!(
+            health_note(Some(&status(PluginHealth::Stopped))),
+            " [stopped]"
+        );
+    }
 }
