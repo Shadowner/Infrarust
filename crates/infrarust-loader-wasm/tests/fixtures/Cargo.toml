@@ -27,6 +27,8 @@ members = [
     "sec-probe",
     "sec-peer",
     "lif-probe",
+    "perf-probe",
+    "perf-raw",
 ]
 
 [workspace.dependencies]
@@ -49,3 +51,11 @@ codegen-units = 1
 
 [profile.dev]
 panic = "abort"
+
+[profile.release.package.fixture-perf-probe]
+opt-level = 3
+codegen-units = 1
+
+[profile.release.package.fixture-perf-raw]
+opt-level = 3
+codegen-units = 1

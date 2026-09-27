@@ -158,6 +158,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-perf-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
+name = "fixture-perf-raw"
+version = "0.0.0"
+dependencies = [
+ "fixture-common",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "fixture-provider"
 version = "0.0.0"
 dependencies = [
