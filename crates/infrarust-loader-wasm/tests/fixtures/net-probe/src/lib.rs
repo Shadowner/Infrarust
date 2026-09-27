@@ -55,6 +55,7 @@ fn run(args: &[String]) -> Result<String, String> {
         "udp-connect" => udp_connect(arg(1)?),
         "udp-recv" => udp_recv(arg(1)?),
         "listen" => listen(arg(1)?),
+        "accept" => accept(arg(1)?),
         "dns" => dns(arg(1)?),
         "http" => http_get(arg(1)?),
         "read" => std::fs::read_to_string(arg(1)?).map_err(io_error),
@@ -213,6 +214,23 @@ fn listen(addr: &str) -> Result<String, String> {
         .local_addr()
         .map(|local| local.to_string())
         .map_err(io_error)
+}
+
+fn accept(addr: &str) -> Result<String, String> {
+    let listener = TcpListener::bind(addr).map_err(io_error)?;
+    let local = listener
+        .local_addr()
+        .map(|local| local.to_string())
+        .map_err(io_error)?;
+    let _ = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open("tcp.port")
+        .and_then(|mut file| file.write_all(local.as_bytes()));
+    let (mut stream, peer) = listener.accept().map_err(io_error)?;
+    let _ = stream.write_all(b"accepted");
+    Ok(peer.to_string())
 }
 
 fn dns(name: &str) -> Result<String, String> {

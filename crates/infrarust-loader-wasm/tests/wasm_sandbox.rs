@@ -5,7 +5,8 @@
 mod net;
 mod support;
 
-use std::path::PathBuf;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -15,7 +16,11 @@ use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::test_util::MockConfigService;
 use infrarust_core::services::command_manager::DispatchOutcome;
 use net::{UdpSink, enable_probe, free_port, network_toml};
+use support::log_capture::LogCapture;
 use support::{EnvOptions, TestEnv, add_fixture, console, loader_from_toml, make_env_with, stage};
+use tokio::io::AsyncReadExt;
+use tracing::Level;
+use tracing::instrument::WithSubscriber;
 
 const DENIED: &str = "err PermissionDenied";
 const SEC: &str = "sec-probe";
@@ -132,6 +137,138 @@ async fn an_ephemeral_udp_socket_does_not_receive_from_an_unlisted_source() {
             "an ephemeral UDP socket received a datagram from a source no allow-list rule covers: {line}"
         );
     }
+}
+
+async fn bound_port(file: &Path) -> u16 {
+    for _ in 0..400 {
+        if let Ok(text) = std::fs::read_to_string(file)
+            && let Some((_, port)) = text.rsplit_once(':')
+            && let Ok(port) = port.parse()
+        {
+            return port;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!(
+        "the guest never reported its bound port in {}",
+        file.display()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_ephemeral_udp_socket_receives_from_a_listed_source() {
+    let source = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let source_addr = source.local_addr().unwrap();
+    let probe = std::sync::Arc::new(
+        enable_probe(&["network"], &network_toml(&[source_addr.to_string()], "")).await,
+    );
+
+    let receiver = std::sync::Arc::clone(&probe);
+    let recv = tokio::spawn(async move { receiver.run("udp-recv 0.0.0.0:0").await });
+    let port = bound_port(&probe.data.join("udp.port")).await;
+
+    for _ in 0..100 {
+        if recv.is_finished() {
+            break;
+        }
+        source
+            .send_to(b"listed", ("127.0.0.1", port))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let line = tokio::time::timeout(Duration::from_secs(5), recv)
+        .await
+        .expect("the guest received a datagram from a listed source")
+        .unwrap();
+    assert_eq!(line, format!("ok {source_addr} listed"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_listener_only_accepts_peers_the_allow_list_covers() {
+    let listen_port = free_port();
+    let listed_port = free_port();
+    let logs = LogCapture::at(Level::WARN);
+
+    let (accepted, unlisted_addr, greeting) = async {
+        let probe = std::sync::Arc::new(
+            enable_probe(
+                &["network"],
+                &network_toml(
+                    &[
+                        format!("127.0.0.1:{listen_port}"),
+                        format!("127.0.0.1:{listed_port}"),
+                    ],
+                    "",
+                ),
+            )
+            .await,
+        );
+        let acceptor = std::sync::Arc::clone(&probe);
+        let accept = tokio::spawn(async move {
+            acceptor
+                .run(&format!("accept 127.0.0.1:{listen_port}"))
+                .await
+        });
+        let port = bound_port(&probe.data.join("tcp.port")).await;
+        assert_eq!(port, listen_port);
+        let listener: SocketAddr = format!("127.0.0.1:{listen_port}").parse().unwrap();
+
+        let unlisted = loop {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            if socket.local_addr().unwrap().port() != listed_port {
+                break socket;
+            }
+        };
+        let unlisted_addr = unlisted.local_addr().unwrap();
+        let mut dropped = Vec::new();
+        match unlisted.connect(listener).await {
+            Ok(mut unlisted) => {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    unlisted.read_to_end(&mut dropped),
+                )
+                .await
+                .expect("the host drops a peer the allow-list does not cover");
+            }
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset, "{error}"),
+        }
+        assert!(
+            dropped.is_empty(),
+            "a peer no rule covers reached the guest: {dropped:?}"
+        );
+        assert!(!accept.is_finished(), "the guest is still waiting");
+
+        let listed = tokio::net::TcpSocket::new_v4().unwrap();
+        listed.set_reuseaddr(true).unwrap();
+        listed
+            .bind(format!("127.0.0.1:{listed_port}").parse().unwrap())
+            .unwrap();
+        let mut listed = listed.connect(listener).await.unwrap();
+        let mut greeting = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(10), listed.read_to_end(&mut greeting))
+            .await
+            .expect("the guest answers a listed peer");
+        let accepted = tokio::time::timeout(Duration::from_secs(10), accept)
+            .await
+            .expect("the accept returns once a listed peer connects")
+            .unwrap();
+        (accepted, unlisted_addr, greeting)
+    }
+    .with_subscriber(logs.clone())
+    .await;
+
+    assert_eq!(accepted, format!("ok 127.0.0.1:{listed_port}"));
+    assert_eq!(greeting, b"accepted");
+    let refused = logs.matching("kind=\"tcp-accept\"");
+    assert_eq!(refused.len(), 1, "{:?}", logs.lines());
+    assert!(
+        refused[0].contains("plugin=net-probe")
+            && refused[0].contains(&format!("source={unlisted_addr}"))
+            && refused[0].contains("reason=\"network allow-list\""),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
