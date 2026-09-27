@@ -304,7 +304,9 @@ Epoch interruption cannot preempt a guest parked inside a host `.await` (such as
 
 ### Memory cap
 
-Each instance is built with a `StoreLimits` that caps linear memory at `memory_limit_mb` and traps on a growth that would exceed it. The cap also applies to the memory a component declares up front, so a limit smaller than the component's initial memory makes it fail to load. Only memory growth is bounded: instance, table, and memory *counts* are unlimited unless `[wasm] instance_pool` is set, in which case that many instance slots are reserved up front and a connection whose codec filter instance finds no free slot passes through unfiltered (see [Global Settings](../../configuration/global#wasm-plugin-sandbox)). Codec filter instances get the same cap as their plugin.
+Each instance is built with a `StoreLimits` that caps linear memory at `memory_limit_mb` and traps on a growth that would exceed it. The cap also applies to the memory a component declares up front, so a limit smaller than the component's initial memory makes it fail to load. Codec filter instances get the same cap as their plugin.
+
+Only memory growth is bounded: the proxy does not cap how many instances exist. Each instance reserves about 4 GiB of virtual address space, which limits a proxy to about 32 000 live instances, fewer under a virtual memory limit; past that, a codec filter side passes packets through unfiltered and a plugin cannot be loaded or restarted. With `[wasm] instance_pool` set, that many instance slots are reserved up front, a connection whose codec filter instance finds no free slot passes through unfiltered, and a plugin whose function table has more than 512 entries cannot be loaded. See [Global Settings](../../configuration/global#instance-memory-and-address-space).
 
 ### One call at a time
 
