@@ -17,7 +17,7 @@ use infrarust_api::events::connection::{
     ConnectCause, ServerPreConnectEvent, ServerPreConnectResult,
 };
 use infrarust_api::events::lifecycle::PostLoginEvent;
-use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
+use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
 use infrarust_api::test_util::{
     Gate, MockBanService, MockConfigService, MockPlayer, MockPlayerRegistry, player_source,
@@ -73,13 +73,21 @@ async fn test_scripted_sdk_plugin_lifecycle() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugin_built_for_the_old_contract_is_refused_with_a_rebuild_hint() {
     let (_tmp, plugins_dir) = stage("old-world");
-    let err = fresh_loader()
+    let logs = LogCapture::at(tracing::Level::ERROR);
+    let discovered = fresh_loader()
         .discover(&plugins_dir)
+        .with_subscriber(logs.clone())
         .await
-        .expect_err("infrarust:plugin@0.2.3 components are not loaded");
-    assert!(matches!(err, LoaderError::InvalidFormat { .. }), "{err:?}");
-    let message = err.to_string();
+        .expect("a refused file does not fail discovery");
+    assert!(
+        discovered.is_empty(),
+        "infrarust:plugin@0.2.3 components are not loaded"
+    );
+    let refusals = logs.matching("WASM plugin refused");
+    assert_eq!(refusals.len(), 1, "{:?}", logs.lines());
+    let message = &refusals[0];
     for needle in [
+        "old-world.wasm",
         "infrarust:plugin@0.2.3",
         "infrarust:plugin@0.3.x",
         "rebuild",

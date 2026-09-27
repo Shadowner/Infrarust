@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use infrarust_api::loader::LoaderError;
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::plugin::PluginMetadata;
+use tracing::Level;
+use tracing::instrument::WithSubscriber;
 
+use support::log_capture::LogCapture;
 use support::{fixture_path, fresh_loader};
 
 const MARKER: &[u8] = b"LIFPROBE-BLOB-V1";
@@ -44,6 +47,14 @@ async fn discover(plugins_dir: &Path) -> Result<Vec<PluginMetadata>, LoaderError
         .expect("discovery finishes in bounded time")
 }
 
+async fn discover_logged(
+    plugins_dir: &Path,
+) -> (Result<Vec<PluginMetadata>, LoaderError>, LogCapture) {
+    let logs = LogCapture::at(Level::ERROR);
+    let found = discover(plugins_dir).with_subscriber(logs.clone()).await;
+    (found, logs)
+}
+
 fn ids(metas: &[PluginMetadata]) -> Vec<&str> {
     let mut ids: Vec<&str> = metas.iter().map(|m| m.id.as_str()).collect();
     ids.sort_unstable();
@@ -74,7 +85,6 @@ async fn a_healthy_probe_is_discovered_with_its_patched_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_zero_byte_wasm_does_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
     std::fs::write(dir.join("empty.wasm"), b"").unwrap();
@@ -82,7 +92,6 @@ async fn a_zero_byte_wasm_does_not_stop_the_other_plugins() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn random_bytes_do_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
     let noise: Vec<u8> = (0..4096u32)
@@ -93,7 +102,6 @@ async fn random_bytes_do_not_stop_the_other_plugins() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_core_module_does_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
     std::fs::write(dir.join("core.wasm"), b"\0asm\x01\0\0\0").unwrap();
@@ -101,12 +109,33 @@ async fn a_core_module_does_not_stop_the_other_plugins() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_truncated_component_does_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
     let bytes = probe_bytes("id=truncated\n");
     std::fs::write(dir.join("truncated.wasm"), &bytes[..bytes.len() / 2]).unwrap();
     assert_good_plugin_survives(&dir, "truncated component").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_refused_file_is_logged_once_with_its_path() {
+    let (_tmp, dir) = staged_with_good();
+    let empty = dir.join("empty.wasm");
+    std::fs::write(&empty, b"").unwrap();
+    let core = dir.join("core.wasm");
+    std::fs::write(&core, b"\0asm\x01\0\0\0").unwrap();
+    let panicker = add_probe(&dir, "panicker", "id=panicker\nmeta=panic\n");
+    let (found, logs) = discover_logged(&dir).await;
+    assert_eq!(ids(&found.unwrap()), ["good"]);
+    let refusals = logs.matching("WASM plugin refused");
+    assert_eq!(refusals.len(), 3, "{:?}", logs.lines());
+    for path in [&empty, &core, &panicker] {
+        let path = path.display().to_string();
+        assert_eq!(
+            refusals.iter().filter(|line| line.contains(&path)).count(),
+            1,
+            "{path}: {refusals:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -118,7 +147,6 @@ async fn a_directory_named_like_a_plugin_is_skipped() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn an_unreadable_wasm_does_not_stop_the_other_plugins() {
     use std::os::unix::fs::PermissionsExt;
     let (_tmp, dir) = staged_with_good();
@@ -132,7 +160,6 @@ async fn an_unreadable_wasm_does_not_stop_the_other_plugins() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_dangling_symlink_does_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
     std::os::unix::fs::symlink(dir.join("missing-target"), dir.join("dangling.wasm")).unwrap();
@@ -309,7 +336,6 @@ fn stamp_of(dir: &Path, id: &str, prefix: &str) -> u128 {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_zero_byte_wasm_does_not_stop_the_plugin_manager() {
     let (_tmp, dir) = staged_with_good();
     std::fs::write(dir.join("empty.wasm"), b"").unwrap();
@@ -323,7 +349,6 @@ async fn a_zero_byte_wasm_does_not_stop_the_plugin_manager() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn the_proxy_starts_with_its_good_plugins_when_plugins_dir_holds_a_zero_byte_wasm() {
     let (_tmp, dir) = staged_with_good();
     std::fs::write(dir.join("empty.wasm"), b"").unwrap();
@@ -389,7 +414,6 @@ async fn a_dependency_cycle_fails_only_the_plugins_in_the_cycle() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn two_wasm_files_with_the_same_id_do_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
     add_probe(&dir, "twin-a", "id=twin\n");
@@ -402,6 +426,25 @@ async fn two_wasm_files_with_the_same_id_do_not_stop_the_other_plugins() {
         managed.discovery
     );
     assert!(managed.enabled("good"));
+    assert!(!managed.enabled("twin"), "neither copy of twin is enabled");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_wasm_files_with_the_same_id_are_refused_by_one_error_naming_both() {
+    let (_tmp, dir) = staged_with_good();
+    let first = add_probe(&dir, "twin-a", "id=twin\n");
+    std::fs::create_dir(dir.join("backup")).unwrap();
+    let second = add_probe(&dir.join("backup"), "twin-b", "id=twin\nversion=0.0.9\n");
+    let (found, logs) = discover_logged(&dir).await;
+    assert_eq!(ids(&found.unwrap()), ["good"]);
+    let refusals = logs.matching("same plugin id");
+    assert_eq!(refusals.len(), 1, "{:?}", logs.lines());
+    for path in [&first, &second] {
+        assert!(
+            refusals[0].contains(&path.display().to_string()),
+            "{path:?}: {refusals:?}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -502,7 +545,6 @@ async fn a_sleeping_metadata_export_does_not_hang_discovery() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_spinning_metadata_export_is_cut_and_does_not_stop_the_others() {
     let (_tmp, dir) = staged_with_good();
     add_probe(&dir, "spinner", "id=spinner\nmeta=spin\n");
@@ -515,7 +557,6 @@ async fn a_spinning_metadata_export_is_cut_and_does_not_stop_the_others() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_panicking_metadata_export_does_not_stop_the_others() {
     let (_tmp, dir) = staged_with_good();
     add_probe(&dir, "panicker", "id=panicker\nmeta=panic\n");

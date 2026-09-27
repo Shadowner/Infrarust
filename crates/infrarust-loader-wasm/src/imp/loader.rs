@@ -15,6 +15,7 @@ use crate::config::WasmLoaderConfig;
 use crate::consts::CACHE_SUBDIR;
 use crate::contract::check as check_contract;
 use crate::epoch::EpochTicker;
+use crate::error::WasmLoaderError;
 use crate::gates::check_imports;
 use crate::instance::InstanceFactory;
 use crate::linker::build_linker;
@@ -49,6 +50,72 @@ impl WasmPluginLoader {
             _ticker: ticker,
         })
     }
+
+    async fn probe(
+        &self,
+        cache: &AotCache,
+        path: &Path,
+    ) -> Result<DiscoveredWasm, WasmLoaderError> {
+        let component = {
+            let engine = self.engine.clone();
+            let cache = cache.clone();
+            let owned = path.to_path_buf();
+            tokio::task::spawn_blocking(move || cache.compile_or_load(&engine, &owned))
+                .await
+                .map_err(|join_err| WasmLoaderError::Precompile {
+                    path: path.to_path_buf(),
+                    reason: format!("compile task failed: {join_err}"),
+                })??
+        };
+        check_contract(&self.engine, &component, path)?;
+        let metadata = extract_metadata(
+            &self.engine,
+            &component,
+            path,
+            &self.config.default_sandbox(),
+        )
+        .await?;
+        Ok(DiscoveredWasm {
+            metadata,
+            component,
+        })
+    }
+}
+
+fn without_duplicate_ids(
+    probed: Vec<(PathBuf, DiscoveredWasm)>,
+) -> (Vec<PluginMetadata>, HashMap<String, DiscoveredWasm>) {
+    let mut ids = Vec::new();
+    let mut files_of: HashMap<String, Vec<String>> = HashMap::new();
+    for (path, entry) in &probed {
+        let files = files_of.entry(entry.metadata.id.clone()).or_default();
+        if files.is_empty() {
+            ids.push(entry.metadata.id.clone());
+        }
+        files.push(path.display().to_string());
+    }
+    for id in &ids {
+        if let Some(files) = files_of.get(id).filter(|files| files.len() > 1) {
+            tracing::error!(
+                plugin = %id,
+                files = %files.join(", "),
+                "WASM plugins refused: several files declare the same plugin id, keep only one of them"
+            );
+        }
+    }
+
+    let mut metadatas = Vec::new();
+    let mut discovered = HashMap::new();
+    for (path, entry) in probed {
+        let id = entry.metadata.id.clone();
+        if files_of.get(&id).is_some_and(|files| files.len() > 1) {
+            continue;
+        }
+        tracing::debug!(plugin = %id, path = %path.display(), "wasm plugin discovered");
+        metadatas.push(entry.metadata.clone());
+        discovered.insert(id, entry);
+    }
+    (metadatas, discovered)
 }
 
 impl PluginLoader for WasmPluginLoader {
@@ -67,47 +134,21 @@ impl PluginLoader for WasmPluginLoader {
             let cache = AotCache::new(plugin_dir.join(CACHE_SUBDIR));
             let wasm_files = scan_wasm_files(plugin_dir)?;
 
-            let mut metadatas = Vec::new();
-            let mut discovered = HashMap::new();
+            let mut probed = Vec::new();
             for path in wasm_files {
-                let label = path_label(&path);
-
-                let component = {
-                    let engine = self.engine.clone();
-                    let cache = cache.clone();
-                    let path = path.clone();
-                    tokio::task::spawn_blocking(move || cache.compile_or_load(&engine, &path))
-                        .await
-                        .map_err(|join_err| LoaderError::LoadFailed {
-                            plugin_id: label.clone(),
-                            reason: format!("compile task failed: {join_err}"),
-                            source: None,
-                        })?
-                        .map_err(|e| e.into_loader_error(&label))?
-                };
-
-                check_contract(&self.engine, &component, &path)
-                    .map_err(|e| e.into_loader_error(&label))?;
-
-                let metadata = extract_metadata(
-                    &self.engine,
-                    &component,
-                    &path,
-                    &self.config.default_sandbox(),
-                )
-                .await
-                .map_err(|e| e.into_loader_error(&label))?;
-
-                metadatas.push(metadata.clone());
-                discovered.insert(
-                    metadata.id.clone(),
-                    DiscoveredWasm {
-                        metadata,
-                        component,
-                    },
-                );
+                match self.probe(&cache, &path).await {
+                    Ok(entry) => probed.push((path, entry)),
+                    Err(error) => {
+                        tracing::error!(
+                            path = %path.display(),
+                            error = %error,
+                            "WASM plugin refused"
+                        );
+                    }
+                }
             }
 
+            let (metadatas, discovered) = without_duplicate_ids(probed);
             *write(&self.discovered) = discovered;
             Ok(metadatas)
         })
@@ -230,11 +271,4 @@ fn scan_wasm_files(dir: &Path) -> Result<Vec<PathBuf>, LoaderError> {
         }
     }
     Ok(out)
-}
-
-fn path_label(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("<unknown>")
-        .to_owned()
 }
