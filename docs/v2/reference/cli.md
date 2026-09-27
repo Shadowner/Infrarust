@@ -121,8 +121,23 @@ Without colors (see [Colors](#colors)) the same replies use ASCII markers: `#` f
 
 | Command | Aliases | Usage | Description |
 |---------|---------|-------|-------------|
-| `plugins` | `pl` | `plugins` | List loaded plugins |
-| `plugin` | | `plugin <id>` | Show plugin details |
+| `plugins` | `pl` | `plugins` | List loaded plugins with their state; WASM plugins also get their health and queue wait |
+| `plugin` | | `plugin <id>` | Show plugin details, and for a WASM plugin its health, generation, restarts, last fault and call queue |
+
+When at least one WASM plugin is loaded, `plugins` adds two columns. `Health` is `healthy`, `recovering`, `quarantined` or `stopped`, followed by the time until the next attempt when one is scheduled (`quarantined 12s`). `Wait p99` is the queue wait that 99 % of the plugin's calls stayed under over the last minute. Native plugins show `-` in both.
+
+For a WASM plugin, `plugin <id>` adds these lines:
+
+```
+│ health        ✕ quarantined, next attempt in 12s
+│ generation    7
+│ restarts      2 of 2 in the last 5m
+│ last fault    the guest trapped: panicked at src/lib.rs:12:5: boom (4s ago, generation 7)
+│ queue         0 of 1024 waiting, at most 12 in the last 1m
+│ queue wait    p50 21µs, p99 1.2ms, max 3.4s over 1234 calls in the last 1m
+```
+
+A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../plugins/wasm/fault-model#watching-a-plugin-s-health) explains the health values and [Threading](../plugins/wasm/threading#watching-the-queue) the queue figures.
 
 #### System
 

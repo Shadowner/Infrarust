@@ -52,7 +52,9 @@ pub enum PluginState {
 }
 ```
 
-`as_str()` gives the lowercase label (`enabled`, `error`, ...). Query a plugin's state programmatically via `PluginManager::plugin_state()`, which returns `Option<&PluginState>`, or through `ctx.plugin_registry()`, whose `PluginInfo` carries the plugin's `metadata` and `state`. The in-game `plugins` subcommand lists loaded plugins, and `plugin <id>` lists or runs a plugin's commands, but neither exposes the raw lifecycle state.
+`as_str()` gives the lowercase label (`enabled`, `error`, ...). Query a plugin's state programmatically via `PluginManager::plugin_state()`, which returns `Option<&PluginState>`, or through `ctx.plugin_registry()`, whose `PluginInfo` carries the plugin's `metadata`, `state` and `runtime`. The in-game `plugins` subcommand lists loaded plugins, and `plugin <id>` lists or runs a plugin's commands, but neither exposes the raw lifecycle state.
+
+`PluginInfo::runtime` is an `Option<PluginRuntimeStatus>`, read from the plugin each time the registry is asked. It is `None` for a native plugin. A WASM plugin fills it: `health` (a `PluginHealth`: `Healthy`, `Recovering { retry_in }`, `Quarantined { retry_in }` or `Stopped`), `generation`, `restarts` in the recovery window, `last_fault`, and `queue` with the depth and the waits of its call queue over the last minute. The lifecycle state of a quarantined WASM plugin stays `Enabled`; see [Watching a plugin's health](../wasm/fault-model#watching-a-plugin-s-health). `PluginManager::plugin_runtime(id)` returns the same value.
 
 ## The Plugin trait
 
@@ -70,6 +72,10 @@ pub trait Plugin: Send + Sync {
     fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
         Box::pin(async { Ok(()) })  // default: no-op
     }
+
+    fn runtime_status(&self) -> Option<PluginRuntimeStatus> {
+        None  // default: no supervised runtime
+    }
 }
 ```
 
@@ -78,6 +84,8 @@ pub trait Plugin: Send + Sync {
 `on_enable()` receives a `PluginContext` for registering event listeners, commands, limbo handlers, config providers, and filters. This is the only place you should register resources, because the context tracks everything for automatic cleanup.
 
 `on_disable()` is optional. Override it only if your plugin holds external resources (database connections, open files, network sockets) that need explicit teardown. Event listeners, commands, filters, and scheduled tasks are cleaned up automatically.
+
+`runtime_status()` is for loaders that supervise the plugins they host. The WASM loader returns the health and call queue of the plugin's instance; a native plugin keeps the default `None`.
 
 ::: warning
 `on_enable` and `on_disable` return `BoxFuture` because the trait uses manual async dispatch. Wrap your implementation in `Box::pin(async move { ... })`.

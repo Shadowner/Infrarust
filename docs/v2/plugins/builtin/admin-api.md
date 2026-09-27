@@ -285,8 +285,60 @@ The ban endpoints go through whichever [ban provider](../../configuration/securi
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/plugins` | List all loaded plugins |
-| GET | `/api/v1/plugins/{id}` | Get a specific plugin's info |
+| GET | `/api/v1/plugins` | List the enabled plugins |
+| GET | `/api/v1/plugins/{id}` | Get one enabled plugin's info |
+
+Each plugin carries its metadata, its lifecycle `state`, and a `runtime` object, which is `null` for a native plugin and filled for a WASM plugin. The runtime is read when the request is answered:
+
+```json
+{
+  "data": {
+    "id": "flaky",
+    "name": "Flaky",
+    "version": "0.2.0",
+    "authors": [],
+    "description": null,
+    "state": "enabled",
+    "dependencies": [],
+    "runtime": {
+      "health": "quarantined",
+      "retry_in_ms": 12500,
+      "generation": 7,
+      "restarts_in_window": 5,
+      "max_restarts": 5,
+      "restart_window_secs": 300,
+      "last_fault": {
+        "cause": "the call ran past the event deadline",
+        "secs_ago": 4,
+        "generation": 7
+      },
+      "queue": {
+        "depth": 3,
+        "capacity": 1024,
+        "window_secs": 60,
+        "taken": 1234,
+        "peak_depth": 12,
+        "wait_p50_us": 21,
+        "wait_p99_us": 1250,
+        "wait_max_us": 3000
+      }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `health` | `healthy`, `recovering` (replacing the instance after a fault), `quarantined` (restart budget spent) or `stopped` (no instance and none coming) |
+| `retry_in_ms` | Time until the next attempt at a fresh instance, for a quarantined plugin or one that waits after an instance could not be created; `null` otherwise |
+| `generation` | Number of the latest instance the proxy started or tried to start; 1 is the first |
+| `restarts_in_window`, `max_restarts`, `restart_window_secs` | Fresh instances and retries within `[wasm.recovery] window`, out of `max_restarts` |
+| `last_fault` | Cause of the latest fault as the proxy logged it, seconds since, and the generation of the instance that faulted; `null` before the first fault |
+| `queue.depth`, `queue.capacity` | Calls waiting in the plugin's queue now, out of `queue_capacity` |
+| `queue.taken`, `queue.peak_depth` | Calls taken from the queue over the last `window_secs`, and the most that waited at once |
+| `queue.wait_p50_us`, `wait_p99_us`, `wait_max_us` | How long those calls waited in the queue before the plugin took them, in microseconds |
+
+A quarantined or recovering plugin keeps `state: "enabled"`: it is still enabled and is tried again on its own. See [Fault Model](../wasm/fault-model#watching-a-plugin-s-health) for the health values and [Threading](../wasm/threading#watching-the-queue) for reading the queue figures.
 
 ### Configuration
 
@@ -426,6 +478,8 @@ Streams log entries in real time. Filter by minimum `level` (`trace`, `debug`, `
 ## Web dashboard
 
 When `enable_webui` is `true`, the plugin serves an embedded web frontend at the root URL (`http://127.0.0.1:8080/`). The frontend is a Nuxt SPA bundled into the binary at compile time.
+
+The Plugins page shows each plugin's state and enable toggle. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
 
 Non-API routes serve static files from the embedded bundle. If a requested file doesn't exist, the server returns `index.html` for client-side routing. API routes (`/api/*`) that don't match a defined endpoint return 404.
 

@@ -108,7 +108,7 @@ Disconnects the named player from the proxy. The reason is optional; if omitted,
 /ir plugins
 ```
 
-Lists all loaded WASM plugins: name, version, and description for each. Prints "No plugins loaded." if the plugin registry is empty.
+Lists every enabled plugin: name, version, and description for each. A WASM plugin that is not healthy gets its health appended, such as `[quarantined, next attempt in 12s]` or `[recovering]`; see [Fault Model](../plugins/wasm/fault-model#watching-a-plugin-s-health). Prints "No plugins loaded." if the plugin registry is empty.
 
 ### plugin
 

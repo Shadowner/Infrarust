@@ -128,6 +128,27 @@ The budget only applies once the plugin has been enabled. If the first `on_enabl
 
 At discovery the proxy runs the guest's `metadata()` once, in a throwaway instance. A trap there, or a `metadata()` still running after the smaller of `max_call_duration` and 5 seconds, refuses that file with one error and no retry; the proxy starts with the other plugins. See [Lifecycle](./lifecycle#metadata-probe).
 
+## Watching a plugin's health
+
+A plugin that is recovering or quarantined is still enabled: its lifecycle state stays `enabled`, it keeps its place in the dependency order, and disabling it works as usual. Its health is reported next to that state, and read live each time you look:
+
+| Health | When | Shown with it |
+|--------|------|---------------|
+| `healthy` | A live instance serves the plugin's calls, including while the first `on_enable` runs | |
+| `recovering` | The proxy is replacing the instance after a fault, or waits `backoff_initial` after it could not create one | the time until the next attempt, during that wait |
+| `quarantined` | The restart budget is spent | the time until the next attempt |
+| `stopped` | The plugin has no instance and none is coming: its first `on_enable` failed, it was disabled or unloaded, or the proxy is shutting down | |
+
+With the health come the plugin's **generation** (the number of the latest instance the proxy started or tried to start: 1 for the first, so a generation of 40 means the proxy has started or tried 39 fresh instances since the plugin was loaded), its **restarts** within `window` out of `max_restarts` (fresh instances and retries, the count the quarantine decision uses), and its **last fault**: the [cause](#the-cause) as it was logged, how long ago, and the generation of the instance that faulted.
+
+Where to look:
+
+- The admin API: `GET /api/v1/plugins` and `GET /api/v1/plugins/{id}` carry a `runtime` object for each WASM plugin, see [Admin API](../builtin/admin-api#plugins). The web dashboard shows a health badge beside the state of a plugin that is recovering or quarantined, and a Runtime panel on the plugin's page.
+- The console: `plugins` adds a `Health` column, and `plugin <id>` shows health, generation, restarts and last fault. See [Console commands](../../reference/cli#plugins).
+- In game: `/ir plugins` appends `[quarantined, next attempt in 12s]` or `[recovering]` to a plugin that is not healthy.
+
+Native plugins have no health: they run in the proxy process and are not replaced after a fault.
+
 ## Disable and unload
 
 On `on_disable`, a plugin with a live instance runs its guest `on_disable` as usual. A quarantined plugin has no instance to run it in, so the call is skipped with a warning. In every case the proxy then removes the instance's listeners and scheduled tasks and the guard listeners of a quarantined plugin, releases the players it holds in limbo, removes the plugin's codec filters, and stops the plugin's task. Unloading the plugin does the same without calling `on_disable`.
@@ -159,7 +180,7 @@ A plugin-level table overrides only the keys it sets. See [`[wasm.recovery]`](..
 - **Keep access handlers fast.** A handler for an access event that runs past its deadline is cut off, counted as a fault and its event denied. Do slow lookups (a web request, a database) in a scheduled task that fills a cache, and answer the event from the cache.
 - **Register everything in `on_enable`.** Commands and limbo handlers registered there are rebound to the fresh instance; ones registered later are removed after a recovery.
 - **Expect held players to be released.** A player your plugin held in limbo is denied when the instance goes away. They can reconnect and meet the fresh instance.
-- **Watch the logs.** Repeated `wasm plugin instance failed` errors, or a `quarantined` warning, mean the plugin has a bug that recovery only hides.
+- **Watch its health.** A generation that keeps climbing, a `quarantined` health, or repeated `wasm plugin instance failed` errors in the log mean the plugin has a bug that recovery only hides. The last fault gives the cause without reading the log; see [Watching a plugin's health](#watching-a-plugin-s-health).
 
 ## See also
 
