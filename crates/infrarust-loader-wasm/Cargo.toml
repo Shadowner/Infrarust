@@ -93,3 +93,8 @@ harness = false
 name = "codec_exec"
 path = "benches/codec_exec/main.rs"
 harness = false
+
+[[bench]]
+name = "wasm_contract"
+path = "benches/wasm_contract/main.rs"
+harness = false
