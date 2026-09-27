@@ -4,6 +4,7 @@
 //! Plugins access services through the [`PluginContext`](crate::plugin::PluginContext).
 
 pub mod ban_service;
+pub mod caller_deadline;
 pub mod config_service;
 pub mod load_balancer;
 pub mod player_registry;

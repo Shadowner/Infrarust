@@ -12,6 +12,7 @@ use infrarust_api::services::ban_service::{
     BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanVerdict, LoginAttempt,
     LoginStage, UnbanRequest,
 };
+use infrarust_api::services::caller_deadline;
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::Component;
 use infrarust_config::{BanConfig, BanProviderSelection};
@@ -183,14 +184,18 @@ impl BanManager {
         provider: &dyn BanProvider,
         attempt: &LoginAttempt,
     ) -> Result<Option<BanVerdict>, ServiceError> {
-        tokio::time::timeout(self.check_timeout, provider.check(attempt))
-            .await
-            .unwrap_or_else(|_| {
-                Err(ServiceError::Unavailable(format!(
-                    "the ban provider did not answer within {:?}",
-                    self.check_timeout
-                )))
-            })
+        let deadline = tokio::time::Instant::now() + self.check_timeout;
+        tokio::time::timeout_at(
+            deadline,
+            caller_deadline::scope(deadline, provider.check(attempt)),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(ServiceError::Unavailable(format!(
+                "the ban provider did not answer within {:?}",
+                self.check_timeout
+            )))
+        })
     }
 
     pub async fn refusal(&self, attempt: &LoginAttempt) -> Option<Component> {
