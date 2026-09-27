@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{ConfigError, ProxyValidationError, ServerValidationError, WasmValidationError};
@@ -370,6 +371,7 @@ fn validate_wasm(config: &ProxyConfig) -> Result<(), WasmValidationError> {
             value: config.wasm.instance_pool,
         });
     }
+    validate_wasm_cache_dir(&config.wasm.cache_dir, &config.plugins_dir)?;
     for (scope, plugin, limits) in wasm_scopes(config) {
         validate_wasm_limits(&scope, &limits, tick)?;
         if let Some(plugin) = plugin {
@@ -377,6 +379,43 @@ fn validate_wasm(config: &ProxyConfig) -> Result<(), WasmValidationError> {
         }
     }
     Ok(())
+}
+
+fn validate_wasm_cache_dir(
+    cache_dir: &Path,
+    plugins_dir: &Path,
+) -> Result<(), WasmValidationError> {
+    if cache_dir.as_os_str().is_empty() {
+        return Err(WasmValidationError::CacheDirEmpty);
+    }
+    if lexically_within(cache_dir, plugins_dir) {
+        return Err(WasmValidationError::CacheDirInPluginsDir {
+            cache_dir: cache_dir.to_path_buf(),
+            plugins_dir: plugins_dir.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+fn lexically_within(inner: &Path, outer: &Path) -> bool {
+    match (std::path::absolute(inner), std::path::absolute(outer)) {
+        (Ok(inner), Ok(outer)) => normalized(&inner).starts_with(normalized(&outer)),
+        _ => false,
+    }
+}
+
+fn normalized(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn wasm_scopes(

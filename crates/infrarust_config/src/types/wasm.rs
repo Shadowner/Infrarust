@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,9 @@ pub struct WasmConfig {
     #[serde(default = "defaults::wasm_instance_pool")]
     pub instance_pool: u32,
 
+    #[serde(default = "defaults::wasm_cache_dir")]
+    pub cache_dir: PathBuf,
+
     #[serde(default)]
     pub recovery: WasmRecoveryConfig,
 
@@ -55,6 +59,7 @@ impl Default for WasmConfig {
             max_call_duration: defaults::wasm_max_call_duration(),
             queue_capacity: defaults::wasm_queue_capacity(),
             instance_pool: defaults::wasm_instance_pool(),
+            cache_dir: defaults::wasm_cache_dir(),
             recovery: WasmRecoveryConfig::default(),
             quotas: WasmQuotasConfig::default(),
         }
@@ -598,7 +603,7 @@ mod tests {
         assert_eq!(
             wasm.mounts,
             [WasmMount {
-                host: std::path::PathBuf::from("/srv/libertybans/shared"),
+                host: PathBuf::from("/srv/libertybans/shared"),
                 guest: "/shared".to_owned(),
                 read_only: true,
             }]
@@ -702,12 +707,12 @@ memory_limit_mb = 8
             }),
             mounts: vec![
                 WasmMount {
-                    host: std::path::PathBuf::from("/srv/shared"),
+                    host: PathBuf::from("/srv/shared"),
                     guest: "/shared".to_owned(),
                     read_only: true,
                 },
                 WasmMount {
-                    host: std::path::PathBuf::from("/srv/out"),
+                    host: PathBuf::from("/srv/out"),
                     guest: "/out".to_owned(),
                     read_only: false,
                 },

@@ -477,6 +477,56 @@ fn test_proxy_zero_or_absurd_wasm_values_are_invalid() {
 }
 
 #[test]
+fn test_proxy_wasm_cache_dir_defaults_outside_plugins_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("", dir.path());
+    assert_eq!(config.wasm.cache_dir, std::path::Path::new("./cache/wasm"));
+    assert!(validate_proxy_config(&config).is_ok());
+}
+
+#[test]
+fn test_proxy_wasm_cache_dir_inside_plugins_dir_is_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (plugins, cache) in [
+        ("./plugins", "./plugins/.cache"),
+        ("./plugins", "plugins"),
+        ("plugins", "./plugins/../plugins/aot"),
+        (
+            "/srv/infrarust/plugins",
+            "/srv/infrarust/plugins/wasm-cache",
+        ),
+        ("/srv/infrarust/plugins/", "/srv/infrarust/plugins"),
+    ] {
+        let toml = format!("plugins_dir = {plugins:?}\n[wasm]\ncache_dir = {cache:?}\n");
+        let config = proxy_from_toml(&toml, dir.path());
+        let err = validate_proxy_config(&config).expect_err(&toml).to_string();
+        assert!(err.contains("wasm.cache_dir"), "{toml}: {err}");
+        assert!(err.contains("outside plugins_dir"), "{toml}: {err}");
+    }
+    let config = proxy_from_toml("[wasm]\ncache_dir = \"\"\n", dir.path());
+    let err = validate_proxy_config(&config)
+        .expect_err("empty")
+        .to_string();
+    assert!(err.contains("wasm.cache_dir must not be empty"), "{err}");
+}
+
+#[test]
+fn test_proxy_wasm_cache_dir_next_to_plugins_dir_is_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (plugins, cache) in [
+        ("./plugins", "./cache/wasm"),
+        ("./plugins", "./plugins-cache"),
+        ("./plugins", "./plugins/../cache"),
+        ("/srv/infrarust/plugins", "/srv/infrarust/cache/wasm"),
+        ("/srv/infrarust/plugins", "/var/cache/infrarust"),
+    ] {
+        let toml = format!("plugins_dir = {plugins:?}\n[wasm]\ncache_dir = {cache:?}\n");
+        let config = proxy_from_toml(&toml, dir.path());
+        assert!(validate_proxy_config(&config).is_ok(), "{toml}");
+    }
+}
+
+#[test]
 fn test_proxy_out_of_range_wasm_recovery_values_are_invalid() {
     let dir = tempfile::tempdir().unwrap();
     for (line, key) in [

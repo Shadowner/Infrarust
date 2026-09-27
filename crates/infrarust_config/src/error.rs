@@ -203,6 +203,19 @@ pub enum WasmValidationError {
     #[error("wasm.instance_pool must be at most {WASM_MAX_INSTANCE_POOL} (got {value})")]
     InstancePoolTooLarge { value: u32 },
 
+    #[error("wasm.cache_dir must not be empty")]
+    CacheDirEmpty,
+
+    #[error(
+        "wasm.cache_dir ({}) must be outside plugins_dir ({}): the cache holds native code, and whoever may add files to plugins_dir must not be able to plant it",
+        .cache_dir.display(),
+        .plugins_dir.display()
+    )]
+    CacheDirInPluginsDir {
+        cache_dir: PathBuf,
+        plugins_dir: PathBuf,
+    },
+
     #[error("{scope}.memory_limit_mb must be between 1 and {WASM_MAX_MEMORY_MB} (got {value})")]
     MemoryLimitOutOfRange { scope: String, value: u32 },
 

@@ -186,6 +186,10 @@ pub const fn wasm_instance_pool() -> u32 {
     0
 }
 
+pub fn wasm_cache_dir() -> PathBuf {
+    PathBuf::from("./cache/wasm")
+}
+
 pub const fn wasm_quota_event_listeners() -> usize {
     1024
 }
