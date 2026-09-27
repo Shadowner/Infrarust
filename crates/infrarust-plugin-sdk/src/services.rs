@@ -509,6 +509,30 @@ impl Proxy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PluginHealth {
+    Healthy,
+    Recovering { retry_in: Option<Duration> },
+    Quarantined { retry_in: Duration },
+    Stopped,
+}
+
+impl PluginHealth {
+    fn from_wit(health: wr::PluginHealth) -> Self {
+        match health {
+            wr::PluginHealth::Healthy => Self::Healthy,
+            wr::PluginHealth::Recovering(retry_in) => Self::Recovering {
+                retry_in: retry_in.map(Duration::from_millis),
+            },
+            wr::PluginHealth::Quarantined(retry_in) => Self::Quarantined {
+                retry_in: Duration::from_millis(retry_in),
+            },
+            wr::PluginHealth::Stopped => Self::Stopped,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PluginInfo {
@@ -519,6 +543,7 @@ pub struct PluginInfo {
     pub description: Option<String>,
     pub state: String,
     pub dependencies: Vec<PluginDependency>,
+    pub health: Option<PluginHealth>,
 }
 
 impl PluginInfo {
@@ -531,6 +556,7 @@ impl PluginInfo {
             description: info.description,
             state: info.state,
             dependencies: info.dependencies,
+            health: info.health.map(PluginHealth::from_wit),
         }
     }
 }
@@ -569,6 +595,30 @@ mod tests {
         ] {
             assert_eq!(BanTarget::from_wit(target.to_wit()), target);
         }
+    }
+
+    #[test]
+    fn a_plugin_health_arrives_with_its_retry_delay() {
+        let info = PluginInfo::from_wit(wr::PluginInfo {
+            id: "guest".into(),
+            name: "Guest".into(),
+            version: "1.0.0".into(),
+            authors: vec![],
+            description: None,
+            state: "enabled".into(),
+            dependencies: vec![],
+            health: Some(wr::PluginHealth::Quarantined(5_000)),
+        });
+        assert_eq!(
+            info.health,
+            Some(PluginHealth::Quarantined {
+                retry_in: Duration::from_secs(5)
+            })
+        );
+        assert_eq!(
+            PluginHealth::from_wit(wr::PluginHealth::Recovering(None)),
+            PluginHealth::Recovering { retry_in: None }
+        );
     }
 
     #[test]

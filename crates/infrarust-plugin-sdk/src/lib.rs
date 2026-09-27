@@ -79,8 +79,8 @@ pub use player::{
 pub use plugin::{Plugin, PluginDependency, PluginMetadata};
 pub use services::{
     BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
-    LoadBalancer, Messaging, PluginInfo, Plugins, Proxy, ProxyDetails, RateLimitInfo, ServerConfig,
-    ServerSource, ServerStatus, Servers, StatusCacheInfo, UnknownDomainBehavior,
+    LoadBalancer, Messaging, PluginHealth, PluginInfo, Plugins, Proxy, ProxyDetails, RateLimitInfo,
+    ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo, UnknownDomainBehavior,
 };
 pub use types::{
     Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
@@ -166,8 +166,9 @@ pub mod prelude {
     pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
     pub use crate::services::{
         BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
-        LoadBalancer, Messaging, PluginInfo, Plugins, Proxy, ProxyDetails, RateLimitInfo,
-        ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo, UnknownDomainBehavior,
+        LoadBalancer, Messaging, PluginHealth, PluginInfo, Plugins, Proxy, ProxyDetails,
+        RateLimitInfo, ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo,
+        UnknownDomainBehavior,
     };
     pub use crate::types::{
         Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
