@@ -95,6 +95,44 @@ mod bench {
         start.elapsed().as_nanos() as f64 / CREATE_ITERS as f64 / 1_000.0
     }
 
+    const CONNECTIONS: usize = 1_000;
+
+    fn open_connections(
+        registry: &CodecFilterRegistryImpl,
+    ) -> Vec<(CodecFilterChain, CodecFilterChain)> {
+        (0..CONNECTIONS)
+            .map(|connection| {
+                build_codec_chains(
+                    registry,
+                    ProtocolVersion::new(767),
+                    connection as u64,
+                    "127.0.0.1:1".parse().unwrap(),
+                    None,
+                )
+            })
+            .collect()
+    }
+
+    fn ns_interleaved(registry: &CodecFilterRegistryImpl) -> (f64, f64) {
+        let mut open = open_connections(registry);
+        let mut packet = RawPacket::new(0x10, Bytes::from(vec![0xABu8; 512]));
+        for (client, _) in &mut open {
+            let _ = black_box(client.process(black_box(&mut packet)));
+        }
+        let start = Instant::now();
+        for i in 0..ITERS as usize {
+            let (client, _) = &mut open[i % CONNECTIONS];
+            let _ = black_box(client.process(black_box(&mut packet)));
+        }
+        let interleaved = start.elapsed().as_nanos() as f64 / ITERS as f64;
+        let hot = ns_per_packet(&mut open[0].0, 512);
+        for (mut client, mut server) in open {
+            client.close();
+            server.close();
+        }
+        (interleaved, hot)
+    }
+
     fn fixture_path(name: &str) -> PathBuf {
         PathBuf::from(env!("INFRARUST_WASM_FIXTURE_DIR"))
             .join(format!("fixture_{}.wasm", name.replace('-', "_")))
@@ -197,6 +235,11 @@ mod bench {
         let pooled_create = us_per_create(&pooled_registry);
         println!(
             "  chain create + close ({CREATE_ITERS} iterations, client + server side): native {native_create:.2}µs, wasm {wasm_create:.2}µs, wasm with instance_pool {pooled_create:.2}µs\n"
+        );
+        let (interleaved, hot) = ns_interleaved(&wasm_registry);
+        let (pooled_interleaved, pooled_hot) = ns_interleaved(&pooled_registry);
+        println!(
+            "  512B pass over {CONNECTIONS} open connections, round robin: wasm {interleaved:.1}ns (one hot connection {hot:.1}ns), wasm with instance_pool {pooled_interleaved:.1}ns (one hot connection {pooled_hot:.1}ns)\n"
         );
     }
 }
