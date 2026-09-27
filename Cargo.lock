@@ -2106,6 +2106,7 @@ dependencies = [
 name = "infrarust-plugin-macros"
 version = "2.0.0-beta.3"
 dependencies = [
+ "infrarust-plugin-common",
  "proc-macro2",
  "quote",
  "syn 3.0.6",

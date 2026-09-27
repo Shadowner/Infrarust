@@ -20,6 +20,7 @@ proc-macro = true
 workspace = true
 
 [dependencies]
+infrarust-plugin-common = { workspace = true }
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }

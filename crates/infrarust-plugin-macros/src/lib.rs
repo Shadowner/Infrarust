@@ -1,5 +1,6 @@
 //! Proc-macros for `infrarust-plugin-sdk`.
 
+use infrarust_plugin_common::validate_plugin_id;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -104,7 +105,7 @@ impl Overrides {
             match key.as_str() {
                 "id" => {
                     let id = string_lit(&arg.value)?;
-                    validate_id(&id.value())
+                    validate_plugin_id(&id.value())
                         .map_err(|reason| syn::Error::new_spanned(&id, reason))?;
                     out.id = Some(id);
                 }
@@ -148,37 +149,11 @@ fn id_list(expr: &Expr) -> syn::Result<Vec<LitStr>> {
         .iter()
         .map(|elem| {
             let id = string_lit(elem)?;
-            validate_id(&id.value()).map_err(|reason| syn::Error::new_spanned(&id, reason))?;
+            validate_plugin_id(&id.value())
+                .map_err(|reason| syn::Error::new_spanned(&id, reason))?;
             Ok(id)
         })
         .collect()
-}
-
-const MAX_ID_LEN: usize = 64;
-
-fn validate_id(id: &str) -> Result<(), String> {
-    let Some(first) = id.chars().next() else {
-        return Err("a plugin id cannot be empty".to_owned());
-    };
-    if id.len() > MAX_ID_LEN {
-        return Err(format!(
-            "plugin id `{id}` is longer than {MAX_ID_LEN} characters"
-        ));
-    }
-    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
-        return Err(format!(
-            "plugin id `{id}` must start with a lowercase letter or a digit"
-        ));
-    }
-    if let Some(bad) = id
-        .chars()
-        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_'))
-    {
-        return Err(format!(
-            "plugin id `{id}` contains `{bad}`; use lowercase letters, digits, `-` and `_`"
-        ));
-    }
-    Ok(())
 }
 
 fn generate_metadata_fn(o: &Overrides) -> syn::Result<TokenStream2> {
@@ -186,7 +161,7 @@ fn generate_metadata_fn(o: &Overrides) -> syn::Result<TokenStream2> {
         Some(id) => quote!(#id),
         None => {
             if let Ok(package) = std::env::var("CARGO_PKG_NAME") {
-                validate_id(&package).map_err(|reason| {
+                validate_plugin_id(&package).map_err(|reason| {
                     syn::Error::new(
                         Span::call_site(),
                         format!(
@@ -484,12 +459,29 @@ mod tests {
     }
 
     #[test]
-    fn id_rules() {
+    fn the_macro_applies_the_shared_id_rule() {
         for good in ["stats", "admin-api", "a1_b2", "0day"] {
-            assert_eq!(validate_id(good), Ok(()), "{good}");
+            let attr = format!("id = {good:?}");
+            let attr: TokenStream2 = attr.parse().unwrap();
+            assert!(
+                expand(attr, quote!(impl Plugin for Foo {})).is_ok(),
+                "{good}"
+            );
         }
-        for bad in ["-lead", "Upper", "sp ace", "dot.ted", &"x".repeat(65)] {
-            assert!(validate_id(bad).is_err(), "{bad}");
+        for bad in [
+            "-lead",
+            "Upper",
+            "sp ace",
+            "dot.ted",
+            "../up",
+            "café",
+            &"x".repeat(65),
+        ] {
+            let attr = format!("id = {bad:?}");
+            let attr: TokenStream2 = attr.parse().unwrap();
+            let err = expand_err(attr, quote!(impl Plugin for Foo {}));
+            let shared = validate_plugin_id(bad).unwrap_err().to_string();
+            assert!(err.contains(&shared), "{bad}: {err}");
         }
     }
 
