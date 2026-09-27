@@ -224,7 +224,6 @@ async fn a_queued_call_is_answered_by_its_deadline_while_the_actor_is_stuck_in_a
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn unloading_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_limit() {
     let lab =
         Arc::new(Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await);
@@ -246,7 +245,6 @@ async fn unloading_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_lim
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn disabling_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_limit() {
     let lab =
         Arc::new(Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await);

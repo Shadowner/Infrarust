@@ -65,6 +65,30 @@ pub(crate) enum JobKind {
     Disable,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct Halt {
+    stopping: AtomicBool,
+    disabling: AtomicBool,
+}
+
+impl Halt {
+    fn stop(&self) {
+        self.stopping.store(true, Ordering::Release);
+    }
+
+    fn disable(&self) {
+        self.disabling.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn stopping(&self) -> bool {
+        self.stopping.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn requested(&self) -> bool {
+        self.stopping() || self.disabling.load(Ordering::Acquire)
+    }
+}
+
 impl fmt::Display for CallFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -443,7 +467,7 @@ impl InstanceRef {
 pub(crate) struct PluginActor {
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     info: Arc<ActorInfo>,
-    stopping: Arc<AtomicBool>,
+    halt: Arc<Halt>,
     task: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -462,14 +486,14 @@ impl PluginActor {
             kind: CallKind::Callback,
             generation: None,
         };
-        let supervisor = Supervisor::start(factory, instance).await?;
-        let stopping = Arc::new(AtomicBool::new(false));
+        let halt = Arc::new(Halt::default());
+        let supervisor = Supervisor::start(factory, instance, Arc::clone(&halt)).await?;
         let task =
-            tokio::spawn(run(supervisor, queue, Arc::clone(&stopping)).with_current_subscriber());
+            tokio::spawn(run(supervisor, queue, Arc::clone(&halt)).with_current_subscriber());
         Ok(Arc::new(Self {
             jobs: Mutex::new(Some(jobs)),
             info,
-            stopping,
+            halt,
             task: Mutex::new(Some(task)),
         }))
     }
@@ -501,6 +525,9 @@ impl PluginActor {
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
+        if kind == JobKind::Disable {
+            self.halt.disable();
+        }
         let (reply, answer) = oneshot::channel();
         let job = Job::new(
             op,
@@ -519,7 +546,7 @@ impl PluginActor {
     }
 
     pub(crate) fn stop(&self) {
-        self.stopping.store(true, Ordering::Release);
+        self.halt.stop();
         let jobs = self
             .jobs
             .lock()
@@ -550,11 +577,7 @@ impl Drop for PluginActor {
     }
 }
 
-async fn run(
-    mut supervisor: Supervisor,
-    mut queue: mpsc::Receiver<Job>,
-    stopping: Arc<AtomicBool>,
-) {
+async fn run(mut supervisor: Supervisor, mut queue: mpsc::Receiver<Job>, halt: Arc<Halt>) {
     loop {
         let job = match supervisor.retry_at() {
             Some(at) => tokio::select! {
@@ -570,7 +593,7 @@ async fn run(
         let Some(job) = job else {
             break;
         };
-        if stopping.load(Ordering::Acquire) {
+        if halt.stopping() {
             job.call.refuse(CallFailure::Stopped);
             break;
         }

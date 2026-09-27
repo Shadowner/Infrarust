@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use tokio::time::Instant;
 
-use crate::actor::{CallFailure, GuestCall, InstanceRef, Job, JobKind};
+use crate::actor::{CallFailure, GuestCall, Halt, InstanceRef, Job, JobKind};
 use crate::bindings::exports::infrarust::plugin::guest::{EnableReason, RecoveryInfo};
 use crate::chain::CallChain;
 use crate::deadline::Deadline;
@@ -25,6 +25,7 @@ enum Health {
     Recovering,
     Quarantined { until: Instant },
     Failed,
+    Halted,
 }
 
 #[derive(Debug)]
@@ -82,12 +83,14 @@ pub(crate) struct Supervisor {
     health: Health,
     budget: RestartBudget,
     last_fault: String,
+    halt: Arc<Halt>,
 }
 
 impl Supervisor {
     pub(crate) async fn start(
         factory: InstanceFactory,
         instance: InstanceRef,
+        halt: Arc<Halt>,
     ) -> Result<Self, WasmLoaderError> {
         let live = factory
             .instantiate(FIRST_GENERATION, instance.stamped(FIRST_GENERATION))
@@ -100,6 +103,7 @@ impl Supervisor {
             health: Health::Starting(live),
             budget,
             last_fault: String::new(),
+            halt,
         })
     }
 
@@ -144,6 +148,10 @@ impl Supervisor {
                 call.refuse(CallFailure::Failed);
                 return ControlFlow::Continue(());
             }
+            Health::Halted => {
+                call.refuse(CallFailure::Stopped);
+                return ControlFlow::Continue(());
+            }
         };
         if generation.is_some_and(|generation| generation != self.generation) {
             tracing::debug!(plugin = %plugin_id, op,
@@ -175,12 +183,25 @@ impl Supervisor {
     }
 
     pub(crate) async fn retry(&mut self) {
+        if self.halted() {
+            return;
+        }
         self.health = Health::Recovering;
         self.budget.retry(Instant::now());
         let chain = CallChain::default().with(self.factory.plugin_id());
         if !self.restart(&chain).await {
             self.recover(&chain).await;
         }
+    }
+
+    fn halted(&mut self) -> bool {
+        if !self.halt.requested() {
+            return false;
+        }
+        tracing::info!(plugin = %self.factory.plugin_id(),
+            "wasm plugin recovery stopped: the plugin is being disabled or unloaded");
+        self.health = Health::Halted;
+        true
     }
 
     pub(crate) fn retire(mut self) {
@@ -222,6 +243,10 @@ impl Supervisor {
                 call.refuse(CallFailure::Failed);
                 return;
             }
+            Health::Halted => {
+                call.refuse(CallFailure::Stopped);
+                return;
+            }
         };
         match run_guest(live, call.as_mut(), None, limit, chain).await {
             Ok(()) => call.answer(),
@@ -257,6 +282,9 @@ impl Supervisor {
 
     async fn recover(&mut self, chain: &CallChain) {
         loop {
+            if self.halted() {
+                return;
+            }
             match self.budget.after_fault(Instant::now()) {
                 Verdict::Restart => {
                     if self.restart(chain).await {
