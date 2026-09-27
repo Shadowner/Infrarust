@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::actor::{CallFailure, JobKind, PluginActor};
 use crate::bindings::exports::infrarust::plugin::guest::{DisableReason, EnableReason};
 use crate::error::WasmLoaderError;
+use crate::supervisor::EnableRefused;
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
@@ -71,21 +72,24 @@ impl Plugin for WasmPlugin {
                         bindings
                             .infrarust_plugin_guest()
                             .call_on_enable(&mut *store, &EnableReason::Initial)
-                            .await
+                            .await?
+                            .map_err(|message| wasmtime::Error::new(EnableRefused(message)))
                     })
                 })
                 .await;
-            match result {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(message)) => {
-                    tracing::warn!(plugin = %self.plugin_id, %message,
-                        "wasm guest on_enable returned an error");
-                    Err(PluginError::InitFailed(message))
-                }
-                Err(failure) => Err(self
-                    .lifecycle_error("on-enable", failure)
-                    .into_plugin_error()),
+            let Err(failure) = result else {
+                return Ok(());
+            };
+            if let CallFailure::Abandoned(fault) = &failure
+                && let Some(message) = fault.refusal()
+            {
+                tracing::warn!(plugin = %self.plugin_id, %message,
+                    "wasm guest on_enable returned an error");
+                return Err(PluginError::InitFailed(message.to_owned()));
             }
+            Err(self
+                .lifecycle_error("on-enable", failure)
+                .into_plugin_error())
         })
     }
 

@@ -484,7 +484,6 @@ async fn every_trap_in_the_first_on_enable_fails_the_enable_and_releases_what_it
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-32: Err from the first on_enable promotes the instance"]
 async fn an_err_from_the_first_on_enable_fails_the_enable_and_releases_what_it_registered() {
     first_on_enable_fails_and_releases_what_it_registered(&[Mode::Refuse]).await;
 }

@@ -28,6 +28,17 @@ enum Health {
 }
 
 #[derive(Debug)]
+pub(crate) struct EnableRefused(pub(crate) String);
+
+impl fmt::Display for EnableRefused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "on_enable returned an error: {}", self.0)
+    }
+}
+
+impl std::error::Error for EnableRefused {}
+
+#[derive(Debug)]
 pub(crate) enum Fault {
     Trapped(Arc<wasmtime::Error>),
     Panicked(String),
@@ -53,6 +64,13 @@ impl Fault {
         match &**self {
             Self::Trapped(trap) => CallFailure::Trapped(Arc::clone(trap)),
             _ => CallFailure::Abandoned(Arc::clone(self)),
+        }
+    }
+
+    pub(crate) fn refusal(&self) -> Option<&str> {
+        match self {
+            Self::Refused(message) => Some(message),
+            _ => None,
         }
     }
 }
@@ -357,7 +375,10 @@ async fn contain<T>(
 ) -> Result<T, Fault> {
     match tokio::time::timeout(limit, AssertUnwindSafe(running).catch_unwind()).await {
         Ok(Ok(Ok(value))) => Ok(value),
-        Ok(Ok(Err(trap))) => Err(Fault::Trapped(Arc::new(trap))),
+        Ok(Ok(Err(error))) => Err(match error.downcast::<EnableRefused>() {
+            Ok(refused) => Fault::Refused(refused.0),
+            Err(trap) => Fault::Trapped(Arc::new(trap)),
+        }),
         Ok(Err(payload)) => Err(Fault::Panicked(panic_message(payload.as_ref()).to_owned())),
         Err(_) => Err(Fault::Overran(limit)),
     }
