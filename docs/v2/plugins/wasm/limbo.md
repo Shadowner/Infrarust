@@ -259,7 +259,9 @@ sequenceDiagram
 
 ### on_session_end
 
-`on_session_end` fires when the player's limbo session ends, for any reason. Use it to drop a stored `SessionHandle` and cancel scheduled tasks tied to that player.
+`on_session_end` fires when the player's limbo session ends, for any reason but one. Use it to drop a stored `SessionHandle` and cancel scheduled tasks tied to that player.
+
+The exception is `SendToLimbo`, from `on_player_enter`, from `complete` or as the `on_timeout` of a timed hold: the player goes on to the other handler chain without leaving the limbo world, and neither `on_session_end` nor `on_disconnect` reaches the handlers the player leaves. The session they saw has still ended: a `SessionHandle` minted in it reports `cancelled()`, and `complete` on it does nothing. The host stops holding that player for your plugin, so a later fault of the plugin does not deny them. Drop what you stored for the player when `cancelled()` turns `true`.
 
 ```rust
 pub enum SessionEndReason {
@@ -297,7 +299,7 @@ The host treats a guest trap as a denial, never a silent pass. A trap also disca
 | `on_disconnect` | Cleanup is skipped |
 | `on_session_end` | Cleanup is skipped |
 
-Every player the discarded instance was still holding (its handler returned `Hold` or `HoldWithTimeout` and has not completed yet) is released at once with the same "Limbo handler unavailable" denial, so no player waits on a handler that no longer exists. Handlers are known by name: when the fresh instance registers the same handler names in `on_enable`, the proxy's existing handlers route to it. A name it does not register again denies the players who reach it. While the plugin is quarantined, its handlers deny every player that enters.
+Every player the discarded instance was still holding (its handler returned `Hold` or `HoldWithTimeout` and has not completed yet) is released at once with the same "Limbo handler unavailable" denial, so no player waits on a handler that no longer exists. A player the plugin held who has gone on to another handler chain with `SendToLimbo` is no longer held by it and is left alone. Handlers are known by name: when the fresh instance registers the same handler names in `on_enable`, the proxy's existing handlers route to it. A name it does not register again denies the players who reach it. While the plugin is quarantined, its handlers deny every player that enters.
 
 A handler that panics in `on_player_enter` denies the player rather than leaving them stuck in limbo:
 
