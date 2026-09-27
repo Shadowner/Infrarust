@@ -673,6 +673,13 @@ async fn quarantined_providers_fail_closed_for_bans_and_safe_for_permissions_unt
         permissions.value(quarantined.as_ref(), "demo.use"),
         Tristate::Undefined
     );
+    assert!(
+        permissions
+            .console_checker()
+            .await
+            .has_permission("infrarust.command.kick"),
+        "the console keeps every permission while the provider is quarantined"
+    );
 
     let_the_backoff_pass().await;
     assert_eq!(manager.check(&login("Steve")).await.unwrap(), None);
@@ -680,6 +687,13 @@ async fn quarantined_providers_fail_closed_for_bans_and_safe_for_permissions_unt
     assert_eq!(
         permissions.value(recovered.as_ref(), "demo.use"),
         Tristate::True
+    );
+    assert!(
+        !permissions
+            .console_checker()
+            .await
+            .has_permission("infrarust.command.kick"),
+        "the recovered provider answers for the console again"
     );
     assert_eq!(
         fx.log(),
