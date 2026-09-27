@@ -264,7 +264,7 @@ Every call into your plugin carries a deadline, set when the proxy makes the cal
 | Call into the plugin | Deadline |
 | --- | --- |
 | Event handler | `[events] handler_timeout` minus a margin (9.75 s with the default 10 s), so the answer reaches the event before the event bus gives up on the listener |
-| Command, tab completion, scheduled task, limbo callback | `max_call_duration` in `[wasm]` (60 s by default): nothing in the proxy stops waiting for these earlier |
+| Command, tab completion, scheduled task, limbo callback | `max_call_duration` in `[wasm]` (60 s by default), counted from when the call is queued: nothing in the proxy stops waiting for these earlier |
 | `on_enable`, `on_disable` | none |
 
 A service call made during that call returns at the earliest of:
@@ -413,7 +413,7 @@ pub fn cancel(&self, handle: TaskHandle);
 
 `delay` runs the closure once after the duration and drops it right after. `interval` runs it repeatedly, the first time one period from now; `interval_with_delay` sets the first run separately. Both fire through the host's `on-scheduled-task` dispatch back into the plugin. `cancel` (or `TaskHandle::cancel`) stops the task on the host and drops the closure in the guest; calling it from inside the task's own callback is fine, and the closure is dropped once that call returns. Cancelling a delay that has already run does nothing.
 
-An interval behaves like a native repeating task: the next run starts one period after the previous run returns, not on a fixed clock. A run that takes longer than the period, or waits behind other calls in the plugin's queue, pushes the next one back instead of queueing more, so at most one run of an interval waits in the queue and the plugin's commands and events are not starved by it. A 1-second interval whose run takes 300 ms runs about every 1.3 seconds.
+An interval behaves like a native repeating task: the next run starts one period after the previous run returns, not on a fixed clock. A run that takes longer than the period, or waits behind other calls in the plugin's queue, pushes the next one back instead of queueing more, so at most one run of an interval waits in the queue and the plugin's commands and events are not starved by it. A 1-second interval whose run takes 300 ms runs about every 1.3 seconds. A run is a call with the deadline of a callback, `max_call_duration` counted from when the run was queued: a run still going at that deadline is cut off, counted as a [fault](./fault-model), and the instance is replaced, which cancels the old instance's tasks. The fresh instance's `on_enable` schedules the interval again, so no run starts before the one ahead of it has returned or been cut.
 
 A plugin holds at most `[wasm.quotas] scheduled_tasks` live tasks (1024 by default): delays that have not run yet and intervals that are not cancelled. Past it, `delay` and `interval` return `LimitExceeded`. A delay stops counting once it has run.
 
