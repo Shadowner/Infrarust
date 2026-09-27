@@ -40,7 +40,7 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::event_bus::conversion::protocol_state_to_api;
-use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
+use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
 use crate::player::commands::CommandOutcome;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
@@ -280,6 +280,7 @@ pub async fn proxy_loop(
         in_game,
         backend_tree: None,
         join,
+        codec_closed: None,
     }
     .run()
     .await
@@ -323,6 +324,7 @@ struct Loop<'a> {
     in_game: bool,
     backend_tree: Option<CCommands>,
     join: &'a mut Option<ServerJoin>,
+    codec_closed: Option<String>,
 }
 
 impl Loop<'_> {
@@ -445,7 +447,9 @@ impl Loop<'_> {
                 .io
                 .commands
                 .drain(&mut self.io.client, registry, self.in_game);
-            if !matches!(step, Ok(Step::Continue)) || !matches!(commands, CommandOutcome::Continue)
+            if !matches!(step, Ok(Step::Continue))
+                || !matches!(commands, CommandOutcome::Continue)
+                || self.codec_closed.is_some()
             {
                 break;
             }
@@ -462,6 +466,18 @@ impl Loop<'_> {
             };
         }
         self.deliver();
+        if let Some(reason) = self.codec_closed.take() {
+            tracing::warn!(%reason, "a required codec filter failed; closing the session");
+            let _ = self.backend.flush().await;
+            return Some(
+                kick(
+                    &mut self.io.client,
+                    &Component::text(CODEC_FILTER_FAILED),
+                    registry,
+                )
+                .await,
+            );
+        }
         let step = match step {
             Ok(step) => step,
             Err(e) => {
@@ -600,8 +616,13 @@ impl Loop<'_> {
                 return Ok(());
             }
 
-            if apply_codec_filter(&mut self.io.client_codec, &mut frame, &mut *self.backend)? {
-                return Ok(());
+            match apply_codec_filter(&mut self.io.client_codec, &mut frame, &mut *self.backend)? {
+                Filtered::Forward => {}
+                Filtered::Consumed => return Ok(()),
+                Filtered::Close(reason) => {
+                    self.codec_closed = Some(reason);
+                    return Ok(());
+                }
             }
 
             if Some(frame.id) == self.ids.s_keepalive {
@@ -765,8 +786,13 @@ impl Loop<'_> {
         let state = self.state.backend_reading(self.backend);
 
         if state == ConnectionState::Play {
-            if apply_codec_filter(&mut self.io.server_codec, &mut frame, &mut self.io.client)? {
-                return Ok(BackendAction::Continue);
+            match apply_codec_filter(&mut self.io.server_codec, &mut frame, &mut self.io.client)? {
+                Filtered::Forward => {}
+                Filtered::Consumed => return Ok(BackendAction::Continue),
+                Filtered::Close(reason) => {
+                    self.codec_closed = Some(reason);
+                    return Ok(BackendAction::Continue);
+                }
             }
 
             if Some(frame.id) == self.ids.c_keepalive {
@@ -1016,18 +1042,19 @@ impl FrameWriter for BackendBridge {
     }
 }
 
-/// Applies codec filter chain to a frame and handles the result.
-///
-/// Returns `Ok(true)` if the frame was consumed (dropped/replaced/queued with
-/// injections) and should NOT be forwarded further. Returns `Ok(false)` if
-/// processing should continue with the (possibly modified) frame.
+enum Filtered {
+    Forward,
+    Consumed,
+    Close(String),
+}
+
 fn apply_codec_filter(
     chain: &mut CodecFilterChain,
     frame: &mut PacketFrame,
     writer: &mut impl FrameWriter,
-) -> Result<bool, CoreError> {
+) -> Result<Filtered, CoreError> {
     if chain.is_empty() {
-        return Ok(false);
+        return Ok(Filtered::Forward);
     }
 
     let mut raw = frame_to_raw(frame);
@@ -1036,12 +1063,12 @@ fn apply_codec_filter(
             if modified {
                 *frame = raw_to_frame(&raw);
             }
-            Ok(false)
+            Ok(Filtered::Forward)
         }
-        FilterResult::Dropped => Ok(true),
+        FilterResult::Dropped => Ok(Filtered::Consumed),
         FilterResult::Replaced(mut output) => {
             send_injected_frames(writer, &mut output, true, true)?;
-            Ok(true) // Original frame is NOT sent
+            Ok(Filtered::Consumed)
         }
         FilterResult::PassWithInjections {
             mut output,
@@ -1053,8 +1080,9 @@ fn apply_codec_filter(
             }
             writer.queue_frame(frame)?;
             send_injected_frames(writer, &mut output, false, true)?;
-            Ok(true) // Frame already queued with injections
+            Ok(Filtered::Consumed)
         }
+        FilterResult::Closed(reason) => Ok(Filtered::Close(reason)),
     }
 }
 

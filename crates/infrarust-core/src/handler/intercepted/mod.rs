@@ -181,6 +181,23 @@ impl InterceptedHandler {
             client_codec,
             server_codec,
         };
+        let refused = io
+            .client_codec
+            .close_reason()
+            .or_else(|| io.server_codec.close_reason())
+            .map(str::to_owned);
+        if let Some(refused) = refused {
+            tracing::warn!(reason = %refused, "a required codec filter refused the connection");
+            let reason = Component::text(crate::filter::codec_chain::CODEC_FILTER_UNAVAILABLE);
+            io.client.disconnect(&reason, registry).await.ok();
+            io.close();
+            lifecycle
+                .end(DisconnectCause::Kicked {
+                    reason: Some(reason),
+                })
+                .await;
+            return Ok(());
+        }
         let ctx = SessionContext {
             services: &self.services,
             backend_connector: &self.backend_connector,

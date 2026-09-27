@@ -10,12 +10,18 @@ use infrarust_api::types::{ProtocolVersion, RawPacket};
 
 use super::codec_registry::CodecFilterRegistryImpl;
 
+pub const CODEC_FILTER_FAILED: &str = "Disconnected: a required packet filter failed.";
+
+pub const CODEC_FILTER_UNAVAILABLE: &str =
+    "Connection refused: a required packet filter is not available.";
+
 /// Result of processing a packet through the codec filter chain.
 pub enum FilterResult {
     Pass { modified: bool },
     Dropped,
     Replaced(FrameOutput),
     PassWithInjections { output: FrameOutput, modified: bool },
+    Closed(String),
 }
 
 fn same_payload(before: &bytes::Bytes, after: &bytes::Bytes) -> bool {
@@ -92,6 +98,9 @@ impl CodecFilterChain {
                     return FilterResult::Replaced(output);
                 }
                 CodecVerdict::Error(e) => {
+                    if let Some(reason) = instance.close_reason() {
+                        return FilterResult::Closed(reason.to_owned());
+                    }
                     tracing::warn!(error = %e, "CodecFilter error, passing frame through");
                     continue;
                 }
@@ -133,6 +142,13 @@ impl CodecFilterChain {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.instances.is_empty()
+    }
+
+    #[must_use]
+    pub fn close_reason(&self) -> Option<&str> {
+        self.instances
+            .iter()
+            .find_map(|instance| instance.close_reason())
     }
 }
 
@@ -305,6 +321,60 @@ mod tests {
 
         chain.close();
         assert_eq!(close_count.load(Ordering::Relaxed), 1);
+    }
+
+    struct Failing {
+        reason: Option<&'static str>,
+    }
+
+    impl CodecFilterInstance for Failing {
+        fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
+            CodecVerdict::Error(CodecFilterError::Internal("broken".to_owned()))
+        }
+
+        fn close_reason(&self) -> Option<&str> {
+            self.reason
+        }
+    }
+
+    #[test]
+    fn an_error_from_a_filter_that_must_close_ends_the_chain_with_its_reason() {
+        let later = Arc::new(AtomicU32::new(0));
+        let mut chain = chain_with_instances(vec![
+            Box::new(Failing {
+                reason: Some("required filter trapped"),
+            }),
+            Box::new(MockInstance {
+                verdict_fn: Box::new(|_, _| CodecVerdict::Pass),
+                call_count: Arc::clone(&later),
+            }),
+        ]);
+        assert_eq!(chain.close_reason(), Some("required filter trapped"));
+        let mut packet = RawPacket::new(0x00, bytes::Bytes::new());
+        assert!(matches!(
+            chain.process(&mut packet),
+            FilterResult::Closed(reason) if reason == "required filter trapped"
+        ));
+        assert_eq!(later.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn an_error_from_a_filter_that_may_fail_open_passes_the_frame_on() {
+        let later = Arc::new(AtomicU32::new(0));
+        let mut chain = chain_with_instances(vec![
+            Box::new(Failing { reason: None }),
+            Box::new(MockInstance {
+                verdict_fn: Box::new(|_, _| CodecVerdict::Pass),
+                call_count: Arc::clone(&later),
+            }),
+        ]);
+        assert_eq!(chain.close_reason(), None);
+        let mut packet = RawPacket::new(0x00, bytes::Bytes::new());
+        assert!(matches!(
+            chain.process(&mut packet),
+            FilterResult::Pass { modified: false }
+        ));
+        assert_eq!(later.load(Ordering::Relaxed), 1);
     }
 
     #[test]

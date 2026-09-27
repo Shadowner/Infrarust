@@ -196,6 +196,7 @@ interface codec-registry {
         priority: filter-priority,
         after: list<string>,
         before: list<string>,
+        required: bool,
     }
 
     register-codec-filter: func(metadata: codec-filter-metadata, factory: handler-id) -> result<_, host-error>;

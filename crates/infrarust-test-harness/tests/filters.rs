@@ -5,11 +5,12 @@ use std::time::Duration;
 use bytes::Bytes;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::filter::{
-    CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, ConnectionSide,
-    FilterMetadata, FilterRegistryError, FilterVerdict, FrameOutput, TransportContext,
-    TransportFilter,
+    CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict,
+    ConnectionSide, FilterMetadata, FilterRegistryError, FilterVerdict, FrameOutput,
+    TransportContext, TransportFilter,
 };
 use infrarust_api::types::RawPacket;
+use infrarust_core::filter::codec_chain::{CODEC_FILTER_FAILED, CODEC_FILTER_UNAVAILABLE};
 
 use infrarust_test_harness::chat::ChatPacket;
 use infrarust_test_harness::{
@@ -200,6 +201,112 @@ async fn a_transport_filter_leaves_with_its_plugin_and_no_other_plugin_can_remov
             .transport_filter_registry
             .chain()
             .is_empty()
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+const REQUIRED: &str = "required";
+const TRIGGER: &str = "close me";
+
+struct Required {
+    unavailable: bool,
+}
+
+impl CodecFilterFactory for Required {
+    fn metadata(&self) -> FilterMetadata {
+        FilterMetadata::new(REQUIRED)
+    }
+
+    fn create(&self, _init: &CodecSessionInit) -> Box<dyn CodecFilterInstance> {
+        Box::new(RequiredInstance {
+            closing: self
+                .unavailable
+                .then(|| "required filter could not start".to_owned()),
+        })
+    }
+}
+
+struct RequiredInstance {
+    closing: Option<String>,
+}
+
+impl CodecFilterInstance for RequiredInstance {
+    fn filter(&mut self, packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
+        let asked = packet
+            .data
+            .windows(TRIGGER.len())
+            .any(|window| window == TRIGGER.as_bytes());
+        if asked {
+            self.closing = Some("required filter failed".to_owned());
+        }
+        match &self.closing {
+            Some(reason) => CodecVerdict::Error(CodecFilterError::Internal(reason.clone())),
+            None => CodecVerdict::Pass,
+        }
+    }
+
+    fn close_reason(&self) -> Option<&str> {
+        self.closing.as_deref()
+    }
+}
+
+fn with_required_filter(unavailable: bool) -> ScriptedPlugin {
+    ScriptedPlugin::new(OWNER).on_enable(move |ctx| {
+        ctx.codec_filters()
+            .expect("trusted plugins hold the codec-filter capability")
+            .register(Box::new(Required { unavailable }))
+            .expect("the filter id is free");
+    })
+}
+
+#[tokio::test]
+async fn a_filter_that_cannot_start_for_a_connection_refuses_it_before_the_backend() {
+    let (proxy, backend) = start(with_required_filter(true)).await;
+
+    let refused = proxy
+        .client(VERSION)
+        .login("Alex")
+        .await
+        .unwrap()
+        .disconnected()
+        .expect("the connection is refused");
+    assert_eq!(refused.text, CODEC_FILTER_UNAVAILABLE);
+    assert!(
+        backend
+            .next_connection(Duration::from_millis(300))
+            .await
+            .is_err(),
+        "the refused player never reaches the backend"
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_filter_that_fails_mid_session_closes_that_connection_only() {
+    let (proxy, backend) = start(with_required_filter(false)).await;
+
+    let mut doomed = proxy
+        .client(VERSION)
+        .login("Alex")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _doomed_backend = backend.next_connection(T).await.unwrap();
+    assert_eq!(
+        chat_seen_by_backend(&proxy, &backend, "Steve", "hello").await,
+        ["hello"]
+    );
+
+    doomed.chat(TRIGGER).await.unwrap();
+    let kicked = doomed.expect_disconnect(T).await.unwrap();
+    assert_eq!(kicked.text, CODEC_FILTER_FAILED);
+    assert_eq!(
+        chat_seen_by_backend(&proxy, &backend, "Notch", "still here").await,
+        ["still here"],
+        "other connections keep their filter and their session"
     );
 
     proxy.shutdown().await.unwrap();

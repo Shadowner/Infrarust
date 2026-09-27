@@ -161,13 +161,33 @@ impl CodecRegistrar {
         priority: FilterPriority,
         constructor: impl Fn(&CodecSessionInit) -> Box<dyn CodecFilter> + 'static,
     ) {
+        self.register(id, priority, false, Box::new(constructor));
+    }
+
+    pub fn add_required(
+        &mut self,
+        id: &str,
+        priority: FilterPriority,
+        constructor: impl Fn(&CodecSessionInit) -> Box<dyn CodecFilter> + 'static,
+    ) {
+        self.register(id, priority, true, Box::new(constructor));
+    }
+
+    fn register(
+        &mut self,
+        id: &str,
+        priority: FilterPriority,
+        required: bool,
+        constructor: FilterConstructor,
+    ) {
         let metadata = crate::bindings::codec_registry::CodecFilterMetadata {
             id: id.to_string(),
             priority: priority.to_wit(),
             after: Vec::new(),
             before: Vec::new(),
+            required,
         };
-        crate::runtime::register_codec_factory(self.notify, metadata, Box::new(constructor));
+        crate::runtime::register_codec_factory(self.notify, metadata, constructor);
     }
 }
 

@@ -182,17 +182,29 @@ impl CodecFilter for LabCodec {
     }
 }
 
+fn lab_codec(init: &CodecSessionInit) -> Box<dyn CodecFilter> {
+    if let Some(mode) = init
+        .connection_id
+        .checked_sub(faults::CODEC_FAULT_CONNECTION_BASE)
+        .and_then(Mode::from_code)
+    {
+        let _ = fault(mode, "codec-create");
+    }
+    Box::new(LabCodec)
+}
+
+#[allow(dead_code)]
 pub fn codec_filters(reg: &mut CodecRegistrar) {
-    reg.add(faults::CODEC_FILTER_ID, FilterPriority::Normal, |init| {
-        if let Some(mode) = init
-            .connection_id
-            .checked_sub(faults::CODEC_FAULT_CONNECTION_BASE)
-            .and_then(Mode::from_code)
-        {
-            let _ = fault(mode, "codec-create");
-        }
-        Box::new(LabCodec)
-    });
+    reg.add(faults::CODEC_FILTER_ID, FilterPriority::Normal, lab_codec);
+}
+
+#[allow(dead_code)]
+pub fn required_codec_filters(reg: &mut CodecRegistrar) {
+    reg.add_required(
+        faults::REQUIRED_CODEC_FILTER_ID,
+        FilterPriority::Normal,
+        lab_codec,
+    );
 }
 
 pub fn limbo_handlers(reg: &mut LimboRegistrar) {

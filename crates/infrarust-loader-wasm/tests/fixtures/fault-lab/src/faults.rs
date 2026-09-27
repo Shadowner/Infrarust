@@ -5,6 +5,7 @@ pub const LIMBO_HANDLER: &str = "fault-lab-limbo";
 pub const CODEC_FAULT_CONNECTION_BASE: u64 = 9000;
 pub const CODEC_FAULT_PACKET_BASE: i32 = 0x70;
 pub const CODEC_MARK_PACKET: i32 = 0x05;
+pub const REQUIRED_CODEC_FILTER_ID: &str = "fault-lab-peer-required";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {

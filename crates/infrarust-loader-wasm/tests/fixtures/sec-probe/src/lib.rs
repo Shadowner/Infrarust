@@ -146,6 +146,7 @@ fn register_one(family: &str, index: u32) -> Result<Result<u64, HostError>, Stri
                 priority: codec_registry::FilterPriority::Normal,
                 after: Vec::new(),
                 before: Vec::new(),
+                required: false,
             },
             handler,
         )

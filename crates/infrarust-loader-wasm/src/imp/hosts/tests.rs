@@ -283,6 +283,7 @@ fn codec_metadata() -> codec_registry::CodecFilterMetadata {
         priority: codec_registry::FilterPriority::Normal,
         after: vec![],
         before: vec![],
+        required: false,
     }
 }
 

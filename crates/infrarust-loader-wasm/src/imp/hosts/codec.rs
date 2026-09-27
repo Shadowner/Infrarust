@@ -61,7 +61,7 @@ impl PluginStoreState {
                 after: metadata.after,
                 before: metadata.before,
             },
-            false,
+            metadata.required,
         )));
         match registered {
             Ok(()) => {

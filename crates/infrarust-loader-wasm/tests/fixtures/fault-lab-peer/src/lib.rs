@@ -19,7 +19,7 @@ impl Plugin for FaultLabPeer {
     }
 
     fn register_codec_filters(reg: &mut CodecRegistrar) {
-        lab::codec_filters(reg);
+        lab::required_codec_filters(reg);
     }
 
     fn register_limbo_handlers(reg: &mut LimboRegistrar) {
