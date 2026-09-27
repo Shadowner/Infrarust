@@ -21,6 +21,7 @@ fn kind(kind: ErrorKind) -> &'static str {
         ErrorKind::InvalidState => "invalid-state",
         ErrorKind::Unsupported => "unsupported",
         ErrorKind::Internal => "internal",
+        ErrorKind::LimitExceeded => "limit-exceeded",
     }
 }
 

@@ -35,6 +35,7 @@ interface types {
         invalid-state,
         unsupported,
         internal,
+        limit-exceeded,
     }
 
     record host-error {

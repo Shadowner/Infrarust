@@ -15,6 +15,7 @@ pub enum ErrorKind {
     InvalidState,
     Unsupported,
     Internal,
+    LimitExceeded,
 }
 
 impl ErrorKind {
@@ -31,6 +32,7 @@ impl ErrorKind {
             Self::InvalidState => "invalid-state",
             Self::Unsupported => "unsupported",
             Self::Internal => "internal",
+            Self::LimitExceeded => "limit-exceeded",
         }
     }
 
@@ -46,6 +48,7 @@ impl ErrorKind {
             wt::ErrorKind::InvalidState => Self::InvalidState,
             wt::ErrorKind::Unsupported => Self::Unsupported,
             wt::ErrorKind::Internal => Self::Internal,
+            wt::ErrorKind::LimitExceeded => Self::LimitExceeded,
         }
     }
 }
@@ -182,6 +185,19 @@ mod tests {
         });
         assert_eq!(error.kind(), ErrorKind::PlayerGone);
         assert_eq!(error.to_string(), "player-gone: player 7 is not online");
+    }
+
+    #[test]
+    fn a_quota_refusal_reads_as_limit_exceeded() {
+        let error = Error::from(wt::HostError {
+            kind: wt::ErrorKind::LimitExceeded,
+            message: "the plugin already holds 256 commands".into(),
+        });
+        assert_eq!(error.kind(), ErrorKind::LimitExceeded);
+        assert_eq!(
+            error.to_string(),
+            "limit-exceeded: the plugin already holds 256 commands"
+        );
     }
 
     #[test]
