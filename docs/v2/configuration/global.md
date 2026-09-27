@@ -80,7 +80,7 @@ servers_dir = "./servers"
 plugins_dir = "./plugins"
 ```
 
-`servers_dir` is the path to the directory containing per-server `.toml` files. `plugins_dir` is where Infrarust looks for WASM plugin files. Both are resolved from the working directory where Infrarust starts. See the [Configuration Overview](./) for the per-server config format.
+`servers_dir` is the path to the directory containing per-server `.toml` files. `plugins_dir` is where Infrarust looks for WASM plugin files, directly in the directory: subdirectories are not scanned, since they hold the plugins' data directories. Both are resolved from the working directory where Infrarust starts. See the [Configuration Overview](./) for the per-server config format.
 
 ## Announce proxy commands
 

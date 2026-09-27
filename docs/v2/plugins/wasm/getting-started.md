@@ -198,7 +198,7 @@ Cargo replaces `-` with `_` in the artifact name, so crate `my-plugin` produces 
 
 ## Deploy
 
-Infrarust discovers WASM plugins by scanning its `plugins/` directory for `.wasm` files and keying each by its metadata `id`. Copy the artifact there:
+Infrarust discovers WASM plugins by scanning its `plugins/` directory, not its subdirectories, for `.wasm` files and keying each by its metadata `id`. Copy the artifact there:
 
 ```bash
 cp target/wasm32-wasip2/release/my_plugin.wasm /path/to/infrarust/plugins/

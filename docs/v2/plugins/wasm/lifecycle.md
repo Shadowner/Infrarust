@@ -41,13 +41,14 @@ stateDiagram-v2
 
 ## Discovery
 
-The loader scans the plugin directory recursively for `*.wasm` files, in sorted order. It follows symlinks to directories and files, and remembers the canonical path of each one it takes: a directory or a file reached a second time, through a symlink loop or a second link, is skipped. The `.cache` subdirectory is skipped too, so cached artifacts are never mistaken for plugins.
+The loader reads the top level of the plugin directory, in sorted order, and takes each regular file named `*.wasm`, or symlink to one. It never enters a subdirectory: the plugins' data directories (`plugins_dir/<id>`, mounted read-write as each guest's `/`) and `.cache` live there, and a component a plugin writes into its data directory must not become a plugin at the next start. A file reached through two links is probed once, under the first name in sorted order.
 
 If the plugin directory does not exist, discovery returns an empty list. If it exists but cannot be read, discovery fails and the proxy does not start. Everything below that is per plugin:
 
 | Problem | What happens |
 |---------|--------------|
-| A subdirectory cannot be read | Logged at `error` with its path, skipped |
+| An entry named `*.wasm` is a directory | Ignored |
+| An entry named `*.wasm` cannot be read (a dangling symlink or a symlink loop) or is not a regular file (a FIFO, a socket) | That entry is refused and never opened |
 | A file cannot be read, is empty, is not a WebAssembly component, or does not compile | That file is refused |
 | The component targets another contract | That file is refused, see [Contract check](#contract-check) |
 | `metadata()` traps, runs out of time, or reports an invalid id | That file is refused, see [Metadata probe](#metadata-probe) |
@@ -139,7 +140,7 @@ Once every file is probed, the proxy puts together the plugins of all loaders, t
 | Plugins depend on each other in a cycle | Every plugin in the cycle | `plugin 'x' is refused: its dependencies form a cycle (x, y)` |
 | A hard dependency was refused | The plugin, and so on down the chain | `plugin 'x' requires 'y', which is not enabled` |
 
-No copy of a duplicated id is kept, so which one runs never depends on the order of the scan. A backup copy left in a subdirectory of `plugins_dir` counts as a duplicate. An optional dependency that is missing or refused is ignored.
+No copy of a duplicated id is kept, so which one runs never depends on the order of the scan. A backup copy in a subdirectory of `plugins_dir` is not scanned and does not count. An optional dependency that is missing or refused is ignored.
 
 A plugin refused here shows the `error` state with the same message. The proxy then enables the others in dependency order.
 

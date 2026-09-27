@@ -25,7 +25,7 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | `connect_max_attempts` | integer | `3` | Backend addresses tried before giving up. 0 = try them all |
 | `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream |
 | `servers_dir` | string | `"./servers"` | Path to the directory containing server TOML files |
-| `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files |
+| `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files. Only the files directly in it are loaded; subdirectories are not scanned |
 | `worker_threads` | integer | `0` | Number of tokio worker threads. 0 = auto (one per CPU core) |
 | `so_reuseport` | boolean | `false` | Enable `SO_REUSEPORT` socket option (Linux only) |
 | `unknown_domain_behavior` | string | `"default_motd"` | What to do when a player connects with an unknown domain. `"default_motd"` shows the default MOTD, `"drop"` silently closes the connection |

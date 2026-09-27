@@ -23,9 +23,9 @@ Copy your compiled artifact into that directory:
 cp target/wasm32-wasip2/release/my_plugin.wasm ./plugins/
 ```
 
-The scan is recursive and matches every file with a `.wasm` extension, so subdirectories work for organizing many plugins. The `.cache` subdirectory is the one exception and is always skipped during discovery. Symlinks to directories and files are followed; a directory or file reached a second time, through a loop or a second link, is scanned once.
+Only the top level of `plugins_dir` is scanned: every regular file with a `.wasm` extension directly in it, or a symlink to such a file, is a plugin candidate. Subdirectories are never entered. They hold the plugins' data directories, `plugins_dir/<plugin-id>`, which each plugin can write to, and the `.cache` directory; scanning them would let a plugin drop a component there and have it loaded at the next start as another plugin. A file reached through two links is loaded once.
 
-Every `.wasm` under `plugins_dir` is a plugin candidate, so keep backup copies and old versions outside it: a copy that reports the same id as the live plugin makes the proxy refuse both, see [The plugin id](#the-plugin-id).
+Keep backup copies and old versions outside `plugins_dir`, or in a subdirectory, where they are ignored. Two copies at the top level that report the same id make the proxy refuse both, see [The plugin id](#the-plugin-id).
 
 ::: tip
 See [Building a Plugin](./building) for producing the `.wasm` artifact with `cargo build --release --target wasm32-wasip2`.

@@ -5,7 +5,7 @@ description: How to configure the plugins directory, register plugins in infraru
 
 # Installing plugins
 
-Infrarust loads plugins from the directory pointed to by `plugins_dir` (default: `./plugins`). When the binary is built with the `wasm` feature, the WASM loader scans that directory recursively for every `.wasm` file and loads each one. Built-in plugins compile into the binary and register themselves at startup, with no files to copy.
+Infrarust loads plugins from the directory pointed to by `plugins_dir` (default: `./plugins`). When the binary is built with the `wasm` feature, the WASM loader loads every `.wasm` file directly in that directory. It does not look into subdirectories. Built-in plugins compile into the binary and register themselves at startup, with no files to copy.
 
 The `wasm` feature is on by default, so a stock release build loads `.wasm` files. Building with `--no-default-features` removes it; add `--features wasm` back to keep WASM plugin support.
 
@@ -20,7 +20,7 @@ plugins/
   .cache/          ← AOT compilation cache, managed automatically
 ```
 
-The loader will find both files on the next startup. Subdirectories are also scanned, so you can organise plugins however you like. The `.cache` subdirectory is skipped during the scan.
+The loader will find both files on the next startup. Put every `.wasm` directly in the plugins directory: subdirectories are not scanned. They are where plugins keep their data (`plugins/<id>/`) and where the `.cache` lives, and a plugin can write to its own data directory, so a component found there is never loaded. A backup copy left in a subdirectory is ignored.
 
 ::: tip
 AOT-compiled `.cwasm` artifacts land in `plugins/.cache/`. They speed up subsequent startups by skipping recompilation. The cache is keyed on the WASM binary hash and the wasmtime version, so a wasmtime upgrade or a changed plugin automatically triggers recompilation.

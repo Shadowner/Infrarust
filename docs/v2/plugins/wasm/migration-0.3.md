@@ -245,6 +245,7 @@ These do not show up as compile errors, so check them by hand:
 - **Registration quotas.** A plugin holds at most 1024 event listeners, 256 commands, 1024 live scheduled tasks, 128 plugin channels, 32 codec filters and 64 limbo handlers by default. Past a quota the registration returns `ErrorKind::LimitExceeded`, a new `error-kind` case (`limit-exceeded`) in the 0.3.0 contract; a `match` on `ErrorKind` needs a wildcard arm, since the enum is `#[non_exhaustive]`. The operator raises a quota under `[wasm.quotas]` or `[plugins.<id>.wasm.quotas]`.
 - **Intervals wait for their run.** An interval's next run starts one period after the previous run returns, like a native repeating task, and at most one run of an interval waits in the plugin's queue.
 - **Shared enums.** `ServerState`, `ProxyMode`, `Capability` and the other enums listed under [Types](#types) are the same types as in the native api and are `#[non_exhaustive]`.
+- **Plugins in subfolders.** The proxy loads only the `.wasm` files directly in `plugins_dir`; subdirectories are no longer scanned, because each plugin's data directory is one of them. If you organised plugins in subfolders, move the files up to `plugins_dir`, or leave a symlink there pointing to each one.
 
 ## Checklist
 
