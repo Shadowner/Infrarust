@@ -5,7 +5,7 @@ use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
 use crate::codec::WasmCodecFilterFactory;
 use crate::convert::wit_enum_map;
 use crate::host_error::{HostResult, filter_error, host_error};
-use crate::store_state::PluginStoreState;
+use crate::store_state::{PluginStoreState, Quota};
 
 wit_enum_map!(priority_from_wit: wcr::FilterPriority => FilterPriority {
     First, Early, Normal, Late, Last
@@ -48,6 +48,10 @@ impl PluginStoreState {
         let ctx = self.services()?;
         let registry = ctx.codec_filters().ok_or_else(no_registry)?;
         let id = metadata.id.clone();
+        if !self.registrations().holds_codec_filter(&id) {
+            let held = self.registrations().codec_filter_count();
+            self.admit(Quota::CodecFilters, held, 1)?;
+        }
         let registered = registry.register(Box::new(WasmCodecFilterFactory::new(
             instantiator,
             factory,

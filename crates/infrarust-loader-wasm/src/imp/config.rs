@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use infrarust_config::{
     EventsConfig, ProxyConfig, WasmConfig, WasmLimits, WasmMount, WasmNetworkConfig,
-    WasmRecoveryConfig,
+    WasmQuotasConfig, WasmRecoveryConfig,
 };
 
 #[derive(Debug, Clone)]
@@ -130,6 +130,7 @@ pub(crate) struct SandboxLimits {
     pub(crate) queue_capacity: usize,
     pub(crate) event_budget: Duration,
     pub(crate) recovery: WasmRecoveryConfig,
+    pub(crate) quotas: WasmQuotasConfig,
 }
 
 impl SandboxLimits {
@@ -146,6 +147,7 @@ impl SandboxLimits {
                 .clamp(1, tokio::sync::Semaphore::MAX_PERMITS),
             event_budget,
             recovery: limits.recovery,
+            quotas: limits.quotas,
         }
     }
 }
@@ -179,6 +181,29 @@ mod tests {
         assert_eq!(sandbox.queue_capacity, 1024);
         assert_eq!(sandbox.event_budget, Duration::from_secs(10));
         assert_eq!(sandbox.recovery, WasmRecoveryConfig::default());
+        assert_eq!(sandbox.quotas, WasmQuotasConfig::default());
+    }
+
+    #[test]
+    fn quotas_follow_the_wasm_section_and_plugin_overrides() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.quotas]
+            commands = 16
+
+            [plugins.chatty.wasm.quotas]
+            event_listeners = 4096
+            "#,
+        )
+        .unwrap();
+        let loader = WasmLoaderConfig::from_proxy_config(&config);
+        let defaults = loader.default_sandbox().quotas;
+        assert_eq!(defaults.commands, 16);
+        assert_eq!(defaults.event_listeners, 1024);
+        let chatty = loader.sandbox_for("chatty").quotas;
+        assert_eq!(chatty.event_listeners, 4096);
+        assert_eq!(chatty.commands, 16);
+        assert_eq!(loader.sandbox_for("other").quotas, defaults);
     }
 
     #[test]

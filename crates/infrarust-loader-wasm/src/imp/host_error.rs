@@ -45,6 +45,13 @@ pub(crate) fn no_services() -> HostError {
     )
 }
 
+pub(crate) fn limit_exceeded(noun: &str, key: &str, limit: usize) -> HostError {
+    host_error(
+        ErrorKind::LimitExceeded,
+        format!("quota reached: the plugin may hold at most {limit} {noun} (quotas.{key})"),
+    )
+}
+
 pub(crate) fn timed_out(expired: HostCallTimeout) -> HostError {
     host_error(ErrorKind::Timeout, expired.to_string())
 }
@@ -193,6 +200,12 @@ mod tests {
         assert_eq!(
             config_write_error(&ConfigWriteError::Validation("bad".into())).kind,
             ErrorKind::InvalidArgument
+        );
+        let quota = limit_exceeded("commands", "commands", 256);
+        assert_eq!(quota.kind, ErrorKind::LimitExceeded);
+        assert_eq!(
+            quota.message,
+            "quota reached: the plugin may hold at most 256 commands (quotas.commands)"
         );
     }
 }

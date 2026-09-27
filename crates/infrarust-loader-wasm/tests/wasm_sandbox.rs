@@ -306,7 +306,6 @@ async fn an_ephemeral_bind_does_not_let_a_plugin_listen() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-07: no per-plugin registration quota"]
 async fn the_command_registry_bounds_how_many_a_plugin_registers() {
     let flood = 3000;
     let probe = enable_sec(&[], "").await;
@@ -319,7 +318,6 @@ async fn the_command_registry_bounds_how_many_a_plugin_registers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-07: no per-plugin registration quota"]
 async fn the_plugin_channel_registry_bounds_how_many_a_plugin_registers() {
     let flood = 3000;
     let probe = enable_sec(&["plugin-messaging"], "").await;
@@ -336,7 +334,6 @@ async fn the_plugin_channel_registry_bounds_how_many_a_plugin_registers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-07: no per-plugin registration quota"]
 async fn the_scheduler_bounds_how_many_tasks_a_plugin_registers() {
     let flood = 3000;
     let probe = enable_sec(&[], "").await;
@@ -555,7 +552,6 @@ async fn a_forged_scheduler_handle_is_a_safe_no_op() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-07: no per-plugin registration quota"]
 async fn the_event_bus_bounds_how_many_listeners_a_plugin_registers() {
     let flood = 3000;
     let probe = enable_sec(&[], "").await;
@@ -568,6 +564,69 @@ async fn the_event_bus_bounds_how_many_listeners_a_plugin_registers() {
     assert!(
         registered <= flood / 2,
         "a plugin registered {registered} event listeners; a per-plugin cap should stop unbounded growth"
+    );
+}
+
+const SMALL_QUOTAS: &str = "[wasm.quotas]
+event_listeners = 5
+commands = 5
+scheduled_tasks = 5
+plugin_channels = 5
+codec_filters = 5
+limbo_handlers = 5
+";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_registration_quota_refuses_with_limit_exceeded_and_a_release_frees_room() {
+    let probe = enable_sec(&["plugin-messaging", "codec-filter", "limbo"], SMALL_QUOTAS).await;
+    for (family, expected) in [
+        ("listeners", "ok 5 ErrorKind::LimitExceeded retry=ok"),
+        ("commands", "ok 4 ErrorKind::LimitExceeded retry=ok"),
+        ("tasks", "ok 5 ErrorKind::LimitExceeded retry=ok"),
+        ("channels", "ok 5 ErrorKind::LimitExceeded retry=ok"),
+        ("codecs", "ok 5 ErrorKind::LimitExceeded retry=ok"),
+        ("limbo", "ok 5 ErrorKind::LimitExceeded retry=none"),
+    ] {
+        assert_eq!(
+            probe.run(&format!("quota {family} 20")).await,
+            expected,
+            "{family}: the plugin's own `sec` command counts toward the command quota"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_quota_override_replaces_the_proxy_wide_quota() {
+    let config = format!("{SMALL_QUOTAS}\n[plugins.sec-probe.wasm.quotas]\nscheduled_tasks = 12\n");
+    let probe = enable_sec(&[], &config).await;
+    assert_eq!(
+        probe.run("quota tasks 20").await,
+        "ok 12 ErrorKind::LimitExceeded retry=ok"
+    );
+    assert_eq!(
+        probe.run("quota listeners 20").await,
+        "ok 5 ErrorKind::LimitExceeded retry=ok"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quota_refusal_is_logged_once_per_window_naming_the_plugin_and_the_quota() {
+    let logs = LogCapture::at(Level::WARN);
+    async {
+        let probe = enable_sec(&[], SMALL_QUOTAS).await;
+        assert_eq!(
+            probe.run("quota listeners 200").await,
+            "ok 5 ErrorKind::LimitExceeded retry=ok"
+        );
+    }
+    .with_subscriber(logs.clone())
+    .await;
+    let refusals = logs.matching("registration refused");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(
+        refusals[0].contains("sec-probe") && refusals[0].contains("quotas.event_listeners"),
+        "{}",
+        refusals[0]
     );
 }
 

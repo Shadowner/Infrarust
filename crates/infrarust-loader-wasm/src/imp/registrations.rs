@@ -56,6 +56,7 @@ impl Binding {
 pub(crate) enum Bound {
     Fresh(Arc<Binding>),
     Rebound,
+    Full,
 }
 
 struct Hold {
@@ -91,6 +92,14 @@ impl Registrations {
         lock(&self.codec_filters).remove(id);
     }
 
+    pub(crate) fn holds_codec_filter(&self, id: &str) -> bool {
+        lock(&self.codec_filters).contains(id)
+    }
+
+    pub(crate) fn codec_filter_count(&self) -> usize {
+        lock(&self.codec_filters).len()
+    }
+
     pub(crate) fn take_codec_filters(&self) -> Vec<String> {
         std::mem::take(&mut *lock(&self.codec_filters))
             .into_iter()
@@ -117,8 +126,14 @@ impl Registrations {
         *lock(&self.permission_provider) = Some(provider);
     }
 
-    pub(crate) fn bind_command(&self, name: &str, generation: u64, callback: u64) -> Bound {
-        bind(&self.commands, name, generation, callback, false)
+    pub(crate) fn bind_command(
+        &self,
+        name: &str,
+        generation: u64,
+        callback: u64,
+        limit: usize,
+    ) -> Bound {
+        bind(&self.commands, name, generation, callback, false, limit)
     }
 
     pub(crate) fn unbind_command(&self, name: &str) {
@@ -138,8 +153,18 @@ impl Registrations {
         lock(&self.command_registrations).get(name).cloned()
     }
 
-    pub(crate) fn bind_limbo(&self, name: &str, generation: u64, callback: u64) -> Bound {
-        bind(&self.limbo, name, generation, callback, true)
+    pub(crate) fn bind_limbo(
+        &self,
+        name: &str,
+        generation: u64,
+        callback: u64,
+        limit: usize,
+    ) -> Bound {
+        bind(&self.limbo, name, generation, callback, true, limit)
+    }
+
+    pub(crate) fn unbind_limbo(&self, name: &str) {
+        lock(&self.limbo).remove(name);
     }
 
     pub(crate) fn record_limbo_registration(
@@ -212,8 +237,13 @@ fn bind(
     generation: u64,
     callback: u64,
     same_generation_rebinds: bool,
+    limit: usize,
 ) -> Bound {
     let mut map = lock(map);
+    let current = |binding: &Arc<Binding>| binding.generation() == Some(generation);
+    if !map.get(name).is_some_and(current) && map.values().filter(|b| current(b)).count() >= limit {
+        return Bound::Full;
+    }
     if let Some(binding) = map.get(name)
         && binding.generation().is_none_or(|bound| {
             bound < generation || (same_generation_rebinds && bound == generation)
@@ -237,10 +267,12 @@ mod tests {
 
     use super::*;
 
+    const ROOM: usize = 64;
+
     fn fresh(bound: Bound) -> Arc<Binding> {
         match bound {
             Bound::Fresh(binding) => binding,
-            Bound::Rebound => panic!("expected a fresh binding"),
+            Bound::Rebound | Bound::Full => panic!("expected a fresh binding"),
         }
     }
 
@@ -261,11 +293,11 @@ mod tests {
     #[test]
     fn a_later_generation_rebinds_a_name_instead_of_registering_it_again() {
         let registrations = Registrations::default();
-        let binding = fresh(registrations.bind_command("greet", 1, 10));
+        let binding = fresh(registrations.bind_command("greet", 1, 10, ROOM));
         assert_eq!(binding.callback_for(1), Some(10));
 
         assert!(matches!(
-            registrations.bind_command("greet", 2, 20),
+            registrations.bind_command("greet", 2, 20, ROOM),
             Bound::Rebound
         ));
         assert_eq!(binding.callback_for(2), Some(20));
@@ -275,8 +307,8 @@ mod tests {
     #[test]
     fn the_same_generation_registering_a_name_again_replaces_it() {
         let registrations = Registrations::default();
-        let first = fresh(registrations.bind_command("greet", 1, 10));
-        let second = fresh(registrations.bind_command("greet", 1, 11));
+        let first = fresh(registrations.bind_command("greet", 1, 10, ROOM));
+        let second = fresh(registrations.bind_command("greet", 1, 11, ROOM));
         assert_eq!(first.callback_for(1), Some(10));
         assert_eq!(second.callback_for(1), Some(11));
     }
@@ -284,9 +316,9 @@ mod tests {
     #[test]
     fn the_same_generation_registering_a_limbo_name_again_rebinds_it() {
         let registrations = Registrations::default();
-        let gate = fresh(registrations.bind_limbo("gate", 1, 10));
+        let gate = fresh(registrations.bind_limbo("gate", 1, 10, ROOM));
         assert!(matches!(
-            registrations.bind_limbo("gate", 1, 11),
+            registrations.bind_limbo("gate", 1, 11, ROOM),
             Bound::Rebound
         ));
         assert_eq!(gate.callback_for(1), Some(11));
@@ -295,12 +327,12 @@ mod tests {
     #[test]
     fn a_sweep_drops_the_names_the_new_generation_did_not_register_again() {
         let registrations = Registrations::default();
-        fresh(registrations.bind_command("kept", 1, 1));
-        let dropped = fresh(registrations.bind_command("dropped", 1, 2));
-        let gate = fresh(registrations.bind_limbo("gate", 1, 3));
-        let gone = fresh(registrations.bind_limbo("gone", 1, 4));
-        registrations.bind_command("kept", 2, 5);
-        registrations.bind_limbo("gate", 2, 6);
+        fresh(registrations.bind_command("kept", 1, 1, ROOM));
+        let dropped = fresh(registrations.bind_command("dropped", 1, 2, ROOM));
+        let gate = fresh(registrations.bind_limbo("gate", 1, 3, ROOM));
+        let gone = fresh(registrations.bind_limbo("gone", 1, 4, ROOM));
+        registrations.bind_command("kept", 2, 5, ROOM);
+        registrations.bind_limbo("gate", 2, 6, ROOM);
         let revoked = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&revoked);
         registrations.record_limbo_registration(
@@ -322,14 +354,63 @@ mod tests {
         assert_eq!(gate.callback_for(2), Some(6));
         assert_eq!(gone.callback_for(1), None);
         assert!(
-            matches!(registrations.bind_limbo("gone", 3, 7), Bound::Fresh(_)),
+            matches!(
+                registrations.bind_limbo("gone", 3, 7, ROOM),
+                Bound::Fresh(_)
+            ),
             "a swept limbo name is registered afresh when it comes back"
         );
         assert_eq!(gone.callback_for(3), None);
         assert!(matches!(
-            registrations.bind_command("dropped", 3, 8),
+            registrations.bind_command("dropped", 3, 8, ROOM),
             Bound::Fresh(_)
         ));
+    }
+
+    #[test]
+    fn a_full_generation_refuses_a_new_name_but_replaces_one_it_holds() {
+        let registrations = Registrations::default();
+        fresh(registrations.bind_command("a", 1, 1, 2));
+        fresh(registrations.bind_command("b", 1, 2, 2));
+        assert!(matches!(
+            registrations.bind_command("c", 1, 3, 2),
+            Bound::Full
+        ));
+        let replaced = fresh(registrations.bind_command("b", 1, 4, 2));
+        assert_eq!(replaced.callback_for(1), Some(4));
+        registrations.unbind_command("a");
+        fresh(registrations.bind_command("c", 1, 5, 2));
+
+        fresh(registrations.bind_limbo("gate", 1, 6, 1));
+        assert!(matches!(
+            registrations.bind_limbo("gate", 1, 7, 1),
+            Bound::Rebound
+        ));
+        assert!(matches!(
+            registrations.bind_limbo("other", 1, 8, 1),
+            Bound::Full
+        ));
+    }
+
+    #[test]
+    fn a_new_generation_counts_only_the_names_it_registered_again() {
+        let registrations = Registrations::default();
+        for (callback, name) in [(1, "a"), (2, "b"), (3, "c")] {
+            fresh(registrations.bind_command(name, 1, callback, 3));
+        }
+        assert!(matches!(
+            registrations.bind_command("a", 2, 10, 2),
+            Bound::Rebound
+        ));
+        fresh(registrations.bind_command("d", 2, 11, 2));
+        assert!(
+            matches!(registrations.bind_command("b", 2, 12, 2), Bound::Full),
+            "rebinding a name of the old generation takes room in the new one"
+        );
+        let stale = registrations.sweep(2);
+        let mut stale = stale.commands;
+        stale.sort();
+        assert_eq!(stale, ["b".to_string(), "c".to_string()]);
     }
 
     #[test]
@@ -341,6 +422,9 @@ mod tests {
         registrations.record_codec_filter("dropped");
         registrations.forget_codec_filter("dropped");
         registrations.sweep(2);
+        assert_eq!(registrations.codec_filter_count(), 2);
+        assert!(registrations.holds_codec_filter("ops"));
+        assert!(!registrations.holds_codec_filter("dropped"));
 
         assert_eq!(registrations.take_codec_filters(), ["ops", "tally"]);
         assert!(registrations.take_codec_filters().is_empty());

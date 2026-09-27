@@ -5,7 +5,7 @@ use std::time::Duration;
 use infrarust_plugin_sdk::bindings::events::EventKind;
 use infrarust_plugin_sdk::bindings::types::{ChannelId as WitChannelId, HostError};
 use infrarust_plugin_sdk::bindings::{
-    codec_registry, command_manager, config_service, event_bus, messaging, scheduler,
+    codec_registry, command_manager, config_service, event_bus, limbo, messaging, scheduler,
 };
 use infrarust_plugin_sdk::prelude::*;
 
@@ -53,6 +53,7 @@ fn run(args: &[String]) -> Result<String, String> {
         "channels" => flood_channels(count(1)?),
         "tasks" => Ok(flood_tasks(count(1)?).to_string()),
         "listeners" => Ok(flood_listeners(count(1)?).to_string()),
+        "quota" => quota(arg(1)?, count(2)?),
         "json-nest" => parse_nested(count(1)?),
         "json-huge" => parse_huge(count(1)?),
         "forge-get" => Ok(match Players::get(PlayerId::new(u64::MAX)) {
@@ -116,6 +117,83 @@ fn flood_listeners(n: u32) -> u32 {
         }
     }
     registered
+}
+
+fn register_one(family: &str, index: u32) -> Result<Result<u64, HostError>, String> {
+    let name = format!("quota{index}");
+    let handler = 900_000 + u64::from(index);
+    Ok(match family {
+        "listeners" => event_bus::subscribe(EventKind::PostLogin, 0),
+        "commands" => command_manager::register(
+            &command_manager::CommandSpec {
+                name,
+                aliases: Vec::new(),
+                description: String::new(),
+                usage: None,
+                permission: None,
+                hidden: false,
+            },
+            handler,
+        )
+        .map(|_| u64::from(index)),
+        "tasks" => scheduler::delay(u64::MAX, handler),
+        "channels" => messaging::register_channel(&quota_channel(index)).map(|()| u64::from(index)),
+        "codecs" => codec_registry::register_codec_filter(
+            &codec_registry::CodecFilterMetadata {
+                id: name,
+                priority: codec_registry::FilterPriority::Normal,
+                after: Vec::new(),
+                before: Vec::new(),
+            },
+            handler,
+        )
+        .map(|()| u64::from(index)),
+        "limbo" => limbo::register_limbo_handler(&name, handler).map(|()| u64::from(index)),
+        other => return Err(format!("unknown quota kind {other}")),
+    })
+}
+
+fn release_one(family: &str, handle: u64) -> Result<(), String> {
+    let index = u32::try_from(handle).unwrap_or(u32::MAX);
+    let released = match family {
+        "listeners" => event_bus::unsubscribe(handle).map(|_| ()),
+        "commands" => command_manager::unregister(&format!("quota{index}")),
+        "tasks" => scheduler::cancel(handle),
+        "channels" => messaging::unregister_channel(&quota_channel(index)).map(|_| ()),
+        "codecs" => codec_registry::unregister_codec_filter(&format!("quota{index}")),
+        other => return Err(format!("{other} has no release")),
+    };
+    released.map_err(|error| kind(&error))
+}
+
+fn quota_channel(index: u32) -> WitChannelId {
+    WitChannelId {
+        modern: Some(format!("sec:quota{index}")),
+        legacy: None,
+    }
+}
+
+fn quota(family: &str, n: u32) -> Result<String, String> {
+    let mut handles = Vec::new();
+    let mut refused = String::from("none");
+    for index in 0..n {
+        match register_one(family, index)? {
+            Ok(handle) => handles.push(handle),
+            Err(error) if refused == "none" => refused = kind(&error),
+            Err(_) => {}
+        }
+    }
+    let retry = match handles.first() {
+        Some(&handle) if family != "limbo" => {
+            release_one(family, handle)?;
+            match register_one(family, n)? {
+                Ok(_) => "ok".to_owned(),
+                Err(error) => kind(&error),
+            }
+        }
+        _ => "none".to_owned(),
+    };
+    Ok(format!("{} {refused} retry={retry}", handles.len()))
 }
 
 fn forge_unsub(handle: u64) -> Result<String, String> {

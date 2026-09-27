@@ -5,7 +5,7 @@ use crate::bindings::infrarust::plugin::command_manager as wcm;
 use crate::host_error::{HostResult, command_error};
 use crate::proxies::WasmCommandHandler;
 use crate::registrations::Bound;
-use crate::store_state::PluginStoreState;
+use crate::store_state::{PluginStoreState, Quota};
 
 fn registration_to_wit(registration: &CommandRegistration) -> wcm::CommandRegistration {
     wcm::CommandRegistration {
@@ -58,26 +58,29 @@ impl PluginStoreState {
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?.any_generation();
         let name = command_key(&spec.name);
-        let binding = match self
-            .registrations()
-            .bind_command(&name, self.generation(), handler)
-        {
-            Bound::Fresh(binding) => binding,
-            Bound::Rebound => {
-                return Ok(self
-                    .registrations()
-                    .command_registration(&name)
-                    .map_or_else(
-                        || wcm::CommandRegistration {
-                            name: name.clone(),
-                            namespaced: format!("{}:{name}", self.plugin_id()),
-                            aliases: Vec::new(),
-                            rejected_aliases: Vec::new(),
-                        },
-                        |registration| registration_to_wit(&registration),
-                    ));
-            }
-        };
+        let limit = self.quota(Quota::Commands);
+        let binding =
+            match self
+                .registrations()
+                .bind_command(&name, self.generation(), handler, limit)
+            {
+                Bound::Fresh(binding) => binding,
+                Bound::Full => return Err(self.quota_exceeded(Quota::Commands)),
+                Bound::Rebound => {
+                    return Ok(self
+                        .registrations()
+                        .command_registration(&name)
+                        .map_or_else(
+                            || wcm::CommandRegistration {
+                                name: name.clone(),
+                                namespaced: format!("{}:{name}", self.plugin_id()),
+                                aliases: Vec::new(),
+                                rejected_aliases: Vec::new(),
+                            },
+                            |registration| registration_to_wit(&registration),
+                        ));
+                }
+            };
         let handler = Box::new(WasmCommandHandler::new(binding, instance));
         match ctx.command_manager().register(spec_from_wit(spec), handler) {
             Ok(registration) => {

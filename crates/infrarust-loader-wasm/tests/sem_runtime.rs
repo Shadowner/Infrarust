@@ -652,6 +652,56 @@ async fn a_delay_that_already_fired_is_no_longer_tracked_by_the_host() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_holding_its_full_quotas_recovers_with_every_registration() {
+    let probe = Probe::start_with(
+        "tools\ncmd warp\ncmd home\nmany 3\ninterval idle 60000 0 0",
+        EnvOptions::default(),
+        "[wasm.quotas]\ncommands = 4\nevent_listeners = 3\nscheduled_tasks = 1\n",
+        |_| {},
+    )
+    .await;
+    for attempt in 1..=3 {
+        assert_eq!(probe.dispatch("trap").await, DispatchOutcome::Executed);
+        probe.wait_for(&format!("enable recovered {attempt}")).await;
+    }
+    assert_eq!(probe.dispatch("warp").await, DispatchOutcome::Executed);
+    assert_eq!(probe.dispatch("home").await, DispatchOutcome::Executed);
+    probe.post_login().await;
+    let deadline = Instant::now() + PROMPTLY;
+    while probe.lines_starting("many ").len() < 3 {
+        assert!(Instant::now() < deadline, "{:?}", probe.log());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registration_refused_by_a_quota_in_on_enable_fails_the_enable() {
+    use infrarust_api::loader::PluginContextFactory;
+
+    let (_tmp, plugins_dir) = stage(PROBE);
+    let data = plugins_dir.join(PROBE);
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(
+        data.join("probe.txt"),
+        "cmd one\ncmd two\ncmd three\nmany 3",
+    )
+    .unwrap();
+    let env = make_env_with(plugins_dir.clone(), EnvOptions::default());
+    let loader =
+        loader_from_toml("[plugins.sem-probe.wasm.quotas]\ncommands = 2\nevent_listeners = 2\n");
+    loader.discover(&plugins_dir).await.unwrap();
+    let plugin = loader.load(PROBE, &env.factory).await.unwrap();
+    let ctx = env.factory.create_context(PROBE);
+    let refused = plugin.on_enable(ctx.as_ref()).await.unwrap_err();
+    assert!(refused.to_string().contains("limit-exceeded"), "{refused}");
+    let log = read_log(&data);
+    assert!(
+        log.iter().any(|line| line == "reg three limit-exceeded"),
+        "a refusal the plugin handles itself does not fail the enable: {log:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_second_wasm_plugin_cannot_take_a_command_or_alias_another_wasm_plugin_owns() {
     let (tmp, plugins_dir) = stage(PROBE);
     support::add_fixture(&plugins_dir, "scripted-peer", "scripted-peer");

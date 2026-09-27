@@ -10,7 +10,7 @@ use crate::bindings::infrarust::plugin::types::ErrorKind;
 use crate::convert;
 use crate::events::{self, Registration};
 use crate::host_error::{HostResult, host_error, timed_out};
-use crate::store_state::PluginStoreState;
+use crate::store_state::{PluginStoreState, Quota};
 
 impl event_bus::Host for PluginStoreState {
     async fn subscribe(
@@ -62,6 +62,7 @@ impl PluginStoreState {
         }
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Event)?;
+        self.admit(Quota::EventListeners, self.listener_count(), 1)?;
         let listener = self.mint_listener_id();
         match events::register(
             &*ctx.event_bus(),
@@ -82,6 +83,7 @@ impl PluginStoreState {
         self.check("event-bus", "subscribe-named")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Event)?;
+        self.admit(Quota::EventListeners, self.listener_count(), 1)?;
         let listener = self.mint_listener_id();
         let handle = events::register_named(
             &*ctx.event_bus(),
@@ -133,6 +135,7 @@ impl PluginStoreState {
             .collect();
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Event)?;
+        self.admit(Quota::EventListeners, self.listener_count(), filters.len())?;
         let listener = self.mint_listener_id();
         let handles = events::register_packets(
             &*ctx.event_bus(),

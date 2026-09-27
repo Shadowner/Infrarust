@@ -4,7 +4,7 @@ use crate::actor::CallKind;
 use crate::bindings::infrarust::plugin::scheduler as wsched;
 use crate::host_error::HostResult;
 use crate::proxies;
-use crate::store_state::PluginStoreState;
+use crate::store_state::{PluginStoreState, Quota};
 
 impl wsched::Host for PluginStoreState {
     async fn delay(&mut self, after: u64, handler: u64) -> wasmtime::Result<HostResult<u64>> {
@@ -30,6 +30,7 @@ impl PluginStoreState {
         self.check("scheduler", "delay")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
+        self.admit(Quota::ScheduledTasks, self.live_task_count(), 1)?;
         let (id, tasks) = self.reserve_task();
         let handle = ctx.scheduler().delay(
             Duration::from_millis(after),
@@ -51,6 +52,7 @@ impl PluginStoreState {
         self.check("scheduler", "interval")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
+        self.admit(Quota::ScheduledTasks, self.live_task_count(), 1)?;
         let (id, _) = self.reserve_task();
         let handle = ctx.scheduler().repeat(
             Duration::from_millis(period),

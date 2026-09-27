@@ -28,6 +28,7 @@ use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerAddress, ServerId,
     TitleData,
 };
+use infrarust_config::WasmQuotasConfig;
 use infrarust_core::filter::FilterOwner;
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::plugin::manager::PluginServices;
@@ -35,6 +36,7 @@ use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
 
 use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
+use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::{
     ban_service, codec_registry, command_manager, config_service, event_bus, limbo, load_balancer,
     messaging, players, plugin_registry, proxy_info, scheduler, server_manager, text, types as wt,
@@ -1190,4 +1192,257 @@ async fn a_codec_filter_can_only_be_unregistered_by_the_plugin_that_owns_it() {
         Ok(())
     );
     assert!(registry.is_empty());
+}
+
+fn quota_state(quotas: WasmQuotasConfig, grants: &[Capability]) -> PluginStoreState {
+    let permissions = PluginPermissions {
+        permissions: grants.iter().map(|c| c.to_kebab().to_owned()).collect(),
+        ..PluginPermissions::default()
+    };
+    let factory = PluginContextFactoryImpl::new(
+        services(vec![]),
+        HashMap::from([("test".to_owned(), permissions)]),
+    );
+    let capabilities = grants
+        .iter()
+        .fold(CapabilitySet::baseline(), |set, capability| {
+            set.with(*capability)
+        });
+    let sandbox = SandboxLimits {
+        quotas,
+        ..SandboxLimits::default()
+    };
+    build_probe_state("test".to_owned(), &sandbox)
+        .with_capabilities(capabilities)
+        .with_ctx(factory.create_context("test"))
+        .with_instance(InstanceRef::detached())
+}
+
+fn quotas(adjust: impl FnOnce(&mut WasmQuotasConfig)) -> WasmQuotasConfig {
+    let mut quotas = WasmQuotasConfig::default();
+    adjust(&mut quotas);
+    quotas
+}
+
+fn is_limit_exceeded<T: std::fmt::Debug>(result: &Result<T, wt::HostError>, key: &str) -> bool {
+    matches!(result, Err(e) if e.kind == wt::ErrorKind::LimitExceeded
+        && e.message.ends_with(&format!("(quotas.{key})")))
+}
+
+#[tokio::test]
+async fn the_listener_quota_counts_every_native_listener_and_unsubscribing_frees_room() {
+    let mut state = quota_state(quotas(|q| q.event_listeners = 3), &[Capability::RawPacket]);
+    let first = event_bus::Host::subscribe(&mut state, EventKind::PostLogin, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    let two_filters = vec![packet_filter(), packet_filter()];
+    event_bus::Host::subscribe_packets(&mut state, two_filters.clone(), 0)
+        .await
+        .unwrap()
+        .unwrap();
+    let over = event_bus::Host::subscribe_packets(&mut state, two_filters, 0)
+        .await
+        .unwrap();
+    assert!(is_limit_exceeded(&over, "event_listeners"), "{over:?}");
+    let named = event_bus::Host::subscribe_named(&mut state, "full".into(), 0)
+        .await
+        .unwrap();
+    assert!(is_limit_exceeded(&named, "event_listeners"), "{named:?}");
+
+    assert_eq!(
+        event_bus::Host::unsubscribe(&mut state, first)
+            .await
+            .unwrap(),
+        Ok(true)
+    );
+    assert!(
+        event_bus::Host::subscribe_named(&mut state, "room".into(), 0)
+            .await
+            .unwrap()
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn the_task_quota_counts_live_tasks_and_a_fired_delay_frees_its_room() {
+    let mut state = quota_state(quotas(|q| q.scheduled_tasks = 2), &[]);
+    let interval = scheduler::Host::interval(&mut state, 60_000, None, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    scheduler::Host::delay(&mut state, 60_000, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    let over = scheduler::Host::delay(&mut state, 60_000, 3).await.unwrap();
+    assert!(is_limit_exceeded(&over, "scheduled_tasks"), "{over:?}");
+
+    assert_eq!(
+        scheduler::Host::cancel(&mut state, interval).await.unwrap(),
+        Ok(())
+    );
+    scheduler::Host::delay(&mut state, 0, 4)
+        .await
+        .unwrap()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let again = scheduler::Host::delay(&mut state, 60_000, 5).await.unwrap();
+        if again.is_ok() {
+            break;
+        }
+        assert!(is_limit_exceeded(&again, "scheduled_tasks"), "{again:?}");
+        assert!(
+            Instant::now() < deadline,
+            "the fired delay still took room in the quota"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test]
+async fn the_command_quota_lets_a_plugin_replace_a_command_and_unregistering_frees_room() {
+    let mut state = quota_state(quotas(|q| q.commands = 2), &[]);
+    let named = |name: &str| command_manager::CommandSpec {
+        name: name.to_owned(),
+        ..command_spec()
+    };
+    for name in ["alpha", "beta"] {
+        command_manager::Host::register(&mut state, named(name), 1)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let over = command_manager::Host::register(&mut state, named("gamma"), 2)
+        .await
+        .unwrap();
+    assert!(is_limit_exceeded(&over, "commands"), "{over:?}");
+    assert!(
+        command_manager::Host::register(&mut state, named("Beta"), 3)
+            .await
+            .unwrap()
+            .is_ok(),
+        "registering a held name again replaces it"
+    );
+
+    assert_eq!(
+        command_manager::Host::unregister(&mut state, "alpha".into())
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    assert!(
+        command_manager::Host::register(&mut state, named("gamma"), 4)
+            .await
+            .unwrap()
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn the_channel_quota_counts_distinct_channels_and_unregistering_frees_room() {
+    let mut state = quota_state(
+        quotas(|q| q.plugin_channels = 1),
+        &[Capability::PluginMessaging],
+    );
+    let other = wt::ChannelId {
+        modern: Some("test:other".into()),
+        legacy: None,
+    };
+    assert_eq!(
+        messaging::Host::register_channel(&mut state, channel())
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    assert_eq!(
+        messaging::Host::register_channel(&mut state, channel())
+            .await
+            .unwrap(),
+        Ok(()),
+        "registering a held channel again takes no room"
+    );
+    let over = messaging::Host::register_channel(&mut state, other.clone())
+        .await
+        .unwrap();
+    assert!(is_limit_exceeded(&over, "plugin_channels"), "{over:?}");
+
+    assert_eq!(
+        messaging::Host::unregister_channel(&mut state, channel())
+            .await
+            .unwrap(),
+        Ok(true)
+    );
+    assert_eq!(
+        messaging::Host::register_channel(&mut state, other)
+            .await
+            .unwrap(),
+        Ok(())
+    );
+}
+
+#[tokio::test]
+async fn the_limbo_quota_refuses_a_new_handler_name_but_not_one_already_held() {
+    let mut state = quota_state(quotas(|q| q.limbo_handlers = 1), &[Capability::Limbo]);
+    assert_eq!(
+        wl::Host::register_limbo_handler(&mut state, "gate".into(), 1)
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    assert_eq!(
+        wl::Host::register_limbo_handler(&mut state, "gate".into(), 2)
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    let over = wl::Host::register_limbo_handler(&mut state, "other".into(), 3)
+        .await
+        .unwrap();
+    assert!(is_limit_exceeded(&over, "limbo_handlers"), "{over:?}");
+}
+
+struct NativeGate;
+
+impl infrarust_api::limbo::LimboHandler for NativeGate {
+    fn name(&self) -> &str {
+        "taken"
+    }
+
+    fn on_player_enter<'a>(
+        &'a self,
+        _session: &'a dyn infrarust_api::limbo::LimboSession,
+    ) -> BoxFuture<'a, infrarust_api::limbo::HandlerResult> {
+        Box::pin(async { infrarust_api::limbo::HandlerResult::Accept })
+    }
+}
+
+#[tokio::test]
+async fn a_refused_limbo_handler_takes_no_room_and_is_refused_again() {
+    let mut owner = quota_state(quotas(|q| q.limbo_handlers = 1), &[Capability::Limbo]);
+    let shared_ctx = owner.services().unwrap();
+    shared_ctx
+        .register_limbo_handler(Box::new(NativeGate))
+        .unwrap();
+    let first = wl::Host::register_limbo_handler(&mut owner, "taken".into(), 1)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&first, Err(e) if e.kind == wt::ErrorKind::Conflict),
+        "{first:?}"
+    );
+    let again = wl::Host::register_limbo_handler(&mut owner, "taken".into(), 2)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&again, Err(e) if e.kind == wt::ErrorKind::Conflict),
+        "{again:?}"
+    );
+    assert_eq!(
+        wl::Host::register_limbo_handler(&mut owner, "free".into(), 3)
+            .await
+            .unwrap(),
+        Ok(())
+    );
 }

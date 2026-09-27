@@ -13,7 +13,7 @@ use crate::convert;
 use crate::host_error::{HostResult, invalid_component, limbo_error, player_error};
 use crate::limbo::WasmLimboHandler;
 use crate::registrations::Bound;
-use crate::store_state::PluginStoreState;
+use crate::store_state::{PluginStoreState, Quota};
 
 impl wl::Host for PluginStoreState {
     async fn register_limbo_handler(
@@ -30,12 +30,16 @@ impl PluginStoreState {
         self.check("limbo", "register-limbo-handler")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?.any_generation();
-        let Bound::Fresh(binding) =
-            self.registrations()
-                .bind_limbo(&name, self.generation(), handler)
-        else {
-            return Ok(());
-        };
+        let limit = self.quota(Quota::LimboHandlers);
+        let binding =
+            match self
+                .registrations()
+                .bind_limbo(&name, self.generation(), handler, limit)
+            {
+                Bound::Fresh(binding) => binding,
+                Bound::Rebound => return Ok(()),
+                Bound::Full => return Err(self.quota_exceeded(Quota::LimboHandlers)),
+            };
         let registration = ctx
             .register_limbo_handler(Box::new(WasmLimboHandler::new(
                 binding,
@@ -44,6 +48,7 @@ impl PluginStoreState {
                 Arc::clone(self.registrations()),
             )))
             .map_err(|error| {
+                self.registrations().unbind_limbo(&name);
                 tracing::warn!(plugin = %self.plugin_id(), %error, "limbo handler refused");
                 limbo_error(&error)
             })?;

@@ -9,12 +9,14 @@ use infrarust_api::permissions::{Capability, CapabilitySet};
 use infrarust_api::player::BossBarHandle;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
+use infrarust_config::WasmQuotasConfig;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use crate::actor::{CallKind, InstanceRef};
+use crate::bindings::infrarust::plugin::types::HostError;
 use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
 use crate::consts::{
@@ -22,12 +24,57 @@ use crate::consts::{
 };
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
-use crate::host_error::{HostResult, no_services};
+use crate::host_error::{HostResult, limit_exceeded, no_services};
 use crate::mounts::Mount;
 use crate::network::{HttpHooks, NetworkPolicy, probe_policy};
 use crate::rate_limit::RateLimit;
 use crate::registrations::Registrations;
 use crate::sync::lock;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Quota {
+    EventListeners,
+    Commands,
+    ScheduledTasks,
+    PluginChannels,
+    CodecFilters,
+    LimboHandlers,
+}
+
+impl Quota {
+    const fn key(self) -> &'static str {
+        match self {
+            Self::EventListeners => "event_listeners",
+            Self::Commands => "commands",
+            Self::ScheduledTasks => "scheduled_tasks",
+            Self::PluginChannels => "plugin_channels",
+            Self::CodecFilters => "codec_filters",
+            Self::LimboHandlers => "limbo_handlers",
+        }
+    }
+
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::EventListeners => "event listeners",
+            Self::Commands => "commands",
+            Self::ScheduledTasks => "scheduled tasks",
+            Self::PluginChannels => "plugin channels",
+            Self::CodecFilters => "codec filters",
+            Self::LimboHandlers => "limbo handlers",
+        }
+    }
+
+    const fn limit(self, quotas: &WasmQuotasConfig) -> usize {
+        match self {
+            Self::EventListeners => quotas.event_listeners,
+            Self::Commands => quotas.commands,
+            Self::ScheduledTasks => quotas.scheduled_tasks,
+            Self::PluginChannels => quotas.plugin_channels,
+            Self::CodecFilters => quotas.codec_filters,
+            Self::LimboHandlers => quotas.limbo_handlers,
+        }
+    }
+}
 
 pub(crate) struct PluginSetup {
     pub(crate) plugin_id: String,
@@ -77,6 +124,7 @@ struct Guest {
     registrations: Arc<Registrations>,
     codec: Option<Arc<CodecInstantiator>>,
     host_call_timeout: Duration,
+    quotas: WasmQuotasConfig,
 }
 
 #[derive(Default)]
@@ -103,6 +151,10 @@ impl LiveTasks {
         lock(&self.slots).remove(&id).flatten()
     }
 
+    fn len(&self) -> usize {
+        lock(&self.slots).len()
+    }
+
     fn drain(&self) -> Vec<TaskHandle> {
         lock(&self.slots)
             .drain()
@@ -114,6 +166,7 @@ impl LiveTasks {
 struct HostResources {
     next_listener_id: u64,
     listeners: HashMap<u64, Vec<ListenerHandle>>,
+    listener_handles: usize,
     next_task_id: u64,
     tasks: Arc<LiveTasks>,
     boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
@@ -124,6 +177,7 @@ impl HostResources {
         Self {
             next_listener_id: 1,
             listeners: HashMap::new(),
+            listener_handles: 0,
             next_task_id: 1,
             tasks: Arc::default(),
             boss_bars: HashMap::new(),
@@ -133,6 +187,7 @@ impl HostResources {
 
 struct Throttles {
     denials: HashMap<Capability, RateLimit>,
+    quota_refusals: HashMap<Quota, RateLimit>,
     command_refusals: RateLimit,
     codec_refusals: RateLimit,
 }
@@ -141,6 +196,7 @@ impl Throttles {
     fn new() -> Self {
         Self {
             denials: HashMap::new(),
+            quota_refusals: HashMap::new(),
             command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
             codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
         }
@@ -203,6 +259,34 @@ impl PluginStoreState {
         }
     }
 
+    pub(crate) fn quota(&self, quota: Quota) -> usize {
+        quota.limit(&self.guest.quotas)
+    }
+
+    pub(crate) fn admit(&mut self, quota: Quota, held: usize, adding: usize) -> HostResult<()> {
+        if held.saturating_add(adding) <= self.quota(quota) {
+            Ok(())
+        } else {
+            Err(self.quota_exceeded(quota))
+        }
+    }
+
+    pub(crate) fn quota_exceeded(&mut self, quota: Quota) -> HostError {
+        let limit = self.quota(quota);
+        let admitted = self
+            .throttles
+            .quota_refusals
+            .entry(quota)
+            .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
+            .admit(Instant::now());
+        if let Some(suppressed) = admitted {
+            let (noun, key) = (quota.noun(), quota.key());
+            tracing::warn!(plugin = %self.guest.plugin_id, quota = key, limit, suppressed,
+                "wasm plugin registration refused: the plugin may hold at most {limit} {noun}, set by `quotas.{key}`");
+        }
+        limit_exceeded(quota.noun(), quota.key(), limit)
+    }
+
     pub(crate) fn report_command_refusal(&mut self, name: &str, reason: &str) {
         let Some(suppressed) = self.throttles.command_refusals.admit(Instant::now()) else {
             return;
@@ -251,11 +335,20 @@ impl PluginStoreState {
     }
 
     pub(crate) fn record_listener(&mut self, id: u64, handles: Vec<ListenerHandle>) {
-        self.resources.listeners.insert(id, handles);
+        self.resources.listener_handles += handles.len();
+        if let Some(replaced) = self.resources.listeners.insert(id, handles) {
+            self.resources.listener_handles -= replaced.len();
+        }
     }
 
     pub(crate) fn take_listener(&mut self, id: u64) -> Option<Vec<ListenerHandle>> {
-        self.resources.listeners.remove(&id)
+        let taken = self.resources.listeners.remove(&id)?;
+        self.resources.listener_handles -= taken.len();
+        Some(taken)
+    }
+
+    pub(crate) fn listener_count(&self) -> usize {
+        self.resources.listener_handles
     }
 
     pub(crate) fn boss_bar_count(&self) -> usize {
@@ -289,10 +382,15 @@ impl PluginStoreState {
         self.resources.tasks.take(id)
     }
 
+    pub(crate) fn live_task_count(&self) -> usize {
+        self.resources.tasks.len()
+    }
+
     pub(crate) fn release_host_resources(&mut self) {
         let resources = &mut self.resources;
         let listeners: Vec<ListenerHandle> =
             resources.listeners.drain().flat_map(|(_, h)| h).collect();
+        resources.listener_handles = 0;
         let tasks = resources.tasks.drain();
         for (_, bar) in resources.boss_bars.drain() {
             let _ = bar.hide();
@@ -400,6 +498,7 @@ pub(crate) fn build_load_state(
             registrations: Arc::clone(&setup.registrations),
             codec: setup.codec.clone(),
             host_call_timeout: setup.sandbox.host_call_timeout,
+            quotas: setup.sandbox.quotas,
         },
         resources: HostResources::new(),
         throttles: Throttles::new(),
@@ -422,6 +521,7 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
             registrations: Arc::default(),
             codec: None,
             host_call_timeout: sandbox.host_call_timeout,
+            quotas: sandbox.quotas,
         },
         resources: HostResources::new(),
         throttles: Throttles::new(),

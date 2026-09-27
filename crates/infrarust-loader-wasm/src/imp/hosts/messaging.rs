@@ -5,7 +5,7 @@ use crate::bindings::infrarust::plugin::messaging as wm;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::convert;
 use crate::host_error::{HostResult, messaging_error, player_error};
-use crate::store_state::PluginStoreState;
+use crate::store_state::{PluginStoreState, Quota};
 
 impl wm::Host for PluginStoreState {
     async fn register_channel(
@@ -58,7 +58,12 @@ impl PluginStoreState {
     fn register_plugin_channel(&mut self, channel: &wt::ChannelId) -> HostResult<()> {
         self.check("messaging", "register-channel")?;
         let channel = convert::channel_from_wit(channel)?;
-        self.services()?.channel_registrar().register(channel);
+        let ctx = self.services()?;
+        let held = ctx.channel_registrar().channels();
+        if !held.contains(&channel) {
+            self.admit(Quota::PluginChannels, held.len(), 1)?;
+        }
+        ctx.channel_registrar().register(channel);
         Ok(())
     }
 
