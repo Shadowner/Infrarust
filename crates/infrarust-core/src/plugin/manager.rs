@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures_util::future::join_all;
 use infrarust_api::event::Event;
 use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
@@ -13,6 +15,7 @@ use infrarust_api::services::{
     server_manager::ServerManager,
 };
 use infrarust_plugin_common::validate_plugin_id;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::event_bus::EventBusImpl;
@@ -50,6 +53,25 @@ pub struct PluginServices {
 
 type LoaderIndex = usize;
 
+pub const DEFAULT_SHUTDOWN_DISABLE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const UNLOAD_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShutdownLimits {
+    pub on_disable: Duration,
+    pub total: Duration,
+}
+
+impl Default for ShutdownLimits {
+    fn default() -> Self {
+        Self {
+            on_disable: DEFAULT_SHUTDOWN_DISABLE_TIMEOUT,
+            total: DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT,
+        }
+    }
+}
+
 pub struct PluginManager {
     loaders: Vec<Box<dyn PluginLoader>>,
     plugins: Vec<LoadedPlugin>,
@@ -63,6 +85,7 @@ pub struct PluginManager {
     event_bus: Option<Arc<EventBusImpl>>,
     registry: Option<Arc<PluginRegistryImpl>>,
     context_factory: Option<Arc<PluginContextFactoryImpl>>,
+    shutdown_limits: ShutdownLimits,
 }
 
 struct LoadedPlugin {
@@ -87,7 +110,12 @@ impl PluginManager {
             event_bus: None,
             registry: None,
             context_factory: None,
+            shutdown_limits: ShutdownLimits::default(),
         }
+    }
+
+    pub fn set_shutdown_limits(&mut self, limits: ShutdownLimits) {
+        self.shutdown_limits = limits;
     }
 
     pub fn set_event_bus(&mut self, event_bus: Arc<EventBusImpl>) {
@@ -298,24 +326,108 @@ impl PluginManager {
             .map(|dep| dep.id.clone())
     }
 
-    /// Disables all plugins in reverse order, then unloads via loaders.
     pub async fn shutdown(&mut self) {
-        let plugins = std::mem::take(&mut self.plugins);
+        let deadline = Instant::now() + self.shutdown_limits.total;
+        self.shutdown_until(deadline).await;
+    }
 
-        for loaded in plugins.iter().rev() {
-            self.disable_loaded(loaded).await;
+    pub async fn shutdown_until(&mut self, deadline: Instant) {
+        let plugins = std::mem::take(&mut self.plugins);
+        if let Some(loaded) = plugins.first() {
+            loaded.context.proxy_shutdown().cancel();
         }
 
-        for loaded in plugins.iter().rev() {
-            self.unload(loaded).await;
+        for level in shutdown_levels(&plugins) {
+            let stopping: Vec<(&LoadedPlugin, bool)> = level
+                .into_iter()
+                .map(|at| {
+                    let loaded = &plugins[at];
+                    (loaded, self.begin_disable(&loaded.metadata.id))
+                })
+                .collect();
+            let this = &*self;
+            join_all(
+                stopping
+                    .into_iter()
+                    .map(|(loaded, enabled)| this.stop_plugin(loaded, enabled, deadline)),
+            )
+            .await;
         }
 
         let loaded = std::mem::take(&mut self.loaded_loaders);
         for at in loaded.into_iter().rev() {
             let loader = &self.loaders[at];
-            if let Err(e) = loader.on_shutdown().await {
-                tracing::error!(loader = %loader.name(), error = %e, "Loader on_shutdown() failed");
+            match tokio::time::timeout(UNLOAD_TIMEOUT, loader.on_shutdown()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!(loader = %loader.name(), error = %e, "Loader on_shutdown() failed");
+                }
+                Err(_) => {
+                    tracing::warn!(loader = %loader.name(), limit = ?UNLOAD_TIMEOUT,
+                        "Loader on_shutdown() did not return in time; going on without it");
+                }
             }
+        }
+    }
+
+    fn begin_disable(&mut self, id: &str) -> bool {
+        if !matches!(self.states.get(id), Some(PluginState::Enabled)) {
+            return false;
+        }
+        tracing::info!(plugin = %id, "Disabling plugin");
+        self.states.insert(id.to_owned(), PluginState::Disabled);
+        if let Some(registry) = &self.registry {
+            registry.remove(id);
+        }
+        true
+    }
+
+    async fn stop_plugin(&self, loaded: &LoadedPlugin, enabled: bool, deadline: Instant) {
+        let id = &loaded.metadata.id;
+        let mut finished = true;
+        if enabled {
+            let limit = self.shutdown_limits.on_disable;
+            let cut_at = deadline.min(Instant::now() + limit);
+            match tokio::time::timeout_at(cut_at, loaded.plugin.on_disable()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!(plugin = %id, error = %e, "Plugin on_disable() failed");
+                }
+                Err(_) => {
+                    tracing::warn!(plugin = %id, limit = ?limit,
+                        "Plugin on_disable() did not return in time during shutdown; stopping the plugin without it");
+                    finished = false;
+                }
+            }
+        }
+        if !finished {
+            self.unload_within(loaded).await;
+        }
+        if enabled {
+            loaded.context.cleanup();
+            self.forget_context(id);
+            if let Some(bus) = &self.event_bus {
+                bus.post(PluginDisabledEvent::new(id.clone()));
+                if tokio::time::timeout_at(deadline, bus.flush())
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!(plugin = %id, "PluginDisabledEvent still being delivered at the shutdown deadline");
+                }
+            }
+        }
+        if finished {
+            self.unload_within(loaded).await;
+        }
+    }
+
+    async fn unload_within(&self, loaded: &LoadedPlugin) {
+        if tokio::time::timeout(UNLOAD_TIMEOUT, self.unload(loaded))
+            .await
+            .is_err()
+        {
+            tracing::warn!(plugin = %loaded.metadata.id, limit = ?UNLOAD_TIMEOUT,
+                "Loader unload did not return in time; going on without it");
         }
     }
 
@@ -401,6 +513,38 @@ impl PluginManager {
     pub fn list_plugins(&self) -> Vec<&PluginMetadata> {
         self.plugins.iter().map(|p| &p.metadata).collect()
     }
+}
+
+fn shutdown_levels(plugins: &[LoadedPlugin]) -> Vec<Vec<usize>> {
+    let position: HashMap<&str, usize> = plugins
+        .iter()
+        .enumerate()
+        .map(|(at, loaded)| (loaded.metadata.id.as_str(), at))
+        .collect();
+    let mut level = vec![0usize; plugins.len()];
+    for _ in 0..plugins.len() {
+        let mut changed = false;
+        for (at, loaded) in plugins.iter().enumerate() {
+            for dependency in &loaded.metadata.dependencies {
+                if let Some(&below) = position.get(dependency.id.as_str())
+                    && below != at
+                    && level[below] <= level[at]
+                {
+                    level[below] = level[at] + 1;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let deepest = level.iter().copied().max().unwrap_or(0);
+    let mut levels = vec![Vec::new(); if plugins.is_empty() { 0 } else { deepest + 1 }];
+    for at in (0..plugins.len()).rev() {
+        levels[level[at]].push(at);
+    }
+    levels
 }
 
 #[cfg(test)]
@@ -645,6 +789,168 @@ mod tests {
         // good: full lifecycle ran.
         assert!(seq.contains(&"load:g1".to_string()));
         assert!(seq.contains(&"on_shutdown:good".to_string()));
+    }
+
+    type Timeline = Arc<Mutex<Vec<(String, Duration)>>>;
+
+    struct SlowPlugin {
+        metadata: PluginMetadata,
+        disable_for: Duration,
+        started: Instant,
+        timeline: Timeline,
+        stopping: Mutex<Option<CancellationToken>>,
+    }
+
+    impl SlowPlugin {
+        fn note(&self, what: &str) {
+            lock(&self.timeline).push((
+                format!("{what}:{}", self.metadata.id),
+                self.started.elapsed(),
+            ));
+        }
+    }
+
+    impl Plugin for SlowPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            self.metadata.clone()
+        }
+
+        fn on_enable<'a>(
+            &'a self,
+            ctx: &'a dyn PluginContext,
+        ) -> BoxFuture<'a, Result<(), infrarust_api::error::PluginError>> {
+            *lock(&self.stopping) = Some(ctx.proxy_shutdown());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn on_disable(&self) -> BoxFuture<'_, Result<(), infrarust_api::error::PluginError>> {
+            Box::pin(async move {
+                if lock(&self.stopping)
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    self.note("told");
+                }
+                self.note("start");
+                tokio::time::sleep(self.disable_for).await;
+                self.note("end");
+                Ok(())
+            })
+        }
+    }
+
+    fn slow_loader(
+        plugins: &[(&'static str, &[&'static str], u64)],
+        timeline: &Timeline,
+    ) -> StaticPluginLoader {
+        let loader = StaticPluginLoader::new();
+        let started = Instant::now();
+        for &(id, dependencies, seconds) in plugins {
+            let mut metadata = PluginMetadata::new(id, id, "1.0.0");
+            for dependency in dependencies {
+                metadata = metadata.depends_on(*dependency);
+            }
+            let timeline = Arc::clone(timeline);
+            let made = metadata.clone();
+            loader.register(metadata, move || {
+                Box::new(SlowPlugin {
+                    metadata: made.clone(),
+                    disable_for: Duration::from_secs(seconds),
+                    started,
+                    timeline: Arc::clone(&timeline),
+                    stopping: Mutex::new(None),
+                })
+            });
+        }
+        loader
+    }
+
+    async fn shut_down(
+        plugins: &[(&'static str, &[&'static str], u64)],
+        limits: ShutdownLimits,
+    ) -> (Vec<(String, Duration)>, Duration, PluginManager) {
+        let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PluginManager::new(vec![Box::new(slow_loader(plugins, &timeline))]);
+        manager.set_shutdown_limits(limits);
+        manager.discover_all(Path::new("plugins")).await.unwrap();
+        assert!(manager.load_and_enable_all(factory()).await.is_empty());
+        let started = Instant::now();
+        manager.shutdown().await;
+        let took = started.elapsed();
+        let seen = lock(&timeline).clone();
+        (seen, took, manager)
+    }
+
+    fn at(timeline: &[(String, Duration)], what: &str) -> Duration {
+        timeline
+            .iter()
+            .find(|(seen, _)| seen == what)
+            .map(|(_, at)| *at)
+            .unwrap_or_else(|| panic!("{what} missing from {timeline:?}"))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_disables_one_dependency_level_at_a_time_and_a_level_all_at_once() {
+        let (timeline, took, _) = shut_down(
+            &[("base", &[], 2), ("top", &["base"], 1), ("lone", &[], 3)],
+            ShutdownLimits::default(),
+        )
+        .await;
+        let start_top = at(&timeline, "start:top");
+        let start_lone = at(&timeline, "start:lone");
+        assert_eq!(
+            start_top, start_lone,
+            "a level is disabled all at once: {timeline:?}"
+        );
+        assert!(at(&timeline, "start:base") >= at(&timeline, "end:top"));
+        assert!(
+            at(&timeline, "start:base") >= at(&timeline, "end:lone"),
+            "the next level waits for the whole level before it: {timeline:?}"
+        );
+        assert_eq!(took, Duration::from_secs(5), "{timeline:?}");
+        for id in ["base", "top", "lone"] {
+            assert!(
+                timeline
+                    .iter()
+                    .any(|(seen, _)| *seen == format!("told:{id}")),
+                "the proxy shutdown token is cancelled before on_disable runs: {timeline:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_on_disable_is_cut_at_the_shutdown_limit_and_the_plugin_still_cleaned_up() {
+        let (timeline, took, manager) = shut_down(
+            &[("stuck", &[], 3600), ("quick", &[], 1)],
+            ShutdownLimits::default(),
+        )
+        .await;
+        assert_eq!(took, DEFAULT_SHUTDOWN_DISABLE_TIMEOUT, "{timeline:?}");
+        assert!(timeline.iter().any(|(seen, _)| seen == "end:quick"));
+        assert!(!timeline.iter().any(|(seen, _)| seen == "end:stuck"));
+        assert!(matches!(
+            manager.plugin_state("stuck"),
+            Some(PluginState::Disabled)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_plugin_phase_ends_at_its_limit_across_levels() {
+        let (timeline, took, _) = shut_down(
+            &[
+                ("low", &[], 4),
+                ("middle", &["low"], 4),
+                ("high", &["middle"], 4),
+            ],
+            ShutdownLimits::default(),
+        )
+        .await;
+        assert_eq!(took, DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT, "{timeline:?}");
+        assert_eq!(at(&timeline, "start:low"), Duration::from_secs(8));
+        assert!(
+            !timeline.iter().any(|(seen, _)| seen == "end:low"),
+            "the last level is cut at the phase limit: {timeline:?}"
+        );
     }
 
     #[tokio::test]

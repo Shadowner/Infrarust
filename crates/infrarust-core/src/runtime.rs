@@ -21,7 +21,7 @@ use infrarust_server_manager::ServerProvider;
 use infrarust_transport::Listener;
 
 use crate::error::CoreError;
-use crate::plugin::manager::{PluginManager, PluginServices};
+use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
     PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginPermissions,
     PluginRegistryImpl,
@@ -45,6 +45,7 @@ impl ProxyRuntime {
             trusted: Vec::new(),
             proxy_info: None,
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
+            plugin_shutdown: ShutdownLimits::default(),
             server_providers: Vec::new(),
         }
     }
@@ -65,6 +66,7 @@ pub struct ProxyRuntimeBuilder {
     trusted: Vec<String>,
     proxy_info: Option<ProxyInfo>,
     drain_timeout: Duration,
+    plugin_shutdown: ShutdownLimits,
     server_providers: Vec<ProviderOverride>,
 }
 
@@ -100,6 +102,18 @@ impl ProxyRuntimeBuilder {
     }
 
     #[must_use]
+    pub fn plugin_disable_timeout(mut self, timeout: Duration) -> Self {
+        self.plugin_shutdown.on_disable = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn plugin_shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.plugin_shutdown.total = timeout;
+        self
+    }
+
+    #[must_use]
     pub fn server_provider(
         mut self,
         server_id: impl Into<String>,
@@ -125,6 +139,7 @@ impl ProxyRuntimeBuilder {
             trusted,
             proxy_info,
             drain_timeout,
+            plugin_shutdown,
             server_providers,
         } = self;
 
@@ -138,6 +153,7 @@ impl ProxyRuntimeBuilder {
 
         let mut plugin_manager = PluginManager::new(loaders);
         plugin_manager.set_event_bus(Arc::clone(&server.services().event_bus));
+        plugin_manager.set_shutdown_limits(plugin_shutdown);
         plugin_manager.set_disabled_plugins(
             plugin_cfgs
                 .iter()
@@ -220,6 +236,7 @@ impl ProxyRuntimeBuilder {
             start_time,
             shutdown,
             drain_timeout,
+            plugin_shutdown_timeout: plugin_shutdown.total,
         })
     }
 }
@@ -377,6 +394,7 @@ pub struct RunningProxy {
     start_time: Instant,
     shutdown: CancellationToken,
     drain_timeout: Duration,
+    plugin_shutdown_timeout: Duration,
 }
 
 impl RunningProxy {
@@ -425,11 +443,22 @@ impl RunningProxy {
         self.server.close_sessions();
         self.server.drain_connections(self.drain_timeout).await;
 
+        let deadline = tokio::time::Instant::now() + self.plugin_shutdown_timeout;
         let bus = self.server.event_bus();
-        bus.fire(ProxyShutdownEvent).await;
-        bus.flush().await;
+        let announced = async {
+            bus.fire(ProxyShutdownEvent).await;
+            bus.flush().await;
+        };
+        if tokio::time::timeout_at(deadline, announced).await.is_err() {
+            tracing::warn!(limit = ?self.plugin_shutdown_timeout,
+                "ProxyShutdownEvent listeners used up the plugin shutdown time; stopping the plugins without waiting for them");
+        }
 
-        self.plugin_manager.write().await.shutdown().await;
+        self.plugin_manager
+            .write()
+            .await
+            .shutdown_until(deadline)
+            .await;
         self.server.stop_background_tasks();
 
         result
@@ -690,6 +719,57 @@ mod tests {
             "disabling the plugin withdraws its documents"
         );
         running.shutdown().await.unwrap();
+    }
+
+    struct HangingPlugin;
+
+    impl Plugin for HangingPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new("hanging", "hanging", "1.0.0")
+        }
+
+        fn on_enable<'a>(
+            &'a self,
+            ctx: &'a dyn PluginContext,
+        ) -> BoxFuture<'a, Result<(), PluginError>> {
+            ctx.event_bus()
+                .subscribe_async(EventPriority::NORMAL, |_: &mut ProxyShutdownEvent| {
+                    Box::pin(tokio::time::sleep(Duration::from_secs(3600)))
+                });
+            Box::pin(async { Ok(()) })
+        }
+
+        fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plugin_hanging_at_shutdown_holds_the_proxy_only_for_the_plugin_shutdown_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let loader = StaticPluginLoader::new();
+        loader.register(PluginMetadata::new("hanging", "hanging", "1.0.0"), || {
+            Box::new(HangingPlugin)
+        });
+        let running = ProxyRuntime::builder(test_config(dir.path()), dir.path().join("i.toml"))
+            .loader(Box::new(loader))
+            .trusted_plugins(["hanging".to_string()])
+            .drain_timeout(Duration::from_millis(100))
+            .plugin_disable_timeout(Duration::from_millis(300))
+            .plugin_shutdown_timeout(Duration::from_millis(800))
+            .start()
+            .await
+            .unwrap();
+        let started = Instant::now();
+        running.shutdown().await.unwrap();
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_secs(3),
+            "a hanging ProxyShutdownEvent listener and on_disable held the shutdown {took:?}"
+        );
     }
 
     #[tokio::test]

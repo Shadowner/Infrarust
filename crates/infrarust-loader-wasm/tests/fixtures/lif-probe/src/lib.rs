@@ -84,6 +84,9 @@ fn act(action: &str) -> Result<(), PluginError> {
             std::thread::sleep(Duration::from_millis(millis));
             Ok(())
         }
+        "write" => loop {
+            log("write");
+        },
         _ => Ok(()),
     }
 }
