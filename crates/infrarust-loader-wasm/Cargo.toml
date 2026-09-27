@@ -42,6 +42,9 @@ rustls = { workspace = true, optional = true }
 tokio-rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, features = ["user"], optional = true }
+
 [dev-dependencies]
 wasmtime = { workspace = true, features = ["wat"] }
 infrarust-api = { workspace = true, features = ["test-util"] }
@@ -67,6 +70,7 @@ wasm = [
     "dep:wasmtime-wasi",
     "dep:sha2",
     "dep:tempfile",
+    "dep:nix",
     "dep:tokio",
     "dep:tokio-util",
     "dep:futures-util",

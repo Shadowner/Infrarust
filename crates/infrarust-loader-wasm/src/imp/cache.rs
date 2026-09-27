@@ -22,18 +22,22 @@ const ORPHANED_TEMP_AGE: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
 pub(crate) struct AotCache {
-    dir: PathBuf,
+    dir: Option<PathBuf>,
     engine_tag: String,
     write_warned: Arc<AtomicBool>,
 }
 
 impl AotCache {
-    pub(crate) fn new(engine: &Engine, dir: PathBuf) -> Self {
+    pub(crate) fn new(engine: &Engine, dir: Option<PathBuf>) -> Self {
         Self {
             dir,
             engine_tag: engine_tag(engine),
             write_warned: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
     }
 
     fn cache_key(&self, wasm: &[u8]) -> String {
@@ -46,8 +50,10 @@ impl AotCache {
         hex(&hasher.finalize())
     }
 
-    fn entry_path(&self, key: &str) -> PathBuf {
-        self.dir.join(format!("{key}{ENTRY_SUFFIX}"))
+    fn entry_path(&self, key: &str) -> Option<PathBuf> {
+        self.dir
+            .as_ref()
+            .map(|dir| dir.join(format!("{key}{ENTRY_SUFFIX}")))
     }
 
     pub(crate) fn read_source(&self, wasm_path: &Path) -> Result<Source, WasmLoaderError> {
@@ -65,7 +71,7 @@ impl AotCache {
         let Source { bytes, key } = source;
         let entry = self.entry_path(key);
 
-        let stale = match self.read_entry(&entry) {
+        let stale = match entry.as_deref().and_then(read_entry) {
             Some(artifact) => match load_artifact(engine, &artifact) {
                 Ok(component) => return Ok(component),
                 Err(error) => Some(error),
@@ -85,7 +91,7 @@ impl AotCache {
             (Some(_), Err(_)) => {}
             (Some(error), Ok(_)) => {
                 tracing::warn!(
-                    path = %entry.display(),
+                    path = %entry.as_deref().unwrap_or(wasm_path).display(),
                     error = %bounded(format_args!("{error:#}")),
                     "AOT cache entry could not be loaded; replaced by a fresh compilation"
                 );
@@ -100,12 +106,15 @@ impl AotCache {
     }
 
     pub(crate) fn sweep(&self, live: &HashSet<String>) {
-        let entries = match std::fs::read_dir(&self.dir) {
+        let Some(dir) = &self.dir else {
+            return;
+        };
+        let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
             Err(error) => {
                 tracing::debug!(
-                    cache_dir = %self.dir.display(),
+                    cache_dir = %dir.display(),
                     error = %error,
                     "AOT cache directory cannot be listed; nothing removed"
                 );
@@ -136,72 +145,112 @@ impl AotCache {
         }
         if removed > 0 {
             tracing::debug!(
-                cache_dir = %self.dir.display(),
+                cache_dir = %dir.display(),
                 removed,
                 "AOT cache files no discovered plugin uses were removed"
             );
         }
     }
 
-    fn read_entry(&self, entry: &Path) -> Option<Vec<u8>> {
-        match std::fs::symlink_metadata(entry) {
-            Ok(metadata) if metadata.file_type().is_file() => {}
-            Ok(_) => {
-                tracing::warn!(
-                    path = %entry.display(),
-                    "AOT cache entry is not a regular file; ignored"
-                );
-                return None;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(error) => {
-                tracing::warn!(
-                    path = %entry.display(),
-                    error = %error,
-                    "AOT cache entry cannot be read; ignored"
-                );
-                return None;
-            }
-        }
-        match std::fs::read(entry) {
-            Ok(artifact) => Some(artifact),
-            Err(error) => {
-                tracing::warn!(
-                    path = %entry.display(),
-                    error = %error,
-                    "AOT cache entry cannot be read; ignored"
-                );
-                None
-            }
-        }
-    }
-
     fn store(&self, key: &str, artifact: &[u8]) {
-        if let Err(error) = self.write_entry(key, artifact)
+        let Some(dir) = &self.dir else {
+            return;
+        };
+        if let Err(error) = write_entry(dir, key, artifact)
             && !self.write_warned.swap(true, Ordering::Relaxed)
         {
             tracing::warn!(
-                cache_dir = %self.dir.display(),
+                cache_dir = %dir.display(),
                 error = %error,
                 "AOT cache directory cannot be written; plugins are compiled in memory and compiled again at the next start"
             );
         }
     }
+}
 
-    fn write_entry(&self, key: &str, artifact: &[u8]) -> std::io::Result<()> {
-        use std::io::Write;
-        create_private_dir(&self.dir)?;
-        let mut temp = tempfile::Builder::new()
-            .prefix(&format!("{key}."))
-            .suffix(TEMP_SUFFIX)
-            .rand_bytes(TEMP_RANDOM_CHARS)
-            .tempfile_in(&self.dir)?;
-        temp.write_all(artifact)?;
-        temp.as_file().sync_all()?;
-        temp.persist(self.entry_path(key))
-            .map(drop)
-            .map_err(|error| error.error)
+fn read_entry(entry: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let refuse = |reason: &dyn std::fmt::Display| {
+        tracing::warn!(
+            path = %entry.display(),
+            reason = %reason,
+            "AOT cache entry refused; the plugin is compiled again and the entry replaced"
+        );
+        None
+    };
+    let linked = match std::fs::symlink_metadata(entry) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => return refuse(&error),
+    };
+    if !linked.file_type().is_file() {
+        return refuse(&"not a regular file");
     }
+    let mut file = match std::fs::File::open(entry) {
+        Ok(file) => file,
+        Err(error) => return refuse(&error),
+    };
+    let opened = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => return refuse(&error),
+    };
+    if let Err(reason) = trusted(&linked, &opened) {
+        return refuse(&reason);
+    }
+    let mut artifact = Vec::with_capacity(usize::try_from(opened.len()).unwrap_or_default());
+    match file.read_to_end(&mut artifact) {
+        Ok(_) => Some(artifact),
+        Err(error) => refuse(&error),
+    }
+}
+
+#[cfg(unix)]
+fn trusted(linked: &std::fs::Metadata, opened: &std::fs::Metadata) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    if (linked.dev(), linked.ino()) != (opened.dev(), opened.ino()) {
+        return Err("the entry was replaced while it was opened".to_owned());
+    }
+    entry_trust(opened.uid(), opened.mode(), nix::unistd::geteuid().as_raw())
+}
+
+#[cfg(not(unix))]
+fn trusted(_linked: &std::fs::Metadata, opened: &std::fs::Metadata) -> Result<(), String> {
+    if opened.file_type().is_file() {
+        Ok(())
+    } else {
+        Err("not a regular file".to_owned())
+    }
+}
+
+#[cfg(unix)]
+fn entry_trust(owner: u32, mode: u32, proxy_user: u32) -> Result<(), String> {
+    if owner != proxy_user {
+        return Err(format!(
+            "owned by uid {owner}, not by the user the proxy runs as (uid {proxy_user})"
+        ));
+    }
+    if mode & 0o022 != 0 {
+        return Err(format!(
+            "writable by group or others (mode {:o})",
+            mode & 0o7777
+        ));
+    }
+    Ok(())
+}
+
+fn write_entry(dir: &Path, key: &str, artifact: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    create_private_dir(dir)?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(&format!("{key}."))
+        .suffix(TEMP_SUFFIX)
+        .rand_bytes(TEMP_RANDOM_CHARS)
+        .tempfile_in(dir)?;
+    temp.write_all(artifact)?;
+    temp.as_file().sync_all()?;
+    temp.persist(dir.join(format!("{key}{ENTRY_SUFFIX}")))
+        .map(drop)
+        .map_err(|error| error.error)
 }
 
 pub(crate) struct Source {
@@ -411,7 +460,7 @@ mod tests {
     }
 
     fn key_under(engine: &Engine) -> String {
-        AotCache::new(engine, PathBuf::new()).cache_key(b"\0asm\x0d\0\x01\0")
+        AotCache::new(engine, None).cache_key(b"\0asm\x0d\0\x01\0")
     }
 
     fn released_with(version: &str) -> Engine {
@@ -484,7 +533,7 @@ mod tests {
     #[test]
     fn the_sweep_removes_only_what_the_cache_wrote_and_nothing_uses() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = AotCache::new(&engine_with(|_| {}), tmp.path().to_path_buf());
+        let cache = AotCache::new(&engine_with(|_| {}), Some(tmp.path().to_path_buf()));
         let used = "a".repeat(64);
         let unused = "b".repeat(64);
         let file = |name: &str| {
@@ -529,8 +578,40 @@ mod tests {
     fn a_missing_cache_directory_is_not_created_by_the_sweep() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("absent");
-        AotCache::new(&engine_with(|_| {}), dir.clone()).sweep(&HashSet::new());
+        AotCache::new(&engine_with(|_| {}), Some(dir.clone())).sweep(&HashSet::new());
         assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_an_entry_of_the_proxy_user_that_others_cannot_write_is_trusted() {
+        assert!(entry_trust(1000, 0o100_600, 1000).is_ok());
+        assert!(entry_trust(1000, 0o100_644, 1000).is_ok());
+        assert!(entry_trust(0, 0o100_600, 0).is_ok());
+        let foreign = entry_trust(0, 0o100_600, 1000).unwrap_err();
+        assert!(foreign.contains("owned by uid 0"), "{foreign}");
+        assert!(entry_trust(1001, 0o100_600, 1000).is_err());
+        let group = entry_trust(1000, 0o100_660, 1000).unwrap_err();
+        assert!(
+            group.contains("writable by group or others (mode 660)"),
+            "{group}"
+        );
+        assert!(entry_trust(1000, 0o100_602, 1000).is_err());
+        assert!(entry_trust(1000, 0o100_666, 1000).is_err());
+    }
+
+    #[test]
+    fn without_a_cache_dir_nothing_is_read_or_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let engine = engine_with(|_| {});
+        let cache = AotCache::new(&engine, None);
+        let path = tmp.path().join("empty.wasm");
+        std::fs::write(&path, b"\0asm\x0d\0\x01\0").unwrap();
+        let source = cache.read_source(&path).unwrap();
+        cache.compile_or_load(&engine, &path, &source).unwrap();
+        cache.sweep(&HashSet::new());
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+        assert!(cache.dir().is_none());
     }
 
     #[test]

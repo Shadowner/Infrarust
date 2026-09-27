@@ -956,7 +956,7 @@ pub async fn observe_wasm(scenario: &Scenario) -> Observed {
     }
     write_scripts(&plugins_dir, scenario);
     let env = environment(plugins_dir.clone(), scenario);
-    let loader = super::fresh_loader();
+    let loader = super::cached_loader(&plugins_dir);
     loader.discover(&plugins_dir).await.expect("discover");
     let mut plugins = Vec::new();
     for (id, _) in &scenario.plugins {

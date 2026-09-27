@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use infrarust_config::{
@@ -15,6 +16,7 @@ pub struct WasmLoaderConfig {
     strict_capabilities: HashSet<String>,
     network: HashMap<String, WasmNetworkConfig>,
     mounts: HashMap<String, Vec<WasmMount>>,
+    cache_dir: Option<PathBuf>,
 }
 
 impl WasmLoaderConfig {
@@ -57,7 +59,19 @@ impl WasmLoaderConfig {
             strict_capabilities,
             network,
             mounts,
+            cache_dir: Some(config.wasm.cache_dir.clone()),
         }
+    }
+
+    #[must_use]
+    pub fn with_cache_dir(mut self, cache_dir: Option<PathBuf>) -> Self {
+        self.cache_dir = cache_dir;
+        self
+    }
+
+    #[must_use]
+    pub fn cache_dir(&self) -> Option<&Path> {
+        self.cache_dir.as_deref()
     }
 
     #[must_use]
@@ -110,6 +124,7 @@ impl Default for WasmLoaderConfig {
             strict_capabilities: HashSet::new(),
             network: HashMap::new(),
             mounts: HashMap::new(),
+            cache_dir: Some(wasm.cache_dir),
         }
     }
 }
@@ -271,6 +286,27 @@ mod tests {
         let sandbox = WasmLoaderConfig::from_proxy_config(&config).default_sandbox();
         assert_eq!(sandbox.max_epoch_yields, 50);
         assert_eq!(sandbox.codec_deadline_ticks, 2);
+    }
+
+    #[test]
+    fn the_cache_dir_follows_the_wasm_section_and_can_be_turned_off() {
+        let default: ProxyConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            WasmLoaderConfig::from_proxy_config(&default).cache_dir(),
+            Some(Path::new("./cache/wasm"))
+        );
+        assert_eq!(
+            WasmLoaderConfig::default().cache_dir(),
+            Some(Path::new("./cache/wasm"))
+        );
+        let config: ProxyConfig =
+            toml::from_str("[wasm]\ncache_dir = \"/var/cache/infrarust/wasm\"\n").unwrap();
+        let loader = WasmLoaderConfig::from_proxy_config(&config);
+        assert_eq!(
+            loader.cache_dir(),
+            Some(Path::new("/var/cache/infrarust/wasm"))
+        );
+        assert_eq!(loader.with_cache_dir(None).cache_dir(), None);
     }
 
     #[test]

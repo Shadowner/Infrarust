@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use infrarust_api::event::BoxFuture;
@@ -12,7 +13,7 @@ use wasmtime::component::Component;
 use crate::actor::PluginActor;
 use crate::cache::AotCache;
 use crate::config::WasmLoaderConfig;
-use crate::consts::CACHE_SUBDIR;
+use crate::consts::LEGACY_CACHE_SUBDIR;
 use crate::contract::check as check_contract;
 use crate::epoch::EpochTicker;
 use crate::error::{WasmLoaderError, bounded};
@@ -28,6 +29,8 @@ use crate::sync::{lock, read, write};
 pub struct WasmPluginLoader {
     engine: Engine,
     config: WasmLoaderConfig,
+    cache: AotCache,
+    legacy_cache_noted: AtomicBool,
     discovered: RwLock<HashMap<String, DiscoveredWasm>>,
     actors: Mutex<HashMap<String, Weak<PluginActor>>>,
     _ticker: EpochTicker,
@@ -43,38 +46,59 @@ struct DiscoveredWasm {
 impl WasmPluginLoader {
     pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
         let ticker = EpochTicker::spawn(engine.clone(), config.epoch_tick())?;
+        let cache = AotCache::new(&engine, config.cache_dir().map(Path::to_path_buf));
         Ok(Self {
             engine,
             config,
+            cache,
+            legacy_cache_noted: AtomicBool::new(false),
             discovered: RwLock::new(HashMap::new()),
             actors: Mutex::new(HashMap::new()),
             _ticker: ticker,
         })
     }
 
+    fn note_legacy_cache(&self, plugin_dir: &Path) {
+        let legacy = plugin_dir.join(LEGACY_CACHE_SUBDIR);
+        if self.cache.dir() == Some(legacy.as_path()) || !legacy.is_dir() {
+            return;
+        }
+        if !self.legacy_cache_noted.swap(true, Ordering::Relaxed) {
+            tracing::info!(
+                path = %legacy.display(),
+                cache_dir = ?self.cache.dir().map(Path::display),
+                "this directory holds the AOT cache of an earlier version; it is no longer read and can be deleted"
+            );
+        }
+    }
+
     async fn probe(
         &self,
-        cache: &AotCache,
         path: &Path,
         live: &mut HashSet<String>,
     ) -> Result<DiscoveredWasm, WasmLoaderError> {
         let component = {
             let engine = self.engine.clone();
-            let cache = cache.clone();
+            let cache = self.cache.clone();
             let owned = path.to_path_buf();
-            let (key, component) =
-                tokio::task::spawn_blocking(move || match cache.read_source(&owned) {
-                    Ok(source) => (
-                        Some(source.key().to_owned()),
-                        cache.compile_or_load(&engine, &owned, &source),
-                    ),
-                    Err(error) => (None, Err(error)),
+            let dispatch = tracing::dispatcher::get_default(Clone::clone);
+            let span = tracing::Span::current();
+            let (key, component) = tokio::task::spawn_blocking(move || {
+                tracing::dispatcher::with_default(&dispatch, || {
+                    span.in_scope(|| match cache.read_source(&owned) {
+                        Ok(source) => (
+                            Some(source.key().to_owned()),
+                            cache.compile_or_load(&engine, &owned, &source),
+                        ),
+                        Err(error) => (None, Err(error)),
+                    })
                 })
-                .await
-                .map_err(|join_err| WasmLoaderError::Precompile {
-                    path: path.to_path_buf(),
-                    reason: format!("compile task failed: {join_err}"),
-                })?;
+            })
+            .await
+            .map_err(|join_err| WasmLoaderError::Precompile {
+                path: path.to_path_buf(),
+                reason: format!("compile task failed: {join_err}"),
+            })?;
             live.extend(key);
             component?
         };
@@ -143,13 +167,13 @@ impl PluginLoader for WasmPluginLoader {
             if !plugin_dir.exists() {
                 return Ok(Vec::new());
             }
-            let cache = AotCache::new(&self.engine, plugin_dir.join(CACHE_SUBDIR));
+            self.note_legacy_cache(plugin_dir);
             let wasm_files = scan_wasm_files(plugin_dir)?;
 
             let mut probed = Vec::new();
             let mut live = HashSet::new();
             for path in wasm_files {
-                match self.probe(&cache, &path, &mut live).await {
+                match self.probe(&path, &mut live).await {
                     Ok(entry) => probed.push(entry),
                     Err(error) => {
                         tracing::error!(
@@ -161,7 +185,7 @@ impl PluginLoader for WasmPluginLoader {
                 }
             }
 
-            cache.sweep(&live);
+            self.cache.sweep(&live);
 
             let (metadatas, discovered) = without_duplicate_ids(probed);
             *write(&self.discovered) = discovered;

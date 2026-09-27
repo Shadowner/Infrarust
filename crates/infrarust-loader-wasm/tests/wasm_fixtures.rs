@@ -34,8 +34,8 @@ use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
 use support::{
-    EnvOptions, TestEnv, add_fixture, fresh_loader, load_enabled, loader_from_toml, make_env,
-    make_env_with, nil_profile, read_log, stage, write_script,
+    EnvOptions, TestEnv, add_fixture, cache_dir_of, cached_loader, fresh_loader, load_enabled,
+    loader_from_toml, make_env, make_env_with, nil_profile, read_log, stage, write_script,
 };
 
 fn make_factory(plugins_dir: &Path) -> PluginContextFactoryImpl {
@@ -179,12 +179,12 @@ async fn test_aot_cache_reused() {
     let (_tmp, plugins_dir) = stage("scripted");
 
     {
-        let loader = fresh_loader();
+        let loader = cached_loader(&plugins_dir);
         loader.discover(&plugins_dir).await.unwrap();
     }
-    let cache_dir = plugins_dir.join(".cache");
+    let cache_dir = cache_dir_of(&plugins_dir);
     let cwasms: Vec<_> = std::fs::read_dir(&cache_dir)
-        .expect(".cache should exist after the first discover")
+        .expect("the cache directory should exist after the first discover")
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "cwasm"))
         .collect();
@@ -193,7 +193,7 @@ async fn test_aot_cache_reused() {
     let mtime_first = std::fs::metadata(&cwasm_path).unwrap().modified().unwrap();
 
     {
-        let loader = fresh_loader();
+        let loader = cached_loader(&plugins_dir);
         let metas = loader.discover(&plugins_dir).await.unwrap();
         assert!(metas.iter().any(|m| m.id == "scripted"));
     }

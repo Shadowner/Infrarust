@@ -130,7 +130,7 @@ mod bench {
         let config: ProxyConfig = toml::from_str(wasm_section).unwrap();
         let loader = WasmPluginLoader::new(
             build_engine(&config).unwrap(),
-            WasmLoaderConfig::from_proxy_config(&config),
+            WasmLoaderConfig::from_proxy_config(&config).with_cache_dir(None),
         )
         .unwrap();
         loader.discover(&plugins_dir).await.unwrap();

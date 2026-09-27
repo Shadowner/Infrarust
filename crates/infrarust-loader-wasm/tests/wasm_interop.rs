@@ -16,8 +16,8 @@ use toml::value::Table;
 
 use support::native_scripted::ScriptedPlugin;
 use support::{
-    add_fixture, add_precompiled_fixture, console, fresh_loader, load_enabled, make_env, read_log,
-    write_script,
+    add_fixture, add_precompiled_fixture, cached_loader, console, fresh_loader, load_enabled,
+    make_env, read_log, write_script,
 };
 
 const T: Duration = infrarust_test_harness::DEFAULT_TIMEOUT;
@@ -44,7 +44,7 @@ async fn a_named_event_round_trips_between_a_wasm_and_a_native_plugin() {
         .on_enable(env.factory.create_context("native-peer").as_ref())
         .await
         .unwrap();
-    let loader = fresh_loader();
+    let loader = cached_loader(&plugins_dir);
     loader.discover(&plugins_dir).await.unwrap();
     let wasm = load_enabled(&loader, &env.factory, "scripted").await;
 
@@ -84,7 +84,7 @@ async fn a_plugin_without_plugin_messaging_cannot_register_a_channel() {
     add_precompiled_fixture(&plugins_dir, "scripted").await;
     write_script(&plugins_dir, "scripted", &format!("channel {ECHO}"));
     let env = make_env(plugins_dir.clone());
-    let loader = fresh_loader();
+    let loader = cached_loader(&plugins_dir);
     loader.discover(&plugins_dir).await.unwrap();
     let plugin = loader.load("scripted", &env.factory).await.unwrap();
     let refused = plugin

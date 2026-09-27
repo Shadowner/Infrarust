@@ -155,6 +155,10 @@ pub fn write_script(plugins_dir: &Path, plugin_id: &str, script: &str) {
     std::fs::write(data_dir.join(script::SCRIPT_FILE), script).unwrap();
 }
 
+pub fn cache_dir_of(plugins_dir: &Path) -> PathBuf {
+    plugins_dir.join(".aot-cache")
+}
+
 #[cfg(feature = "wasm")]
 pub fn fresh_loader() -> infrarust_loader_wasm::WasmPluginLoader {
     loader_from_toml("")
@@ -162,10 +166,35 @@ pub fn fresh_loader() -> infrarust_loader_wasm::WasmPluginLoader {
 
 #[cfg(feature = "wasm")]
 pub fn loader_from_toml(proxy_toml: &str) -> infrarust_loader_wasm::WasmPluginLoader {
+    loader_with_cache(proxy_toml, None)
+}
+
+#[cfg(feature = "wasm")]
+pub fn cached_loader(plugins_dir: &Path) -> infrarust_loader_wasm::WasmPluginLoader {
+    cached_loader_from_toml("", plugins_dir)
+}
+
+#[cfg(feature = "wasm")]
+pub fn cached_loader_from_toml(
+    proxy_toml: &str,
+    plugins_dir: &Path,
+) -> infrarust_loader_wasm::WasmPluginLoader {
+    loader_with_cache(proxy_toml, Some(cache_dir_of(plugins_dir)))
+}
+
+#[cfg(feature = "wasm")]
+fn loader_with_cache(
+    proxy_toml: &str,
+    cache_dir: Option<PathBuf>,
+) -> infrarust_loader_wasm::WasmPluginLoader {
     let config: infrarust_config::ProxyConfig = toml::from_str(proxy_toml).expect("proxy config");
+    let mut loader_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
+    if config.wasm.cache_dir == infrarust_config::defaults::wasm_cache_dir() {
+        loader_config = loader_config.with_cache_dir(cache_dir);
+    }
     infrarust_loader_wasm::WasmPluginLoader::new(
         infrarust_loader_wasm::build_engine(&config).expect("build engine"),
-        infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config),
+        loader_config,
     )
     .expect("wasm loader")
 }
@@ -226,11 +255,11 @@ pub async fn add_precompiled_fixture(plugins_dir: &Path, fixture: &str) {
     if !compiled.contains_key(fixture) {
         let tmp = tempfile::tempdir().unwrap();
         add_fixture(tmp.path(), fixture, fixture);
-        fresh_loader()
+        cached_loader(tmp.path())
             .discover(tmp.path())
             .await
             .unwrap_or_else(|e| panic!("precompiling {fixture}: {e}"));
-        let artifacts = std::fs::read_dir(tmp.path().join(".cache"))
+        let artifacts = std::fs::read_dir(cache_dir_of(tmp.path()))
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|ext| ext == "cwasm"))
@@ -243,7 +272,7 @@ pub async fn add_precompiled_fixture(plugins_dir: &Path, fixture: &str) {
             .collect();
         compiled.insert(fixture.to_owned(), artifacts);
     }
-    let cache = plugins_dir.join(".cache");
+    let cache = cache_dir_of(plugins_dir);
     std::fs::create_dir_all(&cache).unwrap();
     for (name, bytes) in &compiled[fixture] {
         std::fs::write(cache.join(name), bytes).unwrap();

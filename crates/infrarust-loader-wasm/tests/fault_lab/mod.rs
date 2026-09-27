@@ -153,7 +153,7 @@ impl Lab {
         if let Some(permissions) = options.permissions {
             factory = factory.with_permissions(permissions);
         }
-        let loader = support::loader_from_toml(&options.proxy_toml);
+        let loader = support::cached_loader_from_toml(&options.proxy_toml, &plugins_dir);
         loader.discover(&plugins_dir).await.unwrap();
         Self {
             tmp,

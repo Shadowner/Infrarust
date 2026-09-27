@@ -12,7 +12,10 @@ use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::{add_fixture, fixture_path, fresh_loader, loader_from_toml, make_env};
+use support::{
+    add_fixture, cache_dir_of, cached_loader, cached_loader_from_toml, fixture_path,
+    loader_from_toml, make_env,
+};
 
 const MARKER: &[u8] = b"LIFPROBE-BLOB-V1";
 const BOUND: Duration = Duration::from_secs(60);
@@ -43,7 +46,7 @@ async fn discover_with(
 }
 
 async fn discover(dir: &Path) -> Result<Vec<PluginMetadata>, LoaderError> {
-    discover_with(&fresh_loader(), dir).await
+    discover_with(&cached_loader(dir), dir).await
 }
 
 fn ids(metas: &[PluginMetadata]) -> Vec<String> {
@@ -53,7 +56,11 @@ fn ids(metas: &[PluginMetadata]) -> Vec<String> {
 }
 
 fn cache_entries(dir: &Path) -> Vec<PathBuf> {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir.join(".cache"))
+    entries_in(&cache_dir_of(dir))
+}
+
+fn entries_in(cache: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(cache)
         .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
         .unwrap_or_default();
     entries.sort();
@@ -172,7 +179,7 @@ async fn a_cache_entry_compiled_without_epoch_interruption_is_rebuilt_and_the_sp
     assert_ne!(foreign, original);
     std::fs::write(&cwasm, &foreign).unwrap();
 
-    let loader = fresh_loader();
+    let loader = cached_loader(&dir);
     discover_with(&loader, &dir).await.unwrap();
     assert_eq!(
         std::fs::read(&cwasm).unwrap(),
@@ -188,68 +195,223 @@ async fn a_cache_entry_compiled_without_epoch_interruption_is_rebuilt_and_the_sp
     assert!(outcome.is_err());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-17: AOT cache entry runs without proof of origin"]
-async fn a_cache_entry_is_bound_to_the_component_it_was_compiled_from() {
+fn plugins_and_cache() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "good", "id=good\n");
-    discover(&dir).await.unwrap();
-    let good_entry = only_cwasm(&dir);
+    let plugins = tmp.path().join("plugins");
+    std::fs::create_dir(&plugins).unwrap();
+    let cache = tmp.path().join("state").join("cache").join("wasm");
+    (tmp, plugins, cache)
+}
 
+fn loader_with_cache_dir(cache: &Path, extra: &str) -> infrarust_loader_wasm::WasmPluginLoader {
+    loader_from_toml(&format!(
+        "[wasm]\ncache_dir = {:?}\n{extra}",
+        cache.display().to_string()
+    ))
+}
+
+async fn swapped_in_artifact() -> Vec<u8> {
     let other = tempfile::tempdir().unwrap();
     add_probe(other.path(), "other", "id=swapped-in\n");
-    discover(other.path()).await.unwrap();
-    let other_entry = only_cwasm(other.path());
-    std::fs::copy(&other_entry, &good_entry).unwrap();
+    assert_eq!(ids(&discover(other.path()).await.unwrap()), ["swapped-in"]);
+    std::fs::read(only_cwasm(other.path())).unwrap()
+}
 
-    let metas = discover(&dir).await.unwrap();
-    assert_eq!(
-        ids(&metas),
-        ["good"],
-        "good.wasm must run good.wasm's code, not whatever artifact sits under its cache key"
+fn only_entry_in(cache: &Path) -> PathBuf {
+    let entries: Vec<PathBuf> = entries_in(cache)
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "cwasm"))
+        .collect();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    entries[0].clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_artifact_planted_in_plugins_dir_is_never_run() {
+    let (_tmp, plugins, cache) = plugins_and_cache();
+    add_probe(&plugins, "good", "id=good\n");
+    let found = discover_with(&loader_with_cache_dir(&cache, ""), &plugins)
+        .await
+        .unwrap();
+    assert_eq!(ids(&found), ["good"]);
+    let entry = only_entry_in(&cache);
+    assert!(
+        !plugins.join(".cache").exists(),
+        "nothing is written under plugins_dir"
     );
+
+    let planted = plugins.join(".cache");
+    std::fs::create_dir(&planted).unwrap();
+    std::fs::write(
+        planted.join(entry.file_name().unwrap()),
+        swapped_in_artifact().await,
+    )
+    .unwrap();
+    std::fs::remove_file(&entry).unwrap();
+
+    let logs = LogCapture::at(Level::INFO);
+    let loader = loader_with_cache_dir(&cache, "");
+    for _ in 0..2 {
+        let found = discover_with(&loader, &plugins)
+            .with_subscriber(logs.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            ids(&found),
+            ["good"],
+            "good.wasm runs its own code, not an artifact left under plugins_dir"
+        );
+    }
+    assert_eq!(
+        logs.matching("no longer read and can be deleted").len(),
+        1,
+        "{:?}",
+        logs.lines()
+    );
+    assert!(planted.join(entry.file_name().unwrap()).exists());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cache_entry_writable_by_group_or_others_is_refused_and_replaced() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, plugins, cache) = plugins_and_cache();
+    add_probe(&plugins, "good", "id=good\n");
+    discover_with(&loader_with_cache_dir(&cache, ""), &plugins)
+        .await
+        .unwrap();
+    let entry = only_entry_in(&cache);
+    let original = std::fs::read(&entry).unwrap();
+    assert_eq!(
+        std::fs::metadata(&entry).unwrap().permissions().mode() & 0o077,
+        0,
+        "an entry is written readable by the proxy user only"
+    );
+
+    std::fs::write(&entry, swapped_in_artifact().await).unwrap();
+    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o664)).unwrap();
+    let logs = LogCapture::at(Level::WARN);
+    let found = discover_with(&loader_with_cache_dir(&cache, ""), &plugins)
+        .with_subscriber(logs.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&found),
+        ["good"],
+        "a group-writable entry is not loaded"
+    );
+    let refusals = logs.matching("AOT cache entry refused");
+    assert_eq!(refusals.len(), 1, "{:?}", logs.lines());
+    assert!(
+        refusals[0].contains("writable by group or others"),
+        "{refusals:?}"
+    );
+    assert_eq!(std::fs::read(&entry).unwrap(), original);
+    assert_eq!(
+        std::fs::metadata(&entry).unwrap().permissions().mode() & 0o022,
+        0
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_symlinked_cache_entry_is_not_followed() {
+    let (tmp, plugins, cache) = plugins_and_cache();
+    add_probe(&plugins, "good", "id=good\n");
+    discover_with(&loader_with_cache_dir(&cache, ""), &plugins)
+        .await
+        .unwrap();
+    let entry = only_entry_in(&cache);
+    let original = std::fs::read(&entry).unwrap();
+
+    let elsewhere = tmp.path().join("elsewhere.cwasm");
+    std::fs::write(&elsewhere, swapped_in_artifact().await).unwrap();
+    std::fs::remove_file(&entry).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &entry).unwrap();
+    let logs = LogCapture::at(Level::WARN);
+    let found = discover_with(&loader_with_cache_dir(&cache, ""), &plugins)
+        .with_subscriber(logs.clone())
+        .await
+        .unwrap();
+    assert_eq!(ids(&found), ["good"]);
+    assert_eq!(
+        logs.matching("not a regular file").len(),
+        1,
+        "{:?}",
+        logs.lines()
+    );
+    assert!(!std::fs::symlink_metadata(&entry).unwrap().is_symlink());
+    assert_eq!(std::fs::read(&entry).unwrap(), original);
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_read_only_cache_dir_does_not_stop_loading() {
     use std::os::unix::fs::PermissionsExt;
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "good", "id=good\n");
-    let cache = dir.join(".cache");
-    std::fs::create_dir(&cache).unwrap();
+    let (_tmp, plugins, cache) = plugins_and_cache();
+    add_probe(&plugins, "good", "id=good\n");
+    add_probe(&plugins, "second", "id=second\n");
+    std::fs::create_dir_all(&cache).unwrap();
     std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o555)).unwrap();
     if std::fs::File::create(cache.join("probe")).is_ok() {
         return;
     }
-    let found = discover(&dir).await;
+    let logs = LogCapture::at(Level::WARN);
+    let found = discover_with(&loader_with_cache_dir(&cache, ""), &plugins)
+        .with_subscriber(logs.clone())
+        .await;
     std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).unwrap();
     let metas = found.unwrap_or_else(|e| {
         panic!("an unwritable cache must degrade to in-memory compilation, not fail: {e}")
     });
-    assert_eq!(ids(&metas), ["good"]);
+    assert_eq!(ids(&metas), ["good", "second"]);
+    let warnings = logs.matching("AOT cache directory cannot be written");
+    assert_eq!(warnings.len(), 1, "one warning: {:?}", logs.lines());
+    assert!(
+        warnings[0].contains(&cache.display().to_string()),
+        "{warnings:?}"
+    );
+    assert!(entries_in(&cache).is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cache_dir_that_cannot_be_created_does_not_stop_loading() {
+    use std::os::unix::fs::PermissionsExt;
+    let (tmp, plugins, _) = plugins_and_cache();
+    add_probe(&plugins, "good", "id=good\n");
+    let locked = tmp.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::File::create(locked.join("probe")).is_ok() {
+        return;
+    }
+    let found = discover_with(
+        &loader_with_cache_dir(&locked.join("cache").join("wasm"), ""),
+        &plugins,
+    )
+    .await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(ids(&found.unwrap()), ["good"]);
 }
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_read_only_plugins_dir_still_loads_its_plugins() {
     use std::os::unix::fs::PermissionsExt;
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().join("plugins");
-    std::fs::create_dir(&dir).unwrap();
-    add_probe(&dir, "good", "id=good\n");
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-    if std::fs::File::create(dir.join("probe")).is_ok() {
+    let (_tmp, plugins, cache) = plugins_and_cache();
+    add_probe(&plugins, "good", "id=good\n");
+    std::fs::set_permissions(&plugins, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::File::create(plugins.join("probe")).is_ok() {
         return;
     }
-    let found = discover(&dir).await;
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let found = discover_with(&loader_with_cache_dir(&cache, ""), &plugins).await;
+    std::fs::set_permissions(&plugins, std::fs::Permissions::from_mode(0o755)).unwrap();
     let metas = found.unwrap_or_else(|e| {
         panic!("a read-only plugins_dir (for example a mounted volume) must still load: {e}")
     });
     assert_eq!(ids(&metas), ["good"]);
+    only_entry_in(&cache);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -261,7 +423,7 @@ async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
     for _ in 0..6 {
         let dir = dir.clone();
         tasks.push(tokio::spawn(async move {
-            let loader = fresh_loader();
+            let loader = cached_loader(&dir);
             discover_with(&loader, &dir).await.map(|metas| ids(&metas))
         }));
     }
@@ -282,7 +444,7 @@ async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
         .collect();
     assert!(
         leftovers.is_empty(),
-        "temporary files left in .cache: {leftovers:?}"
+        "temporary files left in the cache directory: {leftovers:?}"
     );
     assert_eq!(cwasm_entries(&dir).len(), 1);
 }
@@ -308,7 +470,7 @@ async fn the_cache_does_not_grow_without_bound_across_plugin_updates() {
     );
     assert!(
         entries.len() <= 2,
-        "one plugin updated {updates} times leaves {} artifacts ({bytes} bytes) in .cache",
+        "one plugin updated {updates} times leaves {} artifacts ({bytes} bytes) in the cache",
         entries.len()
     );
 }
@@ -321,8 +483,8 @@ async fn toggling_instance_pool_does_not_recompile_on_every_start() {
     let mut rebuilds = Vec::new();
     let mut previous: Option<Vec<u8>> = None;
     for pool in [0u32, 8, 0, 8] {
-        let loader = loader_from_toml(&format!("[wasm]\ninstance_pool = {pool}\n"));
-        let before = std::fs::metadata(dir.join(".cache")).ok().and_then(|_| {
+        let loader = cached_loader_from_toml(&format!("[wasm]\ninstance_pool = {pool}\n"), &dir);
+        let before = std::fs::metadata(cache_dir_of(&dir)).ok().and_then(|_| {
             cwasm_entries(&dir)
                 .first()
                 .map(|p| std::fs::metadata(p).unwrap().modified().unwrap())
@@ -378,7 +540,7 @@ async fn a_component_the_pool_cannot_hold_keeps_its_cache_entry_and_names_the_po
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
     std::fs::write(dir.join("wide.wasm"), component_with_a_table_of(20_000)).unwrap();
-    let pooled = || loader_from_toml("[wasm]\ninstance_pool = 8\n");
+    let pooled = || cached_loader_from_toml("[wasm]\ninstance_pool = 8\n", &dir);
     let logs = LogCapture::at(Level::WARN);
 
     let found = discover_with(&pooled(), &dir)
@@ -411,7 +573,7 @@ async fn a_component_the_pool_cannot_hold_keeps_its_cache_entry_and_names_the_po
         logs.lines()
     );
 
-    discover_with(&fresh_loader(), &dir)
+    discover_with(&cached_loader(&dir), &dir)
         .with_subscriber(logs.clone())
         .await
         .unwrap();

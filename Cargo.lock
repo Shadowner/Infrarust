@@ -2009,6 +2009,7 @@ dependencies = [
  "infrarust-test-harness",
  "infrarust_config",
  "infrarust_protocol",
+ "nix",
  "rcgen",
  "rustls",
  "rustls-platform-verifier",

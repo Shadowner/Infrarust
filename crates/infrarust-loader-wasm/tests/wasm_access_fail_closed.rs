@@ -30,8 +30,8 @@ use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
 use support::{
-    EnvOptions, TestEnv, add_precompiled_fixture, load_enabled, loader_from_toml, nil_profile,
-    read_log, write_script,
+    EnvOptions, TestEnv, add_precompiled_fixture, cached_loader_from_toml, load_enabled,
+    nil_profile, read_log, write_script,
 };
 
 const SCRIPTED: &str = "scripted";
@@ -208,7 +208,7 @@ impl Scripted {
             }
             .grant(SCRIPTED, "chat-intercept"),
         );
-        let loader = loader_from_toml(proxy_toml);
+        let loader = cached_loader_from_toml(proxy_toml, &plugins_dir);
         loader.discover(&plugins_dir).await.unwrap();
         let plugin = load_enabled(&loader, &env.factory, SCRIPTED).await;
         Self {

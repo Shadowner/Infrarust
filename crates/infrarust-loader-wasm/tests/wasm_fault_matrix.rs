@@ -697,7 +697,7 @@ async fn a_plugin_whose_metadata_traps_does_not_stop_the_others_from_being_disco
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
     support::add_fixture(tmp.path(), "metadata-trap", "metadata-trap");
-    let loader = support::loader_from_toml(LIMITS);
+    let loader = support::cached_loader_from_toml(LIMITS, tmp.path());
     let discovered = tokio::time::timeout(PROMPTLY, loader.discover(tmp.path()))
         .await
         .expect("discovery returns");
@@ -716,7 +716,7 @@ async fn a_plugin_whose_metadata_never_returns_does_not_hang_discovery() {
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
     support::add_fixture(tmp.path(), "metadata-sleep", "metadata-sleep");
-    let loader = support::loader_from_toml(LIMITS);
+    let loader = support::cached_loader_from_toml(LIMITS, tmp.path());
     let started = Instant::now();
     let discovered =
         tokio::time::timeout(Duration::from_secs(20), loader.discover(tmp.path())).await;
@@ -732,7 +732,8 @@ async fn a_plugin_whose_metadata_traps_does_not_fail_the_plugin_manager_discover
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
     support::add_fixture(tmp.path(), "metadata-trap", "metadata-trap");
-    let loader: Box<dyn PluginLoader> = Box::new(support::loader_from_toml(LIMITS));
+    let loader: Box<dyn PluginLoader> =
+        Box::new(support::cached_loader_from_toml(LIMITS, tmp.path()));
     let mut manager = infrarust_core::plugin::manager::PluginManager::new(vec![loader]);
     let discovered = tokio::time::timeout(PROMPTLY, manager.discover_all(tmp.path()))
         .await

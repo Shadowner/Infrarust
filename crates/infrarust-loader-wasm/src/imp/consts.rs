@@ -2,7 +2,7 @@ use std::time::Duration;
 
 pub(crate) const EPOCH_DEADLINE_TICKS: u64 = 1;
 
-pub(crate) const CACHE_SUBDIR: &str = ".cache";
+pub(crate) const LEGACY_CACHE_SUBDIR: &str = ".cache";
 
 pub(crate) const MAX_COMPONENT_BYTES: u64 = 256 * 1024 * 1024;
 

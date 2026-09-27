@@ -13,7 +13,7 @@ use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::{fixture_path, fresh_loader};
+use support::{cache_dir_of, cached_loader, cached_loader_from_toml, fixture_path, fresh_loader};
 
 const MARKER: &[u8] = b"LIFPROBE-BLOB-V1";
 const BLOB_PAYLOAD: usize = 8192 - 16;
@@ -52,9 +52,12 @@ fn add_probe(plugins_dir: &Path, file_stem: &str, settings: &str) -> PathBuf {
 
 async fn discover(plugins_dir: &Path) -> Result<Vec<PluginMetadata>, LoaderError> {
     let _slot = compile_slot().await;
-    tokio::time::timeout(DISCOVERY_BOUND, fresh_loader().discover(plugins_dir))
-        .await
-        .expect("discovery finishes in bounded time")
+    tokio::time::timeout(
+        DISCOVERY_BOUND,
+        cached_loader(plugins_dir).discover(plugins_dir),
+    )
+    .await
+    .expect("discovery finishes in bounded time")
 }
 
 async fn discover_logged(
@@ -99,8 +102,11 @@ async fn add_precompiled_probe(plugins_dir: &Path, file_stem: &str, settings: &s
             let _slot = compile_slot().await;
             let tmp = tempfile::tempdir().unwrap();
             add_probe(tmp.path(), file_stem, settings);
-            fresh_loader().discover(tmp.path()).await.unwrap();
-            std::fs::read_dir(tmp.path().join(".cache"))
+            cached_loader(tmp.path())
+                .discover(tmp.path())
+                .await
+                .unwrap();
+            std::fs::read_dir(cache_dir_of(tmp.path()))
                 .unwrap()
                 .map(|entry| entry.unwrap().path())
                 .filter(|path| path.extension().is_some_and(|ext| ext == "cwasm"))
@@ -113,7 +119,7 @@ async fn add_precompiled_probe(plugins_dir: &Path, file_stem: &str, settings: &s
                 .collect()
         })
         .await;
-    let cache = plugins_dir.join(".cache");
+    let cache = cache_dir_of(plugins_dir);
     std::fs::create_dir_all(&cache).unwrap();
     for (name, bytes) in artifacts {
         std::fs::write(cache.join(name), bytes).unwrap();
@@ -299,11 +305,11 @@ async fn a_wasm_file_reached_through_two_top_level_links_is_probed_once() {
     let outside = tmp.path().join("outside");
     std::fs::create_dir(&outside).unwrap();
     let linked = add_precompiled_probe(&outside, "linked", "id=linked\n").await;
-    for artifact in std::fs::read_dir(outside.join(".cache")).unwrap() {
+    for artifact in std::fs::read_dir(cache_dir_of(&outside)).unwrap() {
         let artifact = artifact.unwrap().path();
         std::fs::copy(
             &artifact,
-            dir.join(".cache").join(artifact.file_name().unwrap()),
+            cache_dir_of(&dir).join(artifact.file_name().unwrap()),
         )
         .unwrap();
     }
@@ -571,7 +577,7 @@ impl Managed {
 
 async fn manage(dir: &Path, proxy_toml: &str, extra: Vec<Box<dyn PluginLoader>>) -> Managed {
     let mut loaders = extra;
-    loaders.push(Box::new(support::loader_from_toml(proxy_toml)));
+    loaders.push(Box::new(cached_loader_from_toml(proxy_toml, dir)));
     let mut manager = infrarust_core::plugin::manager::PluginManager::new(loaders);
     let _slot = compile_slot().await;
     let discovery = tokio::time::timeout(DISCOVERY_BOUND, manager.discover_all(dir))
@@ -641,7 +647,7 @@ async fn the_proxy_starts_with_its_good_plugins_when_plugins_dir_holds_a_zero_by
     let plugins_dir = dir.clone();
     let _slot = compile_slot().await;
     let started = infrarust_test_harness::TestProxy::builder()
-        .loader(Box::new(fresh_loader()))
+        .loader(Box::new(cached_loader(&dir)))
         .patch_config(move |table| {
             table.insert(
                 "plugins_dir".into(),
@@ -787,7 +793,7 @@ async fn a_plugin_depending_on_a_config_disabled_plugin_is_not_enabled() {
     let dir = tmp.path().to_path_buf();
     add_precompiled_probe(&dir, "base", "id=base\n").await;
     add_precompiled_probe(&dir, "dependent", "id=dependent\ndep=base\n").await;
-    let loader = support::loader_from_toml("");
+    let loader = cached_loader(&dir);
     let mut manager = infrarust_core::plugin::manager::PluginManager::new(vec![Box::new(loader)]);
     manager.set_disabled_plugins(std::collections::HashSet::from(["base".to_owned()]));
     let slot = compile_slot().await;
@@ -834,7 +840,7 @@ async fn shutdown_disables_a_dependent_before_its_dependency() {
 async fn a_sleeping_metadata_export_does_not_hang_discovery() {
     let (_tmp, dir) = staged_with_good().await;
     add_probe(&dir, "sleeper", "id=sleeper\nmeta=sleep:3600000\n");
-    let loader = support::loader_from_toml("[wasm]\nmax_call_duration = \"2s\"\n");
+    let loader = cached_loader_from_toml("[wasm]\nmax_call_duration = \"2s\"\n", &dir);
     let _slot = compile_slot().await;
     let started = Instant::now();
     let outcome = tokio::time::timeout(Duration::from_secs(20), loader.discover(&dir)).await;
@@ -850,7 +856,7 @@ async fn a_sleeping_metadata_export_does_not_hang_discovery() {
 async fn discover_with_a_sleeper(proxy_toml: &str, warm_first: bool) -> (Duration, LogCapture) {
     let (_tmp, dir) = staged_with_good().await;
     add_probe(&dir, "sleeper", "id=sleeper\nmeta=sleep:3600000\n");
-    let loader = support::loader_from_toml(proxy_toml);
+    let loader = cached_loader_from_toml(proxy_toml, &dir);
     let _slot = compile_slot().await;
     if warm_first {
         loader.discover(&dir).await.unwrap();
