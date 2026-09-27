@@ -29,6 +29,9 @@ members = [
     "lif-probe",
     "perf-probe",
     "perf-raw",
+    "sem-probe",
+    "wrong-outcome",
+    "doc-hello",
 ]
 
 [workspace.dependencies]

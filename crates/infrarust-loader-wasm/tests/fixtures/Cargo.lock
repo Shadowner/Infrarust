@@ -76,6 +76,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-doc-hello"
+version = "0.1.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-fault-lab"
 version = "0.0.0"
 dependencies = [
@@ -208,6 +215,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-sem-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-slow-handler"
 version = "0.0.0"
 dependencies = [
@@ -216,6 +230,14 @@ dependencies = [
 
 [[package]]
 name = "fixture-trap-on-purpose"
+version = "0.0.0"
+dependencies = [
+ "fixture-common",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "fixture-wrong-outcome"
 version = "0.0.0"
 dependencies = [
  "fixture-common",
