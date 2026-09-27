@@ -63,7 +63,7 @@ world plugin {
 | `load-balancer` | `config-read`, `server-manage` for `set-drained` and `reset-backend` | Read the balancing strategy and backend health; drain and reset backends. |
 | `messaging` | `plugin-messaging` | Register plugin channels and send plugin messages to clients, backends and servers. |
 | `proxy-info` | none | The proxy's version, bind address and limits, and the capabilities the plugin holds. |
-| `plugin-registry` | none | Read-only list of the loaded plugins. |
+| `plugin-registry` | none | Read-only list of the loaded plugins, with the health of each WASM plugin. |
 | `command-manager` | `command` | Register and unregister proxy commands. |
 | `scheduler` | `scheduler` | Schedule one-shot and repeating callbacks. |
 | `limbo` | `limbo` for `register-limbo-handler` | Register limbo handlers and act on the session resources. |
@@ -1347,7 +1347,14 @@ interface proxy-info {
 }
 
 interface plugin-registry {
-    use types.{plugin-dependency};
+    use types.{plugin-dependency, duration-ms};
+
+    variant plugin-health {
+        healthy,
+        recovering(option<duration-ms>),
+        quarantined(duration-ms),
+        stopped,
+    }
 
     record plugin-info {
         id: string,
@@ -1357,6 +1364,7 @@ interface plugin-registry {
         description: option<string>,
         state: string,
         dependencies: list<plugin-dependency>,
+        health: option<plugin-health>,
     }
 
     %list: func() -> list<plugin-info>;
