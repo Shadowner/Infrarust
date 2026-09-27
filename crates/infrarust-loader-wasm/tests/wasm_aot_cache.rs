@@ -288,7 +288,6 @@ async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-19: AOT cache grows without bound"]
 async fn the_cache_does_not_grow_without_bound_across_plugin_updates() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();

@@ -56,17 +56,27 @@ impl WasmPluginLoader {
         &self,
         cache: &AotCache,
         path: &Path,
+        live: &mut HashSet<String>,
     ) -> Result<DiscoveredWasm, WasmLoaderError> {
         let component = {
             let engine = self.engine.clone();
             let cache = cache.clone();
             let owned = path.to_path_buf();
-            tokio::task::spawn_blocking(move || cache.compile_or_load(&engine, &owned))
+            let (key, component) =
+                tokio::task::spawn_blocking(move || match cache.read_source(&owned) {
+                    Ok(source) => (
+                        Some(source.key().to_owned()),
+                        cache.compile_or_load(&engine, &owned, &source),
+                    ),
+                    Err(error) => (None, Err(error)),
+                })
                 .await
                 .map_err(|join_err| WasmLoaderError::Precompile {
                     path: path.to_path_buf(),
                     reason: format!("compile task failed: {join_err}"),
-                })??
+                })?;
+            live.extend(key);
+            component?
         };
         check_contract(&self.engine, &component, path)?;
         let metadata = extract_metadata(
@@ -137,8 +147,9 @@ impl PluginLoader for WasmPluginLoader {
             let wasm_files = scan_wasm_files(plugin_dir)?;
 
             let mut probed = Vec::new();
+            let mut live = HashSet::new();
             for path in wasm_files {
-                match self.probe(&cache, &path).await {
+                match self.probe(&cache, &path, &mut live).await {
                     Ok(entry) => probed.push(entry),
                     Err(error) => {
                         tracing::error!(
@@ -149,6 +160,8 @@ impl PluginLoader for WasmPluginLoader {
                     }
                 }
             }
+
+            cache.sweep(&live);
 
             let (metadatas, discovered) = without_duplicate_ids(probed);
             *write(&self.discovered) = discovered;

@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 use wasmtime::component::Component;
@@ -16,6 +18,7 @@ const PREAMBLE_LEN: usize = 8;
 const ENTRY_SUFFIX: &str = ".cwasm";
 const TEMP_SUFFIX: &str = ".cwasm.tmp";
 const TEMP_RANDOM_CHARS: usize = 12;
+const ORPHANED_TEMP_AGE: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
 pub(crate) struct AotCache {
@@ -47,14 +50,20 @@ impl AotCache {
         self.dir.join(format!("{key}{ENTRY_SUFFIX}"))
     }
 
+    pub(crate) fn read_source(&self, wasm_path: &Path) -> Result<Source, WasmLoaderError> {
+        let bytes = read_component(wasm_path)?;
+        let key = self.cache_key(&bytes);
+        Ok(Source { bytes, key })
+    }
+
     pub(crate) fn compile_or_load(
         &self,
         engine: &Engine,
         wasm_path: &Path,
+        source: &Source,
     ) -> Result<Component, WasmLoaderError> {
-        let bytes = read_component(wasm_path)?;
-        let key = self.cache_key(&bytes);
-        let entry = self.entry_path(&key);
+        let Source { bytes, key } = source;
+        let entry = self.entry_path(key);
 
         let stale = match self.read_entry(&entry) {
             Some(artifact) => match load_artifact(engine, &artifact) {
@@ -66,7 +75,7 @@ impl AotCache {
 
         let artifact =
             engine
-                .precompile_component(&bytes)
+                .precompile_component(bytes)
                 .map_err(|e| WasmLoaderError::Precompile {
                     path: wasm_path.to_path_buf(),
                     reason: bounded(format_args!("{e:#}")),
@@ -80,14 +89,58 @@ impl AotCache {
                     error = %bounded(format_args!("{error:#}")),
                     "AOT cache entry could not be loaded; replaced by a fresh compilation"
                 );
-                self.store(&key, &artifact);
+                self.store(key, &artifact);
             }
-            (None, _) => self.store(&key, &artifact),
+            (None, _) => self.store(key, &artifact),
         }
         loaded.map_err(|e| WasmLoaderError::Deserialize {
             path: wasm_path.to_path_buf(),
             reason: bounded(format_args!("{e:#}")),
         })
+    }
+
+    pub(crate) fn sweep(&self, live: &HashSet<String>) {
+        let entries = match std::fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                tracing::debug!(
+                    cache_dir = %self.dir.display(),
+                    error = %error,
+                    "AOT cache directory cannot be listed; nothing removed"
+                );
+                return;
+            }
+        };
+        let now = SystemTime::now();
+        let mut removed = 0usize;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let unused = match name.to_str().and_then(CacheFile::parse) {
+                Some(CacheFile::Entry(key)) => !live.contains(key),
+                Some(CacheFile::Temp) => is_orphaned(&entry, now),
+                None => false,
+            };
+            if !unused {
+                continue;
+            }
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => removed += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => tracing::debug!(
+                    path = %entry.path().display(),
+                    error = %error,
+                    "unused AOT cache file cannot be removed"
+                ),
+            }
+        }
+        if removed > 0 {
+            tracing::debug!(
+                cache_dir = %self.dir.display(),
+                removed,
+                "AOT cache files no discovered plugin uses were removed"
+            );
+        }
     }
 
     fn read_entry(&self, entry: &Path) -> Option<Vec<u8>> {
@@ -149,6 +202,48 @@ impl AotCache {
             .map(drop)
             .map_err(|error| error.error)
     }
+}
+
+pub(crate) struct Source {
+    bytes: Vec<u8>,
+    key: String,
+}
+
+impl Source {
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+enum CacheFile<'a> {
+    Entry(&'a str),
+    Temp,
+}
+
+impl<'a> CacheFile<'a> {
+    fn parse(name: &'a str) -> Option<Self> {
+        if let Some(stem) = name.strip_suffix(TEMP_SUFFIX) {
+            let (key, random) = stem.split_once('.')?;
+            let random_ok = random.len() == TEMP_RANDOM_CHARS
+                && random.bytes().all(|b| b.is_ascii_alphanumeric());
+            return (is_key(key) && random_ok).then_some(Self::Temp);
+        }
+        let key = name.strip_suffix(ENTRY_SUFFIX)?;
+        is_key(key).then_some(Self::Entry(key))
+    }
+}
+
+fn is_key(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn is_orphaned(entry: &std::fs::DirEntry, now: SystemTime) -> bool {
+    entry
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| now.duration_since(modified).ok())
+        .is_some_and(|age| age >= ORPHANED_TEMP_AGE)
 }
 
 #[cfg(unix)]
@@ -384,6 +479,58 @@ mod tests {
             key_under(&crate::engine::build_engine(&on_demand).unwrap()),
             key_under(&crate::engine::build_engine(&pooled).unwrap())
         );
+    }
+
+    #[test]
+    fn the_sweep_removes_only_what_the_cache_wrote_and_nothing_uses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = AotCache::new(&engine_with(|_| {}), tmp.path().to_path_buf());
+        let used = "a".repeat(64);
+        let unused = "b".repeat(64);
+        let file = |name: &str| {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, b"x").unwrap();
+            path
+        };
+        let aged = |path: &Path| {
+            let file = std::fs::File::options().write(true).open(path).unwrap();
+            file.set_modified(SystemTime::now() - ORPHANED_TEMP_AGE - Duration::from_secs(1))
+                .unwrap();
+        };
+        let kept_entry = file(&format!("{used}.cwasm"));
+        let dropped_entry = file(&format!("{unused}.cwasm"));
+        let fresh_temp = file(&format!("{used}.abcdefABCDEF.cwasm.tmp"));
+        let old_temp = file(&format!("{unused}.0123456789ab.cwasm.tmp"));
+        aged(&old_temp);
+        let foreign = [
+            file("notes.txt"),
+            file(&format!("{}.cwasm", "c".repeat(63))),
+            file(&format!("{}.cwasm", "C".repeat(64))),
+            file(&format!("{unused}.cwasm.bak")),
+            file(&format!("{unused}.short.cwasm.tmp")),
+        ];
+        for path in &foreign {
+            aged(path);
+        }
+        cache.sweep(&HashSet::from([used]));
+        assert!(kept_entry.exists());
+        assert!(!dropped_entry.exists());
+        assert!(
+            fresh_temp.exists(),
+            "a temporary file being written is left alone"
+        );
+        assert!(!old_temp.exists());
+        for path in &foreign {
+            assert!(path.exists(), "{} is not the cache's", path.display());
+        }
+    }
+
+    #[test]
+    fn a_missing_cache_directory_is_not_created_by_the_sweep() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("absent");
+        AotCache::new(&engine_with(|_| {}), dir.clone()).sweep(&HashSet::new());
+        assert!(!dir.exists());
     }
 
     #[test]
