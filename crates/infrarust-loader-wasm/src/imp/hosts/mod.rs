@@ -25,6 +25,8 @@ mod text;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use log::enabled_level;
+
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;

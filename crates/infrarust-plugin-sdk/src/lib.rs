@@ -91,23 +91,43 @@ pub use uuid::Uuid;
 
 #[macro_export]
 macro_rules! trace {
-    ($($arg:tt)*) => { $crate::log::trace(&::std::format!($($arg)*)) };
+    ($($arg:tt)*) => {
+        if $crate::log::enabled($crate::log::Level::Trace) {
+            $crate::log::emit($crate::log::Level::Trace, &::std::format!($($arg)*))
+        }
+    };
 }
 #[macro_export]
 macro_rules! debug {
-    ($($arg:tt)*) => { $crate::log::debug(&::std::format!($($arg)*)) };
+    ($($arg:tt)*) => {
+        if $crate::log::enabled($crate::log::Level::Debug) {
+            $crate::log::emit($crate::log::Level::Debug, &::std::format!($($arg)*))
+        }
+    };
 }
 #[macro_export]
 macro_rules! info {
-    ($($arg:tt)*) => { $crate::log::info(&::std::format!($($arg)*)) };
+    ($($arg:tt)*) => {
+        if $crate::log::enabled($crate::log::Level::Info) {
+            $crate::log::emit($crate::log::Level::Info, &::std::format!($($arg)*))
+        }
+    };
 }
 #[macro_export]
 macro_rules! warn {
-    ($($arg:tt)*) => { $crate::log::warn(&::std::format!($($arg)*)) };
+    ($($arg:tt)*) => {
+        if $crate::log::enabled($crate::log::Level::Warn) {
+            $crate::log::emit($crate::log::Level::Warn, &::std::format!($($arg)*))
+        }
+    };
 }
 #[macro_export]
 macro_rules! error {
-    ($($arg:tt)*) => { $crate::log::error(&::std::format!($($arg)*)) };
+    ($($arg:tt)*) => {
+        if $crate::log::enabled($crate::log::Level::Error) {
+            $crate::log::emit($crate::log::Level::Error, &::std::format!($($arg)*))
+        }
+    };
 }
 
 pub mod prelude {

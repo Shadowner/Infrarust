@@ -98,6 +98,10 @@ mod imp {
     pub(crate) fn release_snapshot(player: u64) -> Result<(), HostError> {
         permissions::release(player)
     }
+
+    pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
+        crate::bindings::log::max_level()
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -130,6 +134,7 @@ mod imp {
         pub(crate) permission_providers: usize,
         pub(crate) snapshots: HashMap<u64, PermissionSnapshot>,
         pub(crate) refused: HashSet<String>,
+        pub(crate) log_level: Option<crate::bindings::log::Level>,
     }
 
     impl FakeHost {
@@ -335,5 +340,9 @@ mod imp {
             host.snapshots.remove(&player);
         });
         Ok(())
+    }
+
+    pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
+        with_fake(|host| host.log_level)
     }
 }

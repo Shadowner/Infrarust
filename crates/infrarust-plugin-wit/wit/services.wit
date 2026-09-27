@@ -1,4 +1,7 @@
 interface log {
+    enum level { error, warn, info, debug, trace }
+
+    max-level: func() -> option<level>;
     trace: func(message: string);
     debug: func(message: string);
     info: func(message: string);

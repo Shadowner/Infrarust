@@ -4,6 +4,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use wasmtime::StoreContextMut;
 use wasmtime::component::{ComponentType, LinkerInstance, Lower, Resource, WasmList};
 
+use super::bindings::infrarust::plugin::log::Level as WitLevel;
 use super::store_state::{CodecStoreState, GuestLevel};
 
 const WRITE_BUDGET: u64 = 64 * 1024;
@@ -46,6 +47,16 @@ fn discard() -> Resource<()> {
     Resource::new_own(0)
 }
 
+fn level_to_wit(level: tracing::Level) -> WitLevel {
+    match level {
+        tracing::Level::ERROR => WitLevel::Error,
+        tracing::Level::WARN => WitLevel::Warn,
+        tracing::Level::INFO => WitLevel::Info,
+        tracing::Level::DEBUG => WitLevel::Debug,
+        _ => WitLevel::Trace,
+    }
+}
+
 fn guest_level(function: &str) -> Option<GuestLevel> {
     match function {
         "trace" => Some(GuestLevel::Trace),
@@ -63,6 +74,11 @@ pub(super) fn define(
     function: &str,
 ) -> wasmtime::Result<bool> {
     match (interface, function) {
+        ("infrarust:plugin/log", "max-level") => {
+            slot.func_wrap(function, |_: Store<'_>, (): ()| {
+                Ok((crate::hosts::enabled_level().map(level_to_wit),))
+            })?;
+        }
         ("infrarust:plugin/log", level) => {
             let Some(level) = guest_level(level) else {
                 return Ok(false);
