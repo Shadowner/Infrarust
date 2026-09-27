@@ -8,7 +8,7 @@ use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::permissions::Capability;
 use infrarust_api::plugin::{Plugin, PluginMetadata};
 use wasmtime::Engine;
-use wasmtime::component::Component;
+use wasmtime::component::{Component, Linker};
 
 use crate::actor::PluginActor;
 use crate::cache::AotCache;
@@ -23,11 +23,12 @@ use crate::linker::build_linker;
 use crate::metadata::extract_metadata;
 use crate::plugin::WasmPlugin;
 use crate::registrations::Registrations;
-use crate::store_state::PluginSetup;
+use crate::store_state::{PluginSetup, PluginStoreState};
 use crate::sync::{lock, read, write};
 
 pub struct WasmPluginLoader {
     engine: Engine,
+    linker: Linker<PluginStoreState>,
     config: WasmLoaderConfig,
     cache: AotCache,
     legacy_cache_noted: AtomicBool,
@@ -45,10 +46,12 @@ struct DiscoveredWasm {
 
 impl WasmPluginLoader {
     pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
+        let linker = build_linker(&engine, "host").map_err(std::io::Error::other)?;
         let ticker = EpochTicker::spawn(engine.clone(), config.epoch_tick())?;
         let cache = AotCache::new(&engine, config.cache_dir().map(Path::to_path_buf));
         Ok(Self {
             engine,
+            linker,
             config,
             cache,
             legacy_cache_noted: AtomicBool::new(false),
@@ -105,6 +108,7 @@ impl WasmPluginLoader {
         check_contract(&self.engine, &component, path)?;
         let metadata = extract_metadata(
             &self.engine,
+            &self.linker,
             &component,
             path,
             &self.config.default_sandbox(),
@@ -237,8 +241,6 @@ impl PluginLoader for WasmPluginLoader {
                 self.config.strict_capabilities(plugin_id),
             )
             .map_err(|e| e.into_loader_error(plugin_id))?;
-            let linker = build_linker(&self.engine, plugin_id)
-                .map_err(|e| e.into_loader_error(plugin_id))?;
 
             let codec = if capabilities.has(Capability::CodecFilter) {
                 let instantiator = crate::codec::CodecInstantiator::new(
@@ -267,7 +269,7 @@ impl PluginLoader for WasmPluginLoader {
                 mounts: mounts.into(),
             };
             let factory =
-                InstanceFactory::new(self.engine.clone(), &entry.component, &linker, setup)
+                InstanceFactory::new(self.engine.clone(), &entry.component, &self.linker, setup)
                     .map_err(|e| e.into_loader_error(plugin_id))?;
             let actor = PluginActor::start(factory)
                 .await

@@ -3,31 +3,34 @@ use std::time::Duration;
 
 use infrarust_api::plugin::PluginMetadata;
 use infrarust_plugin_common::validate_plugin_id;
-use wasmtime::component::Component;
+use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
 
 use crate::bindings::Plugin as PluginBindings;
 use crate::bindings::exports::infrarust::plugin::guest::PluginMetadata as WitMetadata;
 use crate::config::SandboxLimits;
 use crate::error::{WasmLoaderError, bounded};
-use crate::linker::build_linker;
 use crate::store_state::{PluginStoreState, build_probe_state, install_epoch_control};
 
 pub(crate) const METADATA_TIME_LIMIT: Duration = Duration::from_secs(5);
 
 pub(crate) async fn extract_metadata(
     engine: &Engine,
+    linker: &Linker<PluginStoreState>,
     component: &Component,
     path: &Path,
     sandbox: &SandboxLimits,
 ) -> Result<PluginMetadata, WasmLoaderError> {
     let limit = METADATA_TIME_LIMIT.min(sandbox.max_call_duration);
-    let wit_md = tokio::time::timeout(limit, call_metadata(engine, component, path, sandbox))
-        .await
-        .map_err(|_| WasmLoaderError::Metadata {
-            path: path.to_path_buf(),
-            reason: format!("metadata() did not return within {limit:?}"),
-        })??;
+    let wit_md = tokio::time::timeout(
+        limit,
+        call_metadata(engine, linker, component, path, sandbox),
+    )
+    .await
+    .map_err(|_| WasmLoaderError::Metadata {
+        path: path.to_path_buf(),
+        reason: format!("metadata() did not return within {limit:?}"),
+    })??;
     validate_plugin_id(&wit_md.id).map_err(|invalid| WasmLoaderError::Metadata {
         path: path.to_path_buf(),
         reason: bounded(&invalid),
@@ -52,6 +55,7 @@ pub(crate) async fn extract_metadata(
 
 async fn call_metadata(
     engine: &Engine,
+    linker: &Linker<PluginStoreState>,
     component: &Component,
     path: &Path,
     sandbox: &SandboxLimits,
@@ -61,8 +65,7 @@ async fn call_metadata(
     install_epoch_control(&mut store, sandbox.max_epoch_yields);
     store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
 
-    let linker = build_linker(engine, &probe_id)?;
-    let bindings = PluginBindings::instantiate_async(&mut store, component, &linker)
+    let bindings = PluginBindings::instantiate_async(&mut store, component, linker)
         .await
         .map_err(|e| WasmLoaderError::Metadata {
             path: path.to_path_buf(),
