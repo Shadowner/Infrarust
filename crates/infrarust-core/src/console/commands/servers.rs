@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use infrarust_api::services::config_service::{ConfigService, ProxyMode, ServerConfig};
+use infrarust_api::services::config_service::{ConfigService, ServerConfig};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{ServerAddress, ServerId};
 use infrarust_server_manager::ServerState;
@@ -21,17 +21,6 @@ pub(crate) fn state_span(state: ServerState) -> Span {
         ServerState::Stopping => Span::marked(Mark::Busy, "stopping"),
         ServerState::Crashed => Span::marked(Mark::Down, "crashed"),
         _ => Span::muted("unknown"),
-    }
-}
-
-pub(crate) const fn mode_name(mode: ProxyMode) -> &'static str {
-    match mode {
-        ProxyMode::Passthrough => "passthrough",
-        ProxyMode::ZeroCopy => "zero_copy",
-        ProxyMode::ClientOnly => "client_only",
-        ProxyMode::Offline => "offline",
-        ProxyMode::ServerOnly => "server_only",
-        _ => "unknown",
     }
 }
 
@@ -137,7 +126,7 @@ pub(crate) fn servers_output(
             );
         }
         cells.push(players_text(server.players, config.max_players, "/").into());
-        cells.push(mode_name(config.proxy_mode).into());
+        cells.push(config.proxy_mode.as_str().into());
         cells.push(address_cell(&config.addresses));
         table.row(cells);
     }
@@ -156,7 +145,7 @@ pub(crate) fn server_block(server: &ServerView, state: Option<ServerState>) -> B
     let mut fields = Fields::new()
         .field("addresses", join_addresses(&config.addresses))
         .field("domains", domains)
-        .field("mode", mode_name(config.proxy_mode))
+        .field("mode", config.proxy_mode.as_str())
         .field(
             "players",
             players_text(server.players, config.max_players, " / "),
@@ -361,6 +350,8 @@ impl ConsoleCommand for StopServerCommand {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+    use infrarust_api::services::config_service::ProxyMode;
+
     use super::*;
     use crate::console::render::Renderer;
 
@@ -436,13 +427,6 @@ mod tests {
             Span::marked(Mark::Down, "crashed")
         );
         assert_eq!(state_span(ServerState::Unknown), Span::muted("unknown"));
-    }
-
-    #[test]
-    fn modes_are_named_as_the_config_spells_them() {
-        assert_eq!(mode_name(ProxyMode::ZeroCopy), "zero_copy");
-        assert_eq!(mode_name(ProxyMode::ClientOnly), "client_only");
-        assert_eq!(mode_name(ProxyMode::ServerOnly), "server_only");
     }
 
     #[test]

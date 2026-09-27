@@ -19,6 +19,19 @@ pub enum ProxyMode {
     ServerOnly,
 }
 
+impl ProxyMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Passthrough => "passthrough",
+            Self::ZeroCopy => "zero_copy",
+            Self::ClientOnly => "client_only",
+            Self::Offline => "offline",
+            Self::ServerOnly => "server_only",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PacketDirection {
@@ -300,6 +313,15 @@ pub enum FilterPriority {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn proxy_modes_are_named_as_the_config_spells_them() {
+        assert_eq!(ProxyMode::Passthrough.as_str(), "passthrough");
+        assert_eq!(ProxyMode::ZeroCopy.as_str(), "zero_copy");
+        assert_eq!(ProxyMode::ClientOnly.as_str(), "client_only");
+        assert_eq!(ProxyMode::Offline.as_str(), "offline");
+        assert_eq!(ProxyMode::ServerOnly.as_str(), "server_only");
+    }
 
     #[test]
     fn client_setting_ids_round_trip() {

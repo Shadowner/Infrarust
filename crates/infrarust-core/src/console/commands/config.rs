@@ -4,7 +4,7 @@ use std::pin::Pin;
 use infrarust_api::services::config_service::{ConfigService, ServerConfig};
 
 use crate::console::ConsoleServices;
-use crate::console::commands::servers::{join_addresses, mode_name};
+use crate::console::commands::servers::join_addresses;
 use crate::console::dispatcher::ConsoleCommand;
 use crate::console::output::{Block, CommandCategory, CommandOutput, Span, Table};
 
@@ -20,7 +20,7 @@ pub(crate) fn config_block(configs: &[ServerConfig]) -> Block {
     for config in configs {
         table.row([
             Span::entity(config.id.as_str()),
-            Span::plain(mode_name(config.proxy_mode)),
+            Span::plain(config.proxy_mode.as_str()),
             Span::muted(join_addresses(&config.addresses)),
         ]);
     }
