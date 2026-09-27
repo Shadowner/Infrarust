@@ -781,7 +781,11 @@ conformance!(
         .plugin("scripted-peer", ["on chat-message late record"])
         .grant("scripted", CHAT_INTERCEPT)
         .grant("scripted-peer", CHAT_INTERCEPT)
-        .fire(E::PreLogin, "allowed")
+        .fire_diverging(
+            E::PreLogin,
+            "allowed",
+            "denied:A proxy plugin is unavailable. Please try again later.",
+        )
         .fire(E::ChatMessage, "modify:alive")
         .disable()
         .log(
@@ -806,9 +810,11 @@ conformance!(
             [seen(E::ChatMessage, LATE), "disable".to_owned()],
         )
         .expect_divergence(
-            "a native panic is contained to the one handler call, but a WASM trap discards the \
-             instance: a fresh one runs on_enable again, told it is a recovery, before it \
-             handles the later events, so the WASM log shows a second enable"
+            "a native panic is contained to the one handler call and the event goes on as if the \
+             listener were not there, but a WASM listener that gives no answer to an access event \
+             denies it, and the trap discards the instance: a fresh one runs on_enable again, told \
+             it is a recovery, before it handles the later events, so the WASM log shows a second \
+             enable"
         ),
 );
 

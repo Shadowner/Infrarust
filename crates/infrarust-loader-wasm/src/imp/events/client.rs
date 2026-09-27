@@ -6,7 +6,7 @@ use infrarust_api::events::resource_pack::{PlayerResourcePackStatusEvent, Resour
 use infrarust_api::events::transfer::{PreTransferEvent, PreTransferResult, TransferOrigin};
 use infrarust_api::player::ResourcePackStatus;
 
-use super::{Applied, Texts, WasmEvent, unmatched};
+use super::{Applied, Restore, Texts, WasmEvent, unavailable, unmatched};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
@@ -119,6 +119,16 @@ impl WasmEvent for PreTransferEvent {
             },
         });
         texts.applied()
+    }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = self.result().clone();
+        self.set_result(PreTransferResult::Denied {
+            reason: unavailable(),
+        });
+        Some(Restore::new(move |event: &mut Self| {
+            event.set_result(previous);
+        }))
     }
 }
 

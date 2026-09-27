@@ -538,6 +538,7 @@ async fn test_denied_player_write_stops_messages_to_players() {
 const SLOW_HANDLER_TIMEOUT: Duration = Duration::from_millis(500);
 const PATIENT_HANDLER_TIMEOUT: Duration = Duration::from_secs(30);
 const PROMPTLY: Duration = Duration::from_secs(10);
+const DENIED: &str = "denied:A proxy plugin is unavailable. Please try again later.";
 
 async fn enable_slow_handler_with(
     loader: &WasmPluginLoader,
@@ -603,6 +604,7 @@ fn outcome(event: &ServerPreConnectEvent) -> String {
     match event.result() {
         ServerPreConnectResult::Allowed => "allowed".to_string(),
         ServerPreConnectResult::Redirect(server) => format!("connect-to:{}", server.as_str()),
+        ServerPreConnectResult::Denied { reason } => format!("denied:{}", reason.to_plain()),
         _ => "other".to_string(),
     }
 }
@@ -739,8 +741,8 @@ async fn test_full_queue_fails_fast_without_waiting_for_the_plugin() {
                 .expect("a full queue must not make the caller wait for the parked guest");
             assert_eq!(
                 outcome(&rejected),
-                "allowed",
-                "a rejected call has no outcome"
+                DENIED,
+                "a rejected call gets no answer from the plugin, so the access event is denied"
             );
         }
         let found = tokio::time::timeout(PROMPTLY, dispatch_line(&env.command_manager, "ping"))
@@ -765,7 +767,7 @@ async fn test_full_queue_fails_fast_without_waiting_for_the_plugin() {
     .with_subscriber(warnings.clone())
     .await;
 
-    let full = warnings.matching("queue is full");
+    let full = warnings.matching("queue is full; refusing the call");
     assert_eq!(full.len(), 1, "the warning is rate-limited: {full:?}");
     assert!(
         full[0].contains("slow-handler") && full[0].contains("handle-event"),
@@ -789,8 +791,8 @@ async fn test_call_whose_caller_gave_up_while_queued_is_skipped() {
         let abandoned = env.event_bus.fire(pre_connect()).await;
         assert_eq!(
             outcome(&abandoned),
-            "allowed",
-            "the bus gave up on the queued call"
+            DENIED,
+            "the bus gave up on the queued call, and the unanswered access event stays denied"
         );
 
         gate.open();

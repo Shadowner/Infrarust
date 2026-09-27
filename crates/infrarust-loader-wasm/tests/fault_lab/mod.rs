@@ -36,6 +36,7 @@ use crate::support;
 pub const LAB: &str = "fault-lab";
 pub const PEER: &str = "fault-lab-peer";
 pub const PROMPTLY: Duration = Duration::from_secs(15);
+pub const ACCESS_GUARDS: usize = 2;
 
 pub struct LabPlugin {
     pub fixture: &'static str,

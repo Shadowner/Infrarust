@@ -155,7 +155,11 @@ async fn hundreds_of_failed_restarts_leave_nothing_behind() {
     );
     assert_eq!(tried, 300);
     assert_eq!(lab.tasks(LAB), 0, "no failed instance keeps a task");
-    assert_eq!(lab.listeners(LAB), 0, "no failed instance keeps a listener");
+    assert_eq!(
+        lab.listeners(LAB),
+        fault_lab::ACCESS_GUARDS,
+        "no failed instance keeps a listener; only the guards that deny its access events remain"
+    );
     assert_eq!(registrations(&lab).commands, baseline.commands);
     assert!(
         after.0 <= before.0 + 4,
@@ -273,7 +277,7 @@ async fn a_quarantined_plugin_comes_back_on_its_own_when_its_backoff_passes() {
     let listening = lab.listeners(LAB);
     lab.set_faults(LAB, "listen lab-ping\ncommand panic");
     lab.dispatch("lab").await;
-    assert_eq!(lab.listeners(LAB), 0, "quarantined");
+    assert_eq!(lab.listeners(LAB), fault_lab::ACCESS_GUARDS, "quarantined");
     let quarantined_at = Instant::now();
 
     lab.wait_for("the retry after the backoff, without any call", || {

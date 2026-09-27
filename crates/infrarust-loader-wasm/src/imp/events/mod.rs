@@ -2,6 +2,7 @@ mod admin;
 mod chat;
 mod client;
 mod connection;
+mod guard;
 mod handshake;
 mod limbo;
 mod login;
@@ -9,6 +10,7 @@ mod messaging;
 mod packet;
 mod proxy;
 
+pub(crate) use guard::{AccessListeners, guard, is_access};
 pub(crate) use messaging::named_result;
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
@@ -42,11 +44,30 @@ use infrarust_api::events::transfer::PreTransferEvent;
 use infrarust_api::types::Component;
 use infrarust_plugin_wit::arena::ArenaError;
 
-use crate::actor::InstanceRef;
+use crate::actor::{CallFailure, InstanceRef};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
 use crate::snapshots::SnapshotError;
+
+pub(crate) const PLUGIN_UNAVAILABLE: &str =
+    "A proxy plugin is unavailable. Please try again later.";
+
+pub(crate) fn unavailable() -> Component {
+    Component::text(PLUGIN_UNAVAILABLE)
+}
+
+pub(crate) struct Restore<E>(Box<dyn FnOnce(&mut E) + Send>);
+
+impl<E> Restore<E> {
+    pub(crate) fn new(restore: impl FnOnce(&mut E) + Send + 'static) -> Self {
+        Self(Box::new(restore))
+    }
+
+    fn undo(self, event: &mut E) {
+        (self.0)(event);
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Applied {
@@ -68,6 +89,13 @@ pub(crate) trait WasmEvent: Send + 'static {
 
     fn apply_for(&mut self, outcome: we::EventOutcome, _instance: &InstanceRef) -> Applied {
         self.apply(outcome)
+    }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>>
+    where
+        Self: Sized,
+    {
+        None
     }
 }
 
@@ -232,7 +260,9 @@ fn subscribe<E: WasmEvent + Event>(
     priority: EventPriority,
     listener: u64,
 ) -> ListenerHandle {
+    let tracked = is_access(E::KIND).then(|| instance.access().track(E::KIND, priority));
     bus.subscribe_async::<E, _>(priority, move |event: &mut E| {
+        let _ = &tracked;
         deliver(event, instance.clone(), listener)
     })
 }
@@ -243,9 +273,10 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
         post(&instance, E::KIND, listener, wit);
         return Box::pin(async {});
     }
+    let denied = event.deny_unanswered();
     Box::pin(async move {
-        let outcome = instance
-            .call_or_none("handle-event", move |store, bindings| {
+        let answer = instance
+            .call("handle-event", move |store, bindings| {
                 Box::pin(async move {
                     bindings
                         .infrarust_plugin_guest()
@@ -254,10 +285,29 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
                 })
             })
             .await;
-        if let Some(outcome) = outcome {
-            settle(event, outcome, &instance);
+        match answer {
+            Ok(outcome) => {
+                if let Some(denied) = denied {
+                    denied.undo(event);
+                }
+                settle(event, outcome, &instance);
+            }
+            Err(failure) if denied.is_some() => report_denied(&instance, E::KIND, &failure),
+            Err(_) => {}
         }
     })
+}
+
+fn report_denied(instance: &InstanceRef, kind: EventKind, failure: &CallFailure) {
+    if let Some(suppressed) = instance.admit_warning() {
+        tracing::warn!(
+            plugin = instance.plugin_id(),
+            event = kind_name(kind),
+            cause = %failure,
+            suppressed,
+            "access event denied: the wasm plugin listening to it did not answer"
+        );
+    }
 }
 
 fn post(instance: &InstanceRef, kind: EventKind, listener: u64, wit: we::Event) {

@@ -6,7 +6,7 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::types::ServerId;
 
-use super::{Applied, Texts, WasmEvent, unmatched};
+use super::{Applied, Restore, Texts, WasmEvent, unavailable, unmatched};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::component;
 use crate::convert;
@@ -54,6 +54,14 @@ impl WasmEvent for PlayerChooseInitialServerEvent {
             }
         });
         Applied::Set
+    }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = self.result().clone();
+        self.deny(unavailable());
+        Some(Restore::new(move |event: &mut Self| {
+            event.set_result(previous);
+        }))
     }
 }
 
@@ -109,6 +117,14 @@ impl WasmEvent for ServerPreConnectEvent {
             },
         });
         texts.applied()
+    }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = self.result().clone();
+        self.deny(unavailable());
+        Some(Restore::new(move |event: &mut Self| {
+            event.set_result(previous);
+        }))
     }
 }
 

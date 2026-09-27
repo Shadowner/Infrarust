@@ -185,7 +185,7 @@ fn limbo_session(player_id: u64) -> Arc<RecordingLimboSession> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_trapped_handler_leaves_its_event_unchanged_and_a_fresh_instance_handles_the_next_one() {
+async fn a_trapped_handler_denies_its_access_event_and_a_fresh_instance_handles_the_next_one() {
     let logs = LogCapture::at(Level::INFO);
 
     async {
@@ -199,8 +199,8 @@ async fn a_trapped_handler_leaves_its_event_unchanged_and_a_fresh_instance_handl
             .await
             .unwrap();
         assert!(
-            matches!(login.result(), PreLoginResult::Allowed),
-            "the trapped handler left the event unchanged"
+            matches!(login.result(), PreLoginResult::Denied { reason } if reason.to_plain() == "A proxy plugin is unavailable. Please try again later."),
+            "the trapped handler gave no answer, so the access event is denied"
         );
         let message = tokio::time::timeout(PROMPTLY, fx.env.event_bus.fire(chat()))
             .await
@@ -352,7 +352,11 @@ async fn repeated_traps_quarantine_the_plugin_until_its_backoff_passes() {
             ],
             "two restarts fit in the window, the third fault quarantines the plugin"
         );
-        assert_eq!(listeners::<PreLoginEvent>(&fx.env.event_bus, SCRIPTED), 0);
+        assert_eq!(
+            listeners::<PreLoginEvent>(&fx.env.event_bus, SCRIPTED),
+            1,
+            "only the guard that denies pre-login while the plugin is quarantined"
+        );
 
         let started = Instant::now();
         assert!(dispatch(&fx.env, "greet").await, "the host still routes it");
@@ -401,8 +405,8 @@ async fn a_trap_in_the_recovery_on_enable_counts_as_a_failed_restart() {
         fx.env.event_bus.fire(pre_login()).await;
         assert_eq!(
             listeners::<PreLoginEvent>(&fx.env.event_bus, SCRIPTED),
-            0,
-            "the listeners of the failed restarts are gone too"
+            1,
+            "the listeners of the failed restarts are gone too; only the guard that denies pre-login remains"
         );
 
         std::fs::remove_dir(&log).unwrap();

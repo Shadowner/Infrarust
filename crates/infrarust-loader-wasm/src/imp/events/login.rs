@@ -5,9 +5,11 @@ use infrarust_api::events::lifecycle::{
     PreLoginEvent, PreLoginResult,
 };
 
+use std::sync::Arc;
+
 use infrarust_api::permissions::PermissionSnapshot;
 
-use super::{Applied, Texts, WasmEvent, unmatched};
+use super::{Applied, Restore, Texts, WasmEvent, unavailable, unmatched};
 use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::component;
@@ -48,6 +50,14 @@ impl WasmEvent for PreLoginEvent {
             we::PreLoginResult::ForceOnline => PreLoginResult::ForceOnline,
         });
         texts.applied()
+    }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = self.result().clone();
+        self.deny(unavailable());
+        Some(Restore::new(move |event: &mut Self| {
+            event.set_result(previous);
+        }))
     }
 }
 
@@ -135,6 +145,21 @@ impl WasmEvent for PermissionsSetupEvent {
         self.set_result(PermissionsSetupResult::Custom(checker));
         applied
     }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = match self.result() {
+            PermissionsSetupResult::Custom(checker) => {
+                Some(PermissionsSetupResult::Custom(Arc::clone(checker)))
+            }
+            _ => None,
+        };
+        self.set_result(PermissionsSetupResult::Custom(Arc::new(
+            PermissionSnapshot::new(),
+        )));
+        Some(Restore::new(move |event: &mut Self| {
+            event.set_result(previous.unwrap_or_default());
+        }))
+    }
 }
 
 impl WasmEvent for LoginEvent {
@@ -166,6 +191,14 @@ impl WasmEvent for LoginEvent {
         });
         texts.applied()
     }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = self.result().clone();
+        self.deny(unavailable());
+        Some(Restore::new(move |event: &mut Self| {
+            event.set_result(previous);
+        }))
+    }
 }
 
 impl WasmEvent for GameProfileRequestEvent {
@@ -190,6 +223,15 @@ impl WasmEvent for GameProfileRequestEvent {
         };
         self.profile = convert::game_profile_from_wit(result.profile);
         Applied::Set
+    }
+
+    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
+        let previous = self.denied().cloned();
+        self.deny(unavailable());
+        Some(Restore::new(move |event: &mut Self| match previous {
+            Some(reason) => event.deny(reason),
+            None => event.allow(),
+        }))
     }
 }
 

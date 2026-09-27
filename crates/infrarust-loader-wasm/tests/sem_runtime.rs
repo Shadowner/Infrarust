@@ -584,7 +584,6 @@ fn pre_login(name: &str) -> infrarust_api::events::lifecycle::PreLoginEvent {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-05: one slow WASM call decides every queued event"]
 async fn a_deny_listener_busy_with_one_slow_login_still_decides_the_logins_behind_it() {
     use infrarust_api::event::ResultedEvent;
     use infrarust_api::events::lifecycle::PreLoginResult;

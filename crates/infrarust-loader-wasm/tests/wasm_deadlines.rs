@@ -33,6 +33,7 @@ use support::{
 
 const FIXTURE: &str = "deadline-probe";
 const UNAVAILABLE: &str = "ban check unavailable";
+const PLUGIN_UNAVAILABLE: &str = "A proxy plugin is unavailable. Please try again later.";
 const SHORT_HANDLER_TIMEOUT: Duration = Duration::from_millis(300);
 const PATIENT_HANDLER_TIMEOUT: Duration = Duration::from_secs(30);
 const PROMPTLY: Duration = Duration::from_secs(10);
@@ -110,6 +111,7 @@ fn connect_outcome(event: &ServerPreConnectEvent) -> String {
     match event.result() {
         ServerPreConnectResult::Allowed => "allowed".to_string(),
         ServerPreConnectResult::Redirect(server) => format!("connect-to:{}", server.as_str()),
+        ServerPreConnectResult::Denied { reason } => format!("denied:{}", reason.to_plain()),
         _ => "other".to_string(),
     }
 }
@@ -203,8 +205,8 @@ async fn a_call_whose_deadline_passed_while_queued_never_reaches_the_guest() {
 
     assert_eq!(
         connect_outcome(&queued),
-        "allowed",
-        "the event outlived its 300 ms deadline in the queue, so it has no outcome"
+        format!("denied:{PLUGIN_UNAVAILABLE}"),
+        "the event outlived its deadline in the queue, so the plugin never answered it and the access event is denied"
     );
     assert_eq!(
         read_log(&probe.data),

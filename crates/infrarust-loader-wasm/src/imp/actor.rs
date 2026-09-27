@@ -18,6 +18,7 @@ use crate::config::SandboxLimits;
 use crate::consts::{GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL, QUEUE_FULL_WARN_INTERVAL};
 use crate::deadline::{Deadline, inside};
 use crate::error::WasmLoaderError;
+use crate::events::AccessListeners;
 use crate::instance::InstanceFactory;
 use crate::rate_limit::SharedRateLimit;
 use crate::snapshots::PermissionSnapshots;
@@ -227,6 +228,7 @@ struct ActorInfo {
     suppressed_full_warnings: AtomicU64,
     guest_warnings: SharedRateLimit,
     snapshots: Arc<PermissionSnapshots>,
+    access: Arc<AccessListeners>,
 }
 
 impl ActorInfo {
@@ -245,6 +247,7 @@ impl ActorInfo {
             suppressed_full_warnings: AtomicU64::new(0),
             guest_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
             snapshots,
+            access: Arc::default(),
         }
     }
 
@@ -313,6 +316,10 @@ impl InstanceRef {
 
     pub(crate) fn snapshots(&self) -> &Arc<PermissionSnapshots> {
         &self.info.snapshots
+    }
+
+    pub(crate) fn access(&self) -> &Arc<AccessListeners> {
+        &self.info.access
     }
 
     pub(crate) fn admit_warning(&self) -> Option<u64> {

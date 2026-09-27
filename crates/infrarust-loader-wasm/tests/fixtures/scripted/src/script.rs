@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
 
 pub const SCRIPT_FILE: &str = "script.txt";
 pub const LOG_FILE: &str = "log.txt";
@@ -132,7 +133,7 @@ impl EventName {
 
     pub fn accepts(self, action: &Action) -> bool {
         match action {
-            Action::Record | Action::Panic | Action::Cancelled => true,
+            Action::Record | Action::Panic | Action::Cancelled | Action::Sleep(_) => true,
             Action::Allow => matches!(
                 self,
                 Self::PreLogin
@@ -188,6 +189,7 @@ impl EventName {
 pub enum Action {
     Record,
     Panic,
+    Sleep(u64),
     Cancelled,
     Allow,
     ForceOffline,
@@ -405,6 +407,10 @@ fn parse_action(text: &str) -> Result<Action, String> {
     }
     let arg = unquote(rest);
     Ok(match name {
+        "sleep" => Action::Sleep(
+            arg.parse()
+                .map_err(|_| format!("sleep needs milliseconds, not {arg:?}"))?,
+        ),
         "deny" => Action::Deny(arg),
         "connect-to" => Action::ConnectTo(arg),
         "redirect" => Action::Redirect(arg),
@@ -508,8 +514,10 @@ pub fn command_line(name: &str, args: &[String], player: Option<u64>) -> String 
 
 pub fn observe(log: &Path, line: &str, action: &Action) {
     append(log, line);
-    if *action == Action::Panic {
-        panic!("scripted panic after `{line}`");
+    match action {
+        Action::Panic => panic!("scripted panic after `{line}`"),
+        Action::Sleep(millis) => std::thread::sleep(Duration::from_millis(*millis)),
+        _ => {}
     }
 }
 

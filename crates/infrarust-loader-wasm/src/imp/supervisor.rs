@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
+use infrarust_api::event::ListenerHandle;
 use tokio::time::Instant;
 
 use crate::actor::{CallFailure, CallKind, GuestCall, Halt, InstanceRef, Job, JobKind};
@@ -15,6 +16,7 @@ use crate::chain::CallChain;
 use crate::consts::{FAR_FUTURE, GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL};
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
+use crate::events;
 use crate::instance::{InstanceFactory, LiveInstance};
 use crate::rate_limit::RateLimit;
 use crate::recovery::{RestartBudget, Verdict};
@@ -127,6 +129,7 @@ pub(crate) struct Supervisor {
     last_fault: String,
     halt: Arc<Halt>,
     expired_warnings: RateLimit,
+    guards: Vec<ListenerHandle>,
 }
 
 impl Supervisor {
@@ -148,6 +151,7 @@ impl Supervisor {
             last_fault: String::new(),
             halt,
             expired_warnings: RateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
+            guards: Vec::new(),
         })
     }
 
@@ -260,6 +264,8 @@ impl Supervisor {
         if let Health::Starting(mut live) | Health::Healthy(mut live) = health {
             live.release_host_resources();
         }
+        self.instance.access().set_serving(false);
+        self.drop_guards();
         self.factory.registrations().fail_holds(None);
         self.withdraw_codec_filters();
         tracing::debug!(plugin = %self.factory.plugin_id(), "wasm plugin task stopped");
@@ -320,6 +326,9 @@ impl Supervisor {
         self.report(op, fault);
         self.last_fault = fault.to_string();
         let enabled = matches!(self.health, Health::Healthy(_));
+        if enabled {
+            self.close_access();
+        }
         let health = std::mem::replace(&mut self.health, Health::Recovering);
         if let Health::Starting(live) | Health::Healthy(live) = health {
             self.discard(live);
@@ -390,6 +399,8 @@ impl Supervisor {
                 tracing::info!(plugin = %self.factory.plugin_id(), generation,
                     "wasm plugin recovered: a fresh instance is enabled");
                 self.health = Health::Healthy(live);
+                self.instance.access().set_serving(true);
+                self.drop_guards();
                 true
             }
             Err(fault) => {
@@ -398,6 +409,33 @@ impl Supervisor {
                 self.discard(live);
                 false
             }
+        }
+    }
+
+    fn close_access(&mut self) {
+        let access = self.instance.access();
+        access.set_serving(false);
+        if !self.guards.is_empty() {
+            return;
+        }
+        let subscribed = access.subscribed();
+        let bus = self.factory.ctx().event_bus();
+        for (kind, priority) in subscribed {
+            if let Some(handle) =
+                events::guard(&*bus, self.instance.any_generation(), kind, priority)
+            {
+                self.guards.push(handle);
+            }
+        }
+    }
+
+    fn drop_guards(&mut self) {
+        if self.guards.is_empty() {
+            return;
+        }
+        let bus = self.factory.ctx().event_bus();
+        for handle in self.guards.drain(..) {
+            bus.unsubscribe(handle);
         }
     }
 

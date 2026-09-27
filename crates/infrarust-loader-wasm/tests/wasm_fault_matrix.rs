@@ -34,6 +34,7 @@ use support::log_capture::LogCapture;
 
 const LIMITS: &str = "[wasm]\ncpu_budget = \"200ms\"\nmax_call_duration = \"1s\"\nmemory_limit_mb = 16\ncodec_cpu_budget = \"100ms\"\n\n[wasm.recovery]\nmax_restarts = 1000\n";
 const FAILED: &str = "wasm plugin instance failed";
+const DENIED: &str = "denied A proxy plugin is unavailable. Please try again later.";
 const RECOVERED: &str = "wasm plugin recovered";
 
 type Answer = Pin<Box<dyn Future<Output = String> + Send>>;
@@ -160,13 +161,13 @@ async fn every_fault_kind_in_an_event_handler_leaves_the_event_unchanged_and_rec
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn every_fault_kind_in_other_event_families_leaves_their_result_unchanged() {
+async fn every_fault_kind_in_an_access_event_denies_it_and_recovers() {
     let pre_login = Site {
         key: "event:pre-login",
         op: "handle-event",
         directives: "",
         grants: &[],
-        fallback: "allowed",
+        fallback: DENIED,
         healthy: "denied fault-lab",
     };
     let trigger = |lab: Arc<Lab>| {
@@ -188,7 +189,7 @@ async fn every_fault_kind_in_other_event_families_leaves_their_result_unchanged(
         op: "handle-event",
         directives: "",
         grants: &[],
-        fallback: "allowed",
+        fallback: DENIED,
         healthy: "redirect fault-lab",
     };
     let trigger = |lab: Arc<Lab>| {
@@ -210,6 +211,9 @@ async fn every_fault_kind_in_other_event_families_leaves_their_result_unchanged(
                 }
                 infrarust_api::events::connection::ServerPreConnectResult::Redirect(server) => {
                     format!("redirect {server}")
+                }
+                infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
+                    format!("denied {}", reason.to_plain())
                 }
                 _ => "other".to_owned(),
             }
@@ -553,8 +557,8 @@ async fn every_fault_kind_in_a_recovery_on_enable_counts_as_a_failed_restart_and
             .await;
             assert_eq!(
                 (lab.listeners(LAB), lab.tasks(LAB)),
-                (0, 0),
-                "{mode:?}: the quarantined plugin holds no listener and no task"
+                (fault_lab::ACCESS_GUARDS, 0),
+                "{mode:?}: the quarantined plugin holds no listener and no task, only the guards that deny its access events"
             );
             let enables = fault_lab::count_prefix(&lab.log(LAB), "enable recovered");
             assert_eq!(enables, 2, "{mode:?}: two restarts were tried: {:?}", lab.log(LAB));
