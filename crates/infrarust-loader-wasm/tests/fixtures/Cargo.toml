@@ -26,6 +26,7 @@ members = [
     "metadata-sleep",
     "sec-probe",
     "sec-peer",
+    "lif-probe",
 ]
 
 [workspace.dependencies]
