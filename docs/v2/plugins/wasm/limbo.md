@@ -103,7 +103,7 @@ The plugin state is single-threaded with no async runtime. Keep mutable handler 
 
 ## HandlerOutcome
 
-The value `on_player_enter` returns, and the value you pass to `complete` to end a hold. The variants:
+The value `on_player_enter` returns, and the value you pass to `complete` to end a hold. `complete` takes the terminal variants only: `Hold` and `HoldWithTimeout` are refused there (see [Completing a hold](#completing-a-hold)). The variants:
 
 | Variant | Effect |
 |---------|--------|
@@ -164,7 +164,7 @@ fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
 | `send_message(impl Into<Component>)` | `Result<(), Error>` | Send a chat message |
 | `send_title(&TitleData)` | `Result<(), Error>` | Send a title |
 | `send_action_bar(impl Into<Component>)` | `Result<(), Error>` | Send an action-bar message |
-| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect a held player; `InvalidArgument` when the outcome's text is invalid |
+| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect a held player; `InvalidArgument` when the outcome is `Hold` or `HoldWithTimeout`, or its text is invalid |
 | `handle()` | `SessionHandle` | Mint a storable handle for later completion |
 
 ### EntryContext
@@ -191,10 +191,18 @@ Branch on this to vary the gate, for example a maintenance message for `InitialC
 | `send_message(impl Into<Component>)` | `Result<(), Error>` | Send a chat message |
 | `send_title(&TitleData)` | `Result<(), Error>` | Send a title |
 | `send_action_bar(impl Into<Component>)` | `Result<(), Error>` | Send an action-bar message |
-| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect the held player |
+| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect the held player; `InvalidArgument` when the outcome is `Hold` or `HoldWithTimeout`, or its text is invalid |
 | `cancelled()` | `bool` | True once the session has ended |
 
 `complete` on a stale handle is a safe no-op: the host captures the hold generation when the handle is minted, so a completion that arrives after the session advanced or ended does nothing. `cancelled()` returns `true` once the engine has ended the session, which lets a repeating task know to stop.
+
+### Completing a hold
+
+`complete` ends a hold with `Accept`, `Deny`, `Redirect` or `SendToLimbo`. It cannot start another hold: `complete(Hold)` and `complete(HoldWithTimeout { .. })` return an `InvalidArgument` error and change nothing. The player stays held, and a deadline set by `HoldWithTimeout` keeps its original time and `on_timeout`; the handle can still complete the hold later.
+
+A `HoldWithTimeout` deadline cannot be moved. A gate that needs to extend its wait returns `Hold` from `on_player_enter` and keeps its own deadline: a `Context::new().delay` task that completes the hold with `Deny`, which the gate cancels and schedules again to extend the wait.
+
+The native engine differs here: a native handler that passes a hold to `LimboSession::complete` gets no error, and the engine releases the player as for `Accept` with a warning in the log.
 
 ### Async hold pattern
 

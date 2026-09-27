@@ -1460,7 +1460,7 @@ interface limbo {
 }
 ```
 
-`acquire-handle` mints an own-able `limbo-session-handle` the guest can store across dispatches and complete later, from `on-scheduled-task` or an event. `cancelled` reports `true` once the engine has ended the session, so a stored handle's scheduled task knows to stop. A `timeout-outcome` is a terminal-only subset of `handler-result`, so a timed-out hold can never re-arm another hold. `complete` refuses an outcome whose text is invalid. See [Limbo](./limbo).
+`acquire-handle` mints an own-able `limbo-session-handle` the guest can store across dispatches and complete later, from `on-scheduled-task` or an event. `cancelled` reports `true` once the engine has ended the session, so a stored handle's scheduled task knows to stop. A `timeout-outcome` is a terminal-only subset of `handler-result`, so a timed-out hold can never re-arm another hold. `complete` refuses with `invalid-argument` an outcome whose text is invalid and a `hold` or `hold-with-timeout`, which would start another hold; the refused call leaves the current hold and its deadline in place. See [Limbo](./limbo#completing-a-hold).
 
 ## The guest export
 
