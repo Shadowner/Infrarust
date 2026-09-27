@@ -56,6 +56,22 @@ When a call faults, the proxy:
 
 The recovery runs as part of the call that faulted. If a plugin was waiting on that call, for example the one that fired the named event whose handler trapped, an event the fresh instance's `on_enable` fires reaches that plugin without anyone waiting for it, as described in [Events a plugin causes for itself](./threading#events-a-plugin-causes-for-itself), instead of stalling until `[events] handler_timeout`. A retry after a quarantine is not part of any call.
 
+### The cause
+
+The error line and `RecoveryInfo.cause` carry the same text:
+
+| Fault | Cause |
+|-------|-------|
+| A panic in a plugin built with the SDK | `the guest trapped: panicked at src/lib.rs:12:5: <panic message>` |
+| Guest code that used up `cpu_budget` | `the call ran past cpu_budget` |
+| An event or provider call cut off at its deadline | `the call ran past the event deadline` |
+| A command, tab completion, scheduled task or limbo callback cut off at its deadline | `the call ran past its deadline (max_call_duration after it was queued)` |
+| A call still running at `max_call_duration` | `the call ran past max_call_duration (60s)` |
+| Any other trap | `the guest trapped:` and the trap, such as ``wasm trap: wasm `unreachable` instruction executed`` or `forcing trap when growing memory to 67174400 bytes` |
+| A panic in a host function | `a host function panicked: <panic message>` |
+
+A panic in a Rust guest traps with `unreachable`, which says nothing about why. The SDK installs a panic hook when `on_enable` first runs in an instance. The hook sends the panic's location and message to the proxy through the `log` interface, as an `error` line that starts with `panicked at `, just before the guest traps. The proxy keeps that line for the call it came from, logs it at `debug` only, and puts it in the cause of the fault. The line is cut at 1 KiB. A guest written without the SDK can do the same by logging such a line at `error` before it traps. A plugin built with an SDK older than this hook, or a plugin that installs its own panic hook, gets the `unreachable` cause.
+
 Commands and limbo handlers are known to the proxy by name, so they are not registered twice. When the fresh instance registers a command or a limbo handler under a name the plugin already used, the existing registration is pointed at the fresh instance. A name that the fresh instance does not register again during its `on_enable` is removed: the command is unregistered, and the limbo handler denies players who reach it.
 
 ## What survives a recovery

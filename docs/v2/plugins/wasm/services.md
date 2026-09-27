@@ -438,6 +438,8 @@ warn!("retrying {attempt}/{max}");
 error!("failed: {err}");
 ```
 
+An `error` line that starts with `panicked at ` is taken as the message of a panic about to trap the plugin: the host logs it at `debug` and puts it in the cause of the fault instead. The SDK's panic hook sends such a line; see [The cause](./fault-model#the-cause).
+
 ## Text components
 
 `Component` is the SDK's text component, at parity with the native one: text, translatable and keybind content, named and hex colors, every decoration, font, insertion, shadow color, click and hover events, and children. It crosses the boundary as a validated arena the SDK builds for you.
