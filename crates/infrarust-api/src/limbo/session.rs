@@ -31,21 +31,21 @@ pub trait LimboSession: Send + Sync + private::Sealed {
     ///
     /// # Errors
     ///
-    /// Returns `Err(PlayerError::SendFailed)` if the message could not be delivered.
+    /// Returns `Err(PlayerError::Disconnected)` if the player left, or `Err(PlayerError::SendFailed)` if the message could not be delivered.
     fn send_message(&self, message: Component) -> Result<(), PlayerError>;
 
     /// Sends a title display to the player.
     ///
     /// # Errors
     ///
-    /// Returns `Err(PlayerError::SendFailed)` if the title could not be delivered.
+    /// Returns `Err(PlayerError::Disconnected)` if the player left, or `Err(PlayerError::SendFailed)` if the title could not be delivered.
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError>;
 
     /// Sends an action bar message to the player.
     ///
     /// # Errors
     ///
-    /// Returns `Err(PlayerError::SendFailed)` if the message could not be delivered.
+    /// Returns `Err(PlayerError::Disconnected)` if the player left, or `Err(PlayerError::SendFailed)` if the message could not be delivered.
     fn send_action_bar(&self, message: Component) -> Result<(), PlayerError>;
 
     /// Signals that this handler is done processing the player.
