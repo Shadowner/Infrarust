@@ -14,6 +14,8 @@ pub(crate) use guard::{AccessListeners, guard, is_access};
 pub(crate) use messaging::named_result;
 pub(crate) use proxy::PingDetails;
 
+use std::sync::Arc;
+
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, Event, EventPriority, ListenerHandle, PacketFilter};
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
@@ -42,8 +44,6 @@ use infrarust_api::events::proxy::{
 };
 use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
 use infrarust_api::events::transfer::PreTransferEvent;
-use std::sync::Arc;
-
 use infrarust_api::types::Component;
 use infrarust_plugin_wit::arena::ArenaError;
 
