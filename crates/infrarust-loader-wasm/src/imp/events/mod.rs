@@ -333,12 +333,17 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
         let answer = instance
             .call("handle-event", move |store, bindings| {
                 Box::pin(async move {
-                    store.data_mut().set_event_details(details);
+                    let lent = details.is_some();
+                    if lent {
+                        store.data_mut().set_event_details(details);
+                    }
                     let outcome = bindings
                         .infrarust_plugin_guest()
                         .call_handle_event(&mut *store, listener, &wit)
                         .await;
-                    store.data_mut().set_event_details(None);
+                    if lent {
+                        store.data_mut().set_event_details(None);
+                    }
                     outcome
                 })
             })
@@ -401,12 +406,17 @@ fn post(
     }
     let _ = instance.post("handle-event", move |store, bindings| {
         Box::pin(async move {
-            store.data_mut().set_event_details(details);
+            let lent = details.is_some();
+            if lent {
+                store.data_mut().set_event_details(details);
+            }
             let outcome = bindings
                 .infrarust_plugin_guest()
                 .call_handle_event(&mut *store, listener, &wit)
                 .await;
-            store.data_mut().set_event_details(None);
+            if lent {
+                store.data_mut().set_event_details(None);
+            }
             outcome
         })
     });
