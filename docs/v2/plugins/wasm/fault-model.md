@@ -54,6 +54,8 @@ When a call faults, the proxy:
 4. Runs the guest's `on_enable` in it, with `ctx.enable_reason()` set to `EnableReason::Recovered(RecoveryInfo { attempt, cause })`. `attempt` numbers the fresh instances the proxy has started for this plugin since it was loaded, failed ones included: 1 for the first, 2 for the next, and it does not start over after a recovery that worked. It is the new instance's generation minus one. `cause` describes the fault. A trap, a cut-off or an `Err` from this `on_enable` counts as one more fault.
 5. Logs one info line with the new instance's generation (the first instance is generation 1, each fresh one adds 1).
 
+Step 3 can fail without the plugin doing anything wrong, when the proxy cannot create an instance at all: the instance pool is full, the address space is exhausted, or the plugin's data directory cannot be opened. The proxy then logs `wasm plugin recovery could not create a fresh instance; trying again after a pause` with the error and `retry_in`, and waits `backoff_initial` before the next attempt instead of trying again at once. During the pause the plugin is answered like a quarantined one, see below. Each attempt counts against the restart budget, so once the budget is spent the plugin is quarantined.
+
 The recovery runs as part of the call that faulted. If a plugin was waiting on that call, for example the one that fired the named event whose handler trapped, an event the fresh instance's `on_enable` fires reaches that plugin without anyone waiting for it, as described in [Events a plugin causes for itself](./threading#events-a-plugin-causes-for-itself), instead of stalling until `[events] handler_timeout`. A retry after a quarantine is not part of any call.
 
 ### The cause
@@ -108,6 +110,9 @@ stateDiagram-v2
     Recovering --> Healthy: fresh instance enabled
     Recovering --> Recovering: fault in on_enable, budget left
     Recovering --> Quarantined: budget spent
+    Recovering --> Paused: no instance could be created, budget left
+    Paused --> Recovering: backoff_initial passed
+    Paused --> [*]: disable or unload
     Quarantined --> Recovering: backoff passed
     Recovering --> [*]: disable or unload, recovery stopped
     Healthy --> [*]: on_disable
