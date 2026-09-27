@@ -56,7 +56,7 @@ impl wm::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn register_plugin_channel(&mut self, channel: &wt::ChannelId) -> HostResult<()> {
-        self.check("messaging", "register-channel")?;
+        self.check(gate!("messaging", "register-channel"))?;
         let channel = convert::channel_from_wit(channel)?;
         let ctx = self.services()?;
         let held = ctx.channel_registrar().channels();
@@ -68,13 +68,13 @@ impl PluginStoreState {
     }
 
     fn unregister_plugin_channel(&mut self, channel: &wt::ChannelId) -> HostResult<bool> {
-        self.check("messaging", "unregister-channel")?;
+        self.check(gate!("messaging", "unregister-channel"))?;
         let channel = convert::channel_from_wit(channel)?;
         Ok(self.services()?.channel_registrar().unregister(&channel))
     }
 
     fn plugin_channels(&mut self) -> HostResult<Vec<wt::ChannelId>> {
-        self.check("messaging", "channels")?;
+        self.check(gate!("messaging", "channels"))?;
         Ok(self
             .services()?
             .channel_registrar()
@@ -90,7 +90,7 @@ impl PluginStoreState {
         channel: &wt::ChannelId,
         data: Vec<u8>,
     ) -> HostResult<()> {
-        self.check("messaging", "send-to-player")?;
+        self.check(gate!("messaging", "send-to-player"))?;
         let channel = convert::channel_from_wit(channel)?;
         self.online_player(player)?
             .send_plugin_message(&channel, Bytes::from(data))
@@ -103,7 +103,7 @@ impl PluginStoreState {
         channel: &wt::ChannelId,
         data: Vec<u8>,
     ) -> HostResult<()> {
-        self.check("messaging", "send-to-backend")?;
+        self.check(gate!("messaging", "send-to-backend"))?;
         let channel = convert::channel_from_wit(channel)?;
         self.online_player(player)?
             .send_plugin_message_to_backend(&channel, Bytes::from(data))
@@ -116,7 +116,7 @@ impl PluginStoreState {
         channel: &wt::ChannelId,
         data: Vec<u8>,
     ) -> HostResult<u32> {
-        self.check("messaging", "send-to-server")?;
+        self.check(gate!("messaging", "send-to-server"))?;
         let channel = convert::channel_from_wit(channel)?;
         let carriers = self
             .services()?

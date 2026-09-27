@@ -1,3 +1,9 @@
+macro_rules! gate {
+    ($interface:literal, $function:literal) => {
+        const { $crate::hosts::Gate::new($interface, $function) }
+    };
+}
+
 mod bans;
 mod codec;
 mod commands;
@@ -54,19 +60,32 @@ pub(crate) fn parse_text(component: &wt::Component) -> HostResult<Component> {
     component::from_wit(component).map_err(|e| invalid_component(&e))
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Gate {
+    interface: &'static str,
+    function: &'static str,
+    required: &'static [Capability],
+}
+
+impl Gate {
+    pub(crate) const fn new(interface: &'static str, function: &'static str) -> Self {
+        Self {
+            interface,
+            function,
+            required: required(interface, function),
+        }
+    }
+}
+
 impl PluginStoreState {
     pub(crate) fn service_call_limit(&self) -> HostCallLimit {
         self.host_call_limit(self.host_call_timeout())
     }
 
-    pub(crate) fn check(
-        &mut self,
-        interface: &'static str,
-        function: &'static str,
-    ) -> HostResult<()> {
+    pub(crate) fn check(&mut self, gate: Gate) -> HostResult<()> {
         self.check_each(
-            required(interface, function),
-            format_args!("{interface}.{function}"),
+            gate.required,
+            format_args!("{}.{}", gate.interface, gate.function),
         )
     }
 
@@ -86,8 +105,8 @@ impl PluginStoreState {
         Err(missing_capability(missing))
     }
 
-    pub(crate) fn lacks(&mut self, interface: &'static str, function: &'static str) -> bool {
-        self.check(interface, function).is_err()
+    pub(crate) fn lacks(&mut self, gate: Gate) -> bool {
+        self.check(gate).is_err()
     }
 
     pub(crate) fn services(&self) -> HostResult<Arc<dyn PluginContext>> {

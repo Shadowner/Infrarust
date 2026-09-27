@@ -52,7 +52,7 @@ impl wl::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn balancer_strategy(&mut self, server: String) -> HostResult<Option<String>> {
-        self.check("load-balancer", "strategy")?;
+        self.check(gate!("load-balancer", "strategy"))?;
         Ok(self
             .services()?
             .load_balancer_service()
@@ -60,7 +60,7 @@ impl PluginStoreState {
     }
 
     fn balancer_backends(&mut self, server: String) -> HostResult<Vec<wl::BackendStatus>> {
-        self.check("load-balancer", "backends")?;
+        self.check(gate!("load-balancer", "backends"))?;
         Ok(self
             .services()?
             .load_balancer_service()
@@ -76,7 +76,7 @@ impl PluginStoreState {
         address: wt::ServerAddress,
         drained: bool,
     ) -> HostResult<()> {
-        self.check("load-balancer", "set-drained")?;
+        self.check(gate!("load-balancer", "set-drained"))?;
         self.services()?
             .load_balancer_service()
             .set_drained(
@@ -92,7 +92,7 @@ impl PluginStoreState {
         server: String,
         address: wt::ServerAddress,
     ) -> HostResult<()> {
-        self.check("load-balancer", "reset-backend")?;
+        self.check(gate!("load-balancer", "reset-backend"))?;
         self.services()?
             .load_balancer_service()
             .reset_backend(

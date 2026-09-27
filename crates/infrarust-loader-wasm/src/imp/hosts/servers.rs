@@ -30,7 +30,7 @@ impl ws::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn server_state(&mut self, server: String) -> HostResult<Option<wt::ServerState>> {
-        self.check("server-manager", "get-state")?;
+        self.check(gate!("server-manager", "get-state"))?;
         Ok(self
             .services()?
             .server_manager()
@@ -39,7 +39,7 @@ impl PluginStoreState {
     }
 
     async fn start_server(&mut self, server: String) -> HostResult<()> {
-        self.check("server-manager", "start")?;
+        self.check(gate!("server-manager", "start"))?;
         let ctx = self.services()?;
         let server = ServerId::from(server);
         await_service(
@@ -50,7 +50,7 @@ impl PluginStoreState {
     }
 
     async fn stop_server(&mut self, server: String) -> HostResult<()> {
-        self.check("server-manager", "stop")?;
+        self.check(gate!("server-manager", "stop"))?;
         let ctx = self.services()?;
         let server = ServerId::from(server);
         await_service(
@@ -61,7 +61,7 @@ impl PluginStoreState {
     }
 
     fn server_statuses(&mut self) -> HostResult<Vec<ws::ServerStatus>> {
-        self.check("server-manager", "list")?;
+        self.check(gate!("server-manager", "list"))?;
         Ok(self
             .services()?
             .server_manager()

@@ -31,7 +31,7 @@ impl PluginStoreState {
         player: u64,
         snapshot: &wp::PermissionSnapshot,
     ) -> HostResult<()> {
-        self.check("permissions", "set-snapshot")?;
+        self.check(gate!("permissions", "set-snapshot"))?;
         let snapshot = snapshot_from_wit(snapshot)
             .map_err(|reason| host_error(ErrorKind::InvalidArgument, reason.to_string()))?;
         let online = self.online_player(player)?;
@@ -51,7 +51,7 @@ impl PluginStoreState {
     }
 
     async fn release_player_snapshot(&mut self, player: u64) -> HostResult<()> {
-        self.check("permissions", "release")?;
+        self.check(gate!("permissions", "release"))?;
         let Some(released) = self
             .registrations()
             .snapshots()

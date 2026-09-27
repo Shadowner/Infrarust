@@ -27,7 +27,7 @@ impl wl::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn register_limbo(&mut self, name: String, handler: u64) -> HostResult<()> {
-        self.check("limbo", "register-limbo-handler")?;
+        self.check(gate!("limbo", "register-limbo-handler"))?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?.any_generation();
         let limit = self.quota(Quota::LimboHandlers);

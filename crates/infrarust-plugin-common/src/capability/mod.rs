@@ -65,8 +65,13 @@ impl Capability {
     pub const ALL: [Capability; TABLE.len()] = all();
 
     #[must_use]
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    #[must_use]
     pub const fn to_kebab(self) -> &'static str {
-        TABLE[self as usize].1
+        TABLE[self.index()].1
     }
 
     #[must_use]
@@ -113,7 +118,7 @@ mod tests {
     #[test]
     fn the_table_follows_the_declaration_order() {
         for (i, (capability, _)) in TABLE.iter().enumerate() {
-            assert_eq!(*capability as usize, i, "{capability:?} is out of order");
+            assert_eq!(capability.index(), i, "{capability:?} is out of order");
             assert_eq!(Capability::ALL[i], *capability);
         }
     }

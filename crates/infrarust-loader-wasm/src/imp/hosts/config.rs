@@ -54,7 +54,7 @@ impl wc::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn config_value(&mut self, key: &str) -> HostResult<Option<String>> {
-        self.check("config-service", "get-value")?;
+        self.check(gate!("config-service", "get-value"))?;
         if secrets::names_another_plugin(key, self.plugin_id()) {
             return Err(host_error(
                 ErrorKind::PermissionDenied,
@@ -72,7 +72,7 @@ impl PluginStoreState {
     }
 
     fn server_config(&mut self, server: String) -> HostResult<Option<wc::ServerConfig>> {
-        self.check("config-service", "get-server")?;
+        self.check(gate!("config-service", "get-server"))?;
         Ok(self
             .services()?
             .config_service()
@@ -82,7 +82,7 @@ impl PluginStoreState {
     }
 
     fn server_configs(&mut self) -> HostResult<Vec<wc::ServerConfig>> {
-        self.check("config-service", "list-servers")?;
+        self.check(gate!("config-service", "list-servers"))?;
         Ok(self
             .services()?
             .config_service()
@@ -93,7 +93,7 @@ impl PluginStoreState {
     }
 
     fn server_document(&mut self, server: String) -> HostResult<Option<String>> {
-        self.check("config-service", "get-server-document")?;
+        self.check(gate!("config-service", "get-server-document"))?;
         Ok(self
             .services()?
             .config_service()
@@ -101,7 +101,7 @@ impl PluginStoreState {
     }
 
     fn server_sources(&mut self) -> HostResult<Vec<wc::ServerSource>> {
-        self.check("config-service", "list-server-sources")?;
+        self.check(gate!("config-service", "list-server-sources"))?;
         Ok(self
             .services()?
             .config_service()
@@ -117,7 +117,7 @@ impl PluginStoreState {
     }
 
     fn proxy_config_document(&mut self) -> HostResult<String> {
-        self.check("config-service", "get-proxy-config-document")?;
+        self.check(gate!("config-service", "get-proxy-config-document"))?;
         let document = self
             .services()?
             .config_service()
@@ -126,7 +126,10 @@ impl PluginStoreState {
     }
 
     fn effective_proxy_config_document(&mut self) -> HostResult<String> {
-        self.check("config-service", "get-effective-proxy-config-document")?;
+        self.check(gate!(
+            "config-service",
+            "get-effective-proxy-config-document"
+        ))?;
         let document = self
             .services()?
             .config_service()
@@ -135,7 +138,7 @@ impl PluginStoreState {
     }
 
     fn write_proxy_document(&mut self, document: &str) -> HostResult<()> {
-        self.check("config-service", "write-proxy-config-document")?;
+        self.check(gate!("config-service", "write-proxy-config-document"))?;
         let service = self.services()?.config_service();
         let current = service.get_proxy_config_document();
         let document = secrets::plugin_write(document, &current, self.plugin_id())

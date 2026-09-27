@@ -70,24 +70,55 @@ pub const SUBSCRIBE_GATES: &[(&str, Capability)] = &[
     ("raw-packet", Capability::RawPacket),
 ];
 
-#[must_use]
-pub fn required(interface: &str, function: &str) -> &'static [Capability] {
-    let entry = |wanted: &str| {
-        GATES
-            .iter()
-            .find(|(gated, name, _)| *gated == interface && *name == wanted)
-    };
-    entry(function)
-        .or_else(|| entry("*"))
-        .map_or(&[], |(_, _, capabilities)| capabilities)
+const fn same(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < left.len() {
+        if left[at] != right[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
+const fn entry(interface: &str, function: &str) -> Option<&'static [Capability]> {
+    let mut at = 0;
+    while at < GATES.len() {
+        let (gated, name, capabilities) = GATES[at];
+        if same(gated, interface) && same(name, function) {
+            return Some(capabilities);
+        }
+        at += 1;
+    }
+    None
 }
 
 #[must_use]
-pub fn subscribe_gate(kind: &str) -> Option<Capability> {
-    SUBSCRIBE_GATES
-        .iter()
-        .find(|(gated, _)| *gated == kind)
-        .map(|(_, capability)| *capability)
+pub const fn required(interface: &str, function: &str) -> &'static [Capability] {
+    match entry(interface, function) {
+        Some(capabilities) => capabilities,
+        None => match entry(interface, "*") {
+            Some(capabilities) => capabilities,
+            None => &[],
+        },
+    }
+}
+
+#[must_use]
+pub const fn subscribe_gate(kind: &str) -> Option<Capability> {
+    let mut at = 0;
+    while at < SUBSCRIBE_GATES.len() {
+        let (gated, capability) = SUBSCRIBE_GATES[at];
+        if same(gated, kind) {
+            return Some(capability);
+        }
+        at += 1;
+    }
+    None
 }
 
 pub fn gated_interfaces() -> impl Iterator<Item = &'static str> {
@@ -172,6 +203,25 @@ mod tests {
         assert_eq!(interfaces.len(), unique.len());
         assert_eq!(interfaces.len(), 13);
         assert!(interfaces.contains(&"limbo"));
+    }
+
+    #[test]
+    fn the_table_resolves_at_compile_time_like_at_run_time() {
+        const SEND_MESSAGE: &[Capability] = required("players", "send-message");
+        const READ_PLAYERS: &[Capability] = required("players", "list");
+        const LOG: &[Capability] = required("log", "info");
+        const CHAT: Option<Capability> = subscribe_gate("chat-message");
+        assert_eq!(SEND_MESSAGE, [Capability::PlayerWrite]);
+        assert_eq!(READ_PLAYERS, [Capability::PlayerRead]);
+        assert!(LOG.is_empty());
+        assert_eq!(CHAT, Some(Capability::ChatIntercept));
+        for (interface, function, capabilities) in GATES {
+            if *function != "*" {
+                assert_eq!(required(interface, function), *capabilities);
+            }
+        }
+        assert_eq!(required("players", "send-messag"), [Capability::PlayerRead]);
+        assert!(required("player", "send-message").is_empty());
     }
 
     #[test]

@@ -27,7 +27,7 @@ impl wsched::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn schedule_delay(&mut self, after: u64, handler: u64) -> HostResult<u64> {
-        self.check("scheduler", "delay")?;
+        self.check(gate!("scheduler", "delay"))?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
         self.admit(Quota::ScheduledTasks, self.live_task_count(), 1)?;
@@ -49,7 +49,7 @@ impl PluginStoreState {
         initial_delay: Option<u64>,
         handler: u64,
     ) -> HostResult<u64> {
-        self.check("scheduler", "interval")?;
+        self.check(gate!("scheduler", "interval"))?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
         self.admit(Quota::ScheduledTasks, self.live_task_count(), 1)?;
@@ -64,7 +64,7 @@ impl PluginStoreState {
     }
 
     fn cancel_task(&mut self, id: u64) -> HostResult<()> {
-        self.check("scheduler", "cancel")?;
+        self.check(gate!("scheduler", "cancel"))?;
         if let Some(handle) = self.take_task(id)
             && let Ok(ctx) = self.services()
         {

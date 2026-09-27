@@ -38,7 +38,7 @@ impl PluginStoreState {
         metadata: wcr::CodecFilterMetadata,
         factory: u64,
     ) -> HostResult<()> {
-        self.check("codec-registry", "register-codec-filter")?;
+        self.check(gate!("codec-registry", "register-codec-filter"))?;
         let instantiator = self.codec_instantiator().cloned().ok_or_else(|| {
             host_error(
                 ErrorKind::Unavailable,
@@ -76,7 +76,7 @@ impl PluginStoreState {
     }
 
     fn remove_codec_filter(&mut self, id: &str) -> HostResult<()> {
-        self.check("codec-registry", "unregister-codec-filter")?;
+        self.check(gate!("codec-registry", "unregister-codec-filter"))?;
         let ctx = self.services()?;
         let registry = ctx.codec_filters().ok_or_else(no_registry)?;
         registry

@@ -54,7 +54,7 @@ impl PluginStoreState {
         spec: wcm::CommandSpec,
         handler: u64,
     ) -> HostResult<wcm::CommandRegistration> {
-        self.check("command-manager", "register")?;
+        self.check(gate!("command-manager", "register"))?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?.any_generation();
         let name = command_key(&spec.name);
@@ -105,7 +105,7 @@ impl PluginStoreState {
     }
 
     fn unregister_command(&mut self, name: &str) -> HostResult<()> {
-        self.check("command-manager", "unregister")?;
+        self.check(gate!("command-manager", "unregister"))?;
         let key = command_key(name);
         let Ok(ctx) = self.services() else {
             self.registrations().unbind_command(&key);

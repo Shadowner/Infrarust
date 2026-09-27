@@ -53,7 +53,7 @@ impl event_bus::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn subscribe_event(&mut self, kind: EventKind, priority: u8) -> HostResult<u64> {
-        self.check("event-bus", "subscribe")?;
+        self.check(gate!("event-bus", "subscribe"))?;
         if let Some(capability) = subscribe_gate(events::kind_name(kind)) {
             self.check_each(
                 &[capability],
@@ -80,7 +80,7 @@ impl PluginStoreState {
     }
 
     fn subscribe_named_event(&mut self, name: String, priority: u8) -> HostResult<u64> {
-        self.check("event-bus", "subscribe-named")?;
+        self.check(gate!("event-bus", "subscribe-named"))?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Event)?;
         self.admit(Quota::EventListeners, self.listener_count(), 1)?;
@@ -102,7 +102,7 @@ impl PluginStoreState {
         content_type: String,
         payload: Vec<u8>,
     ) -> HostResult<NamedEventResult> {
-        self.check("event-bus", "fire-named")?;
+        self.check(gate!("event-bus", "fire-named"))?;
         let ctx = self.services()?;
         let limit = self.service_call_limit();
         let event = NamedEvent::new(name, content_type, payload);
@@ -118,7 +118,7 @@ impl PluginStoreState {
         filters: &[event_bus::PacketFilter],
         priority: u8,
     ) -> HostResult<u64> {
-        self.check("event-bus", "subscribe-packets")?;
+        self.check(gate!("event-bus", "subscribe-packets"))?;
         if filters.is_empty() {
             return Err(host_error(
                 ErrorKind::InvalidArgument,
@@ -149,7 +149,7 @@ impl PluginStoreState {
     }
 
     fn unsubscribe_event(&mut self, handle: u64) -> HostResult<bool> {
-        self.check("event-bus", "unsubscribe")?;
+        self.check(gate!("event-bus", "unsubscribe"))?;
         let Some(native) = self.take_listener(handle) else {
             return Ok(false);
         };

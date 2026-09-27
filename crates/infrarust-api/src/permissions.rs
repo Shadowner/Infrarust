@@ -444,9 +444,21 @@ pub trait PermissionProvider: Send + Sync {
 pub use infrarust_plugin_common::capability::Capability;
 
 /// The set of [`Capability`]s granted to a plugin.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct CapabilitySet {
-    granted: std::collections::HashSet<Capability>,
+    granted: u32,
+}
+
+const _: () = assert!(Capability::ALL.len() <= u32::BITS as usize);
+
+const fn bit(cap: Capability) -> u32 {
+    1 << cap.index()
+}
+
+impl std::fmt::Debug for CapabilitySet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_set().entries(self.iter()).finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -461,28 +473,32 @@ pub enum CapabilityRejection {
 
 impl CapabilitySet {
     #[must_use]
-    pub fn has(&self, cap: Capability) -> bool {
-        self.granted.contains(&cap)
+    pub const fn has(&self, cap: Capability) -> bool {
+        self.granted & bit(cap) != 0
     }
 
-    pub fn insert(&mut self, cap: Capability) {
-        self.granted.insert(cap);
+    pub const fn insert(&mut self, cap: Capability) {
+        self.granted |= bit(cap);
     }
 
-    pub fn remove(&mut self, cap: Capability) {
-        self.granted.remove(&cap);
+    pub const fn remove(&mut self, cap: Capability) {
+        self.granted &= !bit(cap);
     }
 
     #[must_use]
-    pub fn with(mut self, cap: Capability) -> Self {
-        self.granted.insert(cap);
+    pub const fn with(mut self, cap: Capability) -> Self {
+        self.insert(cap);
         self
     }
 
     #[must_use]
-    pub fn without(mut self, cap: Capability) -> Self {
-        self.granted.remove(&cap);
+    pub const fn without(mut self, cap: Capability) -> Self {
+        self.remove(cap);
         self
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Capability> + '_ {
+        Capability::ALL.into_iter().filter(|cap| self.has(*cap))
     }
 
     #[must_use]
@@ -724,6 +740,30 @@ mod tests {
         assert!(!b.has(Capability::ChatIntercept));
         assert!(!b.has(Capability::BanProvider));
         assert!(!b.has(Capability::PluginMessaging));
+    }
+
+    #[test]
+    fn a_set_adds_removes_and_lists_its_capabilities() {
+        let mut set = CapabilitySet::default().with(Capability::PluginMessaging);
+        set.insert(Capability::EventBus);
+        set.insert(Capability::EventBus);
+        assert!(set.has(Capability::EventBus));
+        assert!(set.has(Capability::PluginMessaging));
+        assert!(!set.has(Capability::Ban));
+        assert_eq!(
+            set.iter().collect::<Vec<_>>(),
+            [Capability::EventBus, Capability::PluginMessaging]
+        );
+        assert_eq!(format!("{set:?}"), "{EventBus, PluginMessaging}");
+        set.remove(Capability::EventBus);
+        assert_eq!(
+            set,
+            CapabilitySet::default().with(Capability::PluginMessaging)
+        );
+        assert_eq!(
+            set.without(Capability::PluginMessaging),
+            CapabilitySet::default()
+        );
     }
 
     #[test]

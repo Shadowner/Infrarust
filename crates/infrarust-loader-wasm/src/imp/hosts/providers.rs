@@ -27,7 +27,7 @@ impl wpr::Host for PluginStoreState {
 
 impl PluginStoreState {
     fn provide_bans(&mut self, features: &wb::BanFeatures) -> HostResult<()> {
-        self.check("providers", "register-ban-provider")?;
+        self.check(gate!("providers", "register-ban-provider"))?;
         let ctx = self.services()?;
         let features = BanFeatures::new()
             .ip_ranges(features.ip_ranges)
@@ -50,7 +50,7 @@ impl PluginStoreState {
     }
 
     fn provide_permissions(&mut self) -> HostResult<()> {
-        self.check("providers", "register-permission-provider")?;
+        self.check(gate!("providers", "register-permission-provider"))?;
         let ctx = self.services()?;
         if self
             .registrations()
