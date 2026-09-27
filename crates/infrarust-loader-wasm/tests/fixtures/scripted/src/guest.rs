@@ -466,7 +466,7 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
             ];
             seen(event, priority, &fields, &action);
             if let Action::Description(description) = &action {
-                e.response_mut().description = text(description);
+                e.set_description(text(description));
             }
         }),
         EventName::ProxyInitialize => ctx.on::<ProxyInitializeEvent>(at, move |_| {

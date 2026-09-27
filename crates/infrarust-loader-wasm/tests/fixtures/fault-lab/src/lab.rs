@@ -232,7 +232,7 @@ fn subscribe_events(ctx: &Context) -> Result<(), PluginError> {
     })?;
     ctx.on::<ProxyPingEvent>(EventPriority::Normal, |e| {
         strike_event("proxy-ping");
-        e.response_mut().description = Component::text("fault-lab");
+        e.set_description(Component::text("fault-lab"));
     })?;
     ctx.on::<DisconnectEvent>(EventPriority::Normal, |_| strike_event("disconnect"))?;
     Ok(())

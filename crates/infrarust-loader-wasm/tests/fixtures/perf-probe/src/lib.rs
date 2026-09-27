@@ -55,7 +55,7 @@ impl Plugin for PerfProbe {
         })?;
         ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
             if event.virtual_host.as_deref() == Some(MODIFY_HOST) {
-                event.response_mut().max_players += 1;
+                event.set_max_players(event.max_players() + 1);
             }
         })?;
         ctx.on::<GameProfileRequestEvent>(EventPriority::Normal, |event| {

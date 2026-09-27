@@ -38,9 +38,9 @@ use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::{
-    ban_service, codec_registry, command_manager, config_service, event_bus, limbo, load_balancer,
-    log, messaging, players, plugin_registry, proxy_info, scheduler, server_manager, text,
-    types as wt,
+    ban_service, codec_registry, command_manager, config_service, event_bus, events, limbo,
+    load_balancer, log, messaging, players, plugin_registry, proxy_info, scheduler, server_manager,
+    text, types as wt,
 };
 use crate::component;
 use crate::config::SandboxLimits;
@@ -1499,4 +1499,48 @@ async fn the_guest_is_told_the_most_verbose_level_the_proxy_logs() {
         "a live subscriber at debug makes debug lines worth sending, got {told:?}"
     );
     drop(sink);
+}
+
+#[tokio::test]
+async fn the_ping_fields_are_read_only_while_a_ping_is_handled() {
+    let mut state = state_with(CapabilitySet::baseline(), vec![]);
+    assert_eq!(
+        events::Host::ping_description(&mut state).await.unwrap(),
+        None
+    );
+    assert_eq!(events::Host::ping_favicon(&mut state).await.unwrap(), None);
+    assert!(
+        events::Host::ping_player_sample(&mut state)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    state.set_event_details(Some(Arc::new(crate::events::EventDetails::Ping(
+        crate::events::PingDetails {
+            description: Component::text("motd"),
+            favicon: Some("data:image/png;base64,AAAA".to_owned()),
+            player_sample: vec![("Notch".to_owned(), uuid::Uuid::from_u128(7))],
+        },
+    ))));
+    assert_eq!(
+        events::Host::ping_description(&mut state).await.unwrap(),
+        Some(text_of("motd"))
+    );
+    assert_eq!(
+        events::Host::ping_favicon(&mut state)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("data:image/png;base64,AAAA")
+    );
+    let sample = events::Host::ping_player_sample(&mut state).await.unwrap();
+    assert_eq!(sample.len(), 1);
+    assert_eq!(sample[0].name, "Notch");
+
+    state.begin_call(None);
+    assert_eq!(
+        events::Host::ping_description(&mut state).await.unwrap(),
+        None
+    );
 }

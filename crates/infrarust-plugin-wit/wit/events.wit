@@ -198,13 +198,13 @@ interface events {
     }
 
     record proxy-ping-result {
-        description: component,
         max-players: s32,
         online-players: s32,
         protocol: protocol-version,
         version-name: string,
-        favicon: option<string>,
-        player-sample: list<ping-player>,
+        description: option<component>,
+        favicon: option<option<string>>,
+        player-sample: option<list<ping-player>>,
     }
 
     record config-reload-event {
@@ -528,4 +528,8 @@ interface events {
         named-event(named-event-result),
         raw-packet(raw-packet-result),
     }
+
+    ping-description: func() -> option<component>;
+    ping-favicon: func() -> option<string>;
+    ping-player-sample: func() -> list<ping-player>;
 }

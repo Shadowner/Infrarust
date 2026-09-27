@@ -629,13 +629,12 @@ fn answer(ctx: &Context) -> Result<(), PluginError> {
         event.set_result(KickedFromServerResult::DisconnectPlayer(None));
     })?;
     ctx.on::<ProxyPingEvent>(EventPriority::Late, |event| {
-        let response = event.response_mut();
-        response.max_players = -1;
-        response.online_players = i32::MAX;
-        response.protocol = 5;
-        response.version_name = String::new();
-        response.favicon = None;
-        response.player_sample = vec![("Zed".to_owned(), Uuid::from_u128(9))];
+        event.set_max_players(-1);
+        event.set_online_players(i32::MAX);
+        event.set_version_protocol(5);
+        event.set_version_name(String::new());
+        event.set_favicon(None);
+        event.set_player_sample(vec![("Zed".to_owned(), Uuid::from_u128(9))]);
     })?;
     ctx.on::<GameProfileRequestEvent>(EventPriority::Late, |event| {
         let profile = event.profile_mut();

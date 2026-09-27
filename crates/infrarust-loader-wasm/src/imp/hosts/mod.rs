@@ -14,6 +14,7 @@ mod load_balancer;
 mod log;
 mod messaging;
 mod permissions;
+mod ping;
 mod players;
 mod plugin_registry;
 mod providers;

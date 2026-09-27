@@ -25,6 +25,7 @@ use crate::consts::{
 };
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::error::WasmLoaderError;
+use crate::events::EventDetails;
 use crate::host_error::{HostResult, limit_exceeded, no_services};
 use crate::mounts::Mount;
 use crate::network::{HttpHooks, NetworkPolicy, probe_policy};
@@ -98,6 +99,7 @@ struct Sandbox {
     deadline: Option<Deadline>,
     epoch_yields: u32,
     guest_panic: Option<String>,
+    event_details: Option<Arc<EventDetails>>,
 }
 
 impl Sandbox {
@@ -114,6 +116,7 @@ impl Sandbox {
             deadline: None,
             epoch_yields: 0,
             guest_panic: None,
+            event_details: None,
         }
     }
 }
@@ -326,6 +329,15 @@ impl PluginStoreState {
         self.sandbox.epoch_yields = 0;
         self.sandbox.deadline = deadline;
         self.sandbox.guest_panic = None;
+        self.sandbox.event_details = None;
+    }
+
+    pub(crate) fn set_event_details(&mut self, details: Option<Arc<EventDetails>>) {
+        self.sandbox.event_details = details;
+    }
+
+    pub(crate) fn event_details(&self) -> Option<&EventDetails> {
+        self.sandbox.event_details.as_deref()
     }
 
     pub(crate) fn record_guest_panic(&mut self, line: String) {
@@ -338,6 +350,7 @@ impl PluginStoreState {
 
     pub(crate) fn end_call(&mut self) {
         self.sandbox.deadline = None;
+        self.sandbox.event_details = None;
     }
 
     pub(crate) fn mint_listener_id(&mut self) -> u64 {

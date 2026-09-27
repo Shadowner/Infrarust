@@ -12,6 +12,7 @@ mod proxy;
 
 pub(crate) use guard::{AccessListeners, guard, is_access};
 pub(crate) use messaging::named_result;
+pub(crate) use proxy::PingDetails;
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, Event, EventPriority, ListenerHandle, PacketFilter};
@@ -41,6 +42,8 @@ use infrarust_api::events::proxy::{
 };
 use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
 use infrarust_api::events::transfer::PreTransferEvent;
+use std::sync::Arc;
+
 use infrarust_api::types::Component;
 use infrarust_plugin_wit::arena::ArenaError;
 
@@ -68,6 +71,48 @@ impl<E> Restore<E> {
     fn undo(self, event: &mut E) {
         (self.0)(event);
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum EventDetails {
+    Ping(PingDetails),
+}
+
+struct Lent<'e, E: WasmEvent> {
+    event: &'e mut E,
+    details: Option<Arc<EventDetails>>,
+}
+
+impl<'e, E: WasmEvent> Lent<'e, E> {
+    fn new(event: &'e mut E) -> Self {
+        let details = event.lend().map(Arc::new);
+        Self { event, details }
+    }
+
+    fn shared(&self) -> Option<Arc<EventDetails>> {
+        self.details.clone()
+    }
+
+    fn give_back(&mut self) -> &mut E {
+        if let Some(details) = self.details.take() {
+            let details = Arc::try_unwrap(details).unwrap_or_else(|shared| (*shared).clone());
+            self.event.give_back(details);
+        }
+        self.event
+    }
+}
+
+impl<E: WasmEvent> Drop for Lent<'_, E> {
+    fn drop(&mut self) {
+        self.give_back();
+    }
+}
+
+fn copied<E: WasmEvent>(event: &mut E) -> Option<Arc<EventDetails>> {
+    let details = event.lend()?;
+    let copy = details.clone();
+    event.give_back(details);
+    Some(Arc::new(copy))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -98,6 +143,12 @@ pub(crate) trait WasmEvent: Send + 'static {
     {
         None
     }
+
+    fn lend(&mut self) -> Option<EventDetails> {
+        None
+    }
+
+    fn give_back(&mut self, _details: EventDetails) {}
 }
 
 pub(crate) fn unmatched(outcome: &we::EventOutcome) -> Applied {
@@ -271,21 +322,28 @@ fn subscribe<E: WasmEvent + Event>(
 fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) -> BoxFuture<'_, ()> {
     let wit = event.to_wit();
     if instance.is_upstream() {
-        post(&instance, E::KIND, listener, wit);
+        let details = copied(event);
+        post(&instance, E::KIND, listener, wit, details);
         return Box::pin(async {});
     }
     let denied = event.deny_unanswered();
     Box::pin(async move {
+        let mut lent = Lent::new(event);
+        let details = lent.shared();
         let answer = instance
             .call("handle-event", move |store, bindings| {
                 Box::pin(async move {
-                    bindings
+                    store.data_mut().set_event_details(details);
+                    let outcome = bindings
                         .infrarust_plugin_guest()
                         .call_handle_event(&mut *store, listener, &wit)
-                        .await
+                        .await;
+                    store.data_mut().set_event_details(None);
+                    outcome
                 })
             })
             .await;
+        let event = lent.give_back();
         match answer {
             Ok(outcome) => {
                 if let Some(denied) = denied {
@@ -311,7 +369,13 @@ fn report_denied(instance: &InstanceRef, kind: EventKind, failure: &CallFailure)
     }
 }
 
-fn post(instance: &InstanceRef, kind: EventKind, listener: u64, wit: we::Event) {
+fn post(
+    instance: &InstanceRef,
+    kind: EventKind,
+    listener: u64,
+    wit: we::Event,
+    details: Option<Arc<EventDetails>>,
+) {
     let entries = CallChain::current().entries(instance.plugin_id());
     if entries >= MAX_ENTRIES {
         if let Some(suppressed) = instance.admit_loop_warning() {
@@ -337,10 +401,13 @@ fn post(instance: &InstanceRef, kind: EventKind, listener: u64, wit: we::Event) 
     }
     let _ = instance.post("handle-event", move |store, bindings| {
         Box::pin(async move {
-            bindings
+            store.data_mut().set_event_details(details);
+            let outcome = bindings
                 .infrarust_plugin_guest()
                 .call_handle_event(&mut *store, listener, &wit)
-                .await
+                .await;
+            store.data_mut().set_event_details(None);
+            outcome
         })
     });
 }
@@ -440,7 +507,7 @@ const fn outcome_name(outcome: &we::EventOutcome) -> &'static str {
 }
 
 #[cfg(test)]
-pub(crate) fn steve() -> std::sync::Arc<dyn infrarust_api::player::Player> {
+pub(crate) fn steve() -> Arc<dyn infrarust_api::player::Player> {
     let (player, _commands) = infrarust_core::player::PlayerSession::new_test(true);
     player
 }

@@ -102,6 +102,18 @@ mod imp {
     pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
         crate::bindings::log::max_level()
     }
+
+    pub(crate) fn ping_description() -> Option<crate::bindings::types::Component> {
+        crate::bindings::events::ping_description()
+    }
+
+    pub(crate) fn ping_favicon() -> Option<String> {
+        crate::bindings::events::ping_favicon()
+    }
+
+    pub(crate) fn ping_player_sample() -> Vec<crate::bindings::events::PingPlayer> {
+        crate::bindings::events::ping_player_sample()
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -135,6 +147,10 @@ mod imp {
         pub(crate) snapshots: HashMap<u64, PermissionSnapshot>,
         pub(crate) refused: HashSet<String>,
         pub(crate) log_level: Option<crate::bindings::log::Level>,
+        pub(crate) ping_description: Option<crate::bindings::types::Component>,
+        pub(crate) ping_favicon: Option<String>,
+        pub(crate) ping_sample: Vec<crate::bindings::events::PingPlayer>,
+        pub(crate) ping_reads: u32,
     }
 
     impl FakeHost {
@@ -344,5 +360,26 @@ mod imp {
 
     pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
         with_fake(|host| host.log_level)
+    }
+
+    pub(crate) fn ping_description() -> Option<crate::bindings::types::Component> {
+        with_fake(|host| {
+            host.ping_reads += 1;
+            host.ping_description.clone()
+        })
+    }
+
+    pub(crate) fn ping_favicon() -> Option<String> {
+        with_fake(|host| {
+            host.ping_reads += 1;
+            host.ping_favicon.clone()
+        })
+    }
+
+    pub(crate) fn ping_player_sample() -> Vec<crate::bindings::events::PingPlayer> {
+        with_fake(|host| {
+            host.ping_reads += 1;
+            host.ping_sample.clone()
+        })
     }
 }

@@ -2,29 +2,46 @@ use infrarust_api::events::proxy::{
     BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
     ProxyShutdownEvent, ServerStateChangeEvent,
 };
-use infrarust_api::types::ProtocolVersion;
+use infrarust_api::types::{Component, ProtocolVersion};
 
-use super::{Applied, Texts, WasmEvent, unmatched};
+use super::{Applied, EventDetails, Texts, WasmEvent, unmatched};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
+use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
 use crate::convert;
 
-fn ping_response_to_wit(response: &PingResponse) -> we::ProxyPingResult {
-    we::ProxyPingResult {
-        description: component::to_wit(&response.description),
-        max_players: response.max_players,
-        online_players: response.online_players,
-        protocol: response.protocol_version.raw(),
-        version_name: response.version_name.clone(),
-        favicon: response.favicon.clone(),
-        player_sample: response
-            .player_sample
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PingDetails {
+    pub(crate) description: Component,
+    pub(crate) favicon: Option<String>,
+    pub(crate) player_sample: Vec<(String, uuid::Uuid)>,
+}
+
+impl PingDetails {
+    pub(crate) fn description_to_wit(&self) -> wt::Component {
+        component::to_wit(&self.description)
+    }
+
+    pub(crate) fn player_sample_to_wit(&self) -> Vec<we::PingPlayer> {
+        self.player_sample
             .iter()
             .map(|(name, uuid)| we::PingPlayer {
                 name: name.clone(),
                 uuid: convert::uuid_to_wit(*uuid),
             })
-            .collect(),
+            .collect()
+    }
+}
+
+fn ping_summary_to_wit(response: &PingResponse) -> we::ProxyPingResult {
+    we::ProxyPingResult {
+        max_players: response.max_players,
+        online_players: response.online_players,
+        protocol: response.protocol_version.raw(),
+        version_name: response.version_name.clone(),
+        description: None,
+        favicon: None,
+        player_sample: None,
     }
 }
 
@@ -38,7 +55,7 @@ impl WasmEvent for ProxyPingEvent {
             virtual_host: self.virtual_host.clone(),
             protocol: self.protocol_version.raw(),
             legacy: self.legacy,
-            result: ping_response_to_wit(&self.response),
+            result: ping_summary_to_wit(&self.response),
         })
     }
 
@@ -48,20 +65,40 @@ impl WasmEvent for ProxyPingEvent {
         };
         let mut texts = Texts::default();
         let response = &mut self.response;
-        if result.description != component::to_wit(&response.description) {
-            response.description = texts.convert(&result.description);
-        }
         response.max_players = result.max_players;
         response.online_players = result.online_players;
         response.protocol_version = ProtocolVersion::new(result.protocol);
         response.version_name = result.version_name;
-        response.favicon = result.favicon;
-        response.player_sample = result
-            .player_sample
-            .into_iter()
-            .map(|player| (player.name, convert::uuid_from_wit(player.uuid)))
-            .collect();
+        if let Some(description) = result.description {
+            response.description = texts.convert(&description);
+        }
+        if let Some(favicon) = result.favicon {
+            response.favicon = favicon;
+        }
+        if let Some(sample) = result.player_sample {
+            response.player_sample = sample
+                .into_iter()
+                .map(|player| (player.name, convert::uuid_from_wit(player.uuid)))
+                .collect();
+        }
         texts.applied()
+    }
+
+    fn lend(&mut self) -> Option<EventDetails> {
+        let response = &mut self.response;
+        Some(EventDetails::Ping(PingDetails {
+            description: std::mem::take(&mut response.description),
+            favicon: response.favicon.take(),
+            player_sample: std::mem::take(&mut response.player_sample),
+        }))
+    }
+
+    fn give_back(&mut self, details: EventDetails) {
+        let EventDetails::Ping(ping) = details;
+        let response = &mut self.response;
+        response.description = ping.description;
+        response.favicon = ping.favicon;
+        response.player_sample = ping.player_sample;
     }
 }
 
@@ -156,7 +193,42 @@ mod tests {
     }
 
     #[test]
-    fn a_ping_outcome_keeps_the_player_sample_and_an_echoed_description() {
+    fn the_event_carries_the_cheap_fields_and_leaves_the_heavy_ones_on_the_host() {
+        let event = ping();
+        let result = current(&event);
+        assert_eq!(result.max_players, 20);
+        assert_eq!(result.online_players, 1);
+        assert_eq!(result.protocol, 774);
+        assert_eq!(result.version_name, "Infrarust");
+        assert_eq!(result.description, None);
+        assert_eq!(result.favicon, None);
+        assert_eq!(result.player_sample, None);
+    }
+
+    #[test]
+    fn lending_moves_the_heavy_fields_out_and_giving_them_back_restores_them() {
+        let mut event = ping();
+        event.response.favicon = Some("data:image/png;base64,AAAA".to_owned());
+        let original = event.response.clone();
+        let Some(EventDetails::Ping(lent)) = event.lend() else {
+            panic!("a ping lends its heavy fields");
+        };
+        assert_eq!(lent.description, original.description);
+        assert_eq!(lent.favicon, original.favicon);
+        assert_eq!(lent.player_sample, original.player_sample);
+        assert_eq!(
+            lent.description_to_wit(),
+            component::to_wit(&original.description)
+        );
+        assert_eq!(lent.player_sample_to_wit()[0].name, "Notch");
+        assert!(event.response.player_sample.is_empty());
+        assert_eq!(event.response.favicon, None);
+        event.give_back(EventDetails::Ping(lent));
+        assert_eq!(event.response, original);
+    }
+
+    #[test]
+    fn a_ping_outcome_without_heavy_fields_keeps_the_native_ones() {
         let mut event = ping();
         let original = event.response.clone();
         let mut outcome = current(&event);
@@ -176,12 +248,17 @@ mod tests {
     }
 
     #[test]
-    fn a_new_description_replaces_the_native_one() {
+    fn an_outcome_replaces_each_heavy_field_it_carries() {
         let mut event = ping();
+        event.response.favicon = Some("data:image/png;base64,AAAA".to_owned());
         let mut outcome = current(&event);
-        outcome.description = component::to_wit(&Component::text("hello"));
+        outcome.description = Some(component::to_wit(&Component::text("hello")));
+        outcome.favicon = Some(None);
+        outcome.player_sample = Some(Vec::new());
         event.apply(we::EventOutcome::ProxyPing(outcome));
         assert_eq!(event.response.description, Component::text("hello"));
+        assert_eq!(event.response.favicon, None);
+        assert!(event.response.player_sample.is_empty());
     }
 
     #[test]
