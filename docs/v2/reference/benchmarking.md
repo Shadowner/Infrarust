@@ -149,6 +149,49 @@ id, length, and total `ns`. Use this to attribute latency to a specific plugin u
 production-like conditions, or route it through the OpenTelemetry layer when the
 `telemetry` feature is on.
 
+## WASM codec filters: cost and isolation
+
+`crates/infrarust-loader-wasm/benches/codec_exec/` loads real WASM plugins (the `fault-lab`, `codec-modify` and `scripted` test fixtures) through the loader and drives the real `CodecFilterChain`. It measures what a WASM codec filter costs on the healthy path and what a filter that runs away costs everyone else.
+
+| Scenario | What it measures |
+|----------|------------------|
+| `hot`, `rr` | ns per 512 B packet on one connection, and round robin over 1000 connections, with and without an `await` between packets |
+| `create` | µs to build and close both sides of a connection, 1000 concurrent creations, RSS per live connection |
+| `sizes` | one call on 16 KiB to 2 MiB packets |
+| `load` | 1000 connections fed 20 packets/s each through loopback sockets: latency and CPU per packet |
+| `idle` | CPU of an idle proxy, epoch thread included |
+| `isolation` | a healthy plugin's command and other connections' packets (fed through sockets) while attackers from one address make a filter spin, in `filter`, in `create` (`STUDY_ATTACK=create`) or in bursts of prepared connections (`STUDY_ATTACK=burst`) |
+
+```bash
+cargo bench -p infrarust-loader-wasm --features wasm --bench codec_exec --no-run
+H=crates/infrarust-loader-wasm/benches/codec_exec
+python3 $H/run.py isolation --profile sparse --configs default --runs 3
+PART=isolation CONFIGS=default $H/study.sh <out-dir>
+STUDY_BINARY_BEFORE=<older codec_exec binary> CONFIGS=before,default $H/study.sh <out-dir>
+```
+
+`run.py` runs each configuration in turn, repeats the series, and prints the median with the min and max. The `before` configuration runs another build of the bench, for a before/after comparison on the same host. Profiles: `sparse` (default worker count, 20 victim connections at 10 packets/s, 10 attackers each triggered by its own socket once a second), `sparse-w2pinned` (the same on 2 worker threads pinned to 2 cores with `taskset`), `w2pinned`, `w2` and `wdefault` (50 victims at 100 packets/s, attackers in a loop). `$H/soak.sh` replays the `faulty-codec` scenario of `tests/soak/` on the real binary.
+
+Example, 3 runs on a 16-thread Ryzen 7 3700X shared with other builds (load average 7 to 27), before and after the 5 ms counted codec budget and the per-address quarantine:
+
+| Measure | Before (800 ms budget) | After (5 ms, quarantine) |
+|---------|------------------------|--------------------------|
+| Other connections' packets, p99, 16 workers, sparse | 770 ms | 0.20 ms |
+| Healthy plugin command, p99, same run | 768 ms | 4.0 ms |
+| Other connections' packets, p99, 2 workers on 2 cores, sparse | 8.7 s | 0.27 ms |
+| Other connections' packets, p99, 2 workers on 2 cores, dense | 3.4 s | 4.5 ms |
+| Filter spinning in `create`: other packets p99 / attacker connection setup | 11.2 s / 1.66 s | 3.0 ms / 0.18 ms |
+| Bursts of 25 prepared connections, 2 workers on 2 cores: other packets p99 | 9.6 s | 5.6 ms |
+| CPU burnt by the attackers, sparse | 7.3 cores | 0.04 cores |
+| 512 B packet with an `await` between packets, one connection / round robin | 1.14 µs / 2.92 µs | 1.06 µs / 1.60 µs |
+| Connection create and close, sequential | 101 µs | 90 µs |
+| RSS per live connection | 76 KiB | 76 KiB |
+| Idle CPU (1 ms epoch tick) | 0.0% of a core | 0.4% of a core |
+| Real binary, `tests/soak/run.sh --scenario faulty-codec` (16 workers, 10 attacking bots): mc-bench packet RTT p50 / p99 | 215 ms / 747 ms | 0.28 ms / 0.5 ms (0.28 / 0.6 without attackers) |
+| Same run: chat echo p99 / proxy CPU | 805 ms / 205% | 30 ms / 2% (27 ms / 1% without attackers) |
+
+The per-packet cost of a healthy filter does not change. What changes is that a filter call can no longer hold a worker thread, and with it the network driver of a lightly loaded proxy, for more than a few milliseconds.
+
 ## Quick reference
 
 ```bash
@@ -157,6 +200,7 @@ cargo bench -p infrarust_protocol  --bench frame_codec          # Layer B
 cargo bench -p infrarust-core      --bench intercepted_pipeline # Layer C
 # Layer D: see tools/mc-bench/README.md
 # Layer E: run the proxy with --features infrarust-core/bench-timing
+cargo bench -p infrarust-loader-wasm --features wasm --bench codec_exec -- isolation  # WASM codec isolation
 ```
 
 Divan takes `--sample-count` and `--sample-size` for quicker runs, and filters by name,
