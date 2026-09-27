@@ -1,10 +1,11 @@
 use std::io::Write;
 
 use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
-use crate::error::ProtocolResult;
+use crate::error::{ProtocolError, ProtocolResult};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 use super::super::{Packet, PacketMapping};
+use super::command_parsers::parser_names;
 
 const NODE_TYPE_MASK: u8 = 0x03;
 const NODE_TYPE_ROOT: u8 = 0x00;
@@ -148,7 +149,7 @@ fn decode_node(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Comman
             (Some(name), Some(parser), suggestions)
         }
         _ => {
-            return Err(crate::error::ProtocolError::invalid(format!(
+            return Err(ProtocolError::invalid(format!(
                 "unknown command node type: {node_type}"
             )));
         }
@@ -205,11 +206,12 @@ fn encode_node(
 fn decode_parser(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Parser> {
     if version.no_less_than(ProtocolVersion::V1_19) {
         let id = r.read_var_int()?.0;
-        let properties = read_parser_properties(r, id)?;
+        let name = indexed_parser_to_name(id, version)?;
+        let properties = read_parser_properties(r, name, version)?;
         Ok(Parser::Indexed { id, properties })
     } else {
         let identifier = r.read_string()?;
-        let properties = read_parser_properties_by_name(r, &identifier)?;
+        let properties = read_parser_properties(r, &identifier, version)?;
         Ok(Parser::Named {
             identifier,
             properties,
@@ -224,12 +226,12 @@ fn encode_parser(
 ) -> ProtocolResult<()> {
     match parser {
         Parser::Indexed { id, properties } => {
-            if version.no_less_than(ProtocolVersion::V1_19) {
-                w.write_var_int(&VarInt(*id))?;
-            } else {
-                let name = indexed_parser_to_name(*id);
-                w.write_string(name)?;
+            if version.less_than(ProtocolVersion::V1_19) {
+                return Err(ProtocolError::invalid(format!(
+                    "indexed command parser {id} cannot be encoded for {version}"
+                )));
             }
+            w.write_var_int(&VarInt(*id))?;
             w.write_all(properties)?;
         }
         Parser::Named {
@@ -237,7 +239,7 @@ fn encode_parser(
             properties,
         } => {
             if version.no_less_than(ProtocolVersion::V1_19) {
-                let id = named_parser_to_id(identifier);
+                let id = named_parser_to_id(identifier, version)?;
                 w.write_var_int(&VarInt(id))?;
             } else {
                 w.write_string(identifier)?;
@@ -248,127 +250,63 @@ fn encode_parser(
     Ok(())
 }
 
-fn read_parser_properties(r: &mut &[u8], id: i32) -> ProtocolResult<Vec<u8>> {
+fn read_parser_properties(
+    r: &mut &[u8],
+    name: &str,
+    version: ProtocolVersion,
+) -> ProtocolResult<Vec<u8>> {
     let mut buf = Vec::new();
-    match id {
-        0 => {}
-        1 | 2 => {
-            let flags = r.read_u8()?;
-            buf.push(flags);
-            if flags & 0x01 != 0 {
-                let bytes = r.read_byte_array_bounded(if id == 1 { 4 } else { 8 })?;
-                buf.extend_from_slice(&bytes);
-            }
-            if flags & 0x02 != 0 {
-                let bytes = r.read_byte_array_bounded(if id == 1 { 4 } else { 8 })?;
-                buf.extend_from_slice(&bytes);
-            }
+    match name {
+        "brigadier:float" | "brigadier:integer" => read_bounds(r, 4, &mut buf)?,
+        "brigadier:double" | "brigadier:long" => read_bounds(r, 8, &mut buf)?,
+        "brigadier:string" => r.read_var_int()?.encode(&mut buf)?,
+        "minecraft:entity" | "minecraft:score_holder" => buf.push(r.read_u8()?),
+        "minecraft:time" if version.no_less_than(ProtocolVersion::V1_19_4) => {
+            buf.extend_from_slice(&r.read_byte_array_bounded(4)?);
         }
-        3 | 4 => {
-            let flags = r.read_u8()?;
-            buf.push(flags);
-            if flags & 0x01 != 0 {
-                let bytes = r.read_byte_array_bounded(if id == 3 { 4 } else { 8 })?;
-                buf.extend_from_slice(&bytes);
-            }
-            if flags & 0x02 != 0 {
-                let bytes = r.read_byte_array_bounded(if id == 3 { 4 } else { 8 })?;
-                buf.extend_from_slice(&bytes);
-            }
-        }
-        5 => {
-            let mode = r.read_var_int()?;
-            mode.encode(&mut buf)?;
-        }
-        6 | 31 => {
-            buf.push(r.read_u8()?);
-        }
-        43 => {
-            let bytes = r.read_byte_array_bounded(4)?;
-            buf.extend_from_slice(&bytes);
-        }
-        44..=47 => {
-            let s = r.read_string()?;
-            let mut tmp = Vec::new();
-            tmp.write_string(&s)?;
-            buf.extend_from_slice(&tmp);
-        }
+        "minecraft:resource_or_tag"
+        | "minecraft:resource_or_tag_key"
+        | "minecraft:resource"
+        | "minecraft:resource_key"
+        | "minecraft:resource_selector" => buf.write_string(&r.read_string()?)?,
         _ => {}
     }
     Ok(buf)
 }
 
-fn read_parser_properties_by_name(r: &mut &[u8], identifier: &str) -> ProtocolResult<Vec<u8>> {
-    let id = named_parser_to_id(identifier);
-    read_parser_properties(r, id)
+fn read_bounds(r: &mut &[u8], width: usize, buf: &mut Vec<u8>) -> ProtocolResult<()> {
+    let flags = r.read_u8()?;
+    buf.push(flags);
+    for bound in [0x01, 0x02] {
+        if flags & bound != 0 {
+            buf.extend_from_slice(&r.read_byte_array_bounded(width)?);
+        }
+    }
+    Ok(())
 }
 
-const PARSERS: [&str; 48] = [
-    "brigadier:bool",
-    "brigadier:float",
-    "brigadier:double",
-    "brigadier:integer",
-    "brigadier:long",
-    "brigadier:string",
-    "minecraft:entity",
-    "minecraft:game_profile",
-    "minecraft:block_pos",
-    "minecraft:column_pos",
-    "minecraft:vec3",
-    "minecraft:vec2",
-    "minecraft:block_state",
-    "minecraft:block_predicate",
-    "minecraft:item_stack",
-    "minecraft:item_predicate",
-    "minecraft:color",
-    "minecraft:component",
-    "minecraft:message",
-    "minecraft:nbt_compound_tag",
-    "minecraft:nbt_tag",
-    "minecraft:nbt_path",
-    "minecraft:objective",
-    "minecraft:objective_criteria",
-    "minecraft:operation",
-    "minecraft:particle",
-    "minecraft:angle",
-    "minecraft:rotation",
-    "minecraft:scoreboard_slot",
-    "minecraft:score_holder",
-    "minecraft:swizzle",
-    "minecraft:team",
-    "minecraft:item_slot",
-    "minecraft:resource_location",
-    "minecraft:function",
-    "minecraft:entity_anchor",
-    "minecraft:int_range",
-    "minecraft:float_range",
-    "minecraft:dimension",
-    "minecraft:gamemode",
-    "minecraft:time",
-    "minecraft:resource_or_tag",
-    "minecraft:resource_or_tag_key",
-    "minecraft:resource",
-    "minecraft:resource_key",
-    "minecraft:template_mirror",
-    "minecraft:template_rotation",
-    "minecraft:heightmap",
-];
-
-fn named_parser_to_id(name: &str) -> i32 {
-    if name == "minecraft:nbt" {
-        return 19;
-    }
-    PARSERS
+fn named_parser_to_id(name: &str, version: ProtocolVersion) -> ProtocolResult<i32> {
+    let name = if name == "minecraft:nbt" {
+        "minecraft:nbt_compound_tag"
+    } else {
+        name
+    };
+    parser_names(version)
         .iter()
         .position(|&parser| parser == name)
-        .map_or(-1, |index| index as i32)
+        .map(|index| index as i32)
+        .ok_or_else(|| {
+            ProtocolError::invalid(format!("command parser {name} does not exist in {version}"))
+        })
 }
 
-fn indexed_parser_to_name(id: i32) -> &'static str {
+fn indexed_parser_to_name(id: i32, version: ProtocolVersion) -> ProtocolResult<&'static str> {
     usize::try_from(id)
         .ok()
-        .and_then(|index| PARSERS.get(index).copied())
-        .unwrap_or("brigadier:string")
+        .and_then(|index| parser_names(version).get(index).copied())
+        .ok_or_else(|| {
+            ProtocolError::invalid(format!("unknown command parser id {id} in {version}"))
+        })
 }
 
 impl Packet for CCommands {
@@ -442,22 +380,131 @@ mod tests {
 
     #[test]
     fn parser_table_lookups_are_inverses() {
-        for (index, name) in PARSERS.iter().enumerate() {
-            let id = index as i32;
-            assert_eq!(named_parser_to_id(name), id, "name -> id for {name}");
-            assert_eq!(indexed_parser_to_name(id), *name, "id -> name for {id}");
+        for &version in ProtocolVersion::SUPPORTED
+            .iter()
+            .filter(|v| v.no_less_than(ProtocolVersion::V1_19))
+        {
+            for (index, name) in parser_names(version).iter().enumerate() {
+                let id = index as i32;
+                assert_eq!(
+                    named_parser_to_id(name, version).unwrap(),
+                    id,
+                    "{name} at {version}"
+                );
+                assert_eq!(
+                    indexed_parser_to_name(id, version).unwrap(),
+                    *name,
+                    "{id} at {version}"
+                );
+            }
+            assert_eq!(
+                named_parser_to_id("minecraft:nbt", version).unwrap(),
+                named_parser_to_id("minecraft:nbt_compound_tag", version).unwrap()
+            );
+            assert!(named_parser_to_id("nope:not_a_parser", version).is_err());
+            assert!(indexed_parser_to_name(-1, version).is_err());
+            assert!(indexed_parser_to_name(parser_names(version).len() as i32, version).is_err());
         }
+    }
 
-        assert_eq!(named_parser_to_id("minecraft:nbt"), 19);
-        assert_eq!(named_parser_to_id("minecraft:nbt_compound_tag"), 19);
-        assert_eq!(indexed_parser_to_name(19), "minecraft:nbt_compound_tag");
+    #[test]
+    fn parser_ids_match_the_vanilla_registry() {
+        let cases = [
+            (ProtocolVersion::V1_19, "minecraft:score_holder", 29),
+            (ProtocolVersion::V1_19, "minecraft:time", 42),
+            (ProtocolVersion::V1_19, "minecraft:resource", 44),
+            (ProtocolVersion::V1_19_3, "minecraft:time", 40),
+            (ProtocolVersion::V1_19_4, "minecraft:heightmap", 47),
+            (ProtocolVersion::V1_20_3, "minecraft:score_holder", 30),
+            (ProtocolVersion::V1_20_3, "minecraft:time", 41),
+            (ProtocolVersion::V1_20_5, "minecraft:resource_key", 46),
+            (ProtocolVersion::V1_21, "minecraft:time", 42),
+            (ProtocolVersion::V1_21_5, "minecraft:resource_selector", 47),
+            (ProtocolVersion::V1_21_6, "minecraft:score_holder", 31),
+            (ProtocolVersion::V1_21_6, "minecraft:dialog", 55),
+            (ProtocolVersion::V26_2, "minecraft:team_color", 16),
+            (
+                ProtocolVersion::V26_3,
+                "minecraft:context_float_provider",
+                55,
+            ),
+            (ProtocolVersion::V26_3, "minecraft:dialog", 58),
+            (ProtocolVersion::V26_3, "minecraft:uuid", 61),
+        ];
+        for (version, name, id) in cases {
+            assert_eq!(
+                named_parser_to_id(name, version).unwrap(),
+                id,
+                "{name} at {version}"
+            );
+        }
+    }
 
-        assert_eq!(named_parser_to_id("nope:not_a_parser"), -1);
-        assert_eq!(indexed_parser_to_name(-1), "brigadier:string");
-        assert_eq!(
-            indexed_parser_to_name(PARSERS.len() as i32),
-            "brigadier:string"
-        );
+    #[test]
+    fn parser_properties_follow_the_client_version() {
+        let cases: [(ProtocolVersion, &str, &[u8]); 6] = [
+            (ProtocolVersion::V1_20_3, "minecraft:score_holder", &[0x01]),
+            (ProtocolVersion::V1_21, "minecraft:time", &[0, 0, 0, 20]),
+            (ProtocolVersion::V1_21, "minecraft:template_mirror", &[]),
+            (
+                ProtocolVersion::V1_21_5,
+                "minecraft:resource_selector",
+                &[5, b'i', b't', b'e', b'm', b's'],
+            ),
+            (ProtocolVersion::V26_3, "minecraft:dialog", &[]),
+            (ProtocolVersion::V26_3, "minecraft:uuid", &[]),
+        ];
+        for (version, name, properties) in cases {
+            let id = named_parser_to_id(name, version).unwrap();
+            let pkt = CCommands {
+                nodes: vec![
+                    CommandNode {
+                        flags: NODE_TYPE_ROOT,
+                        children: vec![1],
+                        redirect_node: None,
+                        name: None,
+                        parser: None,
+                        suggestions_type: None,
+                    },
+                    CommandNode::argument(
+                        "arg",
+                        Parser::Indexed {
+                            id,
+                            properties: properties.to_vec(),
+                        },
+                        None,
+                    ),
+                ],
+                root_index: 0,
+            };
+            let decoded = round_trip(&pkt, version);
+            assert!(
+                matches!(
+                    decoded.nodes[1].parser,
+                    Some(Parser::Indexed { id: got, properties: ref got_props })
+                        if got == id && got_props.as_slice() == properties
+                ),
+                "{name} at {version}"
+            );
+            assert_eq!(decoded.root_index, 0, "{name} at {version}");
+        }
+    }
+
+    #[test]
+    fn indexed_parser_cannot_be_encoded_before_1_19() {
+        let pkt = CCommands {
+            nodes: vec![CommandNode::argument(
+                "arg",
+                Parser::Indexed {
+                    id: 5,
+                    properties: vec![0],
+                },
+                None,
+            )],
+            root_index: 0,
+        };
+        let mut buf = Vec::new();
+        assert!(pkt.encode(&mut buf, ProtocolVersion::V1_16).is_err());
     }
 
     #[test]
@@ -561,7 +608,7 @@ mod tests {
         buf.write_u8(0x03).unwrap();
         buf.write_var_int(&VarInt(0)).unwrap();
         let err = decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
-        assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
     }
 
     #[test]
@@ -570,7 +617,7 @@ mod tests {
         buf.write_u8(NODE_TYPE_LITERAL).unwrap();
         buf.write_var_int(&VarInt(-1)).unwrap();
         let err = decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
-        assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
     }
 
     #[test]
@@ -586,7 +633,7 @@ mod tests {
         let mut buf = Vec::new();
         buf.write_var_int(&VarInt(-5)).unwrap();
         let err = CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
-        assert!(matches!(err, crate::error::ProtocolError::Invalid { .. }));
+        assert!(matches!(err, ProtocolError::Invalid { .. }));
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod chat_session;
 pub mod chunk_batch;
 pub mod chunk_data;
 pub mod client_information;
+mod command_parsers;
 pub mod commands;
 pub(crate) mod common;
 pub mod container_content;
