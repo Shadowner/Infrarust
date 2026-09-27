@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::permissions::{
-    PermissionChecker, PermissionProvider, PermissionSnapshot, PermissionSubject,
+    AllPermissionsChecker, PermissionChecker, PermissionProvider, PermissionSnapshot,
+    PermissionSubject,
 };
 
 use crate::actor::InstanceRef;
@@ -70,6 +71,14 @@ impl PermissionProvider for WasmPermissionProvider {
             }
             let snapshot = match self.ask(subject).await {
                 Ok(snapshot) => snapshot,
+                Err(reason) if subject.is_console() => {
+                    if let Some(suppressed) = self.instance.admit_warning() {
+                        tracing::warn!(plugin = self.instance.plugin_id(), subject = name(subject),
+                            %reason, suppressed,
+                            "wasm permission provider gave no snapshot for the console; the console keeps every permission");
+                    }
+                    return Arc::new(AllPermissionsChecker);
+                }
                 Err(reason) => {
                     if let Some(suppressed) = self.instance.admit_warning() {
                         tracing::warn!(plugin = self.instance.plugin_id(), subject = name(subject),

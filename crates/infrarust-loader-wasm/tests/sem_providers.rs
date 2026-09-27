@@ -307,15 +307,40 @@ async fn an_oversized_snapshot_leaves_the_player_with_the_node_defaults_and_a_wa
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_permission_provider_trapping_for_the_console_leaves_the_console_with_the_node_defaults()
-{
-    let (probe, permissions) = perms_probe("perms console-trap").await;
-    let console = permissions.console_checker().await;
-    assert!(
-        !console.has_permission("infrarust.command.kick"),
-        "the console is a subject like any other: a failed answer gives it the node defaults"
+async fn a_permission_provider_trapping_for_the_console_leaves_the_console_with_every_permission() {
+    let logs = LogCapture::at(Level::WARN);
+    let (console, player, log) = async {
+        let (probe, permissions) = perms_probe("perms console-trap").await;
+        let console = permissions.console_checker().await;
+        let player = permissions.create_checker(&subject(5, "Trap")).await;
+        (
+            [
+                console.has_permission("infrarust.command.kick"),
+                console.has_permission("sem-probe.admin"),
+            ],
+            player.has_permission("sem-probe.admin"),
+            probe.log(),
+        )
+    }
+    .with_subscriber(logs.clone())
+    .await;
+    assert_eq!(
+        console,
+        [true, true],
+        "the console keeps every permission while the provider cannot answer for it"
     );
-    assert!(probe.log().contains(&"snapshot console".to_owned()));
+    assert!(
+        !player,
+        "a player whose answer fails still gets the node defaults"
+    );
+    assert!(log.contains(&"snapshot console".to_owned()), "{log:?}");
+    assert!(
+        !logs
+            .matching("the console keeps every permission")
+            .is_empty(),
+        "{:?}",
+        logs.lines()
+    );
 }
 
 fn steve() -> Arc<dyn infrarust_api::player::Player> {
