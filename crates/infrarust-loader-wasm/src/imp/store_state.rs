@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::ListenerHandle;
@@ -27,6 +27,7 @@ use crate::mounts::Mount;
 use crate::network::{HttpHooks, NetworkPolicy, probe_policy};
 use crate::rate_limit::RateLimit;
 use crate::registrations::Registrations;
+use crate::sync::lock;
 
 pub(crate) struct PluginSetup {
     pub(crate) plugin_id: String,
@@ -78,10 +79,43 @@ struct Guest {
     host_call_timeout: Duration,
 }
 
+#[derive(Default)]
+pub(crate) struct LiveTasks {
+    slots: Mutex<HashMap<u64, Option<TaskHandle>>>,
+}
+
+impl LiveTasks {
+    fn reserve(&self, id: u64) {
+        lock(&self.slots).insert(id, None);
+    }
+
+    fn bind(&self, id: u64, handle: TaskHandle) {
+        if let Some(slot) = lock(&self.slots).get_mut(&id) {
+            *slot = Some(handle);
+        }
+    }
+
+    pub(crate) fn fired(&self, id: u64) {
+        lock(&self.slots).remove(&id);
+    }
+
+    fn take(&self, id: u64) -> Option<TaskHandle> {
+        lock(&self.slots).remove(&id).flatten()
+    }
+
+    fn drain(&self) -> Vec<TaskHandle> {
+        lock(&self.slots)
+            .drain()
+            .filter_map(|(_, handle)| handle)
+            .collect()
+    }
+}
+
 struct HostResources {
     next_listener_id: u64,
     listeners: HashMap<u64, Vec<ListenerHandle>>,
-    tasks: HashSet<u64>,
+    next_task_id: u64,
+    tasks: Arc<LiveTasks>,
     boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
 }
 
@@ -90,7 +124,8 @@ impl HostResources {
         Self {
             next_listener_id: 1,
             listeners: HashMap::new(),
-            tasks: HashSet::new(),
+            next_task_id: 1,
+            tasks: Arc::default(),
             boss_bars: HashMap::new(),
         }
     }
@@ -239,19 +274,26 @@ impl PluginStoreState {
         self.resources.boss_bars.remove(&id)
     }
 
-    pub(crate) fn record_task(&mut self, handle: u64) {
-        self.resources.tasks.insert(handle);
+    pub(crate) fn reserve_task(&mut self) -> (u64, Arc<LiveTasks>) {
+        let id = self.resources.next_task_id;
+        self.resources.next_task_id += 1;
+        self.resources.tasks.reserve(id);
+        (id, Arc::clone(&self.resources.tasks))
     }
 
-    pub(crate) fn forget_task(&mut self, handle: u64) {
-        self.resources.tasks.remove(&handle);
+    pub(crate) fn bind_task(&mut self, id: u64, handle: TaskHandle) {
+        self.resources.tasks.bind(id, handle);
+    }
+
+    pub(crate) fn take_task(&mut self, id: u64) -> Option<TaskHandle> {
+        self.resources.tasks.take(id)
     }
 
     pub(crate) fn release_host_resources(&mut self) {
         let resources = &mut self.resources;
         let listeners: Vec<ListenerHandle> =
             resources.listeners.drain().flat_map(|(_, h)| h).collect();
-        let tasks: Vec<u64> = resources.tasks.drain().collect();
+        let tasks = resources.tasks.drain();
         for (_, bar) in resources.boss_bars.drain() {
             let _ = bar.hide();
         }
@@ -262,7 +304,7 @@ impl PluginStoreState {
             ctx.event_bus().unsubscribe(handle);
         }
         for task in tasks {
-            ctx.scheduler().cancel(TaskHandle::new(task));
+            ctx.scheduler().cancel(task);
         }
     }
 

@@ -633,7 +633,6 @@ async fn a_deny_listener_busy_with_one_slow_login_still_decides_the_logins_behin
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-24: fired one-shot tasks are never forgotten"]
 async fn a_delay_that_already_fired_is_no_longer_tracked_by_the_host() {
     let logs = LogCapture::at(Level::DEBUG);
     let config: Vec<String> = (0..200).map(|i| format!("delay d{i} 1")).collect();

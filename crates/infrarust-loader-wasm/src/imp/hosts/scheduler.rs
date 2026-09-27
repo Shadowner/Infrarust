@@ -1,7 +1,5 @@
 use std::time::Duration;
 
-use infrarust_api::services::scheduler::TaskHandle;
-
 use crate::actor::CallKind;
 use crate::bindings::infrarust::plugin::scheduler as wsched;
 use crate::host_error::HostResult;
@@ -32,15 +30,17 @@ impl PluginStoreState {
         self.check("scheduler", "delay")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
+        let (id, tasks) = self.reserve_task();
         let handle = ctx.scheduler().delay(
             Duration::from_millis(after),
             Box::new(move || {
+                tasks.fired(id);
                 proxies::dispatch_scheduled_task(instance, handler);
                 Box::pin(async {})
             }),
         );
-        self.record_task(handle.as_u64());
-        Ok(handle.as_u64())
+        self.bind_task(id, handle);
+        Ok(id)
     }
 
     fn schedule_interval(
@@ -52,6 +52,7 @@ impl PluginStoreState {
         self.check("scheduler", "interval")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?;
+        let (id, _) = self.reserve_task();
         let handle = ctx.scheduler().repeat(
             Duration::from_millis(period),
             initial_delay.map(Duration::from_millis),
@@ -60,15 +61,16 @@ impl PluginStoreState {
                 Box::pin(async {})
             }),
         );
-        self.record_task(handle.as_u64());
-        Ok(handle.as_u64())
+        self.bind_task(id, handle);
+        Ok(id)
     }
 
-    fn cancel_task(&mut self, handle: u64) -> HostResult<()> {
+    fn cancel_task(&mut self, id: u64) -> HostResult<()> {
         self.check("scheduler", "cancel")?;
-        self.forget_task(handle);
-        if let Ok(ctx) = self.services() {
-            ctx.scheduler().cancel(TaskHandle::new(handle));
+        if let Some(handle) = self.take_task(id)
+            && let Ok(ctx) = self.services()
+        {
+            ctx.scheduler().cancel(handle);
         }
         Ok(())
     }
