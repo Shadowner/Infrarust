@@ -120,10 +120,12 @@ pub mod prelude {
         ConnectionState, FilterPriority, Injections, Packet, Verdict,
     };
     pub use crate::command::{
-        CommandInvocation, CommandRegistration, CommandSender, Completion, Suggestion,
+        CommandBuilder, CommandInvocation, CommandRegistration, CommandSender, Completion,
+        Suggestion,
     };
     pub use crate::component::{
-        ClickEvent, Component, Decoration, HoverEvent, NamedColor, TextColor,
+        ClickEvent, Component, Content, Decoration, HoverEvent, IntoTextColor, NamedColor, Style,
+        TextColor,
     };
     pub use crate::context::{
         Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
@@ -143,14 +145,14 @@ pub mod prelude {
     };
     pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
     pub use crate::services::{
-        BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, LoadBalancer,
-        Messaging, PluginInfo, Plugins, Proxy, ProxyDetails, ServerConfig, ServerSource,
-        ServerStatus, Servers,
+        BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
+        LoadBalancer, Messaging, PluginInfo, Plugins, Proxy, ProxyDetails, RateLimitInfo,
+        ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo, UnknownDomainBehavior,
     };
     pub use crate::types::{
         Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
-        ParticleStatus, PlayerId, PlayerRef, ProxyMode, ServerAddress, ServerId, ServerState,
-        SkinParts,
+        ParticleStatus, PlayerId, PlayerRef, ProfileProperty, ProxyMode, ServerAddress, ServerId,
+        ServerState, SkinParts,
     };
     pub use crate::{Uuid, debug, error, info, plugin, trace, warn};
 }
