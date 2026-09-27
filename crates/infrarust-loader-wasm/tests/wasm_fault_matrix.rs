@@ -386,7 +386,7 @@ async fn every_fault_kind_in_the_other_limbo_callbacks_does_nothing_and_recovers
                             .await;
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                lab.complete("lab ").await;
                 let ran = lab.log(LAB).iter().any(|line| line == key);
                 let recovered = lab
                     .log(LAB)
