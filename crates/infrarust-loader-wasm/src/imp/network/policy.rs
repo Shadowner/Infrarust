@@ -217,17 +217,21 @@ impl NetworkPolicy {
             Mode::On { rules, .. } => rules,
         };
         match usage {
-            SocketAddrUse::TcpBind | SocketAddrUse::UdpBind => {
-                let ephemeral_udp = matches!(usage, SocketAddrUse::UdpBind) && addr.port() == 0;
-                if ephemeral_udp || rules.iter().any(|rule| rule.permits_bind(addr)) {
+            SocketAddrUse::TcpBind | SocketAddrUse::TcpListen | SocketAddrUse::UdpBind => {
+                let ephemeral = addr.port() == 0
+                    && match usage {
+                        SocketAddrUse::UdpBind => true,
+                        SocketAddrUse::TcpBind => addr.ip().is_unspecified(),
+                        _ => false,
+                    };
+                if ephemeral || rules.iter().any(|rule| rule.permits_bind(addr)) {
                     Decision::Allow
                 } else {
                     Decision::Deny(Refusal::AllowList)
                 }
             }
-            SocketAddrUse::TcpConnect
-            | SocketAddrUse::UdpConnect
-            | SocketAddrUse::UdpOutgoingDatagram => {
+            SocketAddrUse::TcpAccept | SocketAddrUse::UdpReceive => Decision::Allow,
+            SocketAddrUse::TcpConnect | SocketAddrUse::UdpSend => {
                 if rules
                     .iter()
                     .any(|rule| rule.matches_ip(addr.ip(), addr.port()))
@@ -433,8 +437,10 @@ fn usage_label(usage: SocketAddrUse) -> &'static str {
         SocketAddrUse::TcpBind => "tcp-bind",
         SocketAddrUse::TcpConnect => "tcp-connect",
         SocketAddrUse::UdpBind => "udp-bind",
-        SocketAddrUse::UdpConnect => "udp-connect",
-        SocketAddrUse::UdpOutgoingDatagram => "udp-send",
+        SocketAddrUse::TcpListen => "tcp-listen",
+        SocketAddrUse::TcpAccept => "tcp-accept",
+        SocketAddrUse::UdpSend => "udp-send",
+        SocketAddrUse::UdpReceive => "udp-receive",
     }
 }
 
@@ -507,15 +513,8 @@ mod tests {
         let resolver = Arc::new(FakeResolver::default());
         let policy = policy_with(&["127.0.0.1:5432", "10.0.0.0/8:3306", "[::1]:*"], &resolver);
         assert!(check(&policy, addr("127.0.0.1:5432"), CONNECT).await);
-        assert!(
-            check(
-                &policy,
-                addr("10.20.30.40:3306"),
-                SocketAddrUse::UdpOutgoingDatagram
-            )
-            .await
-        );
-        assert!(check(&policy, addr("[::1]:9"), SocketAddrUse::UdpConnect).await);
+        assert!(check(&policy, addr("10.20.30.40:3306"), SocketAddrUse::UdpSend).await);
+        assert!(check(&policy, addr("[::1]:9"), SocketAddrUse::UdpSend).await);
         assert!(!check(&policy, addr("127.0.0.1:5433"), CONNECT).await);
         assert!(!check(&policy, addr("11.0.0.1:3306"), CONNECT).await);
         assert_eq!(resolver.calls(), 0);
@@ -667,9 +666,9 @@ mod tests {
             for usage in [
                 SocketAddrUse::TcpConnect,
                 SocketAddrUse::TcpBind,
+                SocketAddrUse::TcpListen,
                 SocketAddrUse::UdpBind,
-                SocketAddrUse::UdpConnect,
-                SocketAddrUse::UdpOutgoingDatagram,
+                SocketAddrUse::UdpSend,
             ] {
                 assert!(!check(policy, addr("127.0.0.1:0"), usage).await);
                 assert!(!check(policy, addr("127.0.0.1:80"), usage).await);

@@ -54,9 +54,11 @@ fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
 }
 
 fn validate_impl(item_impl: &ItemImpl) -> syn::Result<()> {
-    let is_plugin_trait = item_impl.trait_.as_ref().is_some_and(|(bang, path, _)| {
-        bang.is_none() && path.segments.last().is_some_and(|s| s.ident == "Plugin")
-    });
+    let is_plugin_trait = item_impl.modifiers.polarity.is_none()
+        && item_impl
+            .trait_
+            .as_ref()
+            .is_some_and(|(path, _)| path.segments.last().is_some_and(|s| s.ident == "Plugin"));
     if !is_plugin_trait {
         return Err(syn::Error::new_spanned(
             &item_impl.self_ty,

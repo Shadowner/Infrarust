@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use infrarust_api::permissions::{Capability, CapabilitySet};
 use infrarust_config::WasmMount;
-use wasmtime_wasi::{DirPerms, FilePerms};
+use wasmtime_wasi::FsPerms;
 
 use crate::error::WasmLoaderError;
 
@@ -14,11 +14,11 @@ pub(crate) struct Mount {
 }
 
 impl Mount {
-    pub(crate) fn perms(&self) -> (DirPerms, FilePerms) {
+    pub(crate) fn perms(&self) -> FsPerms {
         if self.read_only {
-            (DirPerms::READ, FilePerms::READ)
+            FsPerms::ReadOnly
         } else {
-            (DirPerms::all(), FilePerms::all())
+            FsPerms::ReadWrite
         }
     }
 }
@@ -104,9 +104,9 @@ mod tests {
         let root = std::fs::canonicalize(dir.path()).unwrap();
         assert_eq!(resolved[0].host, root.join("shared"));
         assert_eq!(resolved[0].guest, "/shared");
-        assert_eq!(resolved[0].perms(), (DirPerms::READ, FilePerms::READ));
+        assert_eq!(resolved[0].perms(), FsPerms::ReadOnly);
         assert_eq!(resolved[1].host, root);
-        assert_eq!(resolved[1].perms(), (DirPerms::all(), FilePerms::all()));
+        assert_eq!(resolved[1].perms(), FsPerms::ReadWrite);
     }
 
     #[test]

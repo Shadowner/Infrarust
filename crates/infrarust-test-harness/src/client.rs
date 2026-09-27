@@ -31,9 +31,8 @@ use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
 };
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
-use rand::RngCore;
-use rand::rngs::OsRng;
 use rsa::pkcs8::DecodePublicKey;
+use rsa::rand_core::{OsRng, RngCore};
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 use serde_json::Value;
 use tokio::net::TcpStream;

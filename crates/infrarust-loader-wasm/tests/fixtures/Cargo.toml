@@ -23,8 +23,8 @@ members = [
 ]
 
 [workspace.dependencies]
-wit-bindgen = "0.58"
-wasip2 = "1.0.2"
+wit-bindgen = "0.62.0"
+wasip2 = "2.0.1"
 infrarust-plugin-sdk = { path = "../../../infrarust-plugin-sdk" }
 infrarust-plugin-macros = { path = "../../../infrarust-plugin-macros" }
 fixture-common = { path = "fixture-common" }

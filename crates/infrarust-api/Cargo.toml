@@ -29,7 +29,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-proptest = "1.10"
+proptest = "1.11.0"
 
 [features]
 default = []

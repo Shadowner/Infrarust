@@ -332,7 +332,7 @@ fn verify_server_config(path: &Path) -> anyhow::Result<()> {
 
 fn print_summary(settings: &WizardSettings) {
     let mut table = Table::new();
-    table.load_preset(UTF8_FULL_CONDENSED);
+    table.load_style(UTF8_FULL_CONDENSED);
     table.set_header(vec!["Setting", "Value"]);
 
     table.add_row(vec!["Bind address", &settings.bind.to_string()]);

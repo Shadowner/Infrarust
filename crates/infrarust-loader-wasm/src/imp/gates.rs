@@ -31,11 +31,11 @@ pub(crate) fn missing_grants(
         let Some(interface) = host_interface(import) else {
             continue;
         };
-        let ComponentItem::ComponentInstance(instance) = item else {
+        let ComponentItem::ComponentInstance(instance) = item.ty else {
             continue;
         };
         for (function, item) in instance.exports(engine) {
-            if !matches!(item, ComponentItem::ComponentFunc(_)) {
+            if !matches!(item.ty, ComponentItem::ComponentFunc(_)) {
                 continue;
             }
             for &capability in required(interface, function) {

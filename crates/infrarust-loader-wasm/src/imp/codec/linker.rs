@@ -27,12 +27,12 @@ fn define_imports(
 ) -> wasmtime::Result<()> {
     let ty = component.component_type();
     for (name, item) in ty.imports(engine) {
-        match item {
+        match item.ty {
             ComponentItem::ComponentInstance(instance) => {
                 let interface = name.split_once('@').map_or(name, |(path, _)| path);
                 let mut slot = linker.instance(name)?;
                 for (export, item) in instance.exports(engine) {
-                    define_item(&mut slot, name, interface, export, &item)?;
+                    define_item(&mut slot, name, interface, export, &item.ty)?;
                 }
             }
             ComponentItem::Module(_) | ComponentItem::Component(_) => {

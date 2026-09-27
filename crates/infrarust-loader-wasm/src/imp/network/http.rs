@@ -1,26 +1,30 @@
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
+use http::uri::Scheme;
 use http_body_util::BodyExt;
+use hyper::body::{Body, Bytes, Frame, Incoming, SizeHint};
 use hyper::client::conn::http1::SendRequest;
 use rustls::ClientConfig;
 use rustls::pki_types::ServerName;
 use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio::time::timeout;
+use tokio::time::{Instant, Sleep, sleep, timeout};
 use tracing::instrument::WithSubscriber;
 use wasmtime_wasi::runtime::AbortOnDropJoinHandle;
 use wasmtime_wasi_http::io::TokioIo;
-use wasmtime_wasi_http::p2::bindings::http::types::{DnsErrorPayload, ErrorCode};
-use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
-use wasmtime_wasi_http::p2::types::{
-    HostFutureIncomingResponse, IncomingResponse, OutgoingRequestConfig,
-};
-use wasmtime_wasi_http::p2::{HttpResult, WasiHttpHooks, hyper_request_error};
+use wasmtime_wasi_http::{Error, RequestOptions, WasiBody, WasiHttpHooks};
 
 use super::policy::{HttpResolveError, HttpRoute, NetworkPolicy, Refusal};
+
+type IoFuture = Box<dyn Future<Output = Result<(), Error>> + Send>;
+type SendFuture =
+    Box<dyn Future<Output = Result<(http::Response<WasiBody>, IoFuture), Error>> + Send>;
 
 pub(crate) struct HttpHooks {
     policy: Arc<NetworkPolicy>,
@@ -31,47 +35,53 @@ impl HttpHooks {
     pub(crate) fn new(policy: Arc<NetworkPolicy>, limit: Duration) -> Self {
         Self { policy, limit }
     }
-}
 
-impl WasiHttpHooks for HttpHooks {
-    fn send_request(
-        &mut self,
-        request: hyper::Request<HyperOutgoingBody>,
-        config: OutgoingRequestConfig,
-    ) -> HttpResult<HostFutureIncomingResponse> {
+    fn prepare(
+        &self,
+        request: &http::Request<WasiBody>,
+        options: Option<RequestOptions>,
+    ) -> Result<Exchange, Error> {
         let Some(authority) = request.uri().authority().cloned() else {
-            return Err(ErrorCode::HttpRequestUriInvalid.into());
+            return Err(Error::HttpRequestUriInvalid);
         };
+        let use_tls = request.uri().scheme() == Some(&Scheme::HTTPS);
         let port = authority
             .port_u16()
-            .unwrap_or(if config.use_tls { 443 } else { 80 });
+            .unwrap_or(if use_tls { 443 } else { 80 });
         let host = authority.host().to_owned();
         let destination = format!("{host}:{port}");
         let route = match self.policy.route_http(&host, port) {
             Ok(route) => route,
             Err(refusal) => {
                 self.policy.report_denied("http", &destination, refusal);
-                return Err(ErrorCode::HttpRequestDenied.into());
+                return Err(Error::HttpRequestDenied);
             }
         };
-        let config = OutgoingRequestConfig {
-            use_tls: config.use_tls,
-            connect_timeout: config.connect_timeout.min(self.limit),
-            first_byte_timeout: config.first_byte_timeout.min(self.limit),
-            between_bytes_timeout: config.between_bytes_timeout.min(self.limit),
-        };
-        let exchange = Exchange {
+        let options = options.unwrap_or_default();
+        let bound =
+            |value: Option<Duration>| value.map_or(self.limit, |value| value.min(self.limit));
+        Ok(Exchange {
             policy: Arc::clone(&self.policy),
             host,
             destination,
             route,
-            config,
-        };
-        Ok(HostFutureIncomingResponse::pending(
-            wasmtime_wasi::runtime::spawn(
-                async move { Ok(exchange.run(request).await) }.with_current_subscriber(),
-            ),
-        ))
+            use_tls,
+            connect_timeout: bound(options.connect_timeout),
+            first_byte_timeout: bound(options.first_byte_timeout),
+            between_bytes_timeout: bound(options.between_bytes_timeout),
+        })
+    }
+}
+
+impl WasiHttpHooks for HttpHooks {
+    fn send_request(
+        &mut self,
+        request: http::Request<WasiBody>,
+        options: Option<RequestOptions>,
+        _fut: IoFuture,
+    ) -> SendFuture {
+        let exchange = self.prepare(&request, options);
+        Box::new(async move { exchange?.run(request).await }.with_current_subscriber())
     }
 }
 
@@ -80,29 +90,32 @@ struct Exchange {
     host: String,
     destination: String,
     route: HttpRoute,
-    config: OutgoingRequestConfig,
+    use_tls: bool,
+    connect_timeout: Duration,
+    first_byte_timeout: Duration,
+    between_bytes_timeout: Duration,
 }
 
 impl Exchange {
     async fn run(
         self,
-        mut request: hyper::Request<HyperOutgoingBody>,
-    ) -> Result<IncomingResponse, ErrorCode> {
+        mut request: http::Request<WasiBody>,
+    ) -> Result<(http::Response<WasiBody>, IoFuture), Error> {
         let targets = match self.policy.resolve_http(self.route.clone()).await {
             Ok(targets) => targets,
             Err(HttpResolveError::Denied) => {
                 self.policy
                     .report_denied("http", &self.destination, Refusal::AllowList);
-                return Err(ErrorCode::HttpRequestDenied);
+                return Err(Error::HttpRequestDenied);
             }
             Err(HttpResolveError::Lookup) => {
-                return Err(ErrorCode::DnsError(DnsErrorPayload {
+                return Err(Error::DnsError {
                     rcode: Some("address not available".to_owned()),
                     info_code: Some(0),
-                }));
+                });
             }
         };
-        let stream = connect(&targets, self.config.connect_timeout).await?;
+        let stream = connect(&targets, self.connect_timeout).await?;
 
         if !request.headers().contains_key(hyper::header::HOST)
             && let Some(authority) = request.uri().authority()
@@ -118,9 +131,9 @@ impl Exchange {
         *request.uri_mut() = http::Uri::builder()
             .path_and_query(path)
             .build()
-            .map_err(|_| ErrorCode::HttpRequestUriInvalid)?;
+            .map_err(|_| Error::HttpRequestUriInvalid)?;
 
-        let (mut sender, worker) = if self.config.use_tls {
+        let (mut sender, worker) = if self.use_tls {
             let tls = self.tls_config()?;
             let name = self
                 .host
@@ -128,32 +141,33 @@ impl Exchange {
                 .and_then(|rest| rest.strip_suffix(']'))
                 .unwrap_or(&self.host);
             let server_name =
-                ServerName::try_from(name.to_owned()).map_err(|_| ErrorCode::TlsProtocolError)?;
+                ServerName::try_from(name.to_owned()).map_err(|_| Error::TlsProtocolError)?;
             let stream = timeout(
-                self.config.connect_timeout,
+                self.connect_timeout,
                 tokio_rustls::TlsConnector::from(tls).connect(server_name, stream),
             )
             .await
-            .map_err(|_| ErrorCode::ConnectionTimeout)?
+            .map_err(|_| Error::ConnectionTimeout)?
             .map_err(tls_error)?;
-            handshake(stream, self.config.connect_timeout).await?
+            handshake(stream, self.connect_timeout).await?
         } else {
-            handshake(stream, self.config.connect_timeout).await?
+            handshake(stream, self.connect_timeout).await?
         };
 
-        let resp = timeout(self.config.first_byte_timeout, sender.send_request(request))
+        let between_bytes = self.between_bytes_timeout;
+        let resp = timeout(self.first_byte_timeout, sender.send_request(request))
             .await
-            .map_err(|_| ErrorCode::ConnectionReadTimeout)?
-            .map_err(hyper_request_error)?
-            .map(|body| body.map_err(hyper_request_error).boxed_unsync());
-        Ok(IncomingResponse {
-            resp,
-            worker: Some(worker),
-            between_bytes_timeout: self.config.between_bytes_timeout,
-        })
+            .map_err(|_| Error::ConnectionReadTimeout)?
+            .map_err(Error::from)?
+            .map(|incoming| TimedBody::new(incoming, between_bytes).boxed_unsync());
+        let io: IoFuture = Box::new(async move {
+            worker.await;
+            Ok(())
+        });
+        Ok((resp, io))
     }
 
-    fn tls_config(&self) -> Result<Arc<ClientConfig>, ErrorCode> {
+    fn tls_config(&self) -> Result<Arc<ClientConfig>, Error> {
         let built = self.policy.tls.get_or_init(|| {
             let built = build_tls_config();
             if let Err(error) = &built {
@@ -165,7 +179,7 @@ impl Exchange {
             }
             built
         });
-        built.clone().map_err(|_| ErrorCode::TlsProtocolError)
+        built.clone().map_err(|_| Error::TlsProtocolError)
     }
 }
 
@@ -180,9 +194,9 @@ fn build_tls_config() -> Result<Arc<ClientConfig>, String> {
     Ok(Arc::new(config))
 }
 
-async fn connect(targets: &[SocketAddr], limit: Duration) -> Result<TcpStream, ErrorCode> {
+async fn connect(targets: &[SocketAddr], limit: Duration) -> Result<TcpStream, Error> {
     let attempt = async {
-        let mut failure = ErrorCode::ConnectionRefused;
+        let mut failure = Error::ConnectionRefused;
         for target in targets {
             match TcpStream::connect(target).await {
                 Ok(stream) => return Ok(stream),
@@ -193,33 +207,33 @@ async fn connect(targets: &[SocketAddr], limit: Duration) -> Result<TcpStream, E
     };
     timeout(limit, attempt)
         .await
-        .map_err(|_| ErrorCode::ConnectionTimeout)?
+        .map_err(|_| Error::ConnectionTimeout)?
 }
 
-fn connect_error(error: &std::io::Error) -> ErrorCode {
+fn connect_error(error: &std::io::Error) -> Error {
     match error.kind() {
-        std::io::ErrorKind::TimedOut => ErrorCode::ConnectionTimeout,
+        std::io::ErrorKind::TimedOut => Error::ConnectionTimeout,
         std::io::ErrorKind::HostUnreachable | std::io::ErrorKind::NetworkUnreachable => {
-            ErrorCode::DestinationUnavailable
+            Error::DestinationUnavailable
         }
-        _ => ErrorCode::ConnectionRefused,
+        _ => Error::ConnectionRefused,
     }
 }
 
-fn tls_error(error: std::io::Error) -> ErrorCode {
+fn tls_error(error: std::io::Error) -> Error {
     match error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<rustls::Error>())
     {
-        Some(rustls::Error::InvalidCertificate(_)) => ErrorCode::TlsCertificateError,
-        _ => ErrorCode::TlsProtocolError,
+        Some(rustls::Error::InvalidCertificate(_)) => Error::TlsCertificateError,
+        _ => Error::TlsProtocolError,
     }
 }
 
 async fn handshake<S>(
     stream: S,
     limit: Duration,
-) -> Result<(SendRequest<HyperOutgoingBody>, AbortOnDropJoinHandle<()>), ErrorCode>
+) -> Result<(SendRequest<WasiBody>, AbortOnDropJoinHandle<()>), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -228,8 +242,8 @@ where
         hyper::client::conn::http1::handshake(TokioIo::new(stream)),
     )
     .await
-    .map_err(|_| ErrorCode::ConnectionTimeout)?
-    .map_err(hyper_request_error)?;
+    .map_err(|_| Error::ConnectionTimeout)?
+    .map_err(Error::from)?;
     let worker = wasmtime_wasi::runtime::spawn(
         async move {
             if let Err(error) = connection.await {
@@ -239,4 +253,53 @@ where
         .with_current_subscriber(),
     );
     Ok((sender, worker))
+}
+
+struct TimedBody {
+    incoming: Incoming,
+    limit: Duration,
+    deadline: Pin<Box<Sleep>>,
+}
+
+impl TimedBody {
+    fn new(incoming: Incoming, limit: Duration) -> Self {
+        Self {
+            incoming,
+            limit,
+            deadline: Box::pin(sleep(limit)),
+        }
+    }
+}
+
+impl Body for TimedBody {
+    type Data = Bytes;
+    type Error = Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Error>>> {
+        let this = &mut *self;
+        match Pin::new(&mut this.incoming).poll_frame(cx) {
+            Poll::Ready(Some(Ok(frame))) => {
+                let next = Instant::now() + this.limit;
+                this.deadline.as_mut().reset(next);
+                Poll::Ready(Some(Ok(frame)))
+            }
+            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(Error::from(error)))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => match this.deadline.as_mut().poll(cx) {
+                Poll::Ready(()) => Poll::Ready(Some(Err(Error::ConnectionReadTimeout))),
+                Poll::Pending => Poll::Pending,
+            },
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.incoming.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.incoming.size_hint()
+    }
 }

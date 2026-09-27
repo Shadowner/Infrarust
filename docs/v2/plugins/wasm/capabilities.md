@@ -323,10 +323,10 @@ The WASI context grants one preopened directory per plugin, mounted at `/` insid
 ```rust
 // crates/infrarust-loader-wasm/src/imp/store_state.rs
 builder
-    .preopened_dir(data_dir, "/", DirPerms::all(), FilePerms::all())?;
+    .preopened_dir(data_dir, "/", FsPerms::ReadWrite)?;
 ```
 
-There is no inherited stdio. With `filesystem-extended`, each entry of `[[plugins.<id>.wasm.mounts]]` adds one more preopen at its `guest` path: `DirPerms::READ` and `FilePerms::READ` for a read-only mount (the default), full permissions otherwise. A host directory that does not exist fails that plugin's load. Without the capability the mounts are ignored with one warning, and the plugin sees only its data directory. `..` cannot climb out of a preopen, and a symbolic link that points outside it is refused.
+There is no inherited stdio. With `filesystem-extended`, each entry of `[[plugins.<id>.wasm.mounts]]` adds one more preopen at its `guest` path: `FsPerms::ReadOnly` for a read-only mount (the default), `FsPerms::ReadWrite` otherwise. A host directory that does not exist fails that plugin's load. Without the capability the mounts are ignored with one warning, and the plugin sees only its data directory. `..` cannot climb out of a preopen, and a symbolic link that points outside it is refused.
 
 ### Network
 
@@ -335,7 +335,7 @@ Without `network`, the WASI context refuses every socket address, name lookups a
 With `network`, the plugin reaches only what `[plugins.<id>.wasm.network] allow` lists:
 
 - Each TCP connect, UDP connect and UDP datagram goes through an address check. An address matches an IP or range rule, or an address the proxy resolved from a hostname rule (re-resolved at most every 30 seconds per name when a connection misses).
-- Listening is refused unless a rule names the exact bind address. Ranges and hostnames never allow a bind, so even `0.0.0.0/0:*` does not let a plugin open a server socket. UDP sockets may bind port `0` so they can send.
+- Listening is refused unless a rule names the exact bind address. Ranges and hostnames never allow a bind, so even `0.0.0.0/0:*` does not let a plugin open a server socket. A socket may bind the unspecified address on port `0`, which is the implicit bind of a TCP connect or a UDP send; that bind alone does not allow listening.
 - Name lookups from the guest are on only when `dns` is (by default, when the list has a hostname rule). A lookup can carry data out even when the connection that follows is refused; keep `dns` off unless the plugin connects by name through a socket.
 - HTTP requests are checked by authority. The proxy resolves hostnames itself, verifies HTTPS certificates against the system trust store and caps the request timeouts at `host_call_timeout`.
 - An empty allow list refuses everything; config present without the capability is ignored. Each case logs one warning at load, and each refused call logs a rate-limited warning naming the plugin, the destination and the reason.

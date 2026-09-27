@@ -92,7 +92,7 @@ Hostname rules are resolved by the proxy, with the system resolver, when the plu
 
 A refused socket call fails in the guest with an access-denied error (`std::io::ErrorKind::PermissionDenied` in Rust), and the destination never sees a packet.
 
-Listening is refused by default. A TCP bind, which every listening socket needs, is allowed only when a rule names that exact address and port, such as `0.0.0.0:25600` or `127.0.0.1:9000-9100`. Ranges and hostnames never allow a bind, so `0.0.0.0/0:*` still does not let the plugin listen. A UDP socket may bind to port `0` (an OS-chosen port), which is what sending a datagram requires; binding a fixed UDP port needs an exact rule like TCP.
+Listening is refused by default. A TCP bind, which every listening socket needs, is allowed only when a rule names that exact address and port, such as `0.0.0.0:25600` or `127.0.0.1:9000-9100`. Ranges and hostnames never allow a bind, so `0.0.0.0/0:*` still does not let the plugin listen. A socket may bind the unspecified address on port `0` (an OS-chosen port), which is what a TCP connect or a UDP send does implicitly; that bind does not let a TCP socket listen. Binding a fixed UDP port needs an exact rule like TCP.
 
 ### Name lookups
 

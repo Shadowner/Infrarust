@@ -11,9 +11,8 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-use wasmtime_wasi_http::WasiHttpCtx;
-use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 use crate::actor::{CallKind, InstanceRef};
 use crate::codec::CodecInstantiator;
@@ -320,21 +319,22 @@ fn build_wasi_ctx(
     })?;
     let mut builder = WasiCtxBuilder::new();
     builder
-        .preopened_dir(data_dir, "/", DirPerms::all(), FilePerms::all())
+        .preopened_dir(data_dir, "/", FsPerms::ReadWrite)
         .map_err(|e| WasmLoaderError::WasiSetup {
             path: data_dir.to_path_buf(),
             source: std::io::Error::other(e),
         })?;
     for mount in mounts {
-        let (dirs, files) = mount.perms();
         builder
-            .preopened_dir(&mount.host, &mount.guest, dirs, files)
+            .preopened_dir(&mount.host, &mount.guest, mount.perms())
             .map_err(|e| WasmLoaderError::WasiSetup {
                 path: mount.host.clone(),
                 source: std::io::Error::other(e),
             })?;
     }
     builder
+        .allow_tcp(true)
+        .allow_udp(true)
         .socket_addr_check(network.socket_check())
         .allow_ip_name_lookup(network.dns());
     Ok(builder.build())
