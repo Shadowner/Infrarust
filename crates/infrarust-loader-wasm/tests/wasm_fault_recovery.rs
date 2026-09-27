@@ -330,7 +330,6 @@ async fn consecutive_quarantines_double_the_backoff_up_to_backoff_max() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "W-33: backoff never resets with max_restarts = 0"]
 async fn a_long_healthy_period_resets_the_backoff_even_without_a_restart_budget() {
     let logs = LogCapture::at(Level::WARN);
     async {

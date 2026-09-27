@@ -33,6 +33,9 @@ impl RestartBudget {
 
     pub(crate) fn after_fault(&mut self, now: Instant) -> Verdict {
         self.forget_before(now);
+        if self.restarts.is_empty() {
+            self.quarantines = 0;
+        }
         let allowed = usize::try_from(self.policy.max_restarts).unwrap_or(usize::MAX);
         if self.restarts.len() < allowed {
             self.quarantines = 0;
@@ -150,8 +153,25 @@ mod tests {
         let mut budget = RestartBudget::new(policy(0, 300, 1, 300));
         let t0 = Instant::now();
         for _ in 0..100 {
+            budget.retry(t0);
             budget.after_fault(t0);
         }
+        budget.retry(t0);
         assert_eq!(budget.after_fault(t0), quarantine(t0, 300));
+    }
+
+    #[test]
+    fn a_whole_window_without_a_fault_resets_the_backoff_without_a_restart_budget() {
+        let mut budget = RestartBudget::new(policy(0, 300, 1, 300));
+        let t0 = Instant::now();
+        assert_eq!(budget.after_fault(t0), quarantine(t0, 1));
+        budget.retry(t0 + secs(1));
+        assert_eq!(
+            budget.after_fault(t0 + secs(2)),
+            quarantine(t0 + secs(2), 2)
+        );
+        budget.retry(t0 + secs(4));
+        let later = t0 + secs(4 + 300);
+        assert_eq!(budget.after_fault(later), quarantine(later, 1));
     }
 }
