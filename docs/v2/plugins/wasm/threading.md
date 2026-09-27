@@ -1,6 +1,6 @@
 ---
 title: Threading and Concurrency
-description: How the host runs a WASM plugin. One actor and one call at a time, the call queue, no re-entry and the call-chain guard, calls that wait on a player's own session, deadlines and host-call timeouts, why guest state needs no Send or Sync, and why WASM threads are not supported.
+description: How the host runs a WASM plugin. One actor and one call at a time, the call queue, what the serial queue costs and how to watch it, no re-entry and the call-chain guard, calls that wait on a player's own session, deadlines and host-call timeouts, why guest state needs no Send or Sync, and why WASM threads are not supported.
 outline: [2, 3]
 ---
 
@@ -63,6 +63,47 @@ queue_capacity = 4096
 | The job started | It runs until it returns or until its deadline, whichever comes first. If its caller stopped waiting for another reason in the meantime, the answer is discarded. |
 
 The last row matters: a guest call never outlives its deadline. At the deadline the host cuts the call, discards the instance and starts a fresh one, and the cut counts as a fault with the cause `the call ran past the event deadline` ([Fault Model](./fault-model)). One slow call therefore costs its own event and one fresh instance, and the calls queued behind it run on the fresh instance within their own deadlines instead of waiting for the slow one. The other faults stop a running call too: a trap, running past `cpu_budget` or `max_call_duration`, or a host function that panics.
+
+## What one actor costs
+
+All the calls into a plugin share its one queue and run one after the other, whatever their kind. The time a plugin spends on a call is therefore paid by every call queued behind it: every event of every type the plugin listens to, for every player, and the plugin's commands, tab completions, tasks and limbo callbacks. Two consequences follow.
+
+- **A plugin handles at most 1 / (time per call) calls per second.** A listener that spends 20 ms on each event caps that plugin at 50 events per second, and the proxy's other events for that plugin wait their turn. When events arrive faster, the queue grows until calls pass their deadline (an access event is then denied) or the queue is full (the call is refused).
+- **One slow event type delays the others.** A slow `ServerPreConnectEvent` listener delays the same plugin's `ChatMessageEvent` listener, even though chat has nothing to do with connecting.
+
+Measured on a 16-thread AMD machine (release build, medians of three runs; absolute values vary with the machine, the ratios do not):
+
+| Case | Cost per call | Ceiling for one plugin |
+|------|---------------|------------------------|
+| Cheap event (`PlayerClientBrandEvent`, empty handler), back to back | 2.45 µs (p99 5.3 µs) | about 534,000 events/s with 16 proxy tasks feeding it |
+| Heavy event (`ProxyPingEvent` with a full ping response), unchanged | 7.3 µs (p99 11.2 µs) | about 116,000 events/s |
+| Heavy event, response modified | 11.9 µs (p99 19.9 µs) | |
+| First cheap event after 60 ms without calls | 17 to 22 µs (p99 52 to 71 µs) | |
+
+The first event after a quiet spell costs more because the actor task has to wake up and its caches are cold, which is the usual case in a calm proxy. These costs are the floor: the time your handler spends comes on top, and past a few microseconds it sets the ceiling alone.
+
+A worked example from an endurance run: a plugin spent 20 ms of guest time in its `ServerPreConnectEvent` listener and also listened to `ChatMessageEvent`. When 300 players logged in within 2 seconds, their 300 pre-connect events made 6 seconds of work in that plugin's queue, and the chat events of the 100 players already in game waited behind them: chat p99 went from 80 ms to 3.3 s and 16 chat messages got no answer, while the proxy itself sat at 8 % CPU. A plugin whose login listener ran away until `cpu_budget` (3 s) every 9 seconds held every other event of that plugin for those 3 seconds each time.
+
+Different plugins have different queues, so this cost stays inside the plugin that pays it. To keep a plugin responsive:
+
+- Keep each call short. Guest time and host calls that wait on the proxy both hold the actor.
+- Listen only to the events you need: each listener adds its calls to the same queue.
+- Put a slow part and a latency-sensitive part in two plugins; each gets its own actor.
+
+### Watching the queue
+
+The host keeps, for each plugin, how many calls wait in its queue and how long calls waited before the actor took them. Recording costs about 60 ns per call (a clock read when the call is queued, and a clock read and a few atomic stores when it is taken), without locks. The figures are shown by the [admin API](../builtin/admin-api#plugins) (`runtime.queue` of `GET /api/v1/plugins/{id}`), its web dashboard (the plugin's Runtime panel), and the console commands `plugins` (the `Wait p99` column) and `plugin <id>` (the `queue` and `queue wait` lines):
+
+| Figure | Meaning |
+|--------|---------|
+| depth | Calls waiting in the queue now, out of `queue_capacity` |
+| peak depth | The most calls waiting at once over the last minute, counting the one the actor was taking |
+| calls | Calls the actor took from the queue over the last minute |
+| wait p50, p99, max | How long those calls waited between being queued and being taken, over the last minute |
+
+"The last minute" is between 50 and 60 seconds: the host counts in slices of 10 seconds and drops the oldest slice as a new one starts. The wait includes the actor's wake-up but not the call's own run time. Calls the actor drops when it takes them (past their deadline, caller gone, meant for a replaced instance) count too, so a queue that expires calls shows long waits.
+
+How to read them: a wait p99 that approaches the event deadline (`[events] handler_timeout` minus the margin) means events are about to be denied or dropped for want of an answer; a depth close to `queue_capacity` means calls are about to be refused. Either way the plugin spends too long per call for the rate it receives, and the cause is usually its slowest listener.
 
 ## No re-entry
 

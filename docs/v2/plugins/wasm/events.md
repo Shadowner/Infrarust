@@ -122,6 +122,10 @@ Keep access handlers well under `handler_timeout`: each cut-off call throws away
 
 Native listeners are not held to this rule: a native listener that panics or runs past `handler_timeout` is skipped and the event goes on with the result it had ([Plugin event handlers](../../configuration/global#plugin-event-handlers)).
 
+## What a listener costs
+
+A plugin handles its events one at a time, through one queue shared by every event type it listens to and by its commands and tasks. A listener's cost is therefore paid by every event of the plugin, for every player: a listener that takes 20 ms caps the plugin at 50 events per second, and a slow `ServerPreConnectEvent` listener delays the same plugin's chat listener. A cheap event costs about 2.5 µs and a full `ProxyPingEvent` about 7 µs, which puts one plugin's ceiling near 500,000 cheap events or 116,000 pings per second. [What one actor costs](./threading#what-one-actor-costs) gives the measurements and a worked example, and [Watching the queue](./threading#watching-the-queue) how to see a plugin's queue depth and wait in the admin API and the console.
+
 ## Event reference
 
 The SDK exposes 36 event types, one for every native event a plugin can subscribe to. Player-scoped events carry `player: PlayerRef` (`id`, `uuid`, `username`); call `event.player.handle()` for a `Player` you can message or move. The events that carry a full `GameProfile` (`uuid`, `username`, `properties`) are the ones whose native event does: `PreLoginEvent`, `GameProfileRequestEvent` and `PostLoginEvent`. `RawPacketEvent` carries only the player's id, like its native counterpart.
