@@ -94,7 +94,11 @@ stateDiagram-v2
 
 ### A fault in the first `on_enable`
 
-The budget only applies once the plugin has been enabled. If the first `on_enable` faults, the enable fails, the proxy reports that the plugin could not be enabled, and no fresh instance is tried.
+The budget only applies once the plugin has been enabled. If the first `on_enable` faults, the enable fails, the proxy reports that the plugin could not be enabled, and no fresh instance is tried. A plugin that declares it as a hard dependency is not enabled either, and gets its own error: `plugin 'x' requires 'y', which is not enabled`. The other plugins start as usual.
+
+### A fault before the plugin is loaded
+
+At discovery the proxy runs the guest's `metadata()` once, in a throwaway instance. A trap there, or a `metadata()` still running after the smaller of `max_call_duration` and 5 seconds, refuses that file with one error and no retry; the proxy starts with the other plugins. See [Lifecycle](./lifecycle#metadata-probe).
 
 ## Disable and unload
 

@@ -23,7 +23,9 @@ Copy your compiled artifact into that directory:
 cp target/wasm32-wasip2/release/my_plugin.wasm ./plugins/
 ```
 
-The scan is recursive and matches every file with a `.wasm` extension, so subdirectories work for organizing many plugins. The `.cache` subdirectory is the one exception and is always skipped during discovery.
+The scan is recursive and matches every file with a `.wasm` extension, so subdirectories work for organizing many plugins. The `.cache` subdirectory is the one exception and is always skipped during discovery. Symlinks to directories and files are followed; a directory or file reached a second time, through a loop or a second link, is scanned once.
+
+Every `.wasm` under `plugins_dir` is a plugin candidate, so keep backup copies and old versions outside it: a copy that reports the same id as the live plugin makes the proxy refuse both, see [The plugin id](#the-plugin-id).
 
 ::: tip
 See [Building a Plugin](./building) for producing the `.wasm` artifact with `cargo build --release --target wasm32-wasip2`.
@@ -31,7 +33,7 @@ See [Building a Plugin](./building) for producing the `.wasm` artifact with `car
 
 ## The plugin id
 
-Each plugin reports a `PluginMetadata` from its guest code. The `id` is a unique string set in the SDK. The `#[plugin]` macro accepts up to 64 lowercase letters, digits, `-` and `_`, starting with a letter or a digit:
+Each plugin reports a `PluginMetadata` from its guest code. The `id` is a unique string set in the SDK: 1 to 64 lowercase letters, digits, `-` and `_`, starting with a letter or a digit.
 
 ```rust
 fn metadata(&self) -> PluginMetadata {
@@ -39,7 +41,12 @@ fn metadata(&self) -> PluginMetadata {
 }
 ```
 
-The proxy keys every plugin by this id, not by the file name. The config table for a plugin must match the id exactly.
+The `#[plugin]` macro checks the id at compile time, and the proxy checks it again when it reads the metadata, with the same rule. The id names the plugin's data directory, `plugins_dir/<id>`, so a plugin whose `metadata()` reports any other id, such as `../other`, `/home/proxy` or `My Plugin`, is refused at discovery with the reason.
+
+The proxy keys every plugin by this id, not by the file name. The config table for a plugin must match the id exactly. Ids must be unique:
+
+- Two `.wasm` files that report the same id are both refused, with one error naming every file. No copy is kept, since which one would win depends on the scan order.
+- A `.wasm` that reports the id of a plugin compiled into the proxy is refused, and the error names the file. The compiled-in plugin loads.
 
 ## Per-plugin configuration
 
@@ -156,6 +163,10 @@ The full list of what each refused call returns is in [Capabilities](./capabilit
 ### A plugin built for another contract is refused
 
 The proxy reads which contract each component was built for before running any of its code. A plugin built for `infrarust:plugin@0.2.3` is refused at discovery with `plugin built for infrarust:plugin@0.2.3; this host supports infrarust:plugin@0.3.x, rebuild it with an infrarust-plugin-sdk that targets infrarust:plugin@0.3.x`. Rebuild it against the current SDK; [Migrating to 0.3](./migration-0.3) lists the source changes. A `.wasm` that is not an Infrarust plugin at all is refused as `not an Infrarust plugin component`.
+
+### A refused plugin does not stop the others
+
+Each problem found at discovery refuses only the plugin it concerns, logged at `error` with the file and the cause, and the proxy starts with the rest. That covers a file that cannot be read or is not a component (an empty or truncated upload), a `metadata()` that traps or does not return within the smaller of `max_call_duration` and 5 seconds, an invalid or duplicate id, a missing hard dependency and a dependency cycle. A plugin whose hard dependency is refused, disabled with `enabled = false`, or fails to enable is not enabled either. Only a `plugins_dir` that exists but cannot be read stops the proxy. The full list is in [Lifecycle](./lifecycle#discovery).
 
 ### A trap during `on_enable` fails the plugin
 

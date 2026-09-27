@@ -14,10 +14,15 @@ A WASM plugin passes through six stages: discovery, ahead-of-time compilation, t
 stateDiagram-v2
     [*] --> Discovered: scan *.wasm
     Discovered --> Compiled: AOT compile / cache hit
+    Discovered --> Refused: unreadable, not a component
     Compiled --> Checked: guest export is infrarust:plugin@0.3.x
     Compiled --> Refused: older or unknown contract
     Checked --> Probed: metadata() in probe context
-    Probed --> Loaded: check imports, instantiate
+    Checked --> Refused: metadata() traps or runs out of time, invalid id
+    Probed --> Resolved: unique id, hard dependencies found, no cycle
+    Probed --> Refused: duplicate id, missing dependency, cycle
+    Resolved --> Loaded: every hard dependency enabled; check imports, instantiate
+    Resolved --> Failed: a hard dependency is not enabled
     Loaded --> Enabled: on_enable() (guest registers handlers)
     Enabled --> Enabled: dispatch events / callbacks
     Enabled --> Disabled: on_disable()
@@ -32,22 +37,23 @@ stateDiagram-v2
     Refused --> [*]
 ```
 
+`Refused` and `Failed` apply to one plugin. The proxy logs one error for each and starts with the other plugins.
+
 ## Discovery
 
-The loader scans the plugin directory recursively for `*.wasm` files. The `.cache` subdirectory is skipped during the walk, so cached artifacts are never mistaken for plugins.
+The loader scans the plugin directory recursively for `*.wasm` files, in sorted order. It follows symlinks to directories and files, and remembers the canonical path of each one it takes: a directory or a file reached a second time, through a symlink loop or a second link, is skipped. The `.cache` subdirectory is skipped too, so cached artifacts are never mistaken for plugins.
 
-```rust
-// scan_wasm_files in loader.rs
-if path.is_dir() {
-    if path.file_name().and_then(|n| n.to_str()) != Some(CACHE_SUBDIR) {
-        stack.push(path); // recurse, except into .cache
-    }
-} else if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
-    out.push(path);
-}
-```
+If the plugin directory does not exist, discovery returns an empty list. If it exists but cannot be read, discovery fails and the proxy does not start. Everything below that is per plugin:
 
-If the plugin directory does not exist, discovery returns an empty list rather than an error.
+| Problem | What happens |
+|---------|--------------|
+| A subdirectory cannot be read | Logged at `error` with its path, skipped |
+| A file cannot be read, is empty, is not a WebAssembly component, or does not compile | That file is refused |
+| The component targets another contract | That file is refused, see [Contract check](#contract-check) |
+| `metadata()` traps, runs out of time, or reports an invalid id | That file is refused, see [Metadata probe](#metadata-probe) |
+| Several files report the same id | All of them are refused, see [Duplicate ids and dependencies](#duplicate-ids-and-dependencies) |
+
+A refused file is logged once at `error`, as `WASM plugin refused`, with its path and the cause. Discovery goes on with the next file, and the proxy starts with the plugins that passed.
 
 ## AOT compilation and caching
 
@@ -90,14 +96,14 @@ Before anything runs, the loader reads which contract the component was built fo
 | Exports `infrarust:plugin/guest@0.2.3`, or any other version | Refused: `plugin built for infrarust:plugin@0.2.3; this host supports infrarust:plugin@0.3.x, rebuild it with an infrarust-plugin-sdk that targets infrarust:plugin@0.3.x` |
 | Exports no `infrarust:plugin/guest` interface | Refused: `not an Infrarust plugin component` |
 
-Both refusals are `LoaderError::InvalidFormat` and name the file. See [Migrating to 0.3](./migration-0.3).
+Both refusals are logged with the file and refuse only that file. See [Migrating to 0.3](./migration-0.3).
 
 ## Metadata probe
 
 Before a plugin is loaded with capabilities, the loader instantiates the compiled component in a minimal probe context and calls the guest `metadata()` export. The probe context grants no capabilities (`CapabilitySet::default()`) and no plugin context: a gated host call made from `metadata()` returns `PermissionDenied`, and an ungated one returns `Unavailable` or a neutral value.
 
 ```rust
-// extract_metadata in metadata.rs
+// call_metadata in metadata.rs, run under the time limit below
 let wit_md = bindings
     .infrarust_plugin_guest()
     .call_metadata(&mut store)
@@ -115,7 +121,27 @@ The returned record populates the native `PluginMetadata`:
 | `description` | `wit_md.description` | Optional |
 | `dependencies` | `wit_md.dependencies` | `optional: true` becomes an optional dependency, otherwise a hard dependency. The `#[plugin]` macro fills them from `depends` and `soft_depends` |
 
-A trap in `metadata()` fails the probe with a `Metadata` error and the plugin is not registered.
+The probe, instantiation included, has to finish within the smaller of `max_call_duration` and 5 seconds. The limit is wall-clock time, so it also stops a `metadata()` that waits in a host call, such as a sleep, during which the CPU budget does not run. The probe runs before the plugin id is known, so it uses the proxy-wide `[wasm]` values, not a `[plugins.<id>.wasm]` override. A `metadata()` still running at the limit refuses the file with `metadata() did not return within 5s` (or the shorter `max_call_duration`).
+
+The host then checks the id against the plugin id rule: 1 to 64 characters, lowercase ASCII letters, digits, `-` and `_`, starting with a letter or a digit. It is the rule the `#[plugin]` macro applies at compile time, from the same definition in `infrarust-plugin-common`, so it also catches a component that writes its own `metadata()` or is not built with the SDK. The id names the plugin's data directory, `plugins_dir/<id>`, which is mounted as the guest's `/`: an id such as `../x`, an absolute path or `.cache` would place that directory elsewhere. A file whose id breaks the rule is refused with the reason, for example ``plugin id `../x` must start with a lowercase letter or a digit``.
+
+A trap in `metadata()` refuses the file with a `Metadata` error.
+
+## Duplicate ids and dependencies
+
+Once every file is probed, the proxy puts together the plugins of all loaders, the ones compiled into the proxy included, and resolves the load order. Each problem refuses only the plugins it concerns, with one error for each:
+
+| Problem | Refused | Error |
+|---------|---------|-------|
+| Two or more `.wasm` files report the same id | Every one of those files | One error naming all the files: `several files declare the same plugin id, keep only one of them` |
+| A `.wasm` reports the id of a plugin compiled into the proxy | The `.wasm` | `plugin 'x' from loader 'wasm' (<path>) is refused: loader 'static' already provides that id` |
+| A hard dependency is not installed | The plugin | `plugin 'x' requires 'y', which was not found` |
+| Plugins depend on each other in a cycle | Every plugin in the cycle | `plugin 'x' is refused: its dependencies form a cycle (x, y)` |
+| A hard dependency was refused | The plugin, and so on down the chain | `plugin 'x' requires 'y', which is not enabled` |
+
+No copy of a duplicated id is kept, so which one runs never depends on the order of the scan. A backup copy left in a subdirectory of `plugins_dir` counts as a duplicate. An optional dependency that is missing or refused is ignored.
+
+A plugin refused here shows the `error` state with the same message. The proxy then enables the others in dependency order.
 
 ## Load
 
@@ -193,6 +219,8 @@ fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
 `ctx.enable_reason()` tells why `on_enable` runs: `EnableReason::Initial` the first time, `EnableReason::Recovered(RecoveryInfo { attempt, cause })` in a fresh instance after a [fault](#faults-and-recovery). `attempt` counts the recoveries so far and `cause` describes the fault that ended the previous instance.
 
 Codec filters and limbo handlers are registered through their own registrar hooks (`register_codec_filters`, `register_limbo_handlers`), each gated by the matching opt-in capability.
+
+Before loading a plugin, the proxy checks its hard dependencies. If one of them is not enabled, because `enabled = false` keeps it off, it was refused, it failed to load, or its first `on_enable` failed, the plugin is not loaded either. It gets the `error` state `plugin 'x' requires 'y', which is not enabled`, and one error is logged for it. Plugins are enabled in dependency order, so the check carries on to the dependents of that plugin. An optional dependency never keeps a plugin off.
 
 `on_enable` runs as the first job of the plugin's task, with a fresh epoch budget. The three outcomes:
 
