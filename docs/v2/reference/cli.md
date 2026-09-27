@@ -185,7 +185,7 @@ registry-extractor [OPTIONS] --server <ADDRESS>
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--server <ADDRESS>` | `-s` | *(required)* | Server address to connect to |
-| `--output <DIR>` | `-o` | `data/registry` | Output directory for registry files |
+| `--output <DIR>` | `-o` | `crates/infrarust-core/registry` | Output directory for registry files |
 | `--protocol-version <INT>` | `-p` | *(auto-detect)* | Protocol version to use |
 | `--username <NAME>` | `-u` | `RegExtractor` | Username for the connection |
 

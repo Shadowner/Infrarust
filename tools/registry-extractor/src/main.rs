@@ -14,7 +14,7 @@ struct Cli {
     #[arg(short, long)]
     server: String,
 
-    #[arg(short, long, default_value = "data/registry")]
+    #[arg(short, long, default_value = "crates/infrarust-core/registry")]
     output: PathBuf,
 
     #[arg(short, long)]

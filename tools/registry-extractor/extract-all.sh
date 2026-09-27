@@ -17,7 +17,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-OUTPUT_DIR="$PROJECT_ROOT/data/registry"
+OUTPUT_DIR="$PROJECT_ROOT/crates/infrarust-core/registry"
 EXTRACTOR_BIN="$PROJECT_ROOT/target/release/registry-extractor"
 
 CONTAINER_NAME="infrarust-registry-extractor"

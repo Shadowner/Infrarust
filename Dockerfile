@@ -28,7 +28,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY plugins/ ./plugins/
 COPY tools/ ./tools/
-COPY data/ ./data/
 
 COPY --from=frontend-builder /frontend/.output/public/ \
      ./plugins/infrarust-plugin-admin-api/frontend/.output/public/
