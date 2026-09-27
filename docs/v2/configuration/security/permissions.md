@@ -139,7 +139,7 @@ When a player's permissions change while they are online (`op`, `deop`, or a per
 
 ## Console commands
 
-The console holds every permission with the built-in provider. Its own commands (`op`, `kick`, `ban`, `stop`...) never check permissions. With a plugin provider, plugin commands run from the console are checked against what the plugin grants the console. Use the console to manage admins at runtime:
+The console holds every permission with the built-in provider. Its own commands (`op`, `kick`, `ban`, `stop`...) never check permissions. With a plugin provider, plugin commands run from the console are checked against what the plugin grants the console. When a WASM provider cannot answer for the console (it traps, runs past its deadline, or is quarantined), the console keeps every permission until the plugin answers again. Use the console to manage admins at runtime:
 
 | Command | Description |
 |---------|-------------|

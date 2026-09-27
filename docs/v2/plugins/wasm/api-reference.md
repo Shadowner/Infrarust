@@ -1539,7 +1539,7 @@ interface guest {
 - `handle-event` receives the `listener-handle` from `subscribe` and answers an `event-outcome`. The call has the event's deadline, `[events] handler_timeout` minus a margin; past it the call is cut off as a fault. An access event whose `handle-event` gives no answer is denied, see [A listener that does not answer](./events#a-listener-that-does-not-answer).
 - `handle-command` and `tab-complete` receive the command `handler-id` given to `register`; `tab-complete` answers suggestions with optional tooltips.
 - The `ban-provider-*` exports answer the host once the plugin registered a ban provider. `ban-provider-ban` receives who issued the ban as a second argument. An `err` answer, a trap or a missed deadline fails the call; for `ban-provider-check` that refuses the login. A call still running at its deadline, which for `ban-provider-check` is `[ban] check_timeout` when that comes first, is cut off as a fault. The SDK answers `err("this plugin provides no bans")` when the plugin provides none.
-- `permission-snapshot-for` answers the snapshot for a player or the console once the plugin registered a permission provider. A trap or a missed deadline leaves the subject with the node defaults. The SDK answers an empty snapshot when the plugin provides none.
+- `permission-snapshot-for` answers the snapshot for a player or the console once the plugin registered a permission provider. A trap or a missed deadline leaves a player with the node defaults and the console with every permission. The SDK answers an empty snapshot when the plugin provides none.
 
 ## The codec-filter export
 

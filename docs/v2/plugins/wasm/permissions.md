@@ -122,7 +122,9 @@ The proxy then asks `snapshot_for` for every player that logs in, every player i
 
 ### When the plugin cannot answer
 
-`snapshot_for` has the deadline of an event, `[events] handler_timeout` minus a margin (a fifth, at most 250 ms). A call still running at the deadline is cut off, counted as a [fault](./fault-model) and the instance is replaced, so only that subject goes without an answer; the questions queued behind it reach the fresh instance. A trap, a cut-off call, a full queue, a quarantined plugin or an oversized snapshot leaves the subject with an empty snapshot: every node falls back to its default. The host logs a warning naming the plugin and the subject. The player still holds a snapshot from this plugin, so `set_snapshot` can fix it once the plugin answers again.
+`snapshot_for` has the deadline of an event, `[events] handler_timeout` minus a margin (a fifth, at most 250 ms). A call still running at the deadline is cut off, counted as a [fault](./fault-model) and the instance is replaced, so only that subject goes without an answer; the questions queued behind it reach the fresh instance. A trap, a cut-off call, a full queue, a quarantined plugin or an oversized snapshot leaves a player with an empty snapshot: every node falls back to its default. The host logs a warning naming the plugin and the subject. The player still holds a snapshot from this plugin, so `set_snapshot` can fix it once the plugin answers again.
+
+The console is the exception. When the provider cannot answer for the console, the console keeps every permission, as it does when no provider is registered, and the warning says so. The console belongs to the proxy's operator, and the proxy asks the provider again for each console line that reaches a proxy or plugin command, so the operator keeps those commands while the permission plugin is down and gets the provider's answer again once it recovers. Players get no such fallback.
 
 ## Changing a player while they are online
 
@@ -149,7 +151,7 @@ The host never calls back into an instance that is still running. When a refresh
 
 ## Recovery
 
-A trap does not unregister the provider. While the plugin is quarantined, players who log in get the node defaults; online players keep the snapshot they had. The recovered instance runs `on_enable` again, and its `provide_permissions` succeeds without a second registration and without refreshing anyone. It starts from empty memory, so if it keeps state outside its data directory it can push fresh snapshots:
+A trap does not unregister the provider. While the plugin is quarantined, players who log in get the node defaults and the console keeps every permission; online players keep the snapshot they had. The recovered instance runs `on_enable` again, and its `provide_permissions` succeeds without a second registration and without refreshing anyone. It starts from empty memory, so if it keeps state outside its data directory it can push fresh snapshots:
 
 ```rust
 if let Some(EnableReason::Recovered(_)) = ctx.enable_reason() {

@@ -233,6 +233,8 @@ For WASM plugins, `players.has-permission` (`Player::has_permission` in the SDK)
 
 The console is a subject too. The built-in provider gives it every node. With a plugin provider, the console's checker comes from `create_checker(&PermissionSubject::Console)`, and the console's commands are resolved like a player's, registered defaults included. A plugin command the console may not run answers `The console may not run '<name>'.`
 
+When a WASM provider cannot answer for the console (its call traps, runs past its deadline, finds its queue full, or the plugin is quarantined), the console keeps every permission, as when the selected provider is missing. Players in the same situation get the node defaults. See [WASM permissions](../wasm/permissions#when-the-plugin-cannot-answer).
+
 A handler sees the console as `CommandSource::Console(checker)`, and `ctx.source.has_permission(node)` goes through that checker.
 
 ## Reloading
