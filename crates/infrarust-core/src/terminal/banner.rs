@@ -120,9 +120,15 @@ fn paint_cube(row: &str, colored: bool) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use infrarust_protocol::version::ProtocolVersion;
+
     use super::{Banner, TEXT_COLUMN};
 
     const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+    fn newest() -> &'static str {
+        ProtocolVersion::HIGHEST_KNOWN.name()
+    }
 
     fn sample() -> Banner {
         Banner::new()
@@ -134,16 +140,18 @@ mod tests {
 
     #[test]
     fn an_empty_banner_is_the_cube_and_the_title() {
+        let newest = newest();
         let expected = format!(
-            "    .......     Infrarust {VERSION}\n  ---.....+++   Minecraft proxy - 1.7.2 -> 26.3\n  -----.+++++\n  ----- +++++\n    --- +++\n"
+            "    .......     Infrarust {VERSION}\n  ---.....+++   Minecraft proxy - 1.7.2 -> {newest}\n  -----.+++++\n  ----- +++++\n    --- +++\n"
         );
         assert_eq!(Banner::new().render(false), expected);
     }
 
     #[test]
     fn rows_past_the_cube_continue_in_the_text_column() {
+        let newest = newest();
         let expected = format!(
-            "    .......     Infrarust {VERSION}\n  ---.....+++   Minecraft proxy - 1.7.2 -> 26.3\n  -----.+++++\n  ----- +++++   listen   0.0.0.0:25565\n    --- +++     servers  ./servers\n                plugins  ./plugins\n                workers  auto\n"
+            "    .......     Infrarust {VERSION}\n  ---.....+++   Minecraft proxy - 1.7.2 -> {newest}\n  -----.+++++\n  ----- +++++   listen   0.0.0.0:25565\n    --- +++     servers  ./servers\n                plugins  ./plugins\n                workers  auto\n"
         );
         assert_eq!(sample().render(false), expected);
     }
