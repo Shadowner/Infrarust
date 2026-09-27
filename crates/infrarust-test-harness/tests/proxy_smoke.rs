@@ -251,6 +251,7 @@ async fn switch_between_backends(version: ProtocolVersion) {
     assert_eq!(conn_a.username(), "Steve");
 
     let player = proxy.wait_for_player("Steve", T).await.unwrap();
+    session.sync_with(player.as_ref(), T).await.unwrap();
     assert_eq!(player.current_server(), Some(ServerId::new("a")));
     player.switch_server(ServerId::new("b")).await.unwrap();
 
