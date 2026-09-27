@@ -12,7 +12,17 @@ use support::{EnvOptions, load_enabled, loader_from_toml, make_env_with, stage};
 const CONNECTIONS: usize = 256;
 const POOL: &str = "[wasm]\ninstance_pool = 1024\n";
 
+const THP_ENABLED: &str = "/sys/kernel/mm/transparent_hugepage/enabled";
+
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn thp_always() -> bool {
+    let selected = std::fs::read_to_string(THP_ENABLED).is_ok_and(|mode| mode.contains("[always]"));
+    if !selected {
+        eprintln!("{THP_ENABLED} does not select [always]; this host cannot show the regression");
+    }
+    selected
+}
 
 fn rss_kib() -> u64 {
     std::fs::read_to_string("/proc/self/status")
@@ -65,7 +75,10 @@ async fn resident_per_connection(proxy_toml: &str) -> Resident {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_pooled_codec_instance_is_not_much_heavier_than_an_on_demand_one() {
+async fn under_thp_always_a_pooled_codec_instance_is_not_much_heavier_than_an_on_demand_one() {
+    if !thp_always() {
+        return;
+    }
     let _serial = SERIAL.lock().await;
     let on_demand = resident_per_connection("").await;
     let pooled = resident_per_connection(POOL).await;
@@ -80,7 +93,10 @@ async fn a_pooled_codec_instance_is_not_much_heavier_than_an_on_demand_one() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn closing_pooled_codec_connections_gives_their_memory_back() {
+async fn under_thp_always_closing_pooled_codec_connections_gives_their_memory_back() {
+    if !thp_always() {
+        return;
+    }
     let _serial = SERIAL.lock().await;
     let pooled = resident_per_connection(POOL).await;
     assert!(
