@@ -596,12 +596,14 @@ async fn an_empty_plugin_id_is_handled_without_a_panic() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_unicode_plugin_id_loads_into_a_scoped_data_dir() {
-    let (_tmp, plugins_dir) = load_probe_with_id("id=café-plugin\n").await.expect("unicode id loads");
-    assert!(
-        plugins_dir.join("café-plugin").join("log.txt").exists(),
-        "the data dir is scoped under the id"
-    );
+async fn a_unicode_plugin_id_is_refused_like_the_plugin_macro_refuses_it() {
+    let outcome = load_probe_with_id("id=café-plugin\n").await;
+    if let Ok((_tmp, plugins_dir)) = &outcome {
+        panic!(
+            "the host loaded `café-plugin`, an id outside the #[plugin] rule [a-z0-9][a-z0-9_-]{{0,63}}, into {}",
+            plugins_dir.join("café-plugin").display()
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
