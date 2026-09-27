@@ -25,9 +25,11 @@ discover_all()               load_and_enable_all()                shutdown()
                               └─────────┘
 ```
 
-**Discover.** Each `PluginLoader` scans the plugin directory and returns `PluginMetadata` for every plugin it can load. The manager rejects duplicate IDs across loaders.
+**Discover.** Each `PluginLoader` scans the plugin directory and returns `PluginMetadata` for every plugin it can load. The manager refuses a plugin whose id breaks the [id rule](#pluginmetadata), and a plugin whose id another loader already provides: the loader listed first keeps the id, so a plugin compiled into the proxy wins over a `.wasm` with the same id.
 
-**Resolve deps.** The manager runs a topological sort (Kahn's algorithm) on the collected metadata. This determines load order so that dependencies are enabled before the plugins that need them.
+**Resolve deps.** The manager runs a topological sort (Kahn's algorithm) on the collected metadata. This determines load order so that dependencies are enabled before the plugins that need them. A plugin with a missing hard dependency, or in a dependency cycle, is refused here, see [Resolution rules](#resolution-rules).
+
+Each refusal concerns one plugin: it is logged at `error`, the plugin's state becomes `Error` with the same message, and `load_and_enable_all()` returns it with the other errors. The other plugins go on. `discover_all()` itself fails only when a loader cannot discover at all, such as the WASM loader on a `plugins_dir` it cannot read.
 
 **Loading.** Before any plugin loads, the manager calls `loader.on_load()` once per loader so loaders that host a runtime (the WASM loader, for example) can initialize it. Then for each plugin in the resolved order it calls `loader.load()` and sets the plugin's state to `Loading`. If a loader's `on_load()` fails, all of that loader's plugins are skipped and marked `Error`.
 
@@ -87,7 +89,7 @@ pub trait Plugin: Send + Sync {
 
 ```rust
 pub struct PluginMetadata {
-    pub id: String,                        // Unique snake_case identifier
+    pub id: String,                        // Unique id, see the rule below
     pub name: String,                      // Human-readable name
     pub version: String,                   // Semver version string
     pub authors: Vec<String>,              // Author list
@@ -107,7 +109,7 @@ PluginMetadata::new("my_plugin", "My Plugin", "1.0.0")
     .optional_dependency("extra_plugin")   // optional dependency // [!code focus]
 ```
 
-The `id` field must be unique across all loaded plugins. The manager rejects duplicates during discovery.
+The `id` must be unique across all loaded plugins, and follow the plugin id rule: 1 to 64 lowercase letters, digits, `-` and `_`, starting with a letter or a digit. It names the plugin's data directory, `plugins_dir/<id>`. The manager refuses a plugin whose id breaks the rule, and a second plugin with an id already taken.
 
 ## Dependencies
 
@@ -126,10 +128,10 @@ Use `.depends_on("plugin_id")` for required dependencies and `.optional_dependen
 
 The dependency resolver in `crates/infrarust-core/src/plugin/dependency.rs` applies these rules:
 
-1. If a required dependency is missing, the resolver returns an error and no plugins load.
+1. If a required dependency is missing, the plugin that declared it is refused, and so is every plugin that requires a refused one. The others load.
 2. If an optional dependency is missing, it's skipped. The declaring plugin still loads.
 3. If an optional dependency is present, it still affects load order. The dependency loads first.
-4. Circular dependencies (A depends on B, B depends on A) are detected and rejected.
+4. Circular dependencies (A depends on B, B depends on A) are detected. Every plugin in the cycle is refused, with an error naming the cycle, and so is every plugin that requires one of them.
 
 The resolver uses Kahn's algorithm for topological sorting. Plugins with no dependencies load first, then plugins whose dependencies are satisfied, and so on. Among plugins that are free to load, discovery order wins, so the same set of plugins always loads in the same order.
 
@@ -142,21 +144,21 @@ The resolver uses Kahn's algorithm for topological sorting. Plugins with no depe
 // database always loads before auth
 ```
 
-::: danger
-A missing required dependency prevents all plugins from loading, not just the one that declared the dependency. Fix missing dependencies before starting the proxy.
-:::
+A plugin refused for a missing dependency gets the error `plugin 'x' requires 'y', which was not found`; one that requires a refused plugin gets `plugin 'x' requires 'y', which is not enabled`.
 
 ## Enable flow in detail
 
 When `load_and_enable_all()` runs, it first calls `on_load()` on every loader and records which ones succeeded. Then it processes each plugin in the resolved order:
 
-1. Finds the correct loader for the plugin (based on discovery mapping). If that loader's `on_load()` failed, the plugin is marked `Error` and skipped.
-2. Calls `loader.load(plugin_id, context_factory)` to instantiate the plugin.
-3. Creates a per-plugin `PluginContext` via the context factory.
-4. Sets state to `Loading`.
-5. Calls `plugin.on_enable(ctx)`.
-6. On success: state becomes `Enabled`, the plugin is stored for later shutdown, and the proxy posts a `PluginEnabledEvent`.
-7. On failure: state becomes `Error(message)`, the context is immediately cleaned up, and the error is collected.
+1. If the plugin is disabled with `enabled = false`, marks it `Disabled` and skips it.
+2. Checks every required dependency. If one is not `Enabled` (disabled in the config, refused, failed to load, or failed in `on_enable`), the plugin is marked `Error("plugin 'x' requires 'y', which is not enabled")`, the error is collected, and the plugin is skipped. Since plugins are processed in dependency order, this carries on to the plugins that require it. Optional dependencies are not checked.
+3. Finds the correct loader for the plugin (based on discovery mapping). If that loader's `on_load()` failed, the plugin is marked `Error` and skipped.
+4. Calls `loader.load(plugin_id, context_factory)` to instantiate the plugin.
+5. Creates a per-plugin `PluginContext` via the context factory.
+6. Sets state to `Loading`.
+7. Calls `plugin.on_enable(ctx)`.
+8. On success: state becomes `Enabled`, the plugin is stored for later shutdown, and the proxy posts a `PluginEnabledEvent`.
+9. On failure: state becomes `Error(message)`, the context is immediately cleaned up, and the error is collected.
 
 Errors during loading or enabling don't stop other plugins. The manager collects all errors and continues with the next plugin in the load order.
 
@@ -265,6 +267,9 @@ pub trait PluginLoader: Send + Sync {
         &'a self, plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>>;
 
+    // Defaults to None. Where a discovered plugin comes from, for error messages.
+    fn plugin_source(&self, plugin_id: &str) -> Option<PathBuf> { /* ... */ }
+
     // Defaults to a no-op. Runs once, before any of this loader's plugins load.
     fn on_load<'a>(
         &'a self, context_factory: &'a dyn PluginContextFactory,
@@ -284,7 +289,7 @@ pub trait PluginLoader: Send + Sync {
 }
 ```
 
-`discover()` runs before the context factory exists, so a loader cannot rely on its own hosted runtime to enumerate plugins. `on_load()` is where a runtime gets initialized, and `on_shutdown()` is where it is torn down. Both have default no-op implementations, so simple loaders only implement `name`, `discover`, `load`, and `unload`.
+`discover()` runs before the context factory exists, so a loader cannot rely on its own hosted runtime to enumerate plugins. It returns an error only when it cannot discover anything, which stops the proxy; a loader skips a single bad plugin, logs it, and returns the others. `plugin_source()` lets the manager name the file of a plugin it refuses, such as a `.wasm` whose id is already taken. `on_load()` is where a runtime gets initialized, and `on_shutdown()` is where it is torn down. These three have default implementations, so simple loaders only implement `name`, `discover`, `load`, and `unload`.
 
 Infrarust ships with a `StaticPluginLoader` that loads plugins compiled directly into the binary. Plugins are registered with a metadata struct and a factory closure. Its `discover()` ignores the plugin directory argument and returns the plugins in registration order, and `register()` panics if you register two plugins with the same ID.
 

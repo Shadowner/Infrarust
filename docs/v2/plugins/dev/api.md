@@ -60,7 +60,7 @@ impl Plugin for MyPlugin {
 
 | Builder method | Field | Description |
 |----------------|-------|-------------|
-| `new(id, name, version)` | `id`, `name`, `version` | `id` is a `snake_case` identifier; `version` is a semver string |
+| `new(id, name, version)` | `id`, `name`, `version` | `id` is 1 to 64 lowercase letters, digits, `-` and `_`, starting with a letter or a digit; the proxy refuses a plugin whose id breaks this rule. `version` is a semver string |
 | `author(name)` | `authors` | Adds an author (call once per author) |
 | `description(text)` | `description` | Sets an optional description |
 | `depends_on(id)` | `dependencies` | Adds a required dependency on another plugin |
