@@ -93,6 +93,35 @@ Under the hood the SDK answers the host with the WIT `event-outcome::unchanged` 
 
 If a result carries a text component the host cannot accept, such as one nested deeper than 64 levels, the decision still applies with a placeholder text and the host logs a warning.
 
+## A listener that does not answer
+
+The proxy waits for a WASM listener until the event's [deadline](./threading#deadlines-and-host-call-timeouts), `[events] handler_timeout` minus a margin (a fifth, at most 250 ms), which comes before the event bus gives up on the listener. The listener gives no answer when:
+
+- its call runs past that deadline: the host cuts the call off, counts a [fault](./fault-model) and replaces the instance;
+- the plugin's call queue is full;
+- its call traps or overruns a limit;
+- the plugin is recovering from a fault or is quarantined;
+- the call was queued for an instance a recovery has since replaced.
+
+The seven **access events** are then denied:
+
+| Event | Deny |
+| --- | --- |
+| `PreLoginEvent`, `LoginEvent`, `GameProfileRequestEvent`, `PlayerChooseInitialServerEvent` | The player is disconnected with *A proxy plugin is unavailable. Please try again later.* |
+| `ServerPreConnectEvent` | The connection to the server is refused with that text: a joining player is disconnected, a player switching servers stays where they are |
+| `PreTransferEvent` | The transfer is refused with that text |
+| `PermissionsSetupEvent` | The player gets an empty checker: every node falls back to its default, as when a [permission provider](./permissions) fails |
+
+The host sets the deny before it queues the call and puts the previous result back when the plugin answers, so the deny also holds when the event bus stops waiting at `handler_timeout`. A later listener, native or WASM, can still change the result like after any earlier deny. The host logs `access event denied: the wasm plugin listening to it did not answer` with the plugin, the event and the cause, at most five times a minute per plugin.
+
+While the plugin recovers from a fault or sits in quarantine, it has no instance and no listeners. For each access event its last instance listened to, the host keeps a guard listener at the same priority that denies the event until a fresh instance is enabled, and logs `access event denied: the wasm plugin listening to it has no live instance`. A quarantined plugin that listens to `PreLoginEvent` therefore closes the proxy to new logins until its backoff passes and a fresh instance starts.
+
+Every other event keeps the result it had before the listener, as if the listener were not there. An event the plugin causes for itself is delivered without anyone waiting for it ([Events a plugin causes for itself](./threading#events-a-plugin-causes-for-itself)) and is never denied for want of an answer.
+
+Keep access handlers well under `handler_timeout`: each cut-off call throws away the plugin's memory (caches included) and counts toward the [restart budget](./fault-model#restart-budget-and-quarantine). Do slow lookups, such as a web request or a database query, in a scheduled task that fills a cache, and answer the event from the cache.
+
+Native listeners are not held to this rule: a native listener that panics or runs past `handler_timeout` is skipped and the event goes on with the result it had ([Plugin event handlers](../../configuration/global#plugin-event-handlers)).
+
 ## Event reference
 
 The SDK exposes 36 event types, one for every native event a plugin can subscribe to. Player-scoped events carry `player: PlayerRef` (`id`, `uuid`, `username`); call `event.player.handle()` for a `Player` you can message or move. The events that carry a full `GameProfile` (`uuid`, `username`, `properties`) are the ones whose native event does: `PreLoginEvent`, `GameProfileRequestEvent` and `PostLoginEvent`. `RawPacketEvent` carries only the player's id, like its native counterpart.

@@ -1534,11 +1534,11 @@ interface guest {
 }
 ```
 
-- `on-enable` receives `initial` the first time and `recovered` when the host replaced a faulted instance; `attempt` counts the recoveries and `cause` describes the fault. Returning `err` fails the enable.
+- `on-enable` receives `initial` the first time and `recovered` when the host replaced a faulted instance; `attempt` numbers the fresh instances the host has started for the plugin since it was loaded, failed ones included (the new instance's generation minus one, never reset), and `cause` describes the fault. Returning `err` fails the enable: the first time, the plugin is not enabled and what it registered is released; in a fresh instance, it counts as a failed restart.
 - `on-disable` receives `shutdown` when the proxy stops and `unload` when the plugin alone is disabled. `quarantine` is reserved: a quarantined plugin has no live instance, so the host skips `on-disable` for it.
-- `handle-event` receives the `listener-handle` from `subscribe` and answers an `event-outcome`.
+- `handle-event` receives the `listener-handle` from `subscribe` and answers an `event-outcome`. The call has the event's deadline, `[events] handler_timeout` minus a margin; past it the call is cut off as a fault. An access event whose `handle-event` gives no answer is denied, see [A listener that does not answer](./events#a-listener-that-does-not-answer).
 - `handle-command` and `tab-complete` receive the command `handler-id` given to `register`; `tab-complete` answers suggestions with optional tooltips.
-- The `ban-provider-*` exports answer the host once the plugin registered a ban provider. `ban-provider-ban` receives who issued the ban as a second argument. An `err` answer, a trap or a missed deadline fails the call; for `ban-provider-check` that refuses the login. The SDK answers `err("this plugin provides no bans")` when the plugin provides none.
+- The `ban-provider-*` exports answer the host once the plugin registered a ban provider. `ban-provider-ban` receives who issued the ban as a second argument. An `err` answer, a trap or a missed deadline fails the call; for `ban-provider-check` that refuses the login. A call still running at its deadline, which for `ban-provider-check` is `[ban] check_timeout` when that comes first, is cut off as a fault. The SDK answers `err("this plugin provides no bans")` when the plugin provides none.
 - `permission-snapshot-for` answers the snapshot for a player or the console once the plugin registered a permission provider. A trap or a missed deadline leaves the subject with the node defaults. The SDK answers an empty snapshot when the plugin provides none.
 
 ## The codec-filter export

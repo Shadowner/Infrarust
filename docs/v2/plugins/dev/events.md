@@ -511,7 +511,7 @@ ctx.event_bus().subscribe_async::<DisconnectEvent, _>(
 
 ### WASM plugins
 
-WASM plugins (contract 0.3.0) receive every event above in the same order, with the native fields and results, `GameProfileRequestEvent`, `LoginEvent` and the disconnect cause included. `PermissionsSetupEvent` can only reset to the default checker from WASM. See [WASM events](../wasm/events).
+WASM plugins (contract 0.3.0) receive every event above in the same order, with the native fields and results, `GameProfileRequestEvent`, `LoginEvent` and the disconnect cause included. `PermissionsSetupEvent` can only reset to the default checker from WASM. A WASM listener that gives no answer denies the access events (`PreLoginEvent`, `LoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `PreTransferEvent`), where a native one is skipped. See [WASM events](../wasm/events).
 
 ## Connection events
 

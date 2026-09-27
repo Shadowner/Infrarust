@@ -109,12 +109,12 @@ A real provider keeps its bans in its data directory (`/` inside the sandbox), s
 
 ## Deadlines and failures
 
-Every call waits at most the event budget (`[events] handler_timeout`); `check` is also bounded by `[ban] check_timeout`, whichever ends first. The proxy treats a WASM provider like a native one that failed:
+Every call has the deadline of an event, `[events] handler_timeout` minus a margin (a fifth, at most 250 ms); `check` ends at `[ban] check_timeout` when that comes first. The deadline bounds the guest call itself, not only the wait: a `check` still running when the ban manager stops waiting at `check_timeout` is cut off, counted as a [fault](./fault-model) with the cause `the call ran past the event deadline`, and the instance is replaced. Only that login is refused; the checks queued behind it run on the fresh instance within their own `check_timeout`, instead of each timing out behind the slow one. A provider that is slow on every check keeps faulting and ends up quarantined, which refuses every login until its backoff passes, so keep `check` fast and do slow lookups in a scheduled task that fills a cache. The proxy treats a WASM provider like a native one that failed:
 
 | The plugin | `check` at login | `check` at a status ping | `ban`, `unban`, `get`, `list` |
 |------------|------------------|--------------------------|-------------------------------|
 | answers `Err(message)` | login refused | ping answered | the caller gets the error |
-| traps, misses the deadline, or is quarantined | login refused | ping answered | the caller gets an `unavailable` error |
+| traps, runs past the deadline, finds its queue full, or is quarantined | login refused | ping answered | the caller gets an `unavailable` error |
 
 A refused login shows *Your ban status cannot be checked right now. Please try again later.* and the proxy logs the cause at `error`.
 

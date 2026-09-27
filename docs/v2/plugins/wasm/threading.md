@@ -54,15 +54,15 @@ queue_capacity = 4096
 
 | Situation | What happens |
 |-----------|--------------|
-| The queue is full | The call is refused at once; the caller does not wait. An event handler is skipped and the event keeps the result the handlers before it left. The host logs `wasm plugin call queue is full; refusing the call` with the plugin and the operation, at most once every 5 seconds, with the number of refusals it did not log. |
+| The queue is full | The call is refused at once; the caller does not wait. An event handler gets no answer from the plugin: an [access event](./events#a-listener-that-does-not-answer) is denied, any other event keeps the result the handlers before it left. The host logs `wasm plugin call queue is full; refusing the call` with the plugin and the operation, at most once every 5 seconds, with the number of refusals it did not log. |
 | `on_enable` or `on_disable` and the queue is full | They wait for room instead of being refused |
-| The caller stopped waiting while the job was queued | The job is dropped without reaching the guest (logged at debug). This is what happens to an event handler the event bus cancelled at `handler_timeout`. |
-| The job's deadline passed while it was queued | The job is dropped without reaching the guest, with a warning naming the plugin and the operation |
-| The job was meant for an instance a recovery has since replaced | The job is dropped |
+| The job's deadline passes while it is queued | Its caller stops waiting at the deadline and gets no answer from the plugin, and the job is dropped without reaching the guest when its turn comes (logged at debug). A job nobody waits for is dropped with a warning naming the plugin and the operation, at most five a minute per plugin. |
+| The caller stopped waiting while the job was queued | The job is dropped without reaching the guest (logged at debug) |
+| The job was meant for an instance a recovery has since replaced | The job is dropped; an access event it carried is denied |
 | The plugin is quarantined after repeated faults | The call is refused at once; see [Fault Model](./fault-model) |
-| The job started | It runs to completion, even if its caller stopped waiting in the meantime. Its answer is then discarded. |
+| The job started | It runs until it returns or until its deadline, whichever comes first. If its caller stopped waiting for another reason in the meantime, the answer is discarded. |
 
-The last row matters: the host never abandons a guest call halfway because the proxy moved on. Only a fault stops a running call: a trap, running past `cpu_budget` or `max_call_duration`, or a host function that panics, after which the instance is discarded and rebuilt ([Fault Model](./fault-model)).
+The last row matters: a guest call never outlives its deadline. At the deadline the host cuts the call, discards the instance and starts a fresh one, and the cut counts as a fault with the cause `the call ran past the event deadline` ([Fault Model](./fault-model)). One slow call therefore costs its own event and one fresh instance, and the calls queued behind it run on the fresh instance within their own deadlines instead of waiting for the slow one. The other faults stop a running call too: a trap, running past `cpu_budget` or `max_call_duration`, or a host function that panics.
 
 ## No re-entry
 
@@ -77,7 +77,7 @@ A call that waits on the proxy can cause an event the same plugin listens to. If
 The host prevents it with a **call chain**. Each call into a plugin records the plugin in a chain that follows the work the host does for that call. When an event is about to reach a plugin that is already in the chain, the host does not wait for it:
 
 - the event is queued for the plugin and delivered once its current call has returned;
-- the proxy goes on without the plugin's answer, so a result the plugin sets in that handler is ignored;
+- the proxy goes on without the plugin's answer, so a result the plugin sets in that handler is ignored, and an access event is not denied for want of that answer: a plugin that transfers a player does not block its own `PreTransferEvent`;
 - the host logs `wasm plugin is still running the call that led to this event; it receives the event without the proxy waiting for it, and its answer is ignored`. The plugin's guest warnings are limited to five a minute, and the next one that gets through carries the number of warnings left out.
 
 This covers:
@@ -133,7 +133,9 @@ The session goes on with the player's packets meanwhile, and the player's comman
 
 ### Where the chain does not reach
 
-The chain follows the call's own work. It does not follow work the host hands to another task, and a player's session is another task. If your plugin listens to `ServerPreConnectEvent`, `ServerConnectedEvent` or `ServerPostConnectEvent` and calls `connect`, the session fires those events while your `connect` call is still running. Their delivery waits in your queue behind it, and the session waits up to `[events] handler_timeout` for each before it goes on without your answer. A plugin that listens to connection events should move players with `switch_server`.
+The chain follows the call's own work. It does not follow work the host hands to another task, and a player's session is another task. If your plugin listens to `ServerPreConnectEvent`, `ServerConnectedEvent` or `ServerPostConnectEvent` and calls `connect`, the session fires those events while your `connect` call is still running. Their delivery waits in your queue behind it, and the session waits until each event's deadline before it goes on without your answer; `ServerPreConnectEvent` is an access event, so the connection is then refused. A plugin that listens to connection events should move players with `switch_server`.
+
+A recovery belongs to the call that faulted: the fresh instance's `on_enable` runs in that call's chain. When plugin B waits on a call into plugin A that traps, an event A's fresh instance fires for B reaches B without anyone waiting for it, instead of waiting on B until `handler_timeout`.
 
 ## Deadlines and host-call timeouts
 
@@ -141,15 +143,18 @@ Each job carries a deadline, fixed when it is queued:
 
 | Call into the plugin | Deadline |
 |----------------------|----------|
-| Event handler, ban provider call, permission snapshot | `[events] handler_timeout` (10 s by default) |
+| Event handler, ban provider call, permission snapshot | `[events] handler_timeout` minus a margin (9.75 s with the default 10 s); a ban check ends at `[ban] check_timeout` when that comes first |
 | Command, tab completion, scheduled task, limbo callback | `max_call_duration` in `[wasm]` (60 s by default) |
 | `on_enable`, `on_disable` | none |
 
-The deadline bounds three things:
+The margin is a fifth of the budget, at most 250 ms. It keeps an event's deadline before the moment the event bus gives up on the listener, so the plugin's answer, or the proxy's deny when there is none, is applied to the event. A ban check takes the deadline of the ban manager that asked, which stops waiting at `check_timeout`.
+
+The deadline bounds four things:
 
 - **The wait in the queue.** A job still queued when its deadline passes is dropped, as in the table above.
-- **Host calls.** Every host call that waits on the proxy (`Servers::start` and `stop`, every `Bans` function, `Player::connect`, `transfer`, `request_cookie`, `refresh_permissions`, `ctx.fire_named`, `Permissions::set_snapshot` and `release`) ends at the earlier of `host_call_timeout` (30 s by default) and a margin before the deadline. The margin is a fifth of the deadline, at most 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s. `switch_server` uses its own 250 ms limit under the same rule. On expiry the host call returns an `Error` of kind `Timeout`, and your code still has time to decide, for example to deny a login when the ban check did not answer.
-- **Nothing else.** A running call is not stopped at its deadline. Guest code between host calls keeps running until it returns, bounded by `cpu_budget` and, as a last resort, `max_call_duration`.
+- **The caller's wait.** Every caller gets its answer by the deadline: the plugin's answer, or a failure if the job is still queued, still running, or waiting for a recovery.
+- **Host calls.** Every host call that waits on the proxy (`Servers::start` and `stop`, every `Bans` function, `Player::connect`, `transfer`, `request_cookie`, `refresh_permissions`, `ctx.fire_named`, `Permissions::set_snapshot` and `release`) ends at the earlier of `host_call_timeout` (30 s by default) and a margin before the deadline, the same fifth capped at 250 ms. A 10 s `handler_timeout` leaves host calls 9.5 s, a 300 ms one 192 ms. `switch_server` uses its own 250 ms limit under the same rule. On expiry the host call returns an `Error` of kind `Timeout`, and your code still has time to decide, for example to deny a login when the ban check did not answer.
+- **The guest call itself.** A call still running at its deadline is cut off: the instance is discarded and replaced, and the cut counts as a fault. Guest code between host calls is also bounded by `cpu_budget`, and the whole call by `max_call_duration` counted from when it starts.
 
 `cpu_budget` (3 s by default) limits guest execution per call. The host checks it at every epoch tick (`epoch_tick`, 50 ms by default): at each tick a running guest yields back to the tokio runtime, so a long computation never holds a worker thread for more than one tick at a time, and a call that exceeds its budget traps. `max_call_duration` limits the whole call, host calls included, in wall-clock time. Both faults discard the instance and trigger a [recovery](./fault-model).
 

@@ -169,7 +169,7 @@ ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
 `disconnect` queues the kick and returns at once. `switch_server` hands the request to the player's session and waits at most 250 ms for the session to take it, less when the calling handler's deadline is closer; if it can't, it returns `Timeout`. `connect` waits for the outcome of the switch instead and answers a `ConnectionResult` (`Success`, `AlreadyConnected`, `Denied(reason)`, `Failed(reason)` or `Cancelled`); `transfer`, `request_cookie` and `refresh_permissions` also wait for their answer. All four follow [Slow services and deadlines](#slow-services-and-deadlines). `has_permission` answers after the permission provider and the node's default.
 :::
 
-`connect` runs the whole switch on the player's session, which fires `ServerPreConnectEvent` and the other connection events. A plugin that listens to one of those events cannot answer it while it is itself waiting in `connect`: the event bus gives up on that listener after `[events] handler_timeout` and the switch goes on without it. A plugin that listens to connection events should move players with `switch_server`, which does not wait for the switch.
+`connect` runs the whole switch on the player's session, which fires `ServerPreConnectEvent` and the other connection events. A plugin that listens to one of those events cannot answer it while it is itself waiting in `connect`: the proxy stops waiting for that listener at the event's deadline, and `ServerPreConnectEvent`, an access event, is then denied, so the switch fails. A plugin that listens to connection events should move players with `switch_server`, which does not wait for the switch.
 
 From a handler the player's own session is waiting on, such as that player's `ChatMessageEvent` or a limbo callback for that player, `connect` and `request_cookie` for that player return `InvalidState` at once: the session could not answer before the handler returns. A command handler is not in that case and can wait for its own player's switch. See [Calls that wait on the player's own session](./threading#calls-that-wait-on-the-player-s-own-session).
 
@@ -263,7 +263,7 @@ Every call into your plugin carries a deadline, set when the proxy makes the cal
 
 | Call into the plugin | Deadline |
 | --- | --- |
-| Event handler | `[events] handler_timeout` (10 s by default): how long the event bus waits for a listener |
+| Event handler | `[events] handler_timeout` minus a margin (9.75 s with the default 10 s), so the answer reaches the event before the event bus gives up on the listener |
 | Command, tab completion, scheduled task, limbo callback | `max_call_duration` in `[wasm]` (60 s by default): nothing in the proxy stops waiting for these earlier |
 | `on_enable`, `on_disable` | none |
 
@@ -271,7 +271,7 @@ A service call made during that call returns at the earliest of:
 
 - the service's answer;
 - `host_call_timeout` after the service call started (`[wasm]`, 30 s by default);
-- a margin before the deadline. The margin is a fifth of the deadline, capped at 250 ms, and leaves your code time to decide after the error. With the default 10 s `handler_timeout`, a ban check inside an event handler returns by 9.75 s.
+- a margin before the deadline. The margin is a fifth of the deadline, capped at 250 ms, and leaves your code time to decide after the error. With the default 10 s `handler_timeout`, a ban check inside an event handler returns by 9.5 s.
 
 On expiry the call returns an `Error` of kind `Timeout`. The message is `host call timed out` when `host_call_timeout` ran out, and `host call timed out: the plugin call is close to its deadline` when the deadline was the limit. `switch_server` follows the same rule with its own 250 ms limit.
 

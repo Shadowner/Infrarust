@@ -358,7 +358,7 @@ Sandbox limits for every WASM plugin. Each plugin handles one call at a time; it
 
 Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` and `codec_cpu_budget` at least one `epoch_tick` and at most `1h`; `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576. A `cpu_budget` longer than `max_call_duration` is accepted with a warning.
 
-A call that has started runs to the end even if its caller stops waiting, so an event listener cut off by `[events] handler_timeout` is not a fault. A call still queued when its caller gives up is skipped.
+A call still running at its deadline (`[events] handler_timeout` minus a margin for an event, `max_call_duration` after it was queued for a callback) is cut off and counts as a fault; an access event it served is denied. A call still queued at its deadline is skipped. See [WASM events](../plugins/wasm/events#a-listener-that-does-not-answer).
 
 ```toml
 [wasm]

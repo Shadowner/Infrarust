@@ -57,6 +57,8 @@ ctx.on::<PermissionsSetupEvent>(EventPriority::Normal, |event| {
 
 `use_default()` resets the result to the provider's checker, `result()` reads what earlier listeners chose. A custom checker a native plugin installed reaches the guest as `PermissionsSetupResult::Custom` with the snapshot it describes; a native checker that cannot describe itself shows as an empty snapshot. Returning the event untouched keeps it either way.
 
+`PermissionsSetupEvent` is an [access event](./events#a-listener-that-does-not-answer): when the plugin's listener gives no answer (it runs past the event deadline, traps, finds its queue full, or the plugin is recovering or quarantined), the player gets an empty checker, so every node falls back to its default, as when the permission provider fails. `set_snapshot` does not reach that checker: the player keeps it until they log in again.
+
 A player whose permissions come from this event keeps them for the whole session: a later `refresh_permissions` does not rebuild them from the provider. Change them with `set_snapshot`.
 
 ## Being the permission provider
@@ -120,7 +122,7 @@ The proxy then asks `snapshot_for` for every player that logs in, every player i
 
 ### When the plugin cannot answer
 
-The host waits for `snapshot_for` at most the event budget (`[events] handler_timeout`). A trap, a missed deadline, a quarantined plugin or an oversized snapshot leaves the subject with an empty snapshot: every node falls back to its default. The host logs a warning naming the plugin and the subject. The player still holds a snapshot from this plugin, so `set_snapshot` can fix it once the plugin answers again.
+`snapshot_for` has the deadline of an event, `[events] handler_timeout` minus a margin (a fifth, at most 250 ms). A call still running at the deadline is cut off, counted as a [fault](./fault-model) and the instance is replaced, so only that subject goes without an answer; the questions queued behind it reach the fresh instance. A trap, a cut-off call, a full queue, a quarantined plugin or an oversized snapshot leaves the subject with an empty snapshot: every node falls back to its default. The host logs a warning naming the plugin and the subject. The player still holds a snapshot from this plugin, so `set_snapshot` can fix it once the plugin answers again.
 
 ## Changing a player while they are online
 

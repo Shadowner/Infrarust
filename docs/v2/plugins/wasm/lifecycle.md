@@ -217,7 +217,7 @@ fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
 }
 ```
 
-`ctx.enable_reason()` tells why `on_enable` runs: `EnableReason::Initial` the first time, `EnableReason::Recovered(RecoveryInfo { attempt, cause })` in a fresh instance after a [fault](#faults-and-recovery). `attempt` counts the recoveries so far and `cause` describes the fault that ended the previous instance.
+`ctx.enable_reason()` tells why `on_enable` runs: `EnableReason::Initial` the first time, `EnableReason::Recovered(RecoveryInfo { attempt, cause })` in a fresh instance after a [fault](#faults-and-recovery). `attempt` numbers the fresh instances the host has started for this plugin since it was loaded, failed ones included (1, 2, 3, ..., never reset), and `cause` describes the fault that ended the previous instance.
 
 Codec filters and limbo handlers are registered through their own registrar hooks (`register_codec_filters`, `register_limbo_handlers`), each gated by the matching opt-in capability.
 
@@ -228,12 +228,12 @@ Before loading a plugin, the proxy checks its hard dependencies. If one of them 
 | Guest result | Host action |
 |--------------|-------------|
 | `Ok(())` | Plugin is enabled |
-| `Err(error)` | Returned as `PluginError::InitFailed(message)`; plugin not enabled |
-| Trap or cut-off | Returned as an error; the plugin is not enabled and no fresh instance is tried |
+| `Err(error)` | Returned as `PluginError::InitFailed(message)`; the instance is discarded with the listeners and tasks it registered, the plugin is not enabled and no fresh instance is tried |
+| Trap or cut-off | Returned as an error; the instance is discarded the same way, the plugin is not enabled and no fresh instance is tried |
 
 ## Dispatch
 
-After enabling, events and registered callbacks re-enter the guest. Each plugin instance is owned by one task that runs calls one at a time, in the order they arrive, from a queue of `queue_capacity` entries (`[wasm]` in `infrarust.toml`, default 1024). A call that finds the queue full is refused immediately and logged as a rate-limited warning. A call that has started runs to the end even if its caller stops waiting; a queued call whose caller has already given up, or whose [deadline](#deadlines) has passed, is skipped. See [Capabilities & Sandbox](./capabilities#one-call-at-a-time).
+After enabling, events and registered callbacks re-enter the guest. Each plugin instance is owned by one task that runs calls one at a time, in the order they arrive, from a queue of `queue_capacity` entries (`[wasm]` in `infrarust.toml`, default 1024). A call that finds the queue full is refused immediately and logged as a rate-limited warning. A call that has started runs until it returns or until its [deadline](#deadlines), where it is cut off; a queued call whose caller has already given up, or whose deadline has passed, is skipped. See [Capabilities & Sandbox](./capabilities#one-call-at-a-time).
 
 Each call into the guest resets the epoch budget first, so a single long callback cannot exhaust a budget left over from an earlier call. A dedicated OS thread bumps the engine epoch every `epoch_tick` (50 ms by default). On each deadline the callback either grants another tick (cooperative yield) or, once the call has used `cpu_budget` (3 s by default, 60 ticks), interrupts the guest with a trap. A call that is still running after `max_call_duration` (60 s by default), host calls included, is abandoned and the instance is replaced (see [Fault model](./fault-model)).
 
@@ -245,28 +245,29 @@ Each call into the guest carries a deadline, fixed when the call is queued:
 
 | Call | Deadline | Why |
 |------|----------|-----|
-| Event handler | `[events] handler_timeout` (10 s by default) | The event bus stops waiting for the listener at that point |
-| Ban provider call, permission snapshot | `[events] handler_timeout` (10 s by default); a ban check is also bounded by `[ban] check_timeout` | The login waits on the answer; see [Bans](./bans) and [Permissions](./permissions) |
-| Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default) | Nothing in the proxy stops waiting earlier, and the call is cut off at that limit |
-| `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run |
+| Event handler | `[events] handler_timeout` minus a margin (9.75 s with the default 10 s) | The event bus stops waiting for the listener at `handler_timeout`; the margin lets the plugin's answer, or the proxy's deny, reach the event first |
+| Ban provider call, permission snapshot | The same as an event; a ban check ends at `[ban] check_timeout` when that comes first | The login waits on the answer; see [Bans](./bans) and [Permissions](./permissions) |
+| Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default), counted from when the call is queued | Nothing in the proxy stops waiting earlier |
+| `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run. Each is still cut off at `max_call_duration` |
 
-The deadline has three effects:
+The margin is a fifth of the budget, capped at 250 ms. The deadline has four effects:
 
-- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named` on `event-bus`, `set-snapshot` and `release` on `permissions`) returns before the deadline, minus a margin. The margin is a fifth of the deadline, capped at 250 ms, so a 10 s `handler_timeout` leaves host calls 9.75 s and a 300 ms one leaves them 240 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own, except `switch-server`, which has its own 250 ms cap.
-- **The guest's decision counts.** Because the error arrives inside the margin, the guest still has time to decide and return before the event bus gives up. A PreLogin handler that denies when the ban service errors fails closed, and its denial is applied to the event. If the host call waited out `host_call_timeout` instead, the bus would already have moved on and the login would go through on the default result.
-- **The plugin stays available.** The call ends before its deadline instead of after `host_call_timeout`, so the plugin's next events do not queue behind a stalled service. A call whose deadline passed while it waited in the queue is dropped without running, since its caller can no longer use the result, and a warning names the plugin and the operation.
+- **Host calls fail in time.** Every host call that waits on the proxy (`start` and `stop` on `server-manager`, every `ban-service` function, `switch-server`, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named` on `event-bus`, `set-snapshot` and `release` on `permissions`) returns before the deadline, minus the same margin, so a 10 s `handler_timeout` leaves host calls 9.5 s and a 300 ms one leaves them 192 ms. On expiry the guest gets a `host-error` of kind `timeout`, and no trap. `host_call_timeout` still caps each host call on its own, except `switch-server`, which has its own 250 ms cap.
+- **The guest's decision counts.** Because the error arrives inside the margin, the guest still has time to decide and return before its deadline. A PreLogin handler that denies when the ban service errors fails closed, and its denial is applied to the event.
+- **The call ends at its deadline.** A guest call still running at its deadline is cut off, like a call that reaches `max_call_duration`: the instance is discarded and replaced, and the cut counts as a fault with the cause `the call ran past the event deadline`. Every caller gets its answer by the deadline, a failure if the plugin did not answer; for an [access event](./events#a-listener-that-does-not-answer) that means the event is denied. `cpu_budget` still bounds guest code between host calls, and `max_call_duration` the whole call from when it starts.
+- **The plugin stays available.** A slow call no longer holds the calls queued behind it: they run on the fresh instance within their own deadlines. A call whose deadline passed while it waited in the queue is dropped without running, since its caller can no longer use the result.
 
-A running call is not cut at its deadline. Guest code between host calls keeps running until it returns, bounded by `cpu_budget` and, as a last resort, `max_call_duration`. See [Host services](./services#slow-services-and-deadlines) for the plugin-side view.
+See [Host services](./services#slow-services-and-deadlines) for the plugin-side view.
 
 ## Disable
 
-`on_disable` is called on proxy shutdown and when the plugin alone is disabled. `ctx.disable_reason()` reports which: `DisableReason::Shutdown` when the proxy is stopping, `DisableReason::Unload` otherwise. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance.
+`on_disable` is called on proxy shutdown and when the plugin alone is disabled. `ctx.disable_reason()` reports which: `DisableReason::Shutdown` when the proxy is stopping, `DisableReason::Unload` otherwise. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance. A plugin that is replacing its instance after a fault stops recovering as soon as the restart in progress ends, so `on_disable` and `unload` wait for one restart at most, not for the whole restart budget.
 
 If the plugin is quarantined, or its first `on_enable` failed, there is no live instance: the guest call is skipped and `on_disable` returns `Ok(())` with a warning. That is why the contract's `DisableReason::Quarantine` is never sent today. For a live instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Other` carrying the message; a trap during `on_disable` is logged and returned as an `Other` error wrapping the loader error, and no fresh instance is started. In every case the host then removes the instance's event listeners and scheduled tasks, releases the players it holds in limbo, removes the plugin's codec filters, and stops the task. `unload` does the same without running the guest.
 
 ## Faults and recovery
 
-A fault is a guest trap, a call cut off by `max_call_duration`, or a panic in a host function during a call. Sources of a trap:
+A fault is a guest trap, a call cut off at its [deadline](#deadlines) or at `max_call_duration`, or a panic in a host function during a call. Sources of a trap:
 
 - A guest panic.
 - An out-of-bounds memory or table access.
@@ -274,14 +275,14 @@ A fault is a guest trap, a call cut off by `max_call_duration`, or a panic in a 
 - A memory-grow failure (the store traps on grow failure once `memory_limit_mb`, 64 MiB by default, is hit).
 - Use of a dropped or invalid resource handle.
 
-A caller that stops waiting (for example the event bus after `[events] handler_timeout`) is not a fault: the call keeps running inside the plugin and the instance stays healthy. Host calls inside it return an error before that point anyway, see [Deadlines](#deadlines).
+A caller that stops waiting before the call's deadline (for example a session that ends because the player left) is not a fault: the call keeps running inside the plugin, until it returns or reaches its deadline, and the instance stays healthy. The event bus never gives up before an event's deadline: the deadline is set a margin before `[events] handler_timeout`, see [Deadlines](#deadlines).
 
-wasmtime cannot re-enter an instance whose call trapped or was cut off, so the host never reuses it. After a fault in an enabled plugin, the plugin's task discards the instance and its host-side registrations, creates a fresh instance from the compiled component and runs `on_enable` in it with `EnableReason::Recovered`. Restarts are budgeted: past `[wasm.recovery] max_restarts` within `window`, the plugin is quarantined with an exponential backoff and every call to it is answered at once without running guest code.
+wasmtime cannot re-enter an instance whose call trapped or was cut off, so the host never reuses it. After a fault in an enabled plugin, the plugin's task discards the instance and its host-side registrations, creates a fresh instance from the compiled component and runs `on_enable` in it with `EnableReason::Recovered`. Restarts are budgeted: past `[wasm.recovery] max_restarts` within `window`, the plugin is quarantined with an exponential backoff and every call to it is answered at once without running guest code. Until a fresh instance is enabled, the access events the plugin listened to are denied, see [A listener that does not answer](./events#a-listener-that-does-not-answer).
 
 ```mermaid
 flowchart LR
     A[Guest call] -->|Ok| B[Continue dispatch]
-    A -->|Fault| C[Discard instance and its listeners, tasks, limbo holds]
+    A -->|Fault or past its deadline| C[Discard instance and its listeners, tasks, limbo holds]
     C --> D{Restart budget left?}
     D -->|yes| E[Fresh instance, on_enable again]
     D -->|no| F[Quarantine until the backoff passes]
