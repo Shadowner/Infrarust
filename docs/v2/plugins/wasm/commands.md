@@ -105,7 +105,17 @@ A player's command does not run in that player's session: the host hands it to t
 
 ## Tab-completion
 
-The completer receives a `Completion` with the `sender`, the argument tokens typed so far (`args`, the last one being the token under the cursor, empty after a trailing space), and the `cursor`. `completion.partial()` returns the last token. It answers suggestions; a `&str` or `String` converts into a plain `Suggestion`, and `Suggestion::new(text).with_tooltip(component)` adds a hover tooltip.
+The completer receives a `Completion` with the `sender`, the argument tokens typed so far (`args`), and the `cursor`. The last token of `args` is the one under the cursor: it is empty after a trailing space, so `args` is never empty and `args.len()` is the position of the argument being completed.
+
+| Typed | `args` | `cursor` | `partial()` |
+|-------|--------|----------|-------------|
+| `/warp ` | `[""]` | 0 | `""` |
+| `/warp sp` | `["sp"]` | 2 | `"sp"` |
+| `/warp spawn ` | `["spawn", ""]` | 6 | `""` |
+| `/warp  a  b` | `["a", "b"]` | 5 | `"b"` |
+| `/warp é` | `["é"]` | 2 | `"é"` |
+
+`cursor` is the byte offset of the cursor in the argument text, which is the input after the command label and the one space that follows it. It counts UTF-8 bytes, not characters, and counts every extra space. Completions are asked for at the end of the line, so `cursor` is the length of that text in bytes. `completion.partial()` returns the last token. The completer answers suggestions; a `&str` or `String` converts into a plain `Suggestion`, and `Suggestion::new(text).with_tooltip(component)` adds a hover tooltip.
 
 ```rust
 .completer(|completion| {
@@ -121,7 +131,7 @@ The completer is `Fn`, not `FnMut`: it cannot mutate captured state. The handler
 
 ## Unregister a command
 
-`ctx.unregister_command(name)` removes a command this plugin registered, both on the host and in the guest, and returns `Ok(true)`. It returns `Ok(false)` and leaves the host alone when the plugin does not own that name, so it cannot remove another plugin's command. `CommandRegistration::unregister()` does the same for the command it describes. Names match case-insensitively, like on the host. A handler or completer may unregister its own command; the closure is dropped once the running call returns.
+`ctx.unregister_command(label)` removes a command this plugin registered, both on the host and in the guest, and returns `Ok(true)`. The label is any name the command answers to: its name, an alias the host accepted, or its `<plugin-id>:<name>` form, matched case-insensitively like on the host. Removing a command by one label removes all its labels. It returns `Ok(false)` and leaves the host alone when no command of this plugin answers to that label, so it cannot remove another plugin's command, and an alias listed in `rejected_aliases` does not match. `CommandRegistration::unregister()` does the same for the command it describes. A handler or completer may unregister its own command; the closure is dropped once the running call returns.
 
 ```rust
 let event = ctx.command("event").handler(|_| start_event()).register()?;
