@@ -51,6 +51,7 @@ impl Packet for CSystemChatMessage {
         V1_21_5 => 0x72,
         V1_21_9 => 0x77,
         V26_1   => 0x79,
+        V26_3   => 0x7C,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {

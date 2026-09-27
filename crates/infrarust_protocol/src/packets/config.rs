@@ -103,12 +103,14 @@ define_twin_packets! {
             V1_20_2 => 0x07,
             V1_20_3 => 0x08,
             V1_20_5 => 0x0C,
+            V26_3   => 0x0D,
         ],
         #[derive(PartialEq, Eq)]
         CUpdateTags: Config / Clientbound = ids![
             V1_20_2 => 0x08,
             V1_20_3 => 0x09,
             V1_20_5 => 0x0D,
+            V26_3   => 0x0E,
         ],
     },
     encode_only: true,
@@ -131,6 +133,7 @@ define_twin_packets! {
     state: ConnectionState::Config,
     clientbound_ids: ids![
         V1_20_5 => 0x0E,
+        V26_3   => 0x0F,
     ],
     serverbound_ids: ids![
         V1_20_5 => 0x07,

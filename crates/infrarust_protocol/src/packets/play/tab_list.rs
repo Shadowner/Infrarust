@@ -38,6 +38,7 @@ impl Packet for CTabListHeaderFooter {
         V1_21_5  => 0x73,
         V1_21_9  => 0x78,
         V26_1    => 0x7A,
+        V26_3   => 0x7D,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {

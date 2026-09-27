@@ -62,6 +62,7 @@ impl Packet for CSetDefaultSpawnPosition {
         V1_21_5 => 0x5A,
         V1_21_9 => 0x5F,
         V26_1   => 0x61,
+        V26_3   => 0x63,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {

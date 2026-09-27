@@ -59,6 +59,7 @@ const C_TAB_LIST_HEADER_FOOTER: &[(i32, Option<i32>)] = &[
     (774, Some(0x78)),
     (775, Some(0x7A)),
     (776, Some(0x7A)),
+    (777, Some(0x7D)),
 ];
 
 const C_RESOURCE_PACK: &[(i32, Option<i32>)] = &[
@@ -106,6 +107,7 @@ const C_RESOURCE_PACK: &[(i32, Option<i32>)] = &[
     (774, None),
     (775, None),
     (776, None),
+    (777, None),
 ];
 
 const C_RESOURCE_PACK_PUSH: &[(i32, Option<i32>)] = &[
@@ -153,6 +155,7 @@ const C_RESOURCE_PACK_PUSH: &[(i32, Option<i32>)] = &[
     (774, Some(0x4F)),
     (775, Some(0x51)),
     (776, Some(0x51)),
+    (777, Some(0x52)),
 ];
 
 const C_RESOURCE_PACK_POP: &[(i32, Option<i32>)] = &[
@@ -200,6 +203,7 @@ const C_RESOURCE_PACK_POP: &[(i32, Option<i32>)] = &[
     (774, Some(0x4E)),
     (775, Some(0x50)),
     (776, Some(0x50)),
+    (777, Some(0x51)),
 ];
 
 const S_RESOURCE_PACK_RESPONSE: &[(i32, Option<i32>)] = &[
@@ -247,6 +251,7 @@ const S_RESOURCE_PACK_RESPONSE: &[(i32, Option<i32>)] = &[
     (774, Some(0x30)),
     (775, Some(0x31)),
     (776, Some(0x31)),
+    (777, Some(0x32)),
 ];
 
 const C_CONFIG_RESOURCE_PACK: &[(i32, Option<i32>)] = &[
@@ -294,6 +299,7 @@ const C_CONFIG_RESOURCE_PACK: &[(i32, Option<i32>)] = &[
     (774, None),
     (775, None),
     (776, None),
+    (777, None),
 ];
 
 const C_CONFIG_RESOURCE_PACK_PUSH: &[(i32, Option<i32>)] = &[
@@ -341,6 +347,7 @@ const C_CONFIG_RESOURCE_PACK_PUSH: &[(i32, Option<i32>)] = &[
     (774, Some(0x09)),
     (775, Some(0x09)),
     (776, Some(0x09)),
+    (777, Some(0x09)),
 ];
 
 const C_CONFIG_RESOURCE_PACK_POP: &[(i32, Option<i32>)] = &[
@@ -388,6 +395,7 @@ const C_CONFIG_RESOURCE_PACK_POP: &[(i32, Option<i32>)] = &[
     (774, Some(0x08)),
     (775, Some(0x08)),
     (776, Some(0x08)),
+    (777, Some(0x08)),
 ];
 
 const S_CONFIG_RESOURCE_PACK_RESPONSE: &[(i32, Option<i32>)] = &[
@@ -435,6 +443,7 @@ const S_CONFIG_RESOURCE_PACK_RESPONSE: &[(i32, Option<i32>)] = &[
     (774, Some(0x06)),
     (775, Some(0x06)),
     (776, Some(0x06)),
+    (777, Some(0x06)),
 ];
 
 const C_STORE_COOKIE: &[(i32, Option<i32>)] = &[
@@ -482,6 +491,7 @@ const C_STORE_COOKIE: &[(i32, Option<i32>)] = &[
     (774, Some(0x76)),
     (775, Some(0x78)),
     (776, Some(0x78)),
+    (777, Some(0x7A)),
 ];
 
 const C_CONFIG_STORE_COOKIE: &[(i32, Option<i32>)] = &[
@@ -529,6 +539,7 @@ const C_CONFIG_STORE_COOKIE: &[(i32, Option<i32>)] = &[
     (774, Some(0x0A)),
     (775, Some(0x0A)),
     (776, Some(0x0A)),
+    (777, Some(0x0B)),
 ];
 
 const C_COOKIE_REQUEST: &[(i32, Option<i32>)] = &[
@@ -576,6 +587,7 @@ const C_COOKIE_REQUEST: &[(i32, Option<i32>)] = &[
     (774, Some(0x15)),
     (775, Some(0x15)),
     (776, Some(0x15)),
+    (777, Some(0x15)),
 ];
 
 const C_CONFIG_COOKIE_REQUEST: &[(i32, Option<i32>)] = &[
@@ -623,6 +635,7 @@ const C_CONFIG_COOKIE_REQUEST: &[(i32, Option<i32>)] = &[
     (774, Some(0x00)),
     (775, Some(0x00)),
     (776, Some(0x00)),
+    (777, Some(0x00)),
 ];
 
 const C_LOGIN_COOKIE_REQUEST: &[(i32, Option<i32>)] = &[
@@ -670,6 +683,7 @@ const C_LOGIN_COOKIE_REQUEST: &[(i32, Option<i32>)] = &[
     (774, Some(0x05)),
     (775, Some(0x05)),
     (776, Some(0x05)),
+    (777, Some(0x05)),
 ];
 
 const S_COOKIE_RESPONSE: &[(i32, Option<i32>)] = &[
@@ -717,6 +731,7 @@ const S_COOKIE_RESPONSE: &[(i32, Option<i32>)] = &[
     (774, Some(0x14)),
     (775, Some(0x15)),
     (776, Some(0x15)),
+    (777, Some(0x15)),
 ];
 
 const S_CONFIG_COOKIE_RESPONSE: &[(i32, Option<i32>)] = &[
@@ -764,6 +779,7 @@ const S_CONFIG_COOKIE_RESPONSE: &[(i32, Option<i32>)] = &[
     (774, Some(0x01)),
     (775, Some(0x01)),
     (776, Some(0x01)),
+    (777, Some(0x01)),
 ];
 
 const S_LOGIN_COOKIE_RESPONSE: &[(i32, Option<i32>)] = &[
@@ -811,6 +827,7 @@ const S_LOGIN_COOKIE_RESPONSE: &[(i32, Option<i32>)] = &[
     (774, Some(0x04)),
     (775, Some(0x04)),
     (776, Some(0x04)),
+    (777, Some(0x04)),
 ];
 
 const C_TRANSFER: &[(i32, Option<i32>)] = &[
@@ -858,6 +875,7 @@ const C_TRANSFER: &[(i32, Option<i32>)] = &[
     (774, Some(0x7F)),
     (775, Some(0x81)),
     (776, Some(0x81)),
+    (777, Some(0x84)),
 ];
 
 const C_CONFIG_TRANSFER: &[(i32, Option<i32>)] = &[
@@ -905,6 +923,7 @@ const C_CONFIG_TRANSFER: &[(i32, Option<i32>)] = &[
     (774, Some(0x0B)),
     (775, Some(0x0B)),
     (776, Some(0x0B)),
+    (777, Some(0x0C)),
 ];
 
 const C_CLEAR_TITLES: &[(i32, Option<i32>)] = &[
@@ -952,6 +971,7 @@ const C_CLEAR_TITLES: &[(i32, Option<i32>)] = &[
     (774, Some(0x0E)),
     (775, Some(0x0E)),
     (776, Some(0x0E)),
+    (777, Some(0x0E)),
 ];
 
 const C_BOSS_BAR: &[(i32, Option<i32>)] = &[
@@ -999,6 +1019,7 @@ const C_BOSS_BAR: &[(i32, Option<i32>)] = &[
     (774, Some(0x09)),
     (775, Some(0x09)),
     (776, Some(0x09)),
+    (777, Some(0x09)),
 ];
 
 const C_TITLE_LEGACY: &[(i32, Option<i32>)] = &[
@@ -1046,6 +1067,7 @@ const C_TITLE_LEGACY: &[(i32, Option<i32>)] = &[
     (774, None),
     (775, None),
     (776, None),
+    (777, None),
 ];
 
 #[test]

@@ -8,10 +8,12 @@ define_twin_packets! {
             V1_21_2 => 0x7A,
             V1_21_9 => 0x7F,
             V26_1   => 0x81,
+            V26_3   => 0x84,
         ],
         #[derive(PartialEq, Eq)]
         CConfigTransfer: Config / Clientbound = ids![
             V1_20_5 => 0x0B,
+            V26_3   => 0x0C,
         ],
     },
     encode_only: true,

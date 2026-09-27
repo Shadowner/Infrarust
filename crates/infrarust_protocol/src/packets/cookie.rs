@@ -11,10 +11,12 @@ define_twin_packets! {
             V1_21_5 => 0x71,
             V1_21_9 => 0x76,
             V26_1   => 0x78,
+            V26_3   => 0x7A,
         ],
         #[derive(PartialEq, Eq)]
         CConfigStoreCookie: Config / Clientbound = ids![
             V1_20_5 => 0x0A,
+            V26_3   => 0x0B,
         ],
     },
     encode_only: true,

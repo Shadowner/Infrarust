@@ -40,6 +40,7 @@ const TABLE: &[(ProtocolVersion, &str)] = &[
     (ProtocolVersion::V1_21_11, "1.21.11"),
     (ProtocolVersion::V26_1, "26.1"),
     (ProtocolVersion::V26_2, "26.2"),
+    (ProtocolVersion::V26_3, "26.3"),
 ];
 
 const SUPPORTED_VERSIONS: [ProtocolVersion; TABLE.len()] = {
@@ -91,6 +92,7 @@ impl ProtocolVersion {
     pub const V1_21_11: Self = Self(774);
     pub const V26_1: Self = Self(775);
     pub const V26_2: Self = Self(776);
+    pub const V26_3: Self = Self(777);
 
     pub const SUPPORTED: &[Self] = &SUPPORTED_VERSIONS;
 
@@ -357,7 +359,7 @@ mod tests {
         assert!(ProtocolVersion::V1_7_2.is_known());
         assert!(ProtocolVersion::HIGHEST_KNOWN.is_known());
         assert!(ProtocolVersion(108).is_known());
-        assert!(!ProtocolVersion(777).is_known());
+        assert!(!ProtocolVersion(ProtocolVersion::HIGHEST_KNOWN.0 + 1).is_known());
     }
 
     #[test]
@@ -400,7 +402,7 @@ mod tests {
             TABLE.windows(2).all(|pair| pair[0].0 < pair[1].0),
             "the version table must be strictly ascending"
         );
-        assert_eq!(ProtocolVersion::HIGHEST_KNOWN, ProtocolVersion::V26_2);
+        assert_eq!(ProtocolVersion::HIGHEST_KNOWN, ProtocolVersion::V26_3);
     }
 
     #[test]

@@ -50,6 +50,7 @@ define_twin_packets! {
         V1_21_5 => 0x26,
         V1_21_9 => 0x2B,
         V26_1   => 0x2C,
+        V26_3   => 0x2D,
     ],
     serverbound_ids: ids![
         V1_7_2  => 0x00,

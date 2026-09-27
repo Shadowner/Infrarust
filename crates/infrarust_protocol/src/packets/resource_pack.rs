@@ -144,6 +144,7 @@ define_twin_packets! {
             V1_21_5 => 0x4A,
             V1_21_9 => 0x4F,
             V26_1   => 0x51,
+            V26_3   => 0x52,
         ],
         #[derive(PartialEq, Eq)]
         CConfigResourcePackPush: Config / Clientbound = ids![
@@ -187,6 +188,7 @@ define_twin_packets! {
             V1_21_5 => 0x49,
             V1_21_9 => 0x4E,
             V26_1   => 0x50,
+            V26_3   => 0x51,
         ],
         #[derive(PartialEq, Eq)]
         CConfigResourcePackPop: Config / Clientbound = ids![
@@ -232,6 +234,7 @@ define_twin_packets! {
             V1_21_4 => 0x2F,
             V1_21_6 => 0x30,
             V26_1   => 0x31,
+            V26_3   => 0x32,
         ],
         #[derive(PartialEq, Eq)]
         SConfigResourcePackResponse: Config / Serverbound = ids![

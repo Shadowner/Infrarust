@@ -34,6 +34,7 @@ impl Packet for CGameEvent {
         V1_21_2 => 0x23,
         V1_21_5 => 0x22,
         V1_21_9 => 0x26,
+        V26_3   => 0x27,
     ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {

@@ -54,6 +54,7 @@ const S_CHAT_MESSAGE: &[(i32, Option<i32>)] = &[
     (774, Some(0x08)),
     (775, Some(0x09)),
     (776, Some(0x09)),
+    (777, Some(0x09)),
 ];
 
 const S_CHAT_COMMAND: &[(i32, Option<i32>)] = &[
@@ -101,6 +102,7 @@ const S_CHAT_COMMAND: &[(i32, Option<i32>)] = &[
     (774, Some(0x06)),
     (775, Some(0x07)),
     (776, Some(0x07)),
+    (777, Some(0x07)),
 ];
 
 const S_CHAT_COMMAND_SIGNED: &[(i32, Option<i32>)] = &[
@@ -148,6 +150,7 @@ const S_CHAT_COMMAND_SIGNED: &[(i32, Option<i32>)] = &[
     (774, Some(0x07)),
     (775, Some(0x08)),
     (776, Some(0x08)),
+    (777, Some(0x08)),
 ];
 
 const S_CHAT_ACKNOWLEDGEMENT: &[(i32, Option<i32>)] = &[
@@ -195,6 +198,7 @@ const S_CHAT_ACKNOWLEDGEMENT: &[(i32, Option<i32>)] = &[
     (774, Some(0x05)),
     (775, Some(0x06)),
     (776, Some(0x06)),
+    (777, Some(0x06)),
 ];
 
 const S_CHAT_SESSION_UPDATE: &[(i32, Option<i32>)] = &[
@@ -242,6 +246,7 @@ const S_CHAT_SESSION_UPDATE: &[(i32, Option<i32>)] = &[
     (774, Some(0x09)),
     (775, Some(0x0A)),
     (776, Some(0x0A)),
+    (777, Some(0x0A)),
 ];
 
 const S_CLIENT_INFORMATION: &[(i32, Option<i32>)] = &[
@@ -289,6 +294,7 @@ const S_CLIENT_INFORMATION: &[(i32, Option<i32>)] = &[
     (774, Some(0x0D)),
     (775, Some(0x0E)),
     (776, Some(0x0E)),
+    (777, Some(0x0E)),
 ];
 
 const S_CONFIG_CLIENT_INFORMATION: &[(i32, Option<i32>)] = &[
@@ -336,6 +342,7 @@ const S_CONFIG_CLIENT_INFORMATION: &[(i32, Option<i32>)] = &[
     (774, Some(0x00)),
     (775, Some(0x00)),
     (776, Some(0x00)),
+    (777, Some(0x00)),
 ];
 
 const S_KEEP_ALIVE: &[(i32, Option<i32>)] = &[
@@ -383,6 +390,7 @@ const S_KEEP_ALIVE: &[(i32, Option<i32>)] = &[
     (774, Some(0x1B)),
     (775, Some(0x1C)),
     (776, Some(0x1C)),
+    (777, Some(0x1C)),
 ];
 
 const C_SYSTEM_CHAT_MESSAGE: &[(i32, Option<i32>)] = &[
@@ -430,6 +438,7 @@ const C_SYSTEM_CHAT_MESSAGE: &[(i32, Option<i32>)] = &[
     (774, Some(0x77)),
     (775, Some(0x79)),
     (776, Some(0x79)),
+    (777, Some(0x7C)),
 ];
 
 const C_CHAT_MESSAGE_LEGACY: &[(i32, Option<i32>)] = &[
@@ -477,6 +486,7 @@ const C_CHAT_MESSAGE_LEGACY: &[(i32, Option<i32>)] = &[
     (774, None),
     (775, None),
     (776, None),
+    (777, None),
 ];
 #[test]
 fn chat_message_ids_match_every_protocol() {

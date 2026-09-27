@@ -71,6 +71,7 @@ impl Packet for CRespawn {
         V1_21_5 => 0x4B,
         V1_21_9 => 0x50,
         V26_1   => 0x52,
+        V26_3   => 0x54,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
@@ -107,8 +108,7 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
 
     let level_name = r.read_string()?;
     let hashed_seed = r.read_i64_be()?;
-    let gamemode = r.read_u8()?;
-    let previous_gamemode = r.read_i8()?;
+    let (gamemode, previous_gamemode) = super::common::decode_game_modes(r, version)?;
     let is_debug = r.read_bool()?;
     let is_flat = r.read_bool()?;
 
@@ -148,8 +148,7 @@ fn encode_1_20_2_up(
 
     w.write_string(&pkt.level_name)?;
     w.write_i64_be(pkt.hashed_seed)?;
-    w.write_u8(pkt.gamemode)?;
-    w.write_i8(pkt.previous_gamemode)?;
+    super::common::encode_game_modes(w, pkt.gamemode, pkt.previous_gamemode, version)?;
     w.write_bool(pkt.is_debug)?;
     w.write_bool(pkt.is_flat)?;
 

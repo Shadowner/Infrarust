@@ -19,6 +19,7 @@ define_twin_packets! {
             V1_21_5 => 0x6B,
             V1_21_9 => 0x70,
             V26_1   => 0x72,
+            V26_3   => 0x74,
         ],
         CSetSubtitle: Clientbound = ids![
             V1_17   => 0x57,
@@ -33,6 +34,7 @@ define_twin_packets! {
             V1_21_5 => 0x69,
             V1_21_9 => 0x6E,
             V26_1   => 0x70,
+            V26_3   => 0x72,
         ],
     },
     state: ConnectionState::Play,
@@ -86,6 +88,7 @@ impl Packet for CSetTitleTimes {
         V1_21_5 => 0x6C,
         V1_21_9 => 0x71,
         V26_1   => 0x73,
+        V26_3   => 0x75,
     ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {

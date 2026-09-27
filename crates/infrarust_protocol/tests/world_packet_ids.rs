@@ -42,6 +42,7 @@ const C_GAME_EVENT: &[(i32, Option<i32>)] = &[
     (774, Some(0x26)),
     (775, Some(0x26)),
     (776, Some(0x26)),
+    (777, Some(0x27)),
 ];
 
 const C_SET_CENTER_CHUNK: &[(i32, Option<i32>)] = &[
@@ -81,6 +82,7 @@ const C_SET_CENTER_CHUNK: &[(i32, Option<i32>)] = &[
     (774, Some(0x5C)),
     (775, Some(0x5E)),
     (776, Some(0x5E)),
+    (777, Some(0x60)),
 ];
 
 const C_CHUNK_DATA: &[(i32, Option<i32>)] = &[
@@ -120,6 +122,7 @@ const C_CHUNK_DATA: &[(i32, Option<i32>)] = &[
     (774, Some(0x2C)),
     (775, Some(0x2D)),
     (776, Some(0x2D)),
+    (777, Some(0x2E)),
 ];
 
 const C_SET_DEFAULT_SPAWN_POSITION: &[(i32, Option<i32>)] = &[
@@ -159,6 +162,7 @@ const C_SET_DEFAULT_SPAWN_POSITION: &[(i32, Option<i32>)] = &[
     (774, Some(0x5F)),
     (775, Some(0x61)),
     (776, Some(0x61)),
+    (777, Some(0x63)),
 ];
 
 const C_SYNCHRONIZE_PLAYER_POSITION: &[(i32, Option<i32>)] = &[
@@ -198,6 +202,7 @@ const C_SYNCHRONIZE_PLAYER_POSITION: &[(i32, Option<i32>)] = &[
     (774, Some(0x46)),
     (775, Some(0x48)),
     (776, Some(0x48)),
+    (777, Some(0x49)),
 ];
 
 #[test]
