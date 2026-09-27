@@ -18,14 +18,18 @@ impl Plugin for StatsPlugin {
         ctx.on::<DisconnectEvent>(EventPriority::Normal, |event| {
             info!("[stats] {}", core::leave_log(&event.player.username));
         })?;
-        ctx.command(core::COMMAND_NAME)
+        let registered = ctx
+            .command(core::COMMAND_NAME)
             .aliases(core::COMMAND_ALIASES.iter().copied())
             .description(core::COMMAND_DESCRIPTION)
             .handler(|invocation| {
                 let reply = core::format_count(Players::count());
                 let _ = invocation.reply(Component::text(reply));
             })
-            .register()?;
+            .register();
+        if let Err(e) = registered {
+            warn!("[stats] /{} was not registered: {e}", core::COMMAND_NAME);
+        }
         Ok(())
     }
 }

@@ -93,28 +93,53 @@ fn take_count(env: &TestEnv) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-48: WASM stats plugin fails to enable when count is taken"]
 async fn the_wasm_stats_plugin_still_enables_when_its_command_name_is_taken_like_the_native_build()
 {
-    let tmp = tempfile::tempdir().unwrap();
-    let native_env = make_env(tmp.path().to_path_buf());
-    take_count(&native_env);
-    let ctx = native_env.factory.create_context("stats");
-    assert!(
-        StatsPlugin.on_enable(ctx.as_ref()).await.is_ok(),
-        "the native build warns and keeps its listeners"
-    );
+    let native_logs = LogCapture::at(Level::INFO);
+    async {
+        let tmp = tempfile::tempdir().unwrap();
+        let native_env = make_env(tmp.path().to_path_buf());
+        take_count(&native_env);
+        let ctx = native_env.factory.create_context("stats");
+        assert!(
+            StatsPlugin.on_enable(ctx.as_ref()).await.is_ok(),
+            "the native build warns and keeps its listeners"
+        );
+        join_and_leave(&native_env).await;
+    }
+    .with_subscriber(native_logs.clone())
+    .await;
 
-    let (_tmp, plugins_dir) = stage("stats");
-    let env = make_env(plugins_dir.clone());
-    take_count(&env);
-    let loader = fresh_loader();
-    loader.discover(&plugins_dir).await.unwrap();
-    let plugin = loader.load("stats", &env.factory).await.unwrap();
-    let ctx = env.factory.create_context("stats");
-    let enabled = plugin.on_enable(ctx.as_ref()).await;
-    assert!(
-        enabled.is_ok(),
-        "the WASM build of the same plugin refuses to enable when `count` is taken: {enabled:?}"
+    let wasm_logs = LogCapture::at(Level::INFO);
+    async {
+        let (_tmp, plugins_dir) = stage("stats");
+        let env = make_env(plugins_dir.clone());
+        take_count(&env);
+        let loader = fresh_loader();
+        loader.discover(&plugins_dir).await.unwrap();
+        let plugin = loader.load("stats", &env.factory).await.unwrap();
+        let ctx = env.factory.create_context("stats");
+        let enabled = plugin.on_enable(ctx.as_ref()).await;
+        assert!(
+            enabled.is_ok(),
+            "the WASM build of the same plugin refuses to enable when `count` is taken: {enabled:?}"
+        );
+        join_and_leave(&env).await;
+    }
+    .with_subscriber(wasm_logs.clone())
+    .await;
+
+    for logs in [&native_logs, &wasm_logs] {
+        assert_eq!(
+            logs.matching("[stats] /count was not registered").len(),
+            1,
+            "{:?}",
+            logs.lines()
+        );
+    }
+    assert_eq!(
+        stats_lines(&native_logs),
+        ["[stats] Steve joined", "[stats] Steve left"]
     );
+    assert_eq!(stats_lines(&wasm_logs), stats_lines(&native_logs));
 }
