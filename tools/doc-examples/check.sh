@@ -20,3 +20,4 @@ status=$?
 python3 "$here/extract.py" report "$out" "$out/check.log"
 echo
 echo "cargo exit status: $status (full log: $out/check.log)"
+exit "$status"
