@@ -27,7 +27,7 @@ struct WizardSettings {
 }
 
 pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
-    infrarust_core::telemetry::formatter::print_banner();
+    infrarust_core::terminal::Banner::new().print();
 
     println!(
         "  {}\n",

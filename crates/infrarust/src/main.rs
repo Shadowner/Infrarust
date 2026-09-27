@@ -16,6 +16,7 @@ use infrarust_config::ProxyConfig;
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_core::terminal::Banner;
 use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 
 mod migrate;
@@ -117,7 +118,7 @@ fn main() -> ExitCode {
         log_broadcast.as_ref().map(LogBroadcast::layer),
     );
 
-    infrarust_core::telemetry::formatter::print_banner();
+    startup_banner(&config).print();
 
     for warning in config_warnings {
         tracing::warn!("{warning}");
@@ -341,6 +342,28 @@ async fn signal_handler() {
     {
         ctrl_c.await.ok();
     }
+}
+
+fn startup_banner(config: &ProxyConfig) -> Banner {
+    let workers = match config.worker_threads {
+        0 => "auto".to_string(),
+        count => count.to_string(),
+    };
+    let mut banner = Banner::new()
+        .row("listen", config.bind)
+        .row("servers", config.servers_dir.display())
+        .row("plugins", config.plugins_dir.display())
+        .row("workers", workers);
+    if let Some(web) = config.web.as_ref().filter(|web| web.enable_api) {
+        banner = banner.row("web", &web.bind);
+    }
+    if config.docker.is_some() {
+        banner = banner.row("docker", "on");
+    }
+    banner.row(
+        "platform",
+        format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+    )
 }
 
 #[cfg(test)]
