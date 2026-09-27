@@ -9,12 +9,14 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use tokio::time::Instant;
 
-use crate::actor::{CallFailure, GuestCall, Halt, InstanceRef, Job, JobKind};
+use crate::actor::{CallFailure, CallKind, GuestCall, Halt, InstanceRef, Job, JobKind};
 use crate::bindings::exports::infrarust::plugin::guest::{EnableReason, RecoveryInfo};
 use crate::chain::CallChain;
+use crate::consts::{FAR_FUTURE, GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL};
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
 use crate::instance::{InstanceFactory, LiveInstance};
+use crate::rate_limit::RateLimit;
 use crate::recovery::{RestartBudget, Verdict};
 
 const FIRST_GENERATION: u64 = 1;
@@ -44,6 +46,7 @@ pub(crate) enum Fault {
     Trapped(Arc<wasmtime::Error>),
     Panicked(String),
     Overran(Duration),
+    PastDeadline(CallKind),
     Refused(String),
     Unavailable(WasmLoaderError),
 }
@@ -54,6 +57,12 @@ impl fmt::Display for Fault {
             Self::Trapped(trap) => write!(f, "the guest trapped: {}", trap.root_cause()),
             Self::Panicked(message) => write!(f, "a host function panicked: {message}"),
             Self::Overran(limit) => write!(f, "the call ran past max_call_duration ({limit:?})"),
+            Self::PastDeadline(CallKind::Event) => {
+                f.write_str("the call ran past the event deadline")
+            }
+            Self::PastDeadline(CallKind::Callback) => f.write_str(
+                "the call ran past its deadline (max_call_duration after it was queued)",
+            ),
             Self::Refused(message) => write!(f, "on_enable returned an error: {message}"),
             Self::Unavailable(error) => write!(f, "no fresh instance could be created: {error}"),
         }
@@ -76,6 +85,39 @@ impl Fault {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Bound {
+    at: Instant,
+    limit: Duration,
+    deadline: Option<CallKind>,
+}
+
+impl Bound {
+    fn new(limit: Duration, deadline: Option<(Deadline, CallKind)>) -> Self {
+        let now = Instant::now();
+        let own = now.checked_add(limit).unwrap_or(now + FAR_FUTURE);
+        match deadline {
+            Some((deadline, kind)) if deadline.expires() < own => Self {
+                at: deadline.expires(),
+                limit,
+                deadline: Some(kind),
+            },
+            _ => Self {
+                at: own,
+                limit,
+                deadline: None,
+            },
+        }
+    }
+
+    const fn fault(self) -> Fault {
+        match self.deadline {
+            Some(kind) => Fault::PastDeadline(kind),
+            None => Fault::Overran(self.limit),
+        }
+    }
+}
+
 pub(crate) struct Supervisor {
     factory: InstanceFactory,
     instance: InstanceRef,
@@ -84,6 +126,7 @@ pub(crate) struct Supervisor {
     budget: RestartBudget,
     last_fault: String,
     halt: Arc<Halt>,
+    expired_warnings: RateLimit,
 }
 
 impl Supervisor {
@@ -104,6 +147,7 @@ impl Supervisor {
             budget,
             last_fault: String::new(),
             halt,
+            expired_warnings: RateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
         })
     }
 
@@ -160,12 +204,19 @@ impl Supervisor {
             return ControlFlow::Continue(());
         }
         if deadline.is_some_and(|deadline| deadline.has_passed()) {
-            tracing::warn!(plugin = %plugin_id, op,
-                "skipping a queued wasm guest call: its deadline passed while it waited");
+            if let Some(suppressed) = self.expired_warnings.admit(std::time::Instant::now()) {
+                tracing::warn!(plugin = %plugin_id, op, suppressed,
+                    "skipping a queued wasm guest call: its deadline passed while it waited");
+            }
             call.refuse(CallFailure::Expired);
             return ControlFlow::Continue(());
         }
-        match run_guest(live, call.as_mut(), deadline, limit, chain.clone()).await {
+        let call_kind = match kind {
+            JobKind::Call(call_kind) => Some(call_kind),
+            JobKind::Enable | JobKind::Disable => None,
+        };
+        let bound = Bound::new(limit, deadline.zip(call_kind));
+        match run_guest(live, call.as_mut(), deadline, bound, chain.clone()).await {
             Ok(()) => {
                 if kind == JobKind::Enable {
                     self.promote();
@@ -248,7 +299,7 @@ impl Supervisor {
                 return;
             }
         };
-        match run_guest(live, call.as_mut(), None, limit, chain).await {
+        match run_guest(live, call.as_mut(), None, Bound::new(limit, None), chain).await {
             Ok(()) => call.answer(),
             Err(fault) => {
                 let fault = Arc::new(fault);
@@ -372,12 +423,12 @@ async fn run_guest(
     live: &mut LiveInstance,
     call: &mut dyn GuestCall,
     deadline: Option<Deadline>,
-    limit: Duration,
+    bound: Bound,
     chain: CallChain,
 ) -> Result<(), Fault> {
     live.begin_call(deadline);
     let running = call.run(&mut live.store, &live.bindings);
-    let outcome = chain.scope(contain(limit, running)).await;
+    let outcome = chain.scope(contain(bound, running)).await;
     live.end_call();
     outcome
 }
@@ -392,23 +443,23 @@ async fn enable(
         .bindings
         .infrarust_plugin_guest()
         .call_on_enable(&mut live.store, reason);
-    let outcome = contain(limit, enabling).await;
+    let outcome = contain(Bound::new(limit, None), enabling).await;
     live.end_call();
     outcome?.map_err(Fault::Refused)
 }
 
 async fn contain<T>(
-    limit: Duration,
+    bound: Bound,
     running: impl Future<Output = wasmtime::Result<T>>,
 ) -> Result<T, Fault> {
-    match tokio::time::timeout(limit, AssertUnwindSafe(running).catch_unwind()).await {
+    match tokio::time::timeout_at(bound.at, AssertUnwindSafe(running).catch_unwind()).await {
         Ok(Ok(Ok(value))) => Ok(value),
         Ok(Ok(Err(error))) => Err(match error.downcast::<EnableRefused>() {
             Ok(refused) => Fault::Refused(refused.0),
             Err(trap) => Fault::Trapped(Arc::new(trap)),
         }),
         Ok(Err(payload)) => Err(Fault::Panicked(panic_message(payload.as_ref()).to_owned())),
-        Err(_) => Err(Fault::Overran(limit)),
+        Err(_) => Err(bound.fault()),
     }
 }
 

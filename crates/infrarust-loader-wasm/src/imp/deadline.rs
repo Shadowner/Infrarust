@@ -12,12 +12,24 @@ pub(crate) struct Deadline {
 }
 
 impl Deadline {
+    #[cfg(test)]
     pub(crate) fn after(budget: Duration) -> Self {
+        Self::within(budget, None)
+    }
+
+    pub(crate) fn within(budget: Duration, caller: Option<Instant>) -> Self {
         let now = Instant::now();
+        let own = later(now, budget);
+        let expires = caller.map_or(own, |caller| caller.clamp(now, own));
+        let left = expires.saturating_duration_since(now);
         Self {
-            expires: later(now, budget),
-            host_cutoff: later(now, budget - margin(budget)),
+            expires,
+            host_cutoff: later(now, left - margin(left)),
         }
+    }
+
+    pub(crate) const fn expires(&self) -> Instant {
+        self.expires
     }
 
     pub(crate) fn has_passed(&self) -> bool {
@@ -27,6 +39,10 @@ impl Deadline {
 
 pub(crate) fn margin(budget: Duration) -> Duration {
     (budget / DEADLINE_MARGIN_DIVISOR).min(MAX_DEADLINE_MARGIN)
+}
+
+pub(crate) fn inside(budget: Duration) -> Duration {
+    budget - margin(budget)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +138,34 @@ mod tests {
     fn a_zero_budget_has_passed_as_soon_as_it_is_made() {
         assert!(Deadline::after(Duration::ZERO).has_passed());
         assert!(!Deadline::after(Duration::from_secs(60)).has_passed());
+    }
+
+    #[test]
+    fn a_caller_that_stops_waiting_sooner_brings_the_deadline_forward() {
+        let now = Instant::now();
+        let caller = now + Duration::from_millis(300);
+        let tight = Deadline::within(Duration::from_secs(10), Some(caller));
+        assert_eq!(tight.expires(), caller);
+        assert!(tight.host_cutoff < caller);
+        assert!(tight.host_cutoff >= caller - Duration::from_millis(60));
+
+        let loose = Deadline::within(
+            Duration::from_millis(100),
+            Some(now + Duration::from_secs(10)),
+        );
+        assert!(loose.expires() < caller);
+
+        let gone = Deadline::within(Duration::from_secs(10), Some(now - Duration::from_secs(1)));
+        assert!(gone.has_passed());
+    }
+
+    #[test]
+    fn an_event_keeps_a_margin_before_the_bus_gives_up() {
+        assert_eq!(
+            inside(Duration::from_millis(300)),
+            Duration::from_millis(240)
+        );
+        assert_eq!(inside(Duration::from_secs(10)), Duration::from_millis(9750));
     }
 
     #[test]

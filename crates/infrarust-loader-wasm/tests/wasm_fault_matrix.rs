@@ -547,6 +547,10 @@ async fn every_fault_kind_in_a_recovery_on_enable_counts_as_a_failed_restart_and
                 &format!("interval 50\nlisten lab-ping\ncommand panic\nenable {}", mode.as_str()),
             );
             lab.dispatch("lab").await;
+            lab.wait_for(&format!("{mode:?}: the quarantine"), || {
+                logs.matching("quarantined").len() == 1
+            })
+            .await;
             assert_eq!(
                 (lab.listeners(LAB), lab.tasks(LAB)),
                 (0, 0),

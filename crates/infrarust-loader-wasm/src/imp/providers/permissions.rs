@@ -22,7 +22,7 @@ impl WasmPermissionProvider {
         let subject = convert::permission_subject_to_wit(subject);
         let snapshot = self
             .instance
-            .call_bounded("permission-snapshot-for", move |store, bindings| {
+            .call("permission-snapshot-for", move |store, bindings| {
                 Box::pin(async move {
                     bindings
                         .infrarust_plugin_guest()

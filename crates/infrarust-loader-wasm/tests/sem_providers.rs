@@ -196,7 +196,6 @@ async fn a_provider_without_ip_ranges_never_receives_a_range_ban() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-05: one slow WASM call decides every queued event"]
 async fn a_slow_ban_check_is_cut_at_check_timeout_and_does_not_refuse_the_logins_behind_it() {
     let (probe, manager) = bans_probe("bans", "300ms").await;
     let started = Instant::now();

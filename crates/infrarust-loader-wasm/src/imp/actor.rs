@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::BoxFuture;
+use infrarust_api::services::caller_deadline;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -15,7 +16,7 @@ use crate::bindings::Plugin as PluginBindings;
 use crate::chain::CallChain;
 use crate::config::SandboxLimits;
 use crate::consts::{GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL, QUEUE_FULL_WARN_INTERVAL};
-use crate::deadline::Deadline;
+use crate::deadline::{Deadline, inside};
 use crate::error::WasmLoaderError;
 use crate::instance::InstanceFactory;
 use crate::rate_limit::SharedRateLimit;
@@ -60,7 +61,7 @@ pub(crate) enum CallKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JobKind {
-    Call,
+    Call(CallKind),
     Enable,
     Disable,
 }
@@ -237,7 +238,7 @@ impl ActorInfo {
         Self {
             plugin_id,
             capacity: sandbox.queue_capacity,
-            event_budget: sandbox.event_budget,
+            event_budget: inside(sandbox.event_budget),
             callback_budget: sandbox.max_call_duration,
             started: Instant::now(),
             next_full_warning_ms: AtomicU64::new(0),
@@ -354,13 +355,14 @@ impl InstanceRef {
             + 'static,
     {
         self.enqueue(op, CallChain::current().unawaited(), None, call)
+            .map(drop)
     }
 
     fn awaited<T, F>(
         &self,
         op: &'static str,
         call: F,
-    ) -> Result<oneshot::Receiver<Result<T, CallFailure>>, CallFailure>
+    ) -> Result<(oneshot::Receiver<Result<T, CallFailure>>, Deadline), CallFailure>
     where
         T: Send + 'static,
         F: for<'a> FnOnce(
@@ -371,8 +373,8 @@ impl InstanceRef {
             + 'static,
     {
         let (reply, answer) = oneshot::channel();
-        self.enqueue(op, CallChain::current(), Some(reply), call)?;
-        Ok(answer)
+        let deadline = self.enqueue(op, CallChain::current(), Some(reply), call)?;
+        Ok((answer, deadline))
     }
 
     fn enqueue<T, F>(
@@ -381,7 +383,7 @@ impl InstanceRef {
         chain: CallChain,
         reply: Reply<T>,
         call: F,
-    ) -> Result<(), CallFailure>
+    ) -> Result<Deadline, CallFailure>
     where
         T: Send + 'static,
         F: for<'a> FnOnce(
@@ -394,10 +396,10 @@ impl InstanceRef {
         let Some(jobs) = self.jobs.upgrade() else {
             return Err(CallFailure::Stopped);
         };
-        let deadline = Deadline::after(self.info.budget(self.kind));
+        let deadline = Deadline::within(self.info.budget(self.kind), caller_deadline::current());
         let job = Job::new(
             op,
-            JobKind::Call,
+            JobKind::Call(self.kind),
             Some(deadline),
             self.generation,
             chain,
@@ -405,7 +407,7 @@ impl InstanceRef {
             call,
         );
         match jobs.try_send(job) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(deadline),
             Err(TrySendError::Full(_)) => {
                 self.info.warn_queue_full(op);
                 Err(CallFailure::QueueFull)
@@ -424,8 +426,11 @@ impl InstanceRef {
             + Send
             + 'static,
     {
-        let answer = self.awaited(op, call)?;
-        answer.await.unwrap_or(Err(CallFailure::Dropped))
+        let (answer, deadline) = self.awaited(op, call)?;
+        match tokio::time::timeout_at(deadline.expires(), answer).await {
+            Ok(answer) => answer.unwrap_or(Err(CallFailure::Dropped)),
+            Err(_) => Err(CallFailure::TimedOut),
+        }
     }
 
     pub(crate) async fn call_or_none<T, F>(&self, op: &'static str, call: F) -> Option<T>
@@ -439,28 +444,6 @@ impl InstanceRef {
             + 'static,
     {
         self.call(op, call).await.ok()
-    }
-
-    pub(crate) async fn call_bounded<T, F>(
-        &self,
-        op: &'static str,
-        call: F,
-    ) -> Result<T, CallFailure>
-    where
-        T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
-    {
-        let budget = self.info.budget(self.kind);
-        let answer = self.awaited(op, call)?;
-        match tokio::time::timeout(budget, answer).await {
-            Ok(answer) => answer.unwrap_or(Err(CallFailure::Dropped)),
-            Err(_) => Err(CallFailure::TimedOut),
-        }
     }
 }
 
@@ -612,7 +595,7 @@ mod tests {
     fn job(reply: Reply<()>) -> Job {
         Job::new(
             "op",
-            JobKind::Call,
+            JobKind::Call(CallKind::Event),
             None,
             None,
             CallChain::default(),

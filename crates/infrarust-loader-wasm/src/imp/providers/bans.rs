@@ -52,7 +52,7 @@ impl WasmBanProvider {
                 self.plugin()
             )));
         }
-        match self.instance.call_bounded(op, call).await {
+        match self.instance.call(op, call).await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(message)) => Err(ServiceError::OperationFailed(message)),
             Err(failure) => Err(ServiceError::Unavailable(format!(

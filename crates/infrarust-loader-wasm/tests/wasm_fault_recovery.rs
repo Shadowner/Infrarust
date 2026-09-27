@@ -186,7 +186,6 @@ async fn start_a_recovery_loop(lab: &Arc<Lab>) -> tokio::task::JoinHandle<Durati
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-13: queued callbacks served past their deadline"]
 async fn a_queued_call_is_answered_by_its_deadline_while_the_actor_is_stuck_in_a_recovery_loop() {
     let lab =
         Arc::new(Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await);
