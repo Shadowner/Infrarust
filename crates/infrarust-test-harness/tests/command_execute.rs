@@ -277,7 +277,7 @@ async fn a_command_modified_into_a_proxy_command_runs_on_the_proxy(version: Prot
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_command_modified_into_a_proxy_command_runs_on_the_proxy; p340 = 340, p760 = 760, p762 = 762, p774 = 774);
+version_matrix!(a_command_modified_into_a_proxy_command_runs_on_the_proxy; p340 = 340, p760 = 760, p762 = 762, p777 = 777);
 
 async fn forward_to_backend_skips_the_proxy_command(version: ProtocolVersion) {
     let world = World::start().await;
@@ -323,7 +323,7 @@ async fn signed_proxy_command_runs_on_the_proxy(version: ProtocolVersion) {
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(signed_proxy_command_runs_on_the_proxy; p766 = 766, p770 = 770, p774 = 774);
+version_matrix!(signed_proxy_command_runs_on_the_proxy; p766 = 766, p770 = 770, p777 = 777);
 
 async fn proxy_command_acknowledges_the_offset(version: ProtocolVersion) {
     let world = World::start().await;
@@ -340,7 +340,7 @@ async fn proxy_command_acknowledges_the_offset(version: ProtocolVersion) {
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(proxy_command_acknowledges_the_offset; p760 = 760, p762 = 762, p770 = 770, p774 = 774);
+version_matrix!(proxy_command_acknowledges_the_offset; p760 = 760, p762 = 762, p770 = 770, p777 = 777);
 
 struct CommandLimbo {
     commands: mpsc::UnboundedSender<String>,
@@ -414,4 +414,4 @@ async fn limbo_commands_fire_no_command_event(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(limbo_commands_fire_no_command_event; p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(limbo_commands_fire_no_command_event; p340 = 340, p764 = 764, p777 = 777);

@@ -149,7 +149,7 @@ async fn plugin_transfers(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(plugin_transfers; p766 = 766, p774 = 774);
+version_matrix!(plugin_transfers; p766 = 766, p777 = 777);
 
 async fn backend_transfers_are_intercepted(version: ProtocolVersion) {
     let recorder = Recorder::new();
@@ -212,7 +212,7 @@ async fn backend_transfers_are_intercepted(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(backend_transfers_are_intercepted; p766 = 766, p774 = 774);
+version_matrix!(backend_transfers_are_intercepted; p766 = 766, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transfers_and_cookies_need_1_20_5() {
@@ -298,7 +298,7 @@ async fn cookies_in_play(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(cookies_in_play; p766 = 766, p774 = 774);
+version_matrix!(cookies_in_play; p766 = 766, p777 = 777);
 
 async fn cookies_in_the_configuration_phase(version: ProtocolVersion) {
     let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
@@ -352,7 +352,7 @@ async fn cookies_in_the_configuration_phase(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(cookies_in_the_configuration_phase; p766 = 766, p774 = 774);
+version_matrix!(cookies_in_the_configuration_phase; p766 = 766, p777 = 777);
 
 fn deny_guarded() -> ScriptedPlugin {
     ScriptedPlugin::new("gate").on::<ServerPreConnectEvent>(EventPriority::NORMAL, |event| {
@@ -432,7 +432,7 @@ async fn connect_reports_the_outcome(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(connect_reports_the_outcome; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(connect_reports_the_outcome; p47 = 47, p764 = 764, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pending_connect_is_cancelled_when_the_player_is_kicked() {
@@ -680,7 +680,7 @@ async fn a_switch_configuration_phase_keeps_backend_requests(version: ProtocolVe
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_switch_configuration_phase_keeps_backend_requests; p766 = 766, p774 = 774);
+version_matrix!(a_switch_configuration_phase_keeps_backend_requests; p766 = 766, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_backends_configuration_requests_are_not_replayed_to_limbo_players() {
@@ -878,4 +878,4 @@ async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVer
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(only_what_limbo_needs_is_replayed_to_other_players; p764 = 764, p766 = 766, p774 = 774);
+version_matrix!(only_what_limbo_needs_is_replayed_to_other_players; p764 = 764, p766 = 766, p777 = 777);

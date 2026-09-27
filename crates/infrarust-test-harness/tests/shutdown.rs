@@ -97,7 +97,7 @@ async fn a_connected_player_is_kicked_before_plugins_stop(version: ProtocolVersi
     assert!(seen.contains(&EventKind::ProxyShutdown), "{seen:?}");
 }
 
-version_matrix!(a_connected_player_is_kicked_before_plugins_stop; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_connected_player_is_kicked_before_plugins_stop; p47 = 47, p764 = 764, p777 = 777);
 
 async fn a_passthrough_player_disconnects_before_proxy_shutdown(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -128,7 +128,7 @@ async fn a_passthrough_player_disconnects_before_proxy_shutdown(version: Protoco
     assert!(disconnect.seq < shutdown, "{events:#?}");
 }
 
-version_matrix!(a_passthrough_player_disconnects_before_proxy_shutdown; p47 = 47, p774 = 774);
+version_matrix!(a_passthrough_player_disconnects_before_proxy_shutdown; p47 = 47, p777 = 777);
 
 #[tokio::test]
 async fn events_posted_during_shutdown_reach_plugins_before_they_are_disabled() {
@@ -297,7 +297,7 @@ async fn a_login_in_progress_gets_no_post_login_after_shutdown_began(version: Pr
     assert_eq!(disconnect.cause(), "shutdown");
 }
 
-version_matrix!(a_login_in_progress_gets_no_post_login_after_shutdown_began; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_login_in_progress_gets_no_post_login_after_shutdown_began; p47 = 47, p764 = 764, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn connections_that_never_log_in_do_not_hold_shutdown() {

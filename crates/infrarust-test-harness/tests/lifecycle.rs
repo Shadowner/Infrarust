@@ -139,7 +139,7 @@ async fn client_only_events_are_awaited_in_order(version: ProtocolVersion) {
 }
 
 version_matrix!(client_only_events_are_awaited_in_order;
-    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p777 = 777);
 
 async fn client_only_uuid_ban_ends_in_login(version: ProtocolVersion) {
     let sessions = FakeSessionServer::spawn().await.unwrap();
@@ -184,7 +184,7 @@ async fn client_only_uuid_ban_ends_in_login(version: ProtocolVersion) {
 }
 
 version_matrix!(client_only_uuid_ban_ends_in_login;
-    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p777 = 777);
 
 fn gatekeeper() -> ScriptedPlugin {
     ScriptedPlugin::new("gatekeeper").on::<LoginEvent>(EventPriority::NORMAL, |event| {
@@ -242,7 +242,7 @@ async fn offline_login_denied_ends_in_login(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(offline_login_denied_ends_in_login; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(offline_login_denied_ends_in_login; p47 = 47, p764 = 764, p777 = 777);
 
 async fn client_only_login_denied_ends_in_login(version: ProtocolVersion) {
     let sessions = FakeSessionServer::spawn().await.unwrap();
@@ -261,7 +261,7 @@ async fn client_only_login_denied_ends_in_login(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(client_only_login_denied_ends_in_login; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(client_only_login_denied_ends_in_login; p47 = 47, p764 = 764, p777 = 777);
 
 async fn denied_initial_connect_ends_with_one_disconnect(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -294,7 +294,7 @@ async fn denied_initial_connect_ends_with_one_disconnect(version: ProtocolVersio
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(denied_initial_connect_ends_with_one_disconnect; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(denied_initial_connect_ends_with_one_disconnect; p47 = 47, p764 = 764, p777 = 777);
 
 async fn unreachable_initial_backend_ends_with_one_disconnect(version: ProtocolVersion) {
     let recorder = Recorder::new();
@@ -319,7 +319,7 @@ async fn unreachable_initial_backend_ends_with_one_disconnect(version: ProtocolV
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(unreachable_initial_backend_ends_with_one_disconnect; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(unreachable_initial_backend_ends_with_one_disconnect; p47 = 47, p764 = 764, p777 = 777);
 
 async fn assert_single_disconnect_after_post_login(
     proxy: &TestProxy,
@@ -391,7 +391,7 @@ async fn last_server_follows_a_switch(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(last_server_follows_a_switch; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(last_server_follows_a_switch; p47 = 47, p764 = 764, p777 = 777);
 
 type Sighting = (Option<(String, Option<ServerId>)>, Option<ServerId>);
 
@@ -435,7 +435,7 @@ async fn post_login_sees_a_registered_player(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(post_login_sees_a_registered_player; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(post_login_sees_a_registered_player; p47 = 47, p764 = 764, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_hung_disconnect_listener_is_cut_off_at_the_deadline() {
@@ -574,7 +574,7 @@ async fn a_second_login_replaces_the_first(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_second_login_replaces_the_first; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_second_login_replaces_the_first; p47 = 47, p764 = 764, p777 = 777);
 
 async fn a_kick_during_post_login_ends_in_login(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -611,7 +611,7 @@ async fn a_kick_during_post_login_ends_in_login(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_kick_during_post_login_ends_in_login; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_kick_during_post_login_ends_in_login; p47 = 47, p764 = 764, p777 = 777);
 
 async fn a_post_login_message_arrives_after_join(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -645,7 +645,7 @@ async fn a_post_login_message_arrives_after_join(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_post_login_message_arrives_after_join; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_post_login_message_arrives_after_join; p47 = 47, p764 = 764, p777 = 777);
 
 async fn a_client_only_post_login_message_arrives_after_join(version: ProtocolVersion) {
     let sessions = FakeSessionServer::spawn().await.unwrap();
@@ -682,7 +682,7 @@ async fn a_client_only_post_login_message_arrives_after_join(version: ProtocolVe
 }
 
 version_matrix!(a_client_only_post_login_message_arrives_after_join;
-    p47 = 47, p763 = 763, p764 = 764, p774 = 774);
+    p47 = 47, p763 = 763, p764 = 764, p777 = 777);
 
 const FORWARDED_SOURCE: &str = "203.0.113.7:51234";
 
@@ -725,7 +725,7 @@ async fn real_ip_comes_from_the_proxy_protocol_header(version: ProtocolVersion) 
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(real_ip_comes_from_the_proxy_protocol_header; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(real_ip_comes_from_the_proxy_protocol_header; p47 = 47, p764 = 764, p777 = 777);
 
 const CLAIMED: Uuid = Uuid::from_u128(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef);
 
@@ -767,7 +767,7 @@ async fn offline_profile_uses_the_offline_uuid(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(offline_profile_uses_the_offline_uuid; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(offline_profile_uses_the_offline_uuid; p47 = 47, p764 = 764, p777 = 777);
 
 async fn the_client_policy_trusts_a_claimed_uuid(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -794,7 +794,7 @@ async fn the_client_policy_trusts_a_claimed_uuid(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(the_client_policy_trusts_a_claimed_uuid; p47 = 47, p774 = 774);
+version_matrix!(the_client_policy_trusts_a_claimed_uuid; p47 = 47, p777 = 777);
 
 async fn passthrough_profile_uses_the_offline_uuid(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -819,7 +819,7 @@ async fn passthrough_profile_uses_the_offline_uuid(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(passthrough_profile_uses_the_offline_uuid; p47 = 47, p774 = 774);
+version_matrix!(passthrough_profile_uses_the_offline_uuid; p47 = 47, p777 = 777);
 
 async fn passthrough_post_login_precedes_disconnect(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -856,7 +856,7 @@ async fn passthrough_post_login_precedes_disconnect(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(passthrough_post_login_precedes_disconnect; p47 = 47, p774 = 774);
+version_matrix!(passthrough_post_login_precedes_disconnect; p47 = 47, p777 = 777);
 
 const REWRITTEN: Uuid = Uuid::from_u128(0x00ff_00ff_00ff_00ff_00ff_00ff_00ff_00ff);
 
@@ -926,7 +926,7 @@ async fn client_only_profile_can_be_rewritten(version: ProtocolVersion) {
 }
 
 version_matrix!(client_only_profile_can_be_rewritten;
-    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p777 = 777);
 
 async fn offline_profile_can_be_rewritten(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -943,4 +943,4 @@ async fn offline_profile_can_be_rewritten(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(offline_profile_can_be_rewritten; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(offline_profile_can_be_rewritten; p47 = 47, p764 = 764, p777 = 777);

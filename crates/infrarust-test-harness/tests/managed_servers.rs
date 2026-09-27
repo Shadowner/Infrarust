@@ -325,4 +325,4 @@ async fn a_switch_to_a_sleeping_server_wakes_it(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_switch_to_a_sleeping_server_wakes_it; p340 = 340, p774 = 774);
+version_matrix!(a_switch_to_a_sleeping_server_wakes_it; p340 = 340, p777 = 777);

@@ -139,7 +139,7 @@ async fn a_command_can_wait_for_its_own_players_switch(version: ProtocolVersion)
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_command_can_wait_for_its_own_players_switch; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_command_can_wait_for_its_own_players_switch; p47 = 47, p764 = 764, p777 = 777);
 
 struct Step {
     name: &'static str,
@@ -223,7 +223,7 @@ async fn a_players_commands_run_one_at_a_time_in_order(version: ProtocolVersion)
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_players_commands_run_one_at_a_time_in_order; p47 = 47, p774 = 774);
+version_matrix!(a_players_commands_run_one_at_a_time_in_order; p47 = 47, p777 = 777);
 
 struct DropSignal(Option<oneshot::Sender<()>>);
 

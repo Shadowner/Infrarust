@@ -73,7 +73,7 @@ async fn a_switch_replays_the_client_state(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_switch_replays_the_client_state; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(a_switch_replays_the_client_state; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 struct Pass;
 
@@ -126,7 +126,7 @@ async fn a_limbo_gate_keeps_the_client_state(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_limbo_gate_keeps_the_client_state; p764 = 764, p774 = 774);
+version_matrix!(a_limbo_gate_keeps_the_client_state; p764 = 764, p777 = 777);
 
 fn expected_settings(information: &ClientInformation) -> ClientSettings {
     let mut settings = ClientSettings::new(information.locale.clone());
@@ -180,7 +180,7 @@ async fn the_player_reports_its_client_state(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(the_player_reports_its_client_state; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(the_player_reports_its_client_state; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn ping_is_measured_from_keepalives(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -213,7 +213,7 @@ async fn ping_is_measured_from_keepalives(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(ping_is_measured_from_keepalives; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(ping_is_measured_from_keepalives; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 enum Seen {
     Brand(String),
@@ -329,7 +329,7 @@ async fn client_events_carry_the_client_state(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(client_events_carry_the_client_state; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(client_events_carry_the_client_state; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn forwarded_players_have_no_plugin_messaging(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -371,7 +371,7 @@ async fn forwarded_players_have_no_plugin_messaging(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(forwarded_players_have_no_plugin_messaging; p47 = 47, p774 = 774);
+version_matrix!(forwarded_players_have_no_plugin_messaging; p47 = 47, p777 = 777);
 
 struct Hold {
     chats: mpsc::UnboundedSender<String>,
@@ -459,4 +459,4 @@ async fn ping_is_measured_in_limbo(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(ping_is_measured_in_limbo; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(ping_is_measured_in_limbo; p47 = 47, p764 = 764, p777 = 777);

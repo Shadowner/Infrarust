@@ -242,7 +242,7 @@ async fn late_command_reaches_the_tree(version: ProtocolVersion) {
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(late_command_reaches_the_tree; p764 = 764, p774 = 774);
+version_matrix!(late_command_reaches_the_tree; p764 = 764, p777 = 777);
 
 async fn backend_root_with_a_proxy_name_appears_once(version: ProtocolVersion) {
     let world = World::start().await;
@@ -266,7 +266,7 @@ async fn backend_root_with_a_proxy_name_appears_once(version: ProtocolVersion) {
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(backend_root_with_a_proxy_name_appears_once; p764 = 764, p774 = 774);
+version_matrix!(backend_root_with_a_proxy_name_appears_once; p764 = 764, p777 = 777);
 
 async fn forbidden_command_is_denied_and_not_forwarded(version: ProtocolVersion) {
     let world = World::start().await;
@@ -285,7 +285,7 @@ async fn forbidden_command_is_denied_and_not_forwarded(version: ProtocolVersion)
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(forbidden_command_is_denied_and_not_forwarded; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(forbidden_command_is_denied_and_not_forwarded; p47 = 47, p764 = 764, p777 = 777);
 
 async fn every_label_runs_the_command_as_the_player(version: ProtocolVersion) {
     let world = World::start().await;
@@ -313,7 +313,7 @@ async fn every_label_runs_the_command_as_the_player(version: ProtocolVersion) {
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(every_label_runs_the_command_as_the_player; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(every_label_runs_the_command_as_the_player; p47 = 47, p764 = 764, p777 = 777);
 
 async fn tab_completion_carries_the_player_and_tooltips(version: ProtocolVersion) {
     let world = World::start().await;
@@ -349,7 +349,7 @@ async fn tab_completion_carries_the_player_and_tooltips(version: ProtocolVersion
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(tab_completion_carries_the_player_and_tooltips; p764 = 764, p774 = 774);
+version_matrix!(tab_completion_carries_the_player_and_tooltips; p764 = 764, p777 = 777);
 
 struct RecordingLimbo {
     commands: mpsc::UnboundedSender<String>,
@@ -428,7 +428,7 @@ async fn limbo_commands_share_the_same_dispatch(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(limbo_commands_share_the_same_dispatch; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(limbo_commands_share_the_same_dispatch; p47 = 47, p764 = 764, p777 = 777);
 
 fn console(proxy: &TestProxy) -> ConsoleServices {
     let services = proxy.services();

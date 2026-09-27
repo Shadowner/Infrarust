@@ -170,7 +170,7 @@ async fn the_channel_is_off_by_default(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(the_channel_is_off_by_default; p47 = 47, p774 = 774);
+version_matrix!(the_channel_is_off_by_default; p47 = 47, p777 = 777);
 
 async fn requests_get_golden_responses(version: ProtocolVersion) {
     let network = Network::spawn().await;
@@ -261,7 +261,7 @@ async fn requests_get_golden_responses(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(requests_get_golden_responses; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(requests_get_golden_responses; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn requests_stay_in_the_network(version: ProtocolVersion) {
     let network = Network::spawn().await;
@@ -318,7 +318,7 @@ async fn requests_stay_in_the_network(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(requests_stay_in_the_network; p47 = 47, p774 = 774);
+version_matrix!(requests_stay_in_the_network; p47 = 47, p777 = 777);
 
 async fn connect_goes_through_the_connection_events(version: ProtocolVersion) {
     let network = Network::spawn().await;
@@ -367,7 +367,7 @@ async fn connect_goes_through_the_connection_events(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(connect_goes_through_the_connection_events; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(connect_goes_through_the_connection_events; p47 = 47, p764 = 764, p777 = 777);
 
 async fn forward_reaches_a_backend_of_the_network(version: ProtocolVersion) {
     let network = Network::spawn().await;
@@ -421,7 +421,7 @@ async fn forward_reaches_a_backend_of_the_network(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(forward_reaches_a_backend_of_the_network; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(forward_reaches_a_backend_of_the_network; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn a_plugin_can_take_the_channel_over(version: ProtocolVersion) {
     let network = Network::spawn().await;
@@ -454,7 +454,7 @@ async fn a_plugin_can_take_the_channel_over(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_plugin_can_take_the_channel_over; p47 = 47, p774 = 774);
+version_matrix!(a_plugin_can_take_the_channel_over; p47 = 47, p777 = 777);
 
 async fn write_subchannels_follow_the_permissions(version: ProtocolVersion) {
     let network = Network::spawn().await;
@@ -492,4 +492,4 @@ async fn write_subchannels_follow_the_permissions(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(write_subchannels_follow_the_permissions; p47 = 47, p774 = 774);
+version_matrix!(write_subchannels_follow_the_permissions; p47 = 47, p777 = 777);

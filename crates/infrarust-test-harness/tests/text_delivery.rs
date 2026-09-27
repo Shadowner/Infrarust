@@ -231,7 +231,7 @@ async fn plugin_message_events_follow_the_client_version(version: ProtocolVersio
 }
 
 version_matrix!(plugin_message_events_follow_the_client_version;
-    p47 = 47, p764 = 764, p765 = 765, p769 = 769, p774 = 774);
+    p47 = 47, p764 = 764, p765 = 765, p769 = 769, p777 = 777);
 
 async fn switch_denial_reaches_the_player_as_sent(version: ProtocolVersion) {
     let backend_a = FakeBackend::builder().spawn().await.unwrap();

@@ -128,7 +128,7 @@ async fn kick_reason_is_always_delivered(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(kick_reason_is_always_delivered; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(kick_reason_is_always_delivered; p47 = 47, p764 = 764, p777 = 777);
 
 async fn limbo_message_arrives_while_held(version: ProtocolVersion) {
     let ended = Ended::default();
@@ -165,7 +165,7 @@ async fn limbo_message_arrives_while_held(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(limbo_message_arrives_while_held; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(limbo_message_arrives_while_held; p47 = 47, p764 = 764, p777 = 777);
 
 async fn limbo_kick_keeps_its_reason(version: ProtocolVersion) {
     let ended = Ended::default();
@@ -198,7 +198,7 @@ async fn limbo_kick_keeps_its_reason(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(limbo_kick_keeps_its_reason; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(limbo_kick_keeps_its_reason; p47 = 47, p764 = 764, p777 = 777);
 
 async fn kick_during_limbo_entry_keeps_its_reason(version: ProtocolVersion) {
     let entered = Arc::new(Notify::new());
@@ -243,7 +243,7 @@ async fn kick_during_limbo_entry_keeps_its_reason(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(kick_during_limbo_entry_keeps_its_reason; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(kick_during_limbo_entry_keeps_its_reason; p47 = 47, p764 = 764, p777 = 777);
 
 async fn limbo_switch_request_leaves_limbo(version: ProtocolVersion) {
     let ended = Ended::default();
@@ -286,7 +286,7 @@ async fn limbo_switch_request_leaves_limbo(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(limbo_switch_request_leaves_limbo; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(limbo_switch_request_leaves_limbo; p47 = 47, p764 = 764, p777 = 777);
 
 fn login_in_background(
     proxy: &TestProxy,
@@ -329,7 +329,7 @@ async fn login_phase_kick_uses_login_disconnect(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(login_phase_kick_uses_login_disconnect; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(login_phase_kick_uses_login_disconnect; p47 = 47, p764 = 764, p777 = 777);
 
 async fn config_phase_kick_uses_config_disconnect(version: ProtocolVersion) {
     let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
@@ -360,7 +360,7 @@ async fn config_phase_kick_uses_config_disconnect(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(config_phase_kick_uses_config_disconnect; p764 = 764, p774 = 774);
+version_matrix!(config_phase_kick_uses_config_disconnect; p764 = 764, p777 = 777);
 
 async fn config_phase_message_waits_for_join(version: ProtocolVersion) {
     let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
@@ -400,7 +400,7 @@ async fn config_phase_message_waits_for_join(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(config_phase_message_waits_for_join; p764 = 764, p774 = 774);
+version_matrix!(config_phase_message_waits_for_join; p764 = 764, p777 = 777);
 
 async fn passthrough_disconnect_closes_the_connection(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -435,7 +435,7 @@ async fn passthrough_disconnect_closes_the_connection(version: ProtocolVersion) 
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(passthrough_disconnect_closes_the_connection; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(passthrough_disconnect_closes_the_connection; p47 = 47, p764 = 764, p777 = 777);
 
 struct Reconfiguring {
     proxy: TestProxy,
@@ -498,7 +498,7 @@ async fn a_message_during_backend_reconfiguration_waits_for_play(version: Protoc
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_message_during_backend_reconfiguration_waits_for_play; p764 = 764, p766 = 766, p774 = 774);
+version_matrix!(a_message_during_backend_reconfiguration_waits_for_play; p764 = 764, p766 = 766, p777 = 777);
 
 async fn a_kick_during_backend_reconfiguration_uses_config_disconnect(version: ProtocolVersion) {
     let Reconfiguring {
@@ -520,4 +520,4 @@ async fn a_kick_during_backend_reconfiguration_uses_config_disconnect(version: P
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_kick_during_backend_reconfiguration_uses_config_disconnect; p764 = 764, p766 = 766, p774 = 774);
+version_matrix!(a_kick_during_backend_reconfiguration_uses_config_disconnect; p764 = 764, p766 = 766, p777 = 777);

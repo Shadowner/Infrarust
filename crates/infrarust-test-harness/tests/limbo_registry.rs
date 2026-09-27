@@ -157,4 +157,4 @@ async fn a_server_listing_an_unregistered_handler_sends_the_player_on(version: P
     proxy.shutdown().await.unwrap();
 }
 
-infrarust_test_harness::version_matrix!(a_server_listing_an_unregistered_handler_sends_the_player_on; p47 = 47, p763 = 763, p764 = 764, p774 = 774);
+infrarust_test_harness::version_matrix!(a_server_listing_an_unregistered_handler_sends_the_player_on; p47 = 47, p763 = 763, p764 = 764, p777 = 777);

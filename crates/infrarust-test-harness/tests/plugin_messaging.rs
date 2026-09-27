@@ -76,7 +76,7 @@ async fn a_client_cannot_spoof_backend_plugin_channels(version: ProtocolVersion)
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_client_cannot_spoof_backend_plugin_channels; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(a_client_cannot_spoof_backend_plugin_channels; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 const ECHO: &str = "test:echo";
 
@@ -215,7 +215,7 @@ async fn registered_channels_reach_plugins(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(registered_channels_reach_plugins; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(registered_channels_reach_plugins; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn unregistered_channels_pass_byte_identical(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -273,7 +273,7 @@ async fn unregistered_channels_pass_byte_identical(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(unregistered_channels_pass_byte_identical; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(unregistered_channels_pass_byte_identical; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn plugins_send_in_play(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -325,7 +325,7 @@ async fn plugins_send_in_play(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(plugins_send_in_play; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(plugins_send_in_play; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 async fn plugins_send_in_the_configuration_phase(version: ProtocolVersion) {
     let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
@@ -387,7 +387,7 @@ async fn plugins_send_in_the_configuration_phase(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(plugins_send_in_the_configuration_phase; p764 = 764, p774 = 774);
+version_matrix!(plugins_send_in_the_configuration_phase; p764 = 764, p777 = 777);
 
 async fn the_server_messenger_needs_a_carrier(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -441,4 +441,4 @@ async fn the_server_messenger_needs_a_carrier(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(the_server_messenger_needs_a_carrier; p47 = 47, p774 = 774);
+version_matrix!(the_server_messenger_needs_a_carrier; p47 = 47, p777 = 777);

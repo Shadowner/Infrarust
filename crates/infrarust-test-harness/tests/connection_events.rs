@@ -262,7 +262,7 @@ async fn client_only_connection_events_carry_the_player(version: ProtocolVersion
 }
 
 version_matrix!(client_only_connection_events_carry_the_player;
-    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p777 = 777);
 
 async fn a_switch_carries_the_previous_server(version: ProtocolVersion) {
     let backend_a = FakeBackend::builder().spawn().await.unwrap();
@@ -673,7 +673,7 @@ async fn passthrough_announces_the_initial_connection(version: ProtocolVersion) 
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(passthrough_announces_the_initial_connection; p47 = 47, p774 = 774);
+version_matrix!(passthrough_announces_the_initial_connection; p47 = 47, p777 = 777);
 
 fn sse_bridge(events: broadcast::Sender<ApiEvent>) -> ScriptedPlugin {
     ScriptedPlugin::new("sse").on_enable(move |ctx| {
@@ -740,7 +740,7 @@ async fn the_admin_api_reports_a_switch_but_not_a_first_join(version: ProtocolVe
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(the_admin_api_reports_a_switch_but_not_a_first_join; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(the_admin_api_reports_a_switch_but_not_a_first_join; p47 = 47, p764 = 764, p777 = 777);
 
 async fn next_leave(events: &mut broadcast::Receiver<ApiEvent>) -> Value {
     loop {

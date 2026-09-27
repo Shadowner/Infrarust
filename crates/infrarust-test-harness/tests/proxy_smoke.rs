@@ -20,7 +20,7 @@ const T: Duration = DEFAULT_TIMEOUT;
 
 #[test]
 fn ad_hoc_matrices_end_at_the_limbo_protocol() {
-    assert_eq!(LIMBO, 774);
+    assert_eq!(LIMBO, 777);
 }
 
 async fn offline_login(version: ProtocolVersion) {
@@ -104,7 +104,7 @@ async fn client_only_login(version: ProtocolVersion) {
 }
 
 version_matrix!(client_only_login;
-    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p763 = 763, p764 = 764, p766 = 766, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn client_only_rejected_by_the_session_server() {
@@ -218,7 +218,7 @@ async fn passthrough_login(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(passthrough_login; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(passthrough_login; p47 = 47, p764 = 764, p777 = 777);
 
 async fn switch_between_backends(version: ProtocolVersion) {
     let backend_a = FakeBackend::builder().spawn().await.unwrap();
@@ -364,7 +364,7 @@ async fn recorder_sees_basic_lifecycle(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(recorder_sees_basic_lifecycle; p47 = 47, p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(recorder_sees_basic_lifecycle; p47 = 47, p340 = 340, p764 = 764, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn proxy_lifecycle_events() {
@@ -494,4 +494,4 @@ async fn scripted_plugin_hooks(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(scripted_plugin_hooks; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(scripted_plugin_hooks; p47 = 47, p764 = 764, p777 = 777);

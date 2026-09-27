@@ -69,7 +69,7 @@ async fn an_unknown_domain_is_answered_with_the_default_motd(version: ProtocolVe
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(an_unknown_domain_is_answered_with_the_default_motd; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(an_unknown_domain_is_answered_with_the_default_motd; p47 = 47, p764 = 764, p777 = 777);
 
 async fn a_ping_pipelined_with_the_status_request_is_answered(version: ProtocolVersion) {
     let backend = FakeBackend::builder()
@@ -100,7 +100,7 @@ async fn a_ping_pipelined_with_the_status_request_is_answered(version: ProtocolV
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_ping_pipelined_with_the_status_request_is_answered; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_ping_pipelined_with_the_status_request_is_answered; p47 = 47, p764 = 764, p777 = 777);
 
 fn legacy_backend_ping() -> LegacyPing {
     LegacyPing {
@@ -246,7 +246,7 @@ async fn a_timed_out_ping_listener_still_gets_an_answer(version: ProtocolVersion
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_timed_out_ping_listener_still_gets_an_answer; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(a_timed_out_ping_listener_still_gets_an_answer; p47 = 47, p764 = 764, p777 = 777);
 
 async fn ping_fields_describe_the_request(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
@@ -280,7 +280,7 @@ async fn ping_fields_describe_the_request(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(ping_fields_describe_the_request; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(ping_fields_describe_the_request; p47 = 47, p764 = 764, p777 = 777);
 
 const NOTCH: Uuid = Uuid::from_u128(0x069a_79f4_44e9_4726_a5be_fca9_0e38_aaf5);
 const HEROBRINE: Uuid = Uuid::from_u128(0x00ff_00ff_00ff_00ff_00ff_00ff_00ff_00ff);
@@ -334,7 +334,7 @@ async fn the_player_sample_can_be_read_and_rewritten(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(the_player_sample_can_be_read_and_rewritten; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(the_player_sample_can_be_read_and_rewritten; p47 = 47, p764 = 764, p777 = 777);
 
 async fn an_untouched_player_sample_is_relayed_verbatim(version: ProtocolVersion) {
     let sample = json!([
@@ -369,4 +369,4 @@ async fn an_untouched_player_sample_is_relayed_verbatim(version: ProtocolVersion
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(an_untouched_player_sample_is_relayed_verbatim; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(an_untouched_player_sample_is_relayed_verbatim; p47 = 47, p764 = 764, p777 = 777);

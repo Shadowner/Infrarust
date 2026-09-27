@@ -440,7 +440,7 @@ async fn a_config_kick_during_a_switch_keeps_the_player(version: ProtocolVersion
     .await;
 }
 
-version_matrix!(a_config_kick_during_a_switch_keeps_the_player; p764 = 764, p774 = 774);
+version_matrix!(a_config_kick_during_a_switch_keeps_the_player; p764 = 764, p777 = 777);
 
 async fn an_unreachable_initial_server_shows_its_message(version: ProtocolVersion) {
     let recorder = Recorder::new();
@@ -539,7 +539,7 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(an_unreachable_initial_server_falls_back_to_its_limbo; p47 = 47, p764 = 764, p765 = 765, p774 = 774);
+version_matrix!(an_unreachable_initial_server_falls_back_to_its_limbo; p47 = 47, p764 = 764, p765 = 765, p777 = 777);
 
 async fn a_refused_initial_login_shows_the_backend_reason(version: ProtocolVersion) {
     let sessions = FakeSessionServer::spawn().await.unwrap();
@@ -664,7 +664,7 @@ async fn a_config_kick_during_the_initial_join_reaches_the_client(version: Proto
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_config_kick_during_the_initial_join_reaches_the_client; p764 = 764, p774 = 774);
+version_matrix!(a_config_kick_during_the_initial_join_reaches_the_client; p764 = 764, p777 = 777);
 
 async fn kick_redirects_stop_after_three_attempts(version: ProtocolVersion) {
     let backend_a = FakeBackend::builder().spawn().await.unwrap();
@@ -823,7 +823,7 @@ async fn a_config_kick_during_the_initial_join_can_redirect(version: ProtocolVer
     .await;
 }
 
-version_matrix!(a_config_kick_during_the_initial_join_can_redirect; p764 = 764, p774 = 774);
+version_matrix!(a_config_kick_during_the_initial_join_can_redirect; p764 = 764, p777 = 777);
 
 async fn a_redirect_after_a_kick_mid_reconfiguration_absorbs_the_late_ack(
     version: ProtocolVersion,
@@ -930,4 +930,4 @@ async fn a_redirect_after_a_kick_mid_reconfiguration_absorbs_the_late_ack(
 }
 
 version_matrix!(a_redirect_after_a_kick_mid_reconfiguration_absorbs_the_late_ack;
-    p764 = 764, p766 = 766, p774 = 774);
+    p764 = 764, p766 = 766, p777 = 777);

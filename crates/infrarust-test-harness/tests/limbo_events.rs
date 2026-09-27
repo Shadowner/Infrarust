@@ -107,7 +107,7 @@ async fn an_initial_gate_enters_and_leaves_limbo_before_the_server(version: Prot
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(an_initial_gate_enters_and_leaves_limbo_before_the_server; p47 = 47, p764 = 764, p774 = 774);
+version_matrix!(an_initial_gate_enters_and_leaves_limbo_before_the_server; p47 = 47, p764 = 764, p777 = 777);
 
 async fn a_limbo_redirect_names_the_next_server(version: ProtocolVersion) {
     let hub = FakeBackend::builder().spawn().await.unwrap();
@@ -165,7 +165,7 @@ async fn a_limbo_redirect_names_the_next_server(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_limbo_redirect_names_the_next_server; p47 = 47, p774 = 774);
+version_matrix!(a_limbo_redirect_names_the_next_server; p47 = 47, p777 = 777);
 
 async fn a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_event(
     version: ProtocolVersion,
@@ -247,7 +247,7 @@ async fn a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_event(
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_event; p47 = 47, p774 = 774);
+version_matrix!(a_kick_to_limbo_then_a_disconnect_exits_before_the_disconnect_event; p47 = 47, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_shutdown_in_limbo_exits_before_the_disconnect_event() {

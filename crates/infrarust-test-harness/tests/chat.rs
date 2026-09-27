@@ -219,7 +219,7 @@ async fn modified_signed_chat_is_sent_unsigned(version: ProtocolVersion) {
     world.proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(modified_signed_chat_is_sent_unsigned; p760 = 760, p762 = 762, p770 = 770, p774 = 774);
+version_matrix!(modified_signed_chat_is_sent_unsigned; p760 = 760, p762 = 762, p770 = 770, p777 = 777);
 
 struct ChatLimbo {
     chats: mpsc::UnboundedSender<String>,
@@ -306,4 +306,4 @@ async fn limbo_chat_goes_through_the_event_first(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(limbo_chat_goes_through_the_event_first; p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(limbo_chat_goes_through_the_event_first; p340 = 340, p764 = 764, p777 = 777);

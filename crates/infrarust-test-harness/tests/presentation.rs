@@ -131,7 +131,7 @@ async fn header_footer_survives_a_switch(version: ProtocolVersion) {
 }
 
 version_matrix!(header_footer_survives_a_switch;
-    p47 = 47, p340 = 340, p764 = 764, p765 = 765, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p764 = 764, p765 = 765, p766 = 766, p777 = 777);
 
 async fn clear_title_follows_the_protocol(version: ProtocolVersion) {
     let (_a, _b, proxy, _recorder) = two_servers().await;
@@ -157,7 +157,7 @@ async fn clear_title_follows_the_protocol(version: ProtocolVersion) {
 }
 
 version_matrix!(clear_title_follows_the_protocol;
-    p47 = 47, p340 = 340, p764 = 764, p765 = 765, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p764 = 764, p765 = 765, p766 = 766, p777 = 777);
 
 async fn boss_bar_is_added_updated_and_removed(version: ProtocolVersion) {
     let (_a, _b, proxy, _recorder) = two_servers().await;
@@ -238,7 +238,7 @@ async fn boss_bar_is_added_updated_and_removed(version: ProtocolVersion) {
 }
 
 version_matrix!(boss_bar_is_added_updated_and_removed;
-    p340 = 340, p764 = 764, p765 = 765, p766 = 766, p774 = 774);
+    p340 = 340, p764 = 764, p765 = 765, p766 = 766, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boss_bars_need_1_9() {
@@ -308,7 +308,7 @@ async fn boss_bars_after_a_switch(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(boss_bars_after_a_switch; p340 = 340, p764 = 764, p774 = 774);
+version_matrix!(boss_bars_after_a_switch; p340 = 340, p764 = 764, p777 = 777);
 
 fn added_bar_titles(bars: &[CBossBar], version: ProtocolVersion) -> Vec<(Uuid, String)> {
     bars.iter()
@@ -396,7 +396,7 @@ async fn presentation_survives_a_backend_reconfiguration(version: ProtocolVersio
 }
 
 version_matrix!(presentation_survives_a_backend_reconfiguration;
-    p764 = 764, p765 = 765, p766 = 766, p770 = 770, p774 = 774, p776 = 776);
+    p764 = 764, p765 = 765, p766 = 766, p770 = 770, p774 = 774, p776 = 776, p777 = 777);
 
 fn pack_request() -> ResourcePackRequest {
     ResourcePackRequest::new(PACK_URL)
@@ -524,7 +524,7 @@ async fn resource_pack_round_trip(version: ProtocolVersion) {
 }
 
 version_matrix!(resource_pack_round_trip;
-    p47 = 47, p340 = 340, p764 = 764, p765 = 765, p766 = 766, p774 = 774);
+    p47 = 47, p340 = 340, p764 = 764, p765 = 765, p766 = 766, p777 = 777);
 
 async fn backend_resource_packs_pass_through(version: ProtocolVersion) {
     let (backend_a, _b, proxy, recorder) = two_servers().await;
@@ -577,7 +577,7 @@ async fn backend_resource_packs_pass_through(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(backend_resource_packs_pass_through; p340 = 340, p764 = 764, p765 = 765, p774 = 774);
+version_matrix!(backend_resource_packs_pass_through; p340 = 340, p764 = 764, p765 = 765, p777 = 777);
 
 async fn resource_packs_in_the_configuration_phase(version: ProtocolVersion) {
     let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
@@ -655,7 +655,7 @@ async fn resource_packs_in_the_configuration_phase(version: ProtocolVersion) {
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(resource_packs_in_the_configuration_phase; p764 = 764, p765 = 765, p774 = 774);
+version_matrix!(resource_packs_in_the_configuration_phase; p764 = 764, p765 = 765, p777 = 777);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_resource_packs_are_refused() {
