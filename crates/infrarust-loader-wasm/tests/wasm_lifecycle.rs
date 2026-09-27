@@ -427,7 +427,6 @@ async fn the_proxy_starts_with_its_good_plugins_when_plugins_dir_holds_a_zero_by
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_missing_hard_dependency_fails_only_the_plugin_that_needs_it() {
     let (_tmp, dir) = staged_with_good();
     add_probe(&dir, "needy", "id=needy\ndep=absent\n");
@@ -439,6 +438,13 @@ async fn a_missing_hard_dependency_fails_only_the_plugin_that_needs_it() {
     );
     assert!(managed.enabled("good"));
     assert!(!managed.enabled("needy"));
+    let refusal = "plugin 'needy' requires 'absent', which was not found";
+    assert!(
+        matches!(managed.state("needy"), Some(infrarust_core::plugin::PluginState::Error(e)) if e == refusal),
+        "{:?}",
+        managed.state("needy")
+    );
+    assert_eq!(managed.load_errors, [refusal]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -451,7 +457,6 @@ async fn a_missing_optional_dependency_is_ignored() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_dependency_cycle_fails_only_the_plugins_in_the_cycle() {
     let (_tmp, dir) = staged_with_good();
     add_probe(&dir, "ping", "id=ping\ndep=pong\n");
@@ -464,6 +469,13 @@ async fn a_dependency_cycle_fails_only_the_plugins_in_the_cycle() {
     );
     assert!(managed.enabled("good"));
     assert!(!managed.enabled("ping") && !managed.enabled("pong"));
+    assert_eq!(
+        managed.load_errors,
+        [
+            "plugin 'ping' is refused: its dependencies form a cycle (ping, pong)",
+            "plugin 'pong' is refused: its dependencies form a cycle (ping, pong)",
+        ]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -501,10 +513,9 @@ async fn two_wasm_files_with_the_same_id_are_refused_by_one_error_naming_both() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_wasm_id_colliding_with_a_native_plugin_does_not_stop_the_native_one() {
     let (_tmp, dir) = staged_with_good();
-    add_probe(&dir, "impostor", "id=native-core\n");
+    let impostor = add_probe(&dir, "impostor", "id=native-core\n");
     let managed = manage(&dir, "", vec![native_loader("native-core")]).await;
     assert!(
         managed.discovery.is_ok(),
@@ -512,6 +523,13 @@ async fn a_wasm_id_colliding_with_a_native_plugin_does_not_stop_the_native_one()
         managed.discovery
     );
     assert!(managed.enabled("native-core") && managed.enabled("good"));
+    assert_eq!(
+        managed.load_errors,
+        [format!(
+            "plugin 'native-core' from loader 'wasm' ({}) is refused: loader 'static' already provides that id",
+            impostor.display()
+        )]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -12,6 +12,7 @@ use infrarust_api::services::{
     player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
     server_manager::ServerManager,
 };
+use infrarust_plugin_common::validate_plugin_id;
 use tokio_util::sync::CancellationToken;
 
 use crate::event_bus::EventBusImpl;
@@ -57,6 +58,8 @@ pub struct PluginManager {
     loader_of: HashMap<String, LoaderIndex>,
     loaded_loaders: Vec<LoaderIndex>,
     disabled: HashSet<String>,
+    discovered: HashMap<String, PluginMetadata>,
+    refused: Vec<PluginManagerError>,
     event_bus: Option<Arc<EventBusImpl>>,
     registry: Option<Arc<PluginRegistryImpl>>,
     context_factory: Option<Arc<PluginContextFactoryImpl>>,
@@ -79,6 +82,8 @@ impl PluginManager {
             loader_of: HashMap::new(),
             loaded_loaders: Vec::new(),
             disabled: HashSet::new(),
+            discovered: HashMap::new(),
+            refused: Vec::new(),
             event_bus: None,
             registry: None,
             context_factory: None,
@@ -104,14 +109,13 @@ impl PluginManager {
         self.disabled = ids;
     }
 
-    /// Discovers all plugins via loaders, detects duplicate IDs,
-    /// and resolves load order via topological sort.
     pub async fn discover_all(
         &mut self,
         plugin_dir: &Path,
     ) -> Result<Vec<PluginMetadata>, PluginManagerError> {
-        let mut all_metadata: Vec<PluginMetadata> = Vec::new();
+        let mut accepted: Vec<PluginMetadata> = Vec::new();
         let mut loader_of: HashMap<String, LoaderIndex> = HashMap::new();
+        let mut refused: Vec<PluginManagerError> = Vec::new();
 
         for (at, loader) in self.loaders.iter().enumerate() {
             let discovered = loader.discover(plugin_dir).await.map_err(|source| {
@@ -122,31 +126,58 @@ impl PluginManager {
             })?;
 
             for metadata in discovered {
-                if let Some(existing) = loader_of.get(&metadata.id) {
-                    return Err(PluginManagerError::DuplicateId {
-                        plugin: metadata.id,
-                        first: self.loaders[*existing].name().to_owned(),
-                        second: loader.name().to_owned(),
+                if let Err(reason) = validate_plugin_id(&metadata.id) {
+                    refused.push(PluginManagerError::InvalidId {
+                        loader: loader.name().to_owned(),
+                        origin: loader.plugin_source(&metadata.id),
+                        reason,
                     });
+                    continue;
+                }
+                if let Some(&owner) = loader_of.get(&metadata.id) {
+                    refused.push(PluginManagerError::DuplicateId {
+                        origin: loader.plugin_source(&metadata.id),
+                        plugin: metadata.id,
+                        kept: self.loaders[owner].name().to_owned(),
+                        refused: loader.name().to_owned(),
+                    });
+                    continue;
                 }
                 loader_of.insert(metadata.id.clone(), at);
-                all_metadata.push(metadata);
+                accepted.push(metadata);
             }
         }
 
-        let load_order = resolve_load_order(&all_metadata)?;
+        let resolution = resolve_load_order(&accepted);
+        for error in &resolution.refused {
+            if let Some(plugin) = error.plugin() {
+                self.states
+                    .insert(plugin.to_owned(), PluginState::Error(error.to_string()));
+            }
+        }
+        refused.extend(resolution.refused);
+        for error in &refused {
+            tracing::error!(error = %error, "Plugin refused");
+        }
 
-        self.load_order = load_order;
+        let loadable: HashSet<&str> = resolution.order.iter().map(String::as_str).collect();
+        accepted.retain(|metadata| loadable.contains(metadata.id.as_str()));
+        self.discovered = accepted
+            .iter()
+            .map(|metadata| (metadata.id.clone(), metadata.clone()))
+            .collect();
+        self.load_order = resolution.order;
         self.loader_of = loader_of;
+        self.refused = refused;
 
-        Ok(all_metadata)
+        Ok(accepted)
     }
 
     pub async fn load_and_enable_all(
         &mut self,
         context_factory: Arc<PluginContextFactoryImpl>,
     ) -> Vec<PluginManagerError> {
-        let mut errors = Vec::new();
+        let mut errors = std::mem::take(&mut self.refused);
         let load_order = self.load_order.clone();
         let factory: &dyn PluginContextFactory = context_factory.as_ref();
 
@@ -402,8 +433,16 @@ mod tests {
 
         let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
 
-        let result = manager.discover_all(Path::new("plugins")).await;
-        assert!(result.is_err());
+        let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].name, "A");
+        let errors = manager.load_and_enable_all(factory()).await;
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(
+            errors[0].to_string(),
+            "plugin 'conflict' from loader 'static' is refused: loader 'static' already provides that id"
+        );
+        assert!(manager.is_plugin_loaded("conflict"));
     }
 
     #[tokio::test]

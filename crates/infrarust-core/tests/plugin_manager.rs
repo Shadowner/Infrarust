@@ -133,6 +133,60 @@ async fn test_failed_plugin_does_not_block_others() {
 }
 
 #[tokio::test]
+async fn a_plugin_whose_id_breaks_the_rule_is_refused_and_the_others_enable() {
+    let loader = StaticPluginLoader::new();
+    let bad = registered(&loader, TestPlugin::new("Bad.Id"));
+    let ok = registered(&loader, TestPlugin::new("ok"));
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(factory()).await;
+
+    assert_eq!(discovered.len(), 1);
+    assert!(ok.is_enabled());
+    assert!(!bad.is_enabled());
+    let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        errors,
+        [
+            "a plugin from loader 'static' is refused: plugin id `Bad.Id` must start with a lowercase letter or a digit"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_missing_dependency_refuses_its_plugin_and_its_dependents_with_one_error_each() {
+    let loader = StaticPluginLoader::new();
+    let needy = registered(&loader, TestPlugin::new("needy").depends_on("absent"));
+    let rider = registered(&loader, TestPlugin::new("rider").depends_on("needy"));
+    let ok = registered(&loader, TestPlugin::new("ok"));
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(factory()).await;
+
+    let ids: Vec<&str> = discovered.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, ["ok"]);
+    assert!(ok.is_enabled());
+    assert!(!needy.is_enabled() && !rider.is_enabled());
+    let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        errors,
+        [
+            "plugin 'needy' requires 'absent', which was not found",
+            "plugin 'rider' requires 'needy', which is not enabled",
+        ]
+    );
+    for (id, error) in [("needy", &errors[0]), ("rider", &errors[1])] {
+        assert!(
+            matches!(manager.plugin_state(id), Some(PluginState::Error(e)) if e == error),
+            "{id}: {:?}",
+            manager.plugin_state(id)
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_is_plugin_loaded() {
     let loader = StaticPluginLoader::new();
     registered(&loader, TestPlugin::new("test"));

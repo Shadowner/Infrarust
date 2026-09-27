@@ -74,6 +74,11 @@ pub trait PluginLoader: Send + Sync {
         plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>>;
 
+    fn plugin_source(&self, plugin_id: &str) -> Option<PathBuf> {
+        let _ = plugin_id;
+        None
+    }
+
     /// Initializes the loader's runtime once, before any of its plugins load.
     ///
     /// Runs after [`discover`](Self::discover). On `Err`, the loader must roll

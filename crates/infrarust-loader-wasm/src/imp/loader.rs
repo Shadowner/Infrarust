@@ -37,6 +37,7 @@ pub struct WasmPluginLoader {
 struct DiscoveredWasm {
     metadata: PluginMetadata,
     component: Component,
+    path: PathBuf,
 }
 
 impl WasmPluginLoader {
@@ -78,21 +79,22 @@ impl WasmPluginLoader {
         Ok(DiscoveredWasm {
             metadata,
             component,
+            path: path.to_path_buf(),
         })
     }
 }
 
 fn without_duplicate_ids(
-    probed: Vec<(PathBuf, DiscoveredWasm)>,
+    probed: Vec<DiscoveredWasm>,
 ) -> (Vec<PluginMetadata>, HashMap<String, DiscoveredWasm>) {
     let mut ids = Vec::new();
     let mut files_of: HashMap<String, Vec<String>> = HashMap::new();
-    for (path, entry) in &probed {
+    for entry in &probed {
         let files = files_of.entry(entry.metadata.id.clone()).or_default();
         if files.is_empty() {
             ids.push(entry.metadata.id.clone());
         }
-        files.push(path.display().to_string());
+        files.push(entry.path.display().to_string());
     }
     for id in &ids {
         if let Some(files) = files_of.get(id).filter(|files| files.len() > 1) {
@@ -106,12 +108,12 @@ fn without_duplicate_ids(
 
     let mut metadatas = Vec::new();
     let mut discovered = HashMap::new();
-    for (path, entry) in probed {
+    for entry in probed {
         let id = entry.metadata.id.clone();
         if files_of.get(&id).is_some_and(|files| files.len() > 1) {
             continue;
         }
-        tracing::debug!(plugin = %id, path = %path.display(), "wasm plugin discovered");
+        tracing::debug!(plugin = %id, path = %entry.path.display(), "wasm plugin discovered");
         metadatas.push(entry.metadata.clone());
         discovered.insert(id, entry);
     }
@@ -137,7 +139,7 @@ impl PluginLoader for WasmPluginLoader {
             let mut probed = Vec::new();
             for path in wasm_files {
                 match self.probe(&cache, &path).await {
-                    Ok(entry) => probed.push((path, entry)),
+                    Ok(entry) => probed.push(entry),
                     Err(error) => {
                         tracing::error!(
                             path = %path.display(),
@@ -152,6 +154,12 @@ impl PluginLoader for WasmPluginLoader {
             *write(&self.discovered) = discovered;
             Ok(metadatas)
         })
+    }
+
+    fn plugin_source(&self, plugin_id: &str) -> Option<PathBuf> {
+        read(&self.discovered)
+            .get(plugin_id)
+            .map(|entry| entry.path.clone())
     }
 
     fn load<'a>(
