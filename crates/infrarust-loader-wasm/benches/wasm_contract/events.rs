@@ -194,4 +194,49 @@ pub(crate) fn run(runs: usize) {
     }
     p50.print();
     p99.print();
+    throughput(runs);
+}
+
+const TASKS: usize = 16;
+
+async fn concurrent(bus: Arc<EventBusImpl>, kind: Kind, per_task: usize) -> f64 {
+    let started = Instant::now();
+    let handles: Vec<_> = (0..TASKS)
+        .map(|_| {
+            let bus = Arc::clone(&bus);
+            tokio::spawn(async move {
+                black_box(fire_kind(&bus, kind, per_task).await);
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.await.unwrap();
+    }
+    let fired = TASKS * (per_task + per_task / 10);
+    fired as f64 / started.elapsed().as_secs_f64() / 1_000.0
+}
+
+fn throughput(runs: usize) {
+    let per_task = scaled(2_000);
+    let mut table = Table::new(
+        format!(
+            "events per second through one plugin, {TASKS} tasks firing {per_task} events each, {WORKERS} workers"
+        ),
+        "k events/s",
+    );
+    for _ in 0..runs {
+        let rt = runtime(WORKERS);
+        let probe = rt.block_on(probe::load_default());
+        for kind in [Kind::ClientBrand, Kind::ProxyPing] {
+            let native = Arc::new(native_bus(kind));
+            let native_rate = rt.block_on(concurrent(native, kind, per_task));
+            let wasm_rate =
+                rt.block_on(concurrent(Arc::clone(&probe.env.event_bus), kind, per_task));
+            table.record(&format!("{}: native listener", kind.label()), native_rate);
+            table.record(&format!("{}: WASM listener", kind.label()), wasm_rate);
+        }
+        drop(probe);
+        rt.shutdown_background();
+    }
+    table.print();
 }
