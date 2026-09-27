@@ -42,6 +42,7 @@ tokio-rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 
 [dev-dependencies]
+wasmtime = { workspace = true, features = ["wat"] }
 infrarust-api = { workspace = true, features = ["test-util"] }
 infrarust-core = { workspace = true, features = ["test-support"] }
 infrarust_config = { workspace = true }
