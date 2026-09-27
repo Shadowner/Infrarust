@@ -24,6 +24,8 @@ members = [
     "fault-lab-peer",
     "metadata-trap",
     "metadata-sleep",
+    "sec-probe",
+    "sec-peer",
 ]
 
 [workspace.dependencies]

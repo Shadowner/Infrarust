@@ -52,6 +52,8 @@ fn run(args: &[String]) -> Result<String, String> {
         "tcp" => tcp(arg(1)?, arg(2)?),
         "udp" => udp(arg(1)?, arg(2)?),
         "udp-bind" => udp_bind(arg(1)?),
+        "udp-connect" => udp_connect(arg(1)?),
+        "udp-recv" => udp_recv(arg(1)?),
         "listen" => listen(arg(1)?),
         "dns" => dns(arg(1)?),
         "http" => http_get(arg(1)?),
@@ -59,6 +61,16 @@ fn run(args: &[String]) -> Result<String, String> {
         "write" => std::fs::write(arg(1)?, arg(2)?)
             .map(|()| String::new())
             .map_err(io_error),
+        "append" => append(arg(1)?, arg(2)?),
+        "truncate" => truncate(arg(1)?),
+        "rename" => std::fs::rename(arg(1)?, arg(2)?)
+            .map(|()| String::new())
+            .map_err(io_error),
+        "remove" => std::fs::remove_file(arg(1)?)
+            .map(|()| String::new())
+            .map_err(io_error),
+        "symlink" => symlink(arg(1)?, arg(2)?),
+        "fill" => fill(arg(1)?, arg(2)?.parse::<u32>().map_err(|e| e.to_string())?),
         "exists" => Ok(std::path::Path::new(arg(1)?).exists().to_string()),
         "caps" => Ok(Proxy::granted_capabilities()
             .into_iter()
@@ -72,6 +84,54 @@ fn run(args: &[String]) -> Result<String, String> {
 
 fn io_error(error: std::io::Error) -> String {
     format!("{:?}", error.kind())
+}
+
+fn append(path: &str, data: &str) -> Result<String, String> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(data.as_bytes()))
+        .map(|()| String::new())
+        .map_err(io_error)
+}
+
+fn truncate(path: &str) -> Result<String, String> {
+    OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map(|_| String::new())
+        .map_err(io_error)
+}
+
+fn symlink(target: &str, link: &str) -> Result<String, String> {
+    let (mount, name) = link.split_once('/').unwrap_or(("", link));
+    let guest_mount = format!("/{mount}");
+    let directories = wasip2::filesystem::preopens::get_directories();
+    let descriptor = directories
+        .iter()
+        .find(|(_, path)| path == &guest_mount || (mount.is_empty() && path == "/"))
+        .map(|(descriptor, _)| descriptor)
+        .ok_or_else(|| format!("no preopen for {guest_mount}"))?;
+    descriptor
+        .symlink_at(target, name)
+        .map(|()| String::new())
+        .map_err(|error| format!("{error:?}"))
+}
+
+fn fill(path: &str, megabytes: u32) -> Result<String, String> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(io_error)?;
+    let chunk = vec![0u8; 1024 * 1024];
+    for _ in 0..megabytes {
+        file.write_all(&chunk).map_err(io_error)?;
+    }
+    file.flush().map_err(io_error)?;
+    Ok(format!("{megabytes}"))
 }
 
 fn tcp(addr: &str, payload: &str) -> Result<String, String> {
@@ -106,6 +166,45 @@ fn udp_bind(addr: &str) -> Result<String, String> {
         .local_addr()
         .map(|local| local.to_string())
         .map_err(io_error)
+}
+
+fn udp_connect(addr: &str) -> Result<String, String> {
+    let target: SocketAddr = addr
+        .to_socket_addrs()
+        .map_err(io_error)?
+        .next()
+        .ok_or_else(|| "no address".to_owned())?;
+    let local = if target.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    };
+    let socket = UdpSocket::bind(local).map_err(|error| format!("bind {}", io_error(error)))?;
+    socket.connect(target).map_err(io_error)?;
+    Ok(socket
+        .local_addr()
+        .map(|local| local.to_string())
+        .unwrap_or_default())
+}
+
+fn udp_recv(bind: &str) -> Result<String, String> {
+    let socket = UdpSocket::bind(bind).map_err(|error| format!("bind {}", io_error(error)))?;
+    let local = socket
+        .local_addr()
+        .map(|addr| addr.to_string())
+        .map_err(io_error)?;
+    let _ = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open("udp.port")
+        .and_then(|mut file| file.write_all(local.as_bytes()));
+    let mut buf = [0u8; 1024];
+    let (read, from) = socket.recv_from(&mut buf).map_err(io_error)?;
+    Ok(format!(
+        "{from} {}",
+        String::from_utf8_lossy(&buf[..read])
+    ))
 }
 
 fn listen(addr: &str) -> Result<String, String> {

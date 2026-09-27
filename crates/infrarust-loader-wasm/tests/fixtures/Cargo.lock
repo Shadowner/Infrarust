@@ -172,6 +172,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-sec-peer"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
+name = "fixture-sec-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-slow-handler"
 version = "0.0.0"
 dependencies = [
