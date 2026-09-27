@@ -1,7 +1,3 @@
-//! Builds the WASM guest test fixtures and the double-distributed `stats` plugin
-//! for `wasm32-wasip2`.
-//!
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -23,7 +19,12 @@ fn main() -> Result<(), std::env::VarError> {
     let macros_dir = manifest_dir.join("..").join("infrarust-plugin-macros");
     let stats_dir = repo_root.join("plugins").join("infrarust-plugin-stats");
 
-    for dir in [&fixtures_dir, &wit_dir, &sdk_dir, &macros_dir, &stats_dir] {
+    let sources = [&fixtures_dir, &wit_dir, &sdk_dir, &macros_dir, &stats_dir];
+    if std::env::var_os("DOCS_RS").is_some() || !sources.iter().all(|dir| dir.is_dir()) {
+        return Ok(());
+    }
+
+    for dir in sources {
         println!("cargo:rerun-if-changed={}", dir.display());
     }
     println!("cargo:rerun-if-env-changed=INFRARUST_WASM_FIXTURES_SKIP");

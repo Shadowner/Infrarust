@@ -2,7 +2,7 @@
 
 wit_bindgen::generate!({
     world: "plugin",
-    path: "../infrarust-plugin-wit/wit",
+    path: "wit",
     generate_all,
     pub_export_macro: true,
     export_macro_name: "export",

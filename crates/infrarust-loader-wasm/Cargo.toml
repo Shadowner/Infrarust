@@ -8,6 +8,7 @@ repository.workspace = true
 description = "WebAssembly (Component Model) plugin loader for Infrarust"
 keywords = ["minecraft", "proxy", "plugin", "wasm", "wasmtime"]
 categories = ["game-development", "wasm"]
+exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
 features = ["wasm"]

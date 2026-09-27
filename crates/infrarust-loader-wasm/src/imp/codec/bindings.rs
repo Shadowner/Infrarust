@@ -1,5 +1,5 @@
 wasmtime::component::bindgen!({
-    path: "../infrarust-plugin-wit/wit",
+    path: "wit",
     world: "plugin",
     imports: { default: trappable },
     exports: { default: trappable },
