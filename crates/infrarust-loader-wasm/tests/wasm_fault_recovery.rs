@@ -268,6 +268,42 @@ async fn disabling_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_lim
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_interval_run_past_its_deadline_is_cut_as_a_fault_before_the_next_run_starts() {
+    let logs = LogCapture::at(Level::ERROR);
+    async {
+        let lab = Lab::start(
+            vec![LabPlugin::lab("interval 50\ntask sleep")],
+            options(
+                "[wasm]\nmax_call_duration = \"500ms\"\n\n[wasm.recovery]\nmax_restarts = 100\n",
+            ),
+        )
+        .await;
+        lab.wait_for("three runs cut at their deadline", || {
+            logs.matching("ran past its deadline").len() >= 3
+        })
+        .await;
+        let runs = fault_lab::count(&lab.log(LAB), "task");
+        let cuts = logs.matching("ran past its deadline");
+        assert!(
+            cuts.iter()
+                .all(|line| line.contains("op=\"on-scheduled-task\"")),
+            "{cuts:?}"
+        );
+        assert!(
+            runs <= cuts.len() + 1,
+            "a run started before the one ahead of it was cut: {runs} runs for {} cuts",
+            cuts.len()
+        );
+        lab.wait_for("each cut to replace the instance", || {
+            fault_lab::count_prefix(&lab.log(LAB), "enable recovered") >= cuts.len()
+        })
+        .await;
+    }
+    .with_subscriber(logs.clone())
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_quarantined_plugin_comes_back_on_its_own_when_its_backoff_passes() {
     let lab = Lab::start(
         vec![LabPlugin::lab("listen lab-ping")],
