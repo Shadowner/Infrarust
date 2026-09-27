@@ -65,7 +65,7 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `VirtualBackend` | `virtual-backend` | Provide virtual backends (planned, not implemented) | No |
 | `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider`, and replace or clear a player's permission snapshot (`providers.register-permission-provider`, `permissions.*`, see [Permissions](./permissions)) | No |
 | `FilesystemExtended` | `filesystem-extended` | Mount the host folders listed in `[[plugins.<id>.wasm.mounts]]`, see [Network & Extra Folders](./network) | No |
-| `Network` | `network` | Outbound TCP, UDP, name lookups and HTTP to the destinations in `[plugins.<id>.wasm.network] allow`, see [Network & Extra Folders](./network) | No |
+| `Network` | `network` | TCP, UDP, name lookups and HTTP, limited to the addresses in `[plugins.<id>.wasm.network] allow`, see [Network & Extra Folders](./network) | No |
 
 ::: warning transport-filter is host-only
 `transport-filter` is a valid capability string, but `from_config_strings` puts it in the rejected list rather than granting it. A WASM plugin cannot register transport filters. The capability exists for native plugins, which receive it through `native_trusted`.
@@ -334,7 +334,8 @@ Without `network`, the WASI context refuses every socket address, name lookups a
 
 With `network`, the plugin reaches only what `[plugins.<id>.wasm.network] allow` lists:
 
-- Each TCP connect, UDP connect and UDP datagram goes through an address check. An address matches an IP or range rule, or an address the proxy resolved from a hostname rule (re-resolved at most every 30 seconds per name when a connection misses).
+- Each TCP connect, UDP connect and UDP datagram sent goes through an address check. An address matches an IP or range rule, or an address the proxy resolved from a hostname rule (re-resolved at most every 30 seconds per name when a connection misses).
+- Incoming traffic goes through the same rules. A received UDP datagram whose source address and port match no rule is dropped before the guest sees it, and so is a TCP connection accepted from a peer that matches no rule. Hostname rules count only the addresses the proxy already resolved; a received datagram never causes a lookup.
 - Listening is refused unless a rule names the exact bind address. Ranges and hostnames never allow a bind, so even `0.0.0.0/0:*` does not let a plugin open a server socket. A socket may bind the unspecified address on port `0`, which is the implicit bind of a TCP connect or a UDP send; that bind alone does not allow listening.
 - Name lookups from the guest are on only when `dns` is (by default, when the list has a hostname rule). A lookup can carry data out even when the connection that follows is refused; keep `dns` off unless the plugin connects by name through a socket.
 - HTTP requests are checked by authority. The proxy resolves hostnames itself, verifies HTTPS certificates against the system trust store and caps the request timeouts at `host_call_timeout`.

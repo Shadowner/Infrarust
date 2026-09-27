@@ -430,11 +430,11 @@ max_restarts = 2
 
 #### `[plugins.<id>.wasm.network]`
 
-Outbound network for a WASM plugin that has the `network` capability. Without the capability the table is ignored with a warning; with the capability and no rules, everything is refused. See [Network & Extra Folders](../plugins/wasm/network).
+Network access for a WASM plugin that has the `network` capability. Without the capability the table is ignored with a warning; with the capability and no rules, everything is refused. See [Network & Extra Folders](../plugins/wasm/network).
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `allow` | array of strings | `[]` | `host:port` rules. Host: IPv4 address, `[IPv6]` address, IPv4 range `a.b.c.d/n`, IPv6 range `[x::/n]`, hostname, or `*.suffix` (HTTP only, subdomains only). Port: number, `a-b`, or `*`. A bare `*` host is rejected; write `0.0.0.0/0:*` or `[::/0]:*`. Parsed at load; a bad rule is a config error |
+| `allow` | array of strings | `[]` | `host:port` rules, checked against every address the plugin connects or sends to and every source it receives a UDP datagram or accepts a TCP connection from. Host: IPv4 address, `[IPv6]` address, IPv4 range `a.b.c.d/n`, IPv6 range `[x::/n]`, hostname, or `*.suffix` (HTTP only, subdomains only). Port: number, `a-b`, or `*`. A bare `*` host is rejected; write `0.0.0.0/0:*` or `[::/0]:*`. Parsed at load; a bad rule is a config error |
 | `dns` | boolean | `true` if `allow` has a hostname rule, else `false` | Let the guest resolve names (`wasi:sockets/ip-name-lookup`) |
 | `http` | boolean | `true` | Let the guest send requests with `wasi:http/outgoing-handler`, filtered by `allow` |
 

@@ -8,7 +8,7 @@ outline: [2, 3]
 
 A WASM plugin has no network and sees one folder, its data directory. Two opt-in capabilities widen that, and each one only reaches what the operator lists in config:
 
-- `network` lets the plugin open outbound TCP connections, send UDP datagrams, resolve names and make HTTP or HTTPS requests to the destinations in `[plugins.<id>.wasm.network] allow`.
+- `network` lets the plugin open outbound TCP connections, exchange UDP datagrams, resolve names and make HTTP or HTTPS requests with the addresses in `[plugins.<id>.wasm.network] allow`.
 - `filesystem-extended` mounts the host folders listed in `[[plugins.<id>.wasm.mounts]]` into the guest, read-only unless a mount says otherwise.
 
 Both fail closed. A capability without its config grants nothing, and config without its capability is ignored. Nothing new is needed in the plugin contract: the guest uses the standard WASI 0.2 imports (`wasi:sockets`, `wasi:http`, `wasi:filesystem`), so Rust's `std::net` and `std::fs` work as they do on any `wasm32-wasip2` program.
@@ -86,13 +86,22 @@ If `network` is missing (not granted, or taken away with `deny`), the plugin get
 
 ### Sockets
 
-Every TCP connect, UDP connect and UDP datagram is checked against the rules before the host touches the network. A destination is allowed when its address and port match an IP or range rule, or when the address is one that an allowed hostname currently resolves to and the port matches that rule.
+Every TCP connect, UDP connect and UDP datagram sent is checked against the rules before the host touches the network. A destination is allowed when its address and port match an IP or range rule, or when the address is one that an allowed hostname currently resolves to and the port matches that rule.
 
-Hostname rules are resolved by the proxy, with the system resolver, when the plugin's instance is built, and again when a connection misses, at most once per name every 30 seconds. A failed lookup keeps the previous addresses. The lookup cache belongs to the plugin and survives instance restarts.
+Hostname rules are resolved by the proxy, with the system resolver, when the plugin's instance is built, and again when a connection or a sent datagram misses, at most once per name every 30 seconds. A failed lookup keeps the previous addresses. The lookup cache belongs to the plugin and survives instance restarts.
 
 A refused socket call fails in the guest with an access-denied error (`std::io::ErrorKind::PermissionDenied` in Rust), and the destination never sees a packet.
 
-Listening is refused by default. A TCP bind, which every listening socket needs, is allowed only when a rule names that exact address and port, such as `0.0.0.0:25600` or `127.0.0.1:9000-9100`. Ranges and hostnames never allow a bind, so `0.0.0.0/0:*` still does not let the plugin listen. A socket may bind the unspecified address on port `0` (an OS-chosen port), which is what a TCP connect or a UDP send does implicitly; that bind does not let a TCP socket listen. Binding a fixed UDP port needs an exact rule like TCP.
+The same rules apply to what comes in:
+
+- A UDP datagram reaches the plugin only when its source address and port match a rule. Any other datagram is dropped by the host, and the plugin's receive call keeps waiting for the next one.
+- A connection accepted by a listening TCP socket reaches the plugin only when the peer's address and port match a rule. Any other connection is reset by the host, and the plugin's accept call keeps waiting.
+- A UDP connect is refused when the address matches no rule, so a socket cannot be pointed at a denied address to receive from it.
+- For a hostname rule, a source is compared with the addresses the proxy already holds for that name. Receiving never triggers a lookup, so a datagram arriving from an address the name has moved to is dropped until an outgoing connect or datagram to that address refreshes the rule.
+
+A request to an allowed service and its reply pass as before, because the reply comes from the address and port the request went to. A client that connects to a listening plugin usually comes from a port its OS picked, so a listener only receives clients that a rule covers on every port, such as `10.0.0.0/8:*` or `[fd00::/8]:*`. The list does not separate the two directions: such a rule also lets the plugin connect to those addresses on any port.
+
+Listening is refused by default. A TCP bind, which every listening socket needs, is allowed only when a rule names that exact address and port, such as `0.0.0.0:25600` or `127.0.0.1:9000-9100`. Ranges and hostnames never allow a bind, so `0.0.0.0/0:*` still does not let the plugin listen. A socket may bind the unspecified address on port `0` (an OS-chosen port), which is what a TCP connect or a UDP send does implicitly; that bind does not let a TCP socket listen, and a UDP socket bound that way still only receives from the sources the rules cover. Binding a fixed UDP port needs an exact rule like TCP.
 
 ### Name lookups
 
@@ -116,6 +125,8 @@ HTTPS certificates are checked against the proxy host's trust store, the same on
 ### Denials in the log
 
 Each refused socket call or HTTP request logs a warning with the plugin id, the kind of call (`tcp-connect`, `udp-send`, `tcp-bind`, `http`, ...), the destination and the reason (`network allow-list`, `missing capability `network``, or `http = false`). At most five such lines are written per plugin per minute; the next one carries a `suppressed` count.
+
+A dropped datagram or connection logs a warning of kind `udp-receive` or `tcp-accept`, with the peer in a `source` field instead of `destination`. These have their own limit of five lines per plugin per minute, so traffic sent to the plugin from outside cannot use up the lines that report the plugin's own refused calls. A refused UDP connect logs both a `udp-send` and a `udp-receive` line, since the host checks the address for both directions.
 
 ### Codec filters
 

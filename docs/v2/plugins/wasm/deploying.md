@@ -221,7 +221,7 @@ guest = "/shared"
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `network.allow` | list of `host:port` rules | `[]` | Destinations the plugin may reach. Hosts: an IPv4 address, `[IPv6]`, a range (`10.0.0.0/8`, `[fd00::/8]`), a hostname, or `*.suffix` (HTTP only). Ports: a number, `a-b`, or `*`. A bare `*` host is refused |
+| `network.allow` | list of `host:port` rules | `[]` | Destinations the plugin may reach, and the only sources it receives UDP datagrams or accepts TCP connections from. Hosts: an IPv4 address, `[IPv6]`, a range (`10.0.0.0/8`, `[fd00::/8]`), a hostname, or `*.suffix` (HTTP only). Ports: a number, `a-b`, or `*`. A bare `*` host is refused |
 | `network.dns` | bool | `true` if `allow` has a hostname rule | Lets the guest resolve names itself |
 | `network.http` | bool | `true` | Lets the guest send HTTP and HTTPS requests, still filtered by `allow` |
 | `mounts[].host` | path | required | Host directory; must exist when the plugin loads |
