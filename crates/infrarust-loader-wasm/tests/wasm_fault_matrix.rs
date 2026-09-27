@@ -32,7 +32,7 @@ use fault_lab::faults::{self, Mode};
 use fault_lab::{LAB, Lab, LabOptions, LabPlugin, PROMPTLY};
 use support::log_capture::LogCapture;
 
-const LIMITS: &str = "[wasm]\ncpu_budget = \"200ms\"\nmax_call_duration = \"1s\"\nmemory_limit_mb = 16\ncodec_cpu_budget = \"100ms\"\n\n[wasm.recovery]\nmax_restarts = 1000\n";
+const LIMITS: &str = "[wasm]\ncpu_budget = \"200ms\"\nmax_call_duration = \"1s\"\nmemory_limit_mb = 16\ncodec_cpu_budget = \"100ms\"\n\n[wasm.recovery]\nmax_restarts = 1000\n\n[wasm.codec_quarantine]\nfaults = 0\n";
 const FAILED: &str = "wasm plugin instance failed";
 const DENIED: &str = "denied A proxy plugin is unavailable. Please try again later.";
 const RECOVERED: &str = "wasm plugin recovered";

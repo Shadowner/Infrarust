@@ -9,8 +9,8 @@ use crate::error::{ConfigError, ProxyValidationError, ServerValidationError, Was
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
 use crate::types::{
-    BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmLimits,
-    WasmQuotasConfig, WasmRecoveryConfig,
+    BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmCodecQuarantineConfig,
+    WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
 };
 
 fn server_error(id: &str, reason: ServerValidationError) -> ConfigError {
@@ -354,6 +354,7 @@ pub(crate) const WASM_MAX_QUEUE_CAPACITY: usize = 1 << 20;
 pub(crate) const WASM_MAX_INSTANCE_POOL: u32 = 32_768;
 pub(crate) const WASM_MAX_RESTARTS: u32 = 1000;
 pub(crate) const WASM_MAX_QUOTA: usize = 1 << 20;
+pub(crate) const WASM_MAX_CODEC_QUARANTINE_FAULTS: u32 = 1_000_000;
 const WASM_MAX_RECOVERY_DURATION: Duration = Duration::from_secs(86_400);
 
 pub fn validate_wasm_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
@@ -436,17 +437,27 @@ fn wasm_scopes(
 }
 
 pub fn wasm_warnings(config: &ProxyConfig) -> Vec<String> {
-    wasm_scopes(config)
-        .filter(|(_, _, limits)| limits.cpu_budget > limits.max_call_duration)
-        .map(|(scope, _, limits)| {
-            format!(
+    let tick = config.wasm.epoch_tick;
+    let mut warnings = Vec::new();
+    for (scope, _, limits) in wasm_scopes(config) {
+        if limits.cpu_budget > limits.max_call_duration {
+            warnings.push(format!(
                 "{scope}: cpu_budget ({}) is longer than max_call_duration ({}); \
                  max_call_duration stops a busy guest call first",
                 humantime::format_duration(limits.cpu_budget),
                 humantime::format_duration(limits.max_call_duration)
-            )
-        })
-        .collect()
+            ));
+        }
+        if limits.codec_cpu_budget < tick {
+            warnings.push(format!(
+                "{scope}: codec_cpu_budget ({}) is shorter than wasm.epoch_tick ({}); \
+                 a codec filter call gets one tick",
+                humantime::format_duration(limits.codec_cpu_budget),
+                humantime::format_duration(tick)
+            ));
+        }
+    }
+    warnings
 }
 
 fn validate_wasm_limits(
@@ -460,20 +471,16 @@ fn validate_wasm_limits(
             value: limits.memory_limit_mb,
         });
     }
-    for (key, value) in [
-        ("cpu_budget", limits.cpu_budget),
-        ("codec_cpu_budget", limits.codec_cpu_budget),
-    ] {
-        if value < tick || value > WASM_MAX_DURATION {
-            return Err(WasmValidationError::CpuBudgetOutOfRange {
-                scope: scope.to_string(),
-                key,
-                tick,
-                value,
-            });
-        }
+    if limits.cpu_budget < tick || limits.cpu_budget > WASM_MAX_DURATION {
+        return Err(WasmValidationError::CpuBudgetOutOfRange {
+            scope: scope.to_string(),
+            key: "cpu_budget",
+            tick,
+            value: limits.cpu_budget,
+        });
     }
     for (key, value) in [
+        ("codec_cpu_budget", limits.codec_cpu_budget),
         ("host_call_timeout", limits.host_call_timeout),
         ("max_call_duration", limits.max_call_duration),
     ] {
@@ -493,7 +500,45 @@ fn validate_wasm_limits(
         });
     }
     validate_wasm_recovery(scope, &limits.recovery)?;
+    validate_wasm_codec_quarantine(scope, &limits.codec_quarantine)?;
     validate_wasm_quotas(scope, &limits.quotas)
+}
+
+fn validate_wasm_codec_quarantine(
+    scope: &str,
+    quarantine: &WasmCodecQuarantineConfig,
+) -> Result<(), WasmValidationError> {
+    if quarantine.faults > WASM_MAX_CODEC_QUARANTINE_FAULTS {
+        return Err(WasmValidationError::CodecQuarantineFaultsTooLarge {
+            scope: scope.to_string(),
+            value: quarantine.faults,
+        });
+    }
+    for (key, value) in [
+        ("codec_quarantine.window", quarantine.window),
+        (
+            "codec_quarantine.backoff_initial",
+            quarantine.backoff_initial,
+        ),
+        ("codec_quarantine.backoff_max", quarantine.backoff_max),
+    ] {
+        if value.is_zero() || value > WASM_MAX_RECOVERY_DURATION {
+            return Err(WasmValidationError::DurationOutOfRange {
+                scope: scope.to_string(),
+                key,
+                max: WASM_MAX_RECOVERY_DURATION,
+                value,
+            });
+        }
+    }
+    if quarantine.backoff_initial > quarantine.backoff_max {
+        return Err(WasmValidationError::CodecQuarantineBackoffExceedsMax {
+            scope: scope.to_string(),
+            initial: quarantine.backoff_initial,
+            max: quarantine.backoff_max,
+        });
+    }
+    Ok(())
 }
 
 fn validate_wasm_quotas(scope: &str, quotas: &WasmQuotasConfig) -> Result<(), WasmValidationError> {

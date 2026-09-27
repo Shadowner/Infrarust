@@ -461,7 +461,10 @@ fn test_proxy_zero_or_absurd_wasm_values_are_invalid() {
         ("memory_limit_mb = 0", "wasm.memory_limit_mb"),
         ("memory_limit_mb = 4097", "wasm.memory_limit_mb"),
         ("cpu_budget = \"0s\"", "wasm.cpu_budget"),
-        ("cpu_budget = \"10ms\"", "wasm.cpu_budget"),
+        (
+            "epoch_tick = \"20ms\"\ncpu_budget = \"10ms\"",
+            "wasm.cpu_budget",
+        ),
         ("cpu_budget = \"2h\"", "wasm.cpu_budget"),
         ("codec_cpu_budget = \"0s\"", "wasm.codec_cpu_budget"),
         ("host_call_timeout = \"0s\"", "wasm.host_call_timeout"),
@@ -600,6 +603,49 @@ fn test_proxy_invalid_plugin_quota_override_names_the_plugin() {
 }
 
 #[test]
+fn test_proxy_out_of_range_wasm_codec_quarantine_values_are_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (line, key) in [
+        ("faults = 1000001", "wasm.codec_quarantine.faults"),
+        ("window = \"0s\"", "wasm.codec_quarantine.window"),
+        ("window = \"2d\"", "wasm.codec_quarantine.window"),
+        (
+            "backoff_initial = \"0s\"",
+            "wasm.codec_quarantine.backoff_initial",
+        ),
+        ("backoff_max = \"2d\"", "wasm.codec_quarantine.backoff_max"),
+        (
+            "backoff_initial = \"10m\"\nbackoff_max = \"1m\"",
+            "wasm.codec_quarantine.backoff_initial",
+        ),
+    ] {
+        let config = proxy_from_toml(&format!("[wasm.codec_quarantine]\n{line}"), dir.path());
+        let err = validate_proxy_config(&config).expect_err(line).to_string();
+        assert!(err.contains(key), "{line}: {err}");
+    }
+}
+
+#[test]
+fn test_proxy_disabled_codec_quarantine_and_a_plugin_override_are_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[wasm]\nepoch_tick = \"1ms\"\ncodec_cpu_budget = \"1ms\"\n\n[wasm.codec_quarantine]\nfaults = 0\n\n[plugins.anticheat.wasm.codec_quarantine]\nfaults = 3\nbackoff_initial = \"1m\"",
+        dir.path(),
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+    let err = validate_wasm_config(&proxy_from_toml(
+        "[plugins.anticheat.wasm.codec_quarantine]\nbackoff_initial = \"10m\"",
+        dir.path(),
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("plugins.anticheat.wasm.codec_quarantine.backoff_initial"),
+        "{err}"
+    );
+}
+
+#[test]
 fn test_proxy_in_range_wasm_recovery_values_are_valid() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml(
@@ -650,11 +696,25 @@ fn test_proxy_invalid_plugin_wasm_override_names_the_plugin() {
 fn test_proxy_budget_shorter_than_the_epoch_tick_is_invalid() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml(
-        "[wasm]\nepoch_tick = \"100ms\"\n\n[plugins.p.wasm]\ncodec_cpu_budget = \"50ms\"",
+        "[wasm]\nepoch_tick = \"100ms\"\n\n[plugins.p.wasm]\ncpu_budget = \"50ms\"",
         dir.path(),
     );
     let err = validate_wasm_config(&config).unwrap_err().to_string();
-    assert!(err.contains("plugins.p.wasm.codec_cpu_budget"), "{err}");
+    assert!(err.contains("plugins.p.wasm.cpu_budget"), "{err}");
+}
+
+#[test]
+fn test_proxy_codec_budget_shorter_than_the_epoch_tick_is_a_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("[wasm]\nepoch_tick = \"50ms\"", dir.path());
+    let warnings = validate_wasm_config(&config).unwrap();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("wasm: codec_cpu_budget (5ms) is shorter than wasm.epoch_tick (50ms)"),
+        "{warnings:?}"
+    );
+    let config = proxy_from_toml("", dir.path());
+    assert!(validate_wasm_config(&config).unwrap().is_empty());
 }
 
 #[test]

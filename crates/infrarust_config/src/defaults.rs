@@ -155,7 +155,7 @@ pub const fn event_transport_filter_timeout() -> Duration {
 }
 
 pub const fn wasm_epoch_tick() -> Duration {
-    Duration::from_millis(50)
+    Duration::from_millis(1)
 }
 
 pub const fn wasm_memory_limit_mb() -> u32 {
@@ -167,7 +167,7 @@ pub const fn wasm_cpu_budget() -> Duration {
 }
 
 pub const fn wasm_codec_cpu_budget() -> Duration {
-    Duration::from_millis(800)
+    Duration::from_millis(5)
 }
 
 pub const fn wasm_host_call_timeout() -> Duration {
@@ -227,5 +227,21 @@ pub const fn wasm_recovery_backoff_initial() -> Duration {
 }
 
 pub const fn wasm_recovery_backoff_max() -> Duration {
+    Duration::from_secs(300)
+}
+
+pub const fn wasm_codec_quarantine_faults() -> u32 {
+    5
+}
+
+pub const fn wasm_codec_quarantine_window() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn wasm_codec_quarantine_backoff_initial() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn wasm_codec_quarantine_backoff_max() -> Duration {
     Duration::from_secs(300)
 }

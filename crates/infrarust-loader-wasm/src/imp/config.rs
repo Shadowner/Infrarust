@@ -189,8 +189,8 @@ mod tests {
     fn default_budgets_match_the_previous_hardcoded_sandbox() {
         let sandbox = SandboxLimits::default();
         assert_eq!(sandbox.memory_bytes, 64 * 1024 * 1024);
-        assert_eq!(sandbox.max_epoch_yields, 60);
-        assert_eq!(sandbox.codec_deadline_ticks, 16);
+        assert_eq!(sandbox.max_epoch_yields, 3000);
+        assert_eq!(sandbox.codec_deadline_ticks, 5);
         assert_eq!(sandbox.host_call_timeout, Duration::from_secs(30));
         assert_eq!(sandbox.max_call_duration, Duration::from_secs(60));
         assert_eq!(sandbox.queue_capacity, 1024);

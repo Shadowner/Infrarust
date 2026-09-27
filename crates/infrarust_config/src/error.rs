@@ -9,9 +9,9 @@ use humantime::format_duration;
 use crate::migrate::MigrationWarning;
 use crate::types::ProxyMode;
 use crate::validation::{
-    MAX_IDENTIFIER_LEN, WASM_MAX_DURATION, WASM_MAX_EPOCH_TICK, WASM_MAX_INSTANCE_POOL,
-    WASM_MAX_MEMORY_MB, WASM_MAX_QUEUE_CAPACITY, WASM_MAX_QUOTA, WASM_MAX_RESTARTS,
-    WASM_MIN_EPOCH_TICK,
+    MAX_IDENTIFIER_LEN, WASM_MAX_CODEC_QUARANTINE_FAULTS, WASM_MAX_DURATION, WASM_MAX_EPOCH_TICK,
+    WASM_MAX_INSTANCE_POOL, WASM_MAX_MEMORY_MB, WASM_MAX_QUEUE_CAPACITY, WASM_MAX_QUOTA,
+    WASM_MAX_RESTARTS, WASM_MIN_EPOCH_TICK,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -263,6 +263,22 @@ pub enum WasmValidationError {
         format_duration(*.max)
     )]
     BackoffInitialExceedsMax {
+        scope: String,
+        initial: Duration,
+        max: Duration,
+    },
+
+    #[error(
+        "{scope}.codec_quarantine.faults must be at most {WASM_MAX_CODEC_QUARANTINE_FAULTS} (got {value})"
+    )]
+    CodecQuarantineFaultsTooLarge { scope: String, value: u32 },
+
+    #[error(
+        "{scope}.codec_quarantine.backoff_initial ({}) must not be longer than {scope}.codec_quarantine.backoff_max ({})",
+        format_duration(*.initial),
+        format_duration(*.max)
+    )]
+    CodecQuarantineBackoffExceedsMax {
         scope: String,
         initial: Duration,
         max: Duration,

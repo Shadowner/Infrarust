@@ -46,6 +46,9 @@ pub struct WasmConfig {
 
     #[serde(default)]
     pub quotas: WasmQuotasConfig,
+
+    #[serde(default)]
+    pub codec_quarantine: WasmCodecQuarantineConfig,
 }
 
 impl Default for WasmConfig {
@@ -62,6 +65,7 @@ impl Default for WasmConfig {
             cache_dir: defaults::wasm_cache_dir(),
             recovery: WasmRecoveryConfig::default(),
             quotas: WasmQuotasConfig::default(),
+            codec_quarantine: WasmCodecQuarantineConfig::default(),
         }
     }
 }
@@ -78,6 +82,7 @@ impl WasmConfig {
             queue_capacity: self.queue_capacity,
             recovery: self.recovery,
             quotas: self.quotas,
+            codec_quarantine: self.codec_quarantine,
         }
     }
 
@@ -120,6 +125,9 @@ pub struct PluginWasmConfig {
     pub quotas: Option<PluginWasmQuotasConfig>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec_quarantine: Option<PluginWasmCodecQuarantineConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<WasmNetworkConfig>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -144,6 +152,12 @@ impl PluginWasmConfig {
                 .quotas
                 .as_ref()
                 .map_or(base.quotas, |overrides| overrides.apply(base.quotas)),
+            codec_quarantine: self
+                .codec_quarantine
+                .as_ref()
+                .map_or(base.codec_quarantine, |overrides| {
+                    overrides.apply(base.codec_quarantine)
+                }),
         }
     }
 }
@@ -294,6 +308,74 @@ impl PluginWasmQuotasConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WasmCodecQuarantineConfig {
+    #[serde(default = "defaults::wasm_codec_quarantine_faults")]
+    pub faults: u32,
+
+    #[serde(default = "defaults::wasm_codec_quarantine_window")]
+    #[serde(with = "humantime_serde")]
+    pub window: Duration,
+
+    #[serde(default = "defaults::wasm_codec_quarantine_backoff_initial")]
+    #[serde(with = "humantime_serde")]
+    pub backoff_initial: Duration,
+
+    #[serde(default = "defaults::wasm_codec_quarantine_backoff_max")]
+    #[serde(with = "humantime_serde")]
+    pub backoff_max: Duration,
+}
+
+impl Default for WasmCodecQuarantineConfig {
+    fn default() -> Self {
+        Self {
+            faults: defaults::wasm_codec_quarantine_faults(),
+            window: defaults::wasm_codec_quarantine_window(),
+            backoff_initial: defaults::wasm_codec_quarantine_backoff_initial(),
+            backoff_max: defaults::wasm_codec_quarantine_backoff_max(),
+        }
+    }
+}
+
+impl WasmCodecQuarantineConfig {
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.faults > 0
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginWasmCodecQuarantineConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faults: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub window: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub backoff_initial: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub backoff_max: Option<Duration>,
+}
+
+impl PluginWasmCodecQuarantineConfig {
+    #[must_use]
+    pub fn apply(&self, base: WasmCodecQuarantineConfig) -> WasmCodecQuarantineConfig {
+        WasmCodecQuarantineConfig {
+            faults: self.faults.unwrap_or(base.faults),
+            window: self.window.unwrap_or(base.window),
+            backoff_initial: self.backoff_initial.unwrap_or(base.backoff_initial),
+            backoff_max: self.backoff_max.unwrap_or(base.backoff_max),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WasmLimits {
     pub memory_limit_mb: u32,
@@ -304,6 +386,7 @@ pub struct WasmLimits {
     pub queue_capacity: usize,
     pub recovery: WasmRecoveryConfig,
     pub quotas: WasmQuotasConfig,
+    pub codec_quarantine: WasmCodecQuarantineConfig,
 }
 
 impl Default for WasmLimits {
@@ -329,19 +412,20 @@ mod tests {
     fn an_absent_wasm_section_uses_the_documented_defaults() {
         let config: ProxyConfig = toml::from_str("").unwrap();
         assert_eq!(config.wasm, WasmConfig::default());
-        assert_eq!(config.wasm.epoch_tick, Duration::from_millis(50));
+        assert_eq!(config.wasm.epoch_tick, Duration::from_millis(1));
         assert_eq!(config.wasm.instance_pool, 0);
         assert_eq!(
             config.wasm.limits(),
             WasmLimits {
                 memory_limit_mb: 64,
                 cpu_budget: Duration::from_secs(3),
-                codec_cpu_budget: Duration::from_millis(800),
+                codec_cpu_budget: Duration::from_millis(5),
                 host_call_timeout: Duration::from_secs(30),
                 max_call_duration: Duration::from_secs(60),
                 queue_capacity: 1024,
                 recovery: WasmRecoveryConfig::default(),
                 quotas: WasmQuotasConfig::default(),
+                codec_quarantine: WasmCodecQuarantineConfig::default(),
             }
         );
     }
@@ -375,6 +459,7 @@ mod tests {
                 queue_capacity: 64,
                 recovery: WasmRecoveryConfig::default(),
                 quotas: WasmQuotasConfig::default(),
+                codec_quarantine: WasmCodecQuarantineConfig::default(),
             }
         );
     }
@@ -400,6 +485,32 @@ mod tests {
         assert_eq!(limits.queue_capacity, 64);
         assert_eq!(limits.host_call_timeout, Duration::from_secs(30));
         assert_eq!(config.wasm.limits_for(None), config.wasm.limits());
+    }
+
+    #[test]
+    fn the_codec_quarantine_table_has_documented_defaults_and_per_plugin_overrides() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.codec_quarantine]
+            window = "30s"
+
+            [plugins.anticheat.wasm.codec_quarantine]
+            faults = 0
+            "#,
+        )
+        .unwrap();
+        let base = config.wasm.limits().codec_quarantine;
+        assert_eq!(base.faults, 5);
+        assert!(base.is_enabled());
+        assert_eq!(base.window, Duration::from_secs(30));
+        assert_eq!(base.backoff_initial, Duration::from_secs(10));
+        assert_eq!(base.backoff_max, Duration::from_secs(300));
+        let overridden = config
+            .wasm
+            .limits_for(config.plugins["anticheat"].wasm.as_ref())
+            .codec_quarantine;
+        assert!(!overridden.is_enabled());
+        assert_eq!(overridden.window, Duration::from_secs(30));
     }
 
     #[test]
