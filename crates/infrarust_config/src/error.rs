@@ -10,7 +10,8 @@ use crate::migrate::MigrationWarning;
 use crate::types::ProxyMode;
 use crate::validation::{
     MAX_IDENTIFIER_LEN, WASM_MAX_DURATION, WASM_MAX_EPOCH_TICK, WASM_MAX_INSTANCE_POOL,
-    WASM_MAX_MEMORY_MB, WASM_MAX_QUEUE_CAPACITY, WASM_MAX_RESTARTS, WASM_MIN_EPOCH_TICK,
+    WASM_MAX_MEMORY_MB, WASM_MAX_QUEUE_CAPACITY, WASM_MAX_QUOTA, WASM_MAX_RESTARTS,
+    WASM_MIN_EPOCH_TICK,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -235,6 +236,13 @@ pub enum WasmValidationError {
 
     #[error("{scope}.recovery.max_restarts must be at most {WASM_MAX_RESTARTS} (got {value})")]
     MaxRestartsTooLarge { scope: String, value: u32 },
+
+    #[error("{scope}.quotas.{key} must be between 1 and {WASM_MAX_QUOTA} (got {value})")]
+    QuotaOutOfRange {
+        scope: String,
+        key: &'static str,
+        value: usize,
+    },
 
     #[error(
         "{scope}.recovery.backoff_initial ({}) must not be longer than {scope}.recovery.backoff_max ({})",

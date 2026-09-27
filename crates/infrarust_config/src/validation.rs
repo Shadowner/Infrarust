@@ -9,7 +9,7 @@ use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
 use crate::types::{
     BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmLimits,
-    WasmRecoveryConfig,
+    WasmQuotasConfig, WasmRecoveryConfig,
 };
 
 fn server_error(id: &str, reason: ServerValidationError) -> ConfigError {
@@ -352,6 +352,7 @@ pub(crate) const WASM_MAX_MEMORY_MB: u32 = 4096;
 pub(crate) const WASM_MAX_QUEUE_CAPACITY: usize = 1 << 20;
 pub(crate) const WASM_MAX_INSTANCE_POOL: u32 = 32_768;
 pub(crate) const WASM_MAX_RESTARTS: u32 = 1000;
+pub(crate) const WASM_MAX_QUOTA: usize = 1 << 20;
 const WASM_MAX_RECOVERY_DURATION: Duration = Duration::from_secs(86_400);
 
 pub fn validate_wasm_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
@@ -452,7 +453,21 @@ fn validate_wasm_limits(
             value: limits.queue_capacity,
         });
     }
-    validate_wasm_recovery(scope, &limits.recovery)
+    validate_wasm_recovery(scope, &limits.recovery)?;
+    validate_wasm_quotas(scope, &limits.quotas)
+}
+
+fn validate_wasm_quotas(scope: &str, quotas: &WasmQuotasConfig) -> Result<(), WasmValidationError> {
+    for (key, value) in quotas.entries() {
+        if !(1..=WASM_MAX_QUOTA).contains(&value) {
+            return Err(WasmValidationError::QuotaOutOfRange {
+                scope: scope.to_string(),
+                key,
+                value,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn validate_wasm_mounts(scope: &str, plugin: &PluginWasmConfig) -> Result<(), WasmValidationError> {

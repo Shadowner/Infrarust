@@ -41,7 +41,8 @@ pub use server_manager::{
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TracesConfig};
 pub use wasm::{
-    PluginWasmConfig, PluginWasmRecoveryConfig, WasmConfig, WasmLimits, WasmRecoveryConfig,
+    PluginWasmConfig, PluginWasmQuotasConfig, PluginWasmRecoveryConfig, WasmConfig, WasmLimits,
+    WasmQuotasConfig, WasmRecoveryConfig,
 };
 pub use wasm_network::{
     HostPattern, NetworkRule, NetworkRuleError, PortRange, WasmMount, WasmNetworkConfig,

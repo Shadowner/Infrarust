@@ -39,6 +39,9 @@ pub struct WasmConfig {
 
     #[serde(default)]
     pub recovery: WasmRecoveryConfig,
+
+    #[serde(default)]
+    pub quotas: WasmQuotasConfig,
 }
 
 impl Default for WasmConfig {
@@ -53,6 +56,7 @@ impl Default for WasmConfig {
             queue_capacity: defaults::wasm_queue_capacity(),
             instance_pool: defaults::wasm_instance_pool(),
             recovery: WasmRecoveryConfig::default(),
+            quotas: WasmQuotasConfig::default(),
         }
     }
 }
@@ -68,6 +72,7 @@ impl WasmConfig {
             max_call_duration: self.max_call_duration,
             queue_capacity: self.queue_capacity,
             recovery: self.recovery,
+            quotas: self.quotas,
         }
     }
 
@@ -107,6 +112,9 @@ pub struct PluginWasmConfig {
     pub recovery: Option<PluginWasmRecoveryConfig>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quotas: Option<PluginWasmQuotasConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network: Option<WasmNetworkConfig>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -127,6 +135,10 @@ impl PluginWasmConfig {
                 .recovery
                 .as_ref()
                 .map_or(base.recovery, |overrides| overrides.apply(base.recovery)),
+            quotas: self
+                .quotas
+                .as_ref()
+                .map_or(base.quotas, |overrides| overrides.apply(base.quotas)),
         }
     }
 }
@@ -192,6 +204,91 @@ impl PluginWasmRecoveryConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WasmQuotasConfig {
+    #[serde(default = "defaults::wasm_quota_event_listeners")]
+    pub event_listeners: usize,
+
+    #[serde(default = "defaults::wasm_quota_commands")]
+    pub commands: usize,
+
+    #[serde(default = "defaults::wasm_quota_scheduled_tasks")]
+    pub scheduled_tasks: usize,
+
+    #[serde(default = "defaults::wasm_quota_plugin_channels")]
+    pub plugin_channels: usize,
+
+    #[serde(default = "defaults::wasm_quota_codec_filters")]
+    pub codec_filters: usize,
+
+    #[serde(default = "defaults::wasm_quota_limbo_handlers")]
+    pub limbo_handlers: usize,
+}
+
+impl Default for WasmQuotasConfig {
+    fn default() -> Self {
+        Self {
+            event_listeners: defaults::wasm_quota_event_listeners(),
+            commands: defaults::wasm_quota_commands(),
+            scheduled_tasks: defaults::wasm_quota_scheduled_tasks(),
+            plugin_channels: defaults::wasm_quota_plugin_channels(),
+            codec_filters: defaults::wasm_quota_codec_filters(),
+            limbo_handlers: defaults::wasm_quota_limbo_handlers(),
+        }
+    }
+}
+
+impl WasmQuotasConfig {
+    #[must_use]
+    pub const fn entries(&self) -> [(&'static str, usize); 6] {
+        [
+            ("event_listeners", self.event_listeners),
+            ("commands", self.commands),
+            ("scheduled_tasks", self.scheduled_tasks),
+            ("plugin_channels", self.plugin_channels),
+            ("codec_filters", self.codec_filters),
+            ("limbo_handlers", self.limbo_handlers),
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginWasmQuotasConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_listeners: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_tasks: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_channels: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec_filters: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limbo_handlers: Option<usize>,
+}
+
+impl PluginWasmQuotasConfig {
+    #[must_use]
+    pub fn apply(&self, base: WasmQuotasConfig) -> WasmQuotasConfig {
+        WasmQuotasConfig {
+            event_listeners: self.event_listeners.unwrap_or(base.event_listeners),
+            commands: self.commands.unwrap_or(base.commands),
+            scheduled_tasks: self.scheduled_tasks.unwrap_or(base.scheduled_tasks),
+            plugin_channels: self.plugin_channels.unwrap_or(base.plugin_channels),
+            codec_filters: self.codec_filters.unwrap_or(base.codec_filters),
+            limbo_handlers: self.limbo_handlers.unwrap_or(base.limbo_handlers),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WasmLimits {
     pub memory_limit_mb: u32,
@@ -201,6 +298,7 @@ pub struct WasmLimits {
     pub max_call_duration: Duration,
     pub queue_capacity: usize,
     pub recovery: WasmRecoveryConfig,
+    pub quotas: WasmQuotasConfig,
 }
 
 impl Default for WasmLimits {
@@ -238,6 +336,7 @@ mod tests {
                 max_call_duration: Duration::from_secs(60),
                 queue_capacity: 1024,
                 recovery: WasmRecoveryConfig::default(),
+                quotas: WasmQuotasConfig::default(),
             }
         );
     }
@@ -270,6 +369,7 @@ mod tests {
                 max_call_duration: Duration::from_secs(45),
                 queue_capacity: 64,
                 recovery: WasmRecoveryConfig::default(),
+                quotas: WasmQuotasConfig::default(),
             }
         );
     }
@@ -338,6 +438,86 @@ mod tests {
         assert_eq!(flaky.max_restarts, 1);
         assert_eq!(flaky.window, Duration::from_secs(60));
         assert_eq!(flaky.backoff_max, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn an_absent_quotas_table_uses_the_documented_defaults() {
+        let config: ProxyConfig = toml::from_str("[wasm]\nqueue_capacity = 8\n").unwrap();
+        assert_eq!(
+            config.wasm.limits().quotas,
+            WasmQuotasConfig {
+                event_listeners: 1024,
+                commands: 256,
+                scheduled_tasks: 1024,
+                plugin_channels: 128,
+                codec_filters: 32,
+                limbo_handlers: 64,
+            }
+        );
+    }
+
+    #[test]
+    fn the_quotas_table_parses_and_a_plugin_overrides_only_its_keys() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.quotas]
+            event_listeners = 50
+            commands = 10
+            scheduled_tasks = 20
+            plugin_channels = 4
+            codec_filters = 2
+            limbo_handlers = 3
+
+            [plugins.busy.wasm.quotas]
+            scheduled_tasks = 5000
+            "#,
+        )
+        .unwrap();
+        let global = WasmQuotasConfig {
+            event_listeners: 50,
+            commands: 10,
+            scheduled_tasks: 20,
+            plugin_channels: 4,
+            codec_filters: 2,
+            limbo_handlers: 3,
+        };
+        assert_eq!(config.wasm.limits().quotas, global);
+        let busy = config
+            .wasm
+            .limits_for(config.plugins["busy"].wasm.as_ref())
+            .quotas;
+        assert_eq!(
+            busy,
+            WasmQuotasConfig {
+                scheduled_tasks: 5000,
+                ..global
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_quota_keys_are_rejected() {
+        let global = toml::from_str::<ProxyConfig>("[wasm.quotas]\nlisteners = 3\n");
+        assert!(global.is_err(), "a misspelt quota key must not be ignored");
+        let plugin = toml::from_str::<ProxyConfig>("[plugins.p.wasm.quotas]\ntasks = 3\n");
+        assert!(plugin.is_err());
+    }
+
+    #[test]
+    fn quota_overrides_serialize_only_the_keys_that_are_set() {
+        let overrides = PluginWasmConfig {
+            quotas: Some(PluginWasmQuotasConfig {
+                commands: Some(12),
+                ..PluginWasmQuotasConfig::default()
+            }),
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&overrides).unwrap();
+        assert!(!text.contains("event_listeners"), "{text}");
+        let back: PluginWasmConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back, overrides);
+        let plain = toml::to_string(&PluginWasmConfig::default()).unwrap();
+        assert!(!plain.contains("quotas"), "{plain}");
     }
 
     #[test]

@@ -186,6 +186,30 @@ pub const fn wasm_instance_pool() -> u32 {
     0
 }
 
+pub const fn wasm_quota_event_listeners() -> usize {
+    1024
+}
+
+pub const fn wasm_quota_commands() -> usize {
+    256
+}
+
+pub const fn wasm_quota_scheduled_tasks() -> usize {
+    1024
+}
+
+pub const fn wasm_quota_plugin_channels() -> usize {
+    128
+}
+
+pub const fn wasm_quota_codec_filters() -> usize {
+    32
+}
+
+pub const fn wasm_quota_limbo_handlers() -> usize {
+    64
+}
+
 pub const fn wasm_recovery_max_restarts() -> u32 {
     5
 }

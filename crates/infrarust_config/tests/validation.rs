@@ -498,6 +498,58 @@ fn test_proxy_out_of_range_wasm_recovery_values_are_invalid() {
 }
 
 #[test]
+fn test_proxy_out_of_range_wasm_quotas_are_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    for (line, key) in [
+        ("event_listeners = 0", "wasm.quotas.event_listeners"),
+        ("commands = 0", "wasm.quotas.commands"),
+        ("scheduled_tasks = 0", "wasm.quotas.scheduled_tasks"),
+        ("plugin_channels = 0", "wasm.quotas.plugin_channels"),
+        ("codec_filters = 0", "wasm.quotas.codec_filters"),
+        ("limbo_handlers = 0", "wasm.quotas.limbo_handlers"),
+        ("event_listeners = 1048577", "wasm.quotas.event_listeners"),
+        ("scheduled_tasks = 2000000", "wasm.quotas.scheduled_tasks"),
+    ] {
+        let config = proxy_from_toml(&format!("[wasm.quotas]\n{line}"), dir.path());
+        let err = validate_proxy_config(&config).expect_err(line).to_string();
+        assert!(err.contains(key), "{line}: {err}");
+    }
+}
+
+#[test]
+fn test_proxy_in_range_wasm_quotas_are_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[wasm.quotas]\nevent_listeners = 1\ncommands = 1048576\n\n[plugins.p.wasm.quotas]\ncodec_filters = 1",
+        dir.path(),
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+}
+
+#[test]
+fn test_proxy_invalid_plugin_quota_override_names_the_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        "[plugins.greedy.wasm.quotas]\ncommands = 0\n\n[plugins.modest.wasm.quotas]\ncommands = 8",
+        dir.path(),
+    );
+    let err = validate_wasm_config(&config).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            ConfigError::Wasm(WasmValidationError::QuotaOutOfRange { scope, key: "commands", value: 0 })
+                if scope == "plugins.greedy.wasm"
+        ),
+        "{err}"
+    );
+    assert!(
+        err.to_string()
+            .contains("plugins.greedy.wasm.quotas.commands"),
+        "{err}"
+    );
+}
+
+#[test]
 fn test_proxy_in_range_wasm_recovery_values_are_valid() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml(
