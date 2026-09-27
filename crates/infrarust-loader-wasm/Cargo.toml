@@ -29,6 +29,7 @@ wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
@@ -64,6 +65,7 @@ wasm = [
     "dep:wasmtime-wasi",
     "dep:sha2",
     "dep:tokio",
+    "dep:tokio-util",
     "dep:futures-util",
     "dep:bytes",
     "dep:uuid",

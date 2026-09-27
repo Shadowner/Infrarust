@@ -1,4 +1,5 @@
 use std::fmt;
+use std::future::Future;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -7,8 +8,9 @@ use std::time::{Duration, Instant};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::caller_deadline;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
 use wasmtime::Store;
 
@@ -71,11 +73,25 @@ pub(crate) enum JobKind {
 pub(crate) struct Halt {
     stopping: AtomicBool,
     disabling: AtomicBool,
+    forced: AtomicBool,
+    cut: Notify,
+    proxy: CancellationToken,
 }
 
 impl Halt {
+    pub(crate) fn new(proxy: CancellationToken) -> Self {
+        Self {
+            proxy,
+            ..Self::default()
+        }
+    }
+
     fn stop(&self) {
         self.stopping.store(true, Ordering::Release);
+        if self.proxy_stopping() {
+            self.forced.store(true, Ordering::Release);
+            self.cut.notify_waiters();
+        }
     }
 
     fn disable(&self) {
@@ -86,8 +102,30 @@ impl Halt {
         self.stopping.load(Ordering::Acquire)
     }
 
+    pub(crate) fn proxy_stopping(&self) -> bool {
+        self.proxy.is_cancelled()
+    }
+
     pub(crate) fn requested(&self) -> bool {
-        self.stopping() || self.disabling.load(Ordering::Acquire)
+        self.stopping() || self.disabling.load(Ordering::Acquire) || self.proxy_stopping()
+    }
+
+    pub(crate) fn interrupted(&self) -> impl Future<Output = ()> + Send + '_ {
+        let started_before_shutdown = !self.proxy_stopping();
+        async move {
+            let cut = self.cut.notified();
+            if self.forced.load(Ordering::Acquire) {
+                return;
+            }
+            if started_before_shutdown {
+                tokio::select! {
+                    () = cut => {}
+                    () = self.proxy.cancelled() => {}
+                }
+            } else {
+                cut.await;
+            }
+        }
     }
 }
 
@@ -482,7 +520,7 @@ impl PluginActor {
             kind: CallKind::Callback,
             generation: None,
         };
-        let halt = Arc::new(Halt::default());
+        let halt = Arc::new(Halt::new(factory.ctx().proxy_shutdown()));
         let supervisor = Supervisor::start(factory, instance, Arc::clone(&halt)).await?;
         let task =
             tokio::spawn(run(supervisor, queue, Arc::clone(&halt)).with_current_subscriber());

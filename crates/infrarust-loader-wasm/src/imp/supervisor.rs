@@ -62,6 +62,7 @@ pub(crate) enum Fault {
     Overran(Duration),
     PastDeadline(CallKind),
     Refused(String),
+    Interrupted,
 }
 
 impl fmt::Display for Fault {
@@ -79,6 +80,7 @@ impl fmt::Display for Fault {
                 "the call ran past its deadline (max_call_duration after it was queued)",
             ),
             Self::Refused(message) => write!(f, "on_enable returned an error: {message}"),
+            Self::Interrupted => f.write_str("the call was cut: the proxy is shutting down"),
         }
     }
 }
@@ -254,7 +256,8 @@ impl Supervisor {
             JobKind::Enable | JobKind::Disable => None,
         };
         let bound = Bound::new(limit, deadline.zip(call_kind));
-        match run_guest(live, call.as_mut(), deadline, bound, chain.clone()).await {
+        let halt = Arc::clone(&self.halt);
+        match run_guest(live, call.as_mut(), deadline, bound, chain.clone(), &halt).await {
             Ok(()) => {
                 if kind == JobKind::Enable {
                     self.promote();
@@ -289,7 +292,7 @@ impl Supervisor {
             return false;
         }
         tracing::info!(plugin = %self.factory.plugin_id(),
-            "wasm plugin recovery stopped: the plugin is being disabled or unloaded");
+            "wasm plugin recovery stopped: the plugin is being disabled or unloaded, or the proxy is shutting down");
         self.health = Health::Halted;
         true
     }
@@ -340,7 +343,17 @@ impl Supervisor {
                 return;
             }
         };
-        match run_guest(live, call.as_mut(), None, Bound::new(limit, None), chain).await {
+        let halt = Arc::clone(&self.halt);
+        match run_guest(
+            live,
+            call.as_mut(),
+            None,
+            Bound::new(limit, None),
+            chain,
+            &halt,
+        )
+        .await
+        {
             Ok(()) => call.answer(),
             Err(fault) => {
                 let fault = Arc::new(fault);
@@ -358,6 +371,12 @@ impl Supervisor {
     }
 
     async fn fail(&mut self, op: &'static str, fault: &Fault, chain: &CallChain) {
+        if matches!(fault, Fault::Interrupted) {
+            tracing::warn!(plugin = %self.factory.plugin_id(), op, generation = self.generation,
+                "wasm plugin call cut: the proxy is shutting down; the plugin stops without running on_disable");
+            self.stop_for_shutdown();
+            return;
+        }
         self.report(op, fault);
         self.last_fault = fault.to_string();
         let enabled = matches!(self.health, Health::Healthy(_));
@@ -372,6 +391,17 @@ impl Supervisor {
             self.recover(chain).await;
         } else {
             self.health = Health::Failed;
+        }
+    }
+
+    fn stop_for_shutdown(&mut self) {
+        if matches!(self.health, Health::Healthy(_)) {
+            self.close_access();
+        }
+        if let Health::Starting(live) | Health::Healthy(live) =
+            std::mem::replace(&mut self.health, Health::Halted)
+        {
+            self.discard(live);
         }
     }
 
@@ -447,7 +477,12 @@ impl Supervisor {
             attempt: u32::try_from(generation - FIRST_GENERATION).unwrap_or(u32::MAX),
             cause: self.last_fault.clone(),
         });
-        match chain.clone().scope(enable(&mut live, limit, &reason)).await {
+        let halt = Arc::clone(&self.halt);
+        match chain
+            .clone()
+            .scope(enable(&mut live, limit, &reason, &halt))
+            .await
+        {
             Ok(()) => {
                 let ctx = self.factory.ctx();
                 let stale = self.factory.registrations().sweep(generation);
@@ -514,6 +549,11 @@ impl Supervisor {
     }
 
     fn report(&self, op: &'static str, fault: &Fault) {
+        if matches!(fault, Fault::Interrupted) {
+            tracing::warn!(plugin = %self.factory.plugin_id(), op, generation = self.generation,
+                "wasm plugin call cut: the proxy is shutting down");
+            return;
+        }
         tracing::error!(plugin = %self.factory.plugin_id(), op, generation = self.generation,
             cause = %fault, "wasm plugin instance failed; discarding it");
         if let Some(trap) = fault.trap() {
@@ -529,11 +569,12 @@ async fn run_guest(
     deadline: Option<Deadline>,
     bound: Bound,
     chain: CallChain,
+    halt: &Halt,
 ) -> Result<(), Fault> {
     live.begin_call(deadline);
     let running = call.run(&mut live.store, &live.bindings);
     let outcome = chain
-        .scope(contain(bound, running))
+        .scope(contain(bound, halt, running))
         .await
         .map_err(|fault| fault.explained(live.store.data_mut().take_guest_panic()));
     live.end_call();
@@ -544,13 +585,14 @@ async fn enable(
     live: &mut LiveInstance,
     limit: Duration,
     reason: &EnableReason,
+    halt: &Halt,
 ) -> Result<(), Fault> {
     live.begin_call(None);
     let enabling = live
         .bindings
         .infrarust_plugin_guest()
         .call_on_enable(&mut live.store, reason);
-    let outcome = contain(Bound::new(limit, None), enabling)
+    let outcome = contain(Bound::new(limit, None), halt, enabling)
         .await
         .map_err(|fault| fault.explained(live.store.data_mut().take_guest_panic()));
     live.end_call();
@@ -559,9 +601,16 @@ async fn enable(
 
 async fn contain<T>(
     bound: Bound,
+    halt: &Halt,
     running: impl Future<Output = wasmtime::Result<T>>,
 ) -> Result<T, Fault> {
-    match tokio::time::timeout_at(bound.at, AssertUnwindSafe(running).catch_unwind()).await {
+    let guarded = tokio::time::timeout_at(bound.at, AssertUnwindSafe(running).catch_unwind());
+    let outcome = tokio::select! {
+        biased;
+        () = halt.interrupted() => return Err(Fault::Interrupted),
+        outcome = guarded => outcome,
+    };
+    match outcome {
         Ok(Ok(Ok(value))) => Ok(value),
         Ok(Ok(Err(error))) => Err(match error.downcast::<EnableRefused>() {
             Ok(refused) => Fault::Refused(refused.0),
