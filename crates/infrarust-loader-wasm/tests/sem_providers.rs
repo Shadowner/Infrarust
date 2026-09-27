@@ -203,6 +203,19 @@ async fn a_slow_ban_check_is_cut_at_check_timeout_and_does_not_refuse_the_logins
     let cut = started.elapsed();
     assert!(slow.is_some(), "the slow login itself is refused");
     assert!(cut < Duration::from_millis(1000), "{cut:?}");
+    let replaced = Instant::now() + Duration::from_secs(10);
+    while !probe
+        .log()
+        .iter()
+        .any(|line| line.starts_with("enable recovered"))
+    {
+        assert!(
+            Instant::now() < replaced,
+            "the slow check was never cut: {:?}",
+            probe.log()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 
     let mut refused = Vec::new();
     for name in ["Steve", "Alex", "Notch", "Jeb"] {
