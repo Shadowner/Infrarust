@@ -109,7 +109,8 @@ async fn a_spinning_filter_is_cut_at_its_budget_and_the_log_says_why() {
         "{trapped:?}"
     );
     assert!(
-        trapped[1].contains("hit an unreachable instruction"),
+        trapped[1].contains("panicked at ")
+            && trapped[1].contains("fault-lab: codec-filter panics on purpose"),
         "{trapped:?}"
     );
     assert!(
@@ -149,7 +150,7 @@ async fn faults_from_one_address_quarantine_the_filter_for_that_address_only() {
     assert_eq!(quarantined.len(), 1, "{quarantined:?}");
     assert!(quarantined[0].contains("203.0.113.7"), "{quarantined:?}");
     assert!(
-        quarantined[0].contains("hit an unreachable instruction"),
+        quarantined[0].contains("fault-lab: codec-filter panics on purpose"),
         "{quarantined:?}"
     );
     assert!(
@@ -192,7 +193,7 @@ async fn a_required_filter_that_traps_closes_its_connection_and_not_the_others()
         assert_eq!(failing.close_reason(), None);
         let closed = send(&mut failing, Mode::Panic);
         assert!(
-            matches!(&closed, FilterResult::Closed(reason) if reason.contains("hit an unreachable instruction")),
+            matches!(&closed, FilterResult::Closed(reason) if reason.contains("codec-filter panics on purpose")),
             "a trap in a required filter closes the connection"
         );
         assert!(matches!(mark(&mut failing).0, FilterResult::Closed(_)));

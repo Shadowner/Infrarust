@@ -480,6 +480,8 @@ pub fn permission_snapshot_for(subject: wp::PermissionSubject) -> wp::Permission
 }
 
 pub fn create_codec_filter<P: Plugin>(factory: u64, init: WitSessionInit) -> FilterInstanceProxy {
+    #[cfg(target_family = "wasm")]
+    report_panics_to_host();
     declare_codec_filters::<P>(false);
     let init = CodecSessionInit::from_wit(init);
     let inner = CODEC_FACTORIES

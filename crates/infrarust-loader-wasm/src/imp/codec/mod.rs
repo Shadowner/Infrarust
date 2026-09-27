@@ -76,6 +76,18 @@ impl CodecInstantiator {
         self.quarantine
     }
 
+    fn guest_failure(
+        &self,
+        store: &mut Store<CodecStoreState>,
+        error: &wasmtime::Error,
+    ) -> CreateFailure {
+        CreateFailure::Guest(cause(
+            error,
+            self.budget,
+            store.data_mut().take_guest_panic(),
+        ))
+    }
+
     fn create_live(&self, factory_id: u64, init: &CodecSessionInit) -> Result<Live, CreateFailure> {
         let mut store = Store::new(
             &self.engine,
@@ -86,10 +98,19 @@ impl CodecInstantiator {
         });
         install_budget(&mut store);
         arm(&mut store);
-        let instance = self
-            .pre
-            .instantiate(&mut store)
-            .map_err(|e| CreateFailure::from_instantiate(&self.plugin_id, e))?;
+        let instance = match self.pre.instantiate(&mut store) {
+            Ok(instance) => instance,
+            Err(error) if error.downcast_ref::<Trap>().is_some() => {
+                return Err(self.guest_failure(&mut store, &error));
+            }
+            Err(error) => {
+                return Err(CreateFailure::Host(instantiate_err(
+                    &self.plugin_id,
+                    "instantiate",
+                    &error,
+                )));
+            }
+        };
         let guest = self
             .indices
             .load(&mut store, &instance)
@@ -97,7 +118,7 @@ impl CodecInstantiator {
         let wit_init = convert::session_init_to_wit(init);
         let handle = guest
             .call_create(&mut store, factory_id, wit_init)
-            .map_err(CreateFailure::Guest)?;
+            .map_err(|error| self.guest_failure(&mut store, &error))?;
         Ok(Live {
             store,
             guest,
@@ -108,17 +129,7 @@ impl CodecInstantiator {
 
 pub(crate) enum CreateFailure {
     Host(WasmLoaderError),
-    Guest(wasmtime::Error),
-}
-
-impl CreateFailure {
-    fn from_instantiate(plugin_id: &str, error: wasmtime::Error) -> Self {
-        if error.downcast_ref::<Trap>().is_some() {
-            Self::Guest(error)
-        } else {
-            Self::Host(instantiate_err(plugin_id, "instantiate", &error))
-        }
-    }
+    Guest(String),
 }
 
 pub(crate) fn install_budget(store: &mut Store<CodecStoreState>) {
@@ -134,16 +145,17 @@ pub(crate) fn install_budget(store: &mut Store<CodecStoreState>) {
 }
 
 pub(crate) fn arm(store: &mut Store<CodecStoreState>) {
-    store.data_mut().ticks = 0;
+    store.data_mut().begin_call();
     store.set_epoch_deadline(1);
 }
 
-pub(crate) fn cause(error: &wasmtime::Error, budget: Duration) -> String {
+pub(crate) fn cause(error: &wasmtime::Error, budget: Duration, panic: Option<String>) -> String {
+    if let Some(panic) = panic {
+        return panic;
+    }
     match error.downcast_ref::<Trap>() {
         Some(Trap::Interrupt) => format!("ran past codec_cpu_budget ({budget:?})"),
-        Some(Trap::UnreachableCodeReached) => {
-            "hit an unreachable instruction (a panic in the filter ends this way)".to_owned()
-        }
+        Some(Trap::UnreachableCodeReached) => "hit an unreachable instruction".to_owned(),
         Some(Trap::StackOverflow) => "overflowed its stack".to_owned(),
         Some(trap) => format!("trapped: {trap}"),
         None => format!("failed: {}", error.root_cause()),
@@ -203,6 +215,10 @@ impl Live {
         self.guest
             .filter_instance()
             .call_on_close(&mut self.store, self.handle)
+    }
+
+    pub(crate) fn take_guest_panic(&mut self) -> Option<String> {
+        self.store.data_mut().take_guest_panic()
     }
 
     pub(crate) fn release(mut self) {
@@ -320,7 +336,7 @@ mod tests {
         assert_eq!(error.downcast_ref::<Trap>(), Some(&Trap::Interrupt));
         assert_eq!(store.data().ticks, 3);
         assert_eq!(
-            cause(&error, Duration::from_millis(5)),
+            cause(&error, Duration::from_millis(5), None),
             "ran past codec_cpu_budget (5ms)"
         );
     }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use infrarust_plugin_common::guest_panic::{bounded_guest_panic, is_guest_panic_line};
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::Rng;
 
@@ -84,6 +85,7 @@ pub(crate) struct CodecStoreState {
     rng: Option<Box<dyn Rng + Send>>,
     pub(crate) ticks: u64,
     pub(crate) budget_ticks: u64,
+    guest_panic: Option<String>,
 }
 
 impl CodecStoreState {
@@ -97,6 +99,7 @@ impl CodecStoreState {
             rng: None,
             ticks: 0,
             budget_ticks,
+            guest_panic: None,
         }
     }
 
@@ -104,8 +107,22 @@ impl CodecStoreState {
         &mut self.limits
     }
 
-    pub(crate) fn log(&self, level: GuestLevel, message: &str) {
-        self.log.emit(level, message);
+    pub(crate) fn log(&mut self, level: GuestLevel, message: String) {
+        if level == GuestLevel::Error && is_guest_panic_line(&message) {
+            self.log.emit(GuestLevel::Debug, &message);
+            self.guest_panic = Some(bounded_guest_panic(message));
+            return;
+        }
+        self.log.emit(level, &message);
+    }
+
+    pub(crate) fn begin_call(&mut self) {
+        self.ticks = 0;
+        self.guest_panic = None;
+    }
+
+    pub(crate) fn take_guest_panic(&mut self) -> Option<String> {
+        self.guest_panic.take()
     }
 
     fn rng(&mut self) -> &mut (dyn Rng + Send) {

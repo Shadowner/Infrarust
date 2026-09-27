@@ -181,8 +181,7 @@ impl CodecFilterFactory for WasmCodecFilterFactory {
                 shared.report_create_failure(ip, &error);
                 shared.unavailable(shared.closing("could not be created"))
             }
-            Err(CreateFailure::Guest(error)) => {
-                let cause = cause(&error, shared.instantiator.budget());
+            Err(CreateFailure::Guest(cause)) => {
                 shared.report_fault("create", ip, &cause);
                 shared.fault(ticket.as_ref(), ip, &cause);
                 shared.unavailable(shared.closing(&cause))
@@ -214,8 +213,11 @@ impl WasmCodecFilterInstance {
     }
 
     fn fail(&mut self, op: &str, error: &wasmtime::Error) {
-        self.live = None;
-        let cause = cause(error, self.shared.instantiator.budget());
+        let panic = self
+            .live
+            .take()
+            .and_then(|mut live| live.take_guest_panic());
+        let cause = cause(error, self.shared.instantiator.budget(), panic);
         self.shared.report_fault(op, self.ip, &cause);
         if self.shared.required {
             self.closing = Some(self.shared.closing(&cause));

@@ -67,10 +67,13 @@ pub(super) fn define(
             let Some(level) = guest_level(level) else {
                 return Ok(false);
             };
-            slot.func_wrap(function, move |store: Store<'_>, (message,): (String,)| {
-                store.data().log(level, &message);
-                Ok(())
-            })?;
+            slot.func_wrap(
+                function,
+                move |mut store: Store<'_>, (message,): (String,)| {
+                    store.data_mut().log(level, message);
+                    Ok(())
+                },
+            )?;
         }
         ("wasi:clocks/wall-clock", "now") => {
             slot.func_wrap(function, |_: Store<'_>, (): ()| Ok((wall_now(),)))?;
