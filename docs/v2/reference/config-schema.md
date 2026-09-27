@@ -348,25 +348,25 @@ Sandbox limits for every WASM plugin. Each plugin handles one call at a time; it
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `epoch_tick` | duration | `"50ms"` | How often the sandbox clock ticks. CPU budgets are counted in ticks, rounded up. Proxy-wide only |
+| `epoch_tick` | duration | `"1ms"` | How often the sandbox clock ticks. CPU budgets are counted in ticks during which the guest runs, rounded up, and a guest that runs past a tick yields its worker thread. Proxy-wide only |
 | `memory_limit_mb` | integer | `64` | Linear-memory cap per plugin, in MiB. Growing past it traps the plugin |
 | `cpu_budget` | duration | `"3s"` | CPU time one call into a plugin may use before it traps. Waiting on a host call does not count |
-| `codec_cpu_budget` | duration | `"800ms"` | CPU time for one codec filter call (`create`, `filter`, connection hooks) before it traps |
+| `codec_cpu_budget` | duration | `"5ms"` | CPU time for one codec filter call (`create`, `filter`, connection hooks, final drop) before it traps. A filter call holds a network worker thread, so this bounds what one call costs the other connections |
 | `host_call_timeout` | duration | `"30s"` | Longest a host call that waits on the proxy may take: server-manager `start` and `stop`, every ban-service call, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named`, `set-snapshot` and `release` on `permissions`, and the timeouts of each HTTP request. On expiry the plugin receives a `host-error` of kind `timeout`. `switch-server` has its own 250 ms cap |
 | `max_call_duration` | duration | `"60s"` | Wall-clock limit on one call into a plugin, host calls included. Past it the call is abandoned and the plugin's instance is replaced by a fresh one |
 | `queue_capacity` | integer | `1024` | Calls that may wait for a busy plugin. A call arriving at a full queue is refused immediately and logged as a rate-limited warning |
 | `cache_dir` | string | `"./cache/wasm"` | Directory of the AOT cache of compiled plugins, resolved from the working directory. Must not be `plugins_dir` or inside it. When it cannot be written, plugins are compiled in memory at each start with one warning. Proxy-wide only. See [AOT compilation and caching](../plugins/wasm/lifecycle#aot-compilation-and-caching) |
 
-Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` and `codec_cpu_budget` at least one `epoch_tick` and at most `1h`; `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576; `cache_dir` not empty and outside `plugins_dir`. A `cpu_budget` longer than `max_call_duration` is accepted with a warning.
+Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` at least one `epoch_tick` and at most `1h`; `codec_cpu_budget`, `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576; `cache_dir` not empty and outside `plugins_dir`. A `cpu_budget` longer than `max_call_duration`, and a `codec_cpu_budget` shorter than `epoch_tick` (a codec call then gets one tick), are accepted with a warning.
 
 A call still running at its deadline (`[events] handler_timeout` minus a margin for an event, `max_call_duration` after it was queued for a callback) is cut off and counts as a fault; an access event it served is denied. A call still queued at its deadline is skipped. See [WASM events](../plugins/wasm/events#a-listener-that-does-not-answer).
 
 ```toml
 [wasm]
-epoch_tick = "50ms"
+epoch_tick = "1ms"
 memory_limit_mb = 64
 cpu_budget = "3s"
-codec_cpu_budget = "800ms"
+codec_cpu_budget = "5ms"
 host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
@@ -393,6 +393,27 @@ Validation: `max_restarts` at most 1000 (0 quarantines on the first fault); `win
 max_restarts = 5
 window = "5m"
 backoff_initial = "1s"
+backoff_max = "5m"
+```
+
+#### `[wasm.codec_quarantine]`
+
+When a codec filter traps (a panic, running past `codec_cpu_budget`, running out of memory) for connections from one client address, the proxy counts it against that address and that filter. At `faults` traps within `window`, the filter is quarantined for the address: its live instances on that address's connections stop filtering and its new connections get no instance of the filter for the backoff. Their packets pass through unfiltered, or the connection is closed or refused for a filter the plugin declared required. Other addresses keep the filter. Each quarantine is logged as a warning with the plugin, the filter, the address, the time until retry and the cause. See [Codec filters](../plugins/wasm/codec-filters#quarantine).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `faults` | integer | `5` | Traps of one filter from one address that trigger a quarantine. `0` turns the quarantine off |
+| `window` | duration | `"10s"` | Sliding window over which the traps are counted |
+| `backoff_initial` | duration | `"10s"` | Length of the first quarantine of an address. A quarantine that follows a fault within `window` of the previous one ending doubles it |
+| `backoff_max` | duration | `"5m"` | Longest a quarantine lasts |
+
+Validation: `faults` at most 1000000; `window`, `backoff_initial` and `backoff_max` greater than zero and at most `24h`; `backoff_initial` no longer than `backoff_max`.
+
+```toml
+[wasm.codec_quarantine]
+faults = 5
+window = "10s"
+backoff_initial = "10s"
 backoff_max = "5m"
 ```
 
@@ -446,7 +467,7 @@ enabled = true
 
 #### `[plugins.<id>.wasm]`
 
-Overrides the `[wasm]` limits for one plugin. Accepts `memory_limit_mb`, `cpu_budget`, `codec_cpu_budget`, `host_call_timeout`, `max_call_duration` and `queue_capacity` (not `epoch_tick`, `instance_pool` or `cache_dir`, which are proxy-wide), a `recovery` table with any of the `[wasm.recovery]` keys, and a `quotas` table with any of the `[wasm.quotas]` keys. A key left out keeps the `[wasm]` value. The same validation applies to the resulting limits.
+Overrides the `[wasm]` limits for one plugin. Accepts `memory_limit_mb`, `cpu_budget`, `codec_cpu_budget`, `host_call_timeout`, `max_call_duration` and `queue_capacity` (not `epoch_tick`, `instance_pool` or `cache_dir`, which are proxy-wide), a `recovery` table with any of the `[wasm.recovery]` keys, a `quotas` table with any of the `[wasm.quotas]` keys, and a `codec_quarantine` table with any of the `[wasm.codec_quarantine]` keys. A key left out keeps the `[wasm]` value. The same validation applies to the resulting limits.
 
 ```toml
 [plugins.auth.wasm]
@@ -458,6 +479,9 @@ max_restarts = 2
 
 [plugins.auth.wasm.quotas]
 commands = 512
+
+[plugins.auth.wasm.codec_quarantine]
+faults = 3
 ```
 
 #### `[plugins.<id>.wasm.network]`

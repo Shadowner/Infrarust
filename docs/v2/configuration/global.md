@@ -422,10 +422,10 @@ See [Plugin messaging](../plugins/dev/messaging#the-bungeecord-channel) for the 
 
 ```toml
 [wasm]
-epoch_tick = "50ms"
+epoch_tick = "1ms"
 memory_limit_mb = 64
 cpu_budget = "3s"
-codec_cpu_budget = "800ms"
+codec_cpu_budget = "5ms"
 host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
@@ -437,14 +437,14 @@ Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and 
 
 | Key | What it limits |
 |-----|----------------|
-| `epoch_tick` | How often the sandbox clock ticks. CPU budgets are counted in ticks and rounded up to a whole number of them. Proxy-wide only. |
+| `epoch_tick` | How often the sandbox clock ticks. CPU budgets are counted in ticks during which the guest runs, rounded up to a whole number of them, and a guest that runs past a tick yields its worker thread. The ticking thread costs about 0.4% of one core at 1 ms. Proxy-wide only. |
 | `memory_limit_mb` | Linear memory of one plugin, in MiB. A plugin that grows past it traps. |
 | `cpu_budget` | CPU time one call into a plugin may use before it traps. Time spent waiting on a host call (a ban lookup, a server start) does not count. |
-| `codec_cpu_budget` | The same budget for each codec filter call (`create`, `filter` and the connection hooks). |
+| `codec_cpu_budget` | The same budget for each codec filter call (`create`, `filter`, the connection hooks and the final drop). A filter call runs on a network worker thread and holds it, so this bounds what one call can cost the other connections. See [Codec filters](../plugins/wasm/codec-filters#hot-path-and-the-cpu-budget). |
 | `host_call_timeout` | How long one host call that waits on the proxy may take: server-manager `start` and `stop`, every ban-service call, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named`, `set-snapshot` and `release` on `permissions`, and the timeouts of each HTTP request. When it runs out the plugin gets a `host-error` of kind `timeout` and carries on. `switch-server` has its own 250 ms cap. A host call also ends early, with the same error, shortly before the deadline of the call it belongs to (a margin before `[events] handler_timeout` for an event, `max_call_duration` after it was queued for a command, a scheduled task or a limbo callback), so the plugin always gets to decide. |
 | `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin's instance is replaced by a fresh one. It is also the deadline of a command, a tab completion, a scheduled task or a limbo callback, counted from when the call is queued. |
 | `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin (an access event is then denied, see below) and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
-| `instance_pool` | Proxy-wide only. `0` (the default) creates every WASM instance on demand. A positive value reserves that many instance slots at startup and recycles them, which cuts the cost of building the codec filter instances of a new connection by about 40%. Count one slot per loaded plugin plus two per connection and per codec filter plugin, since each connection side gets its own instance. When every slot is taken, a codec filter instance cannot be built and that connection side passes packets through unfiltered, with an error in the log, and no plugin can be loaded or restarted until a slot frees up. While the pool is on, a plugin whose function table has more than 512 entries cannot be loaded. See [Instance memory and address space](#instance-memory-and-address-space) for what a slot reserves and keeps resident. |
+| `instance_pool` | Proxy-wide only. `0` (the default) creates every WASM instance on demand. A positive value reserves that many instance slots at startup and recycles them, which cuts the cost of building the codec filter instances of a new connection by about 40%. Count one slot per loaded plugin plus two per connection and per codec filter plugin, since each connection side gets its own instance. When every slot is taken, a codec filter instance cannot be built and that connection side passes packets through unfiltered (or the connection is refused, for a [required filter](../plugins/wasm/codec-filters#required-filters)), with an error in the log limited to 10 a minute per filter, and no plugin can be loaded or restarted until a slot frees up. While the pool is on, a plugin whose function table has more than 512 entries cannot be loaded. See [Instance memory and address space](#instance-memory-and-address-space) for what a slot reserves and keeps resident. |
 | `cache_dir` | Proxy-wide only. Directory of the AOT cache, where each plugin is kept compiled to native code so that later starts skip compilation. Resolved from the working directory, like `plugins_dir`. It must not be `plugins_dir` or a directory inside it, since whoever may add plugin files must not be able to plant native code; keep it writable by the proxy user only. When it cannot be created or written, the proxy logs one warning and compiles the plugins in memory at each start. Entries no plugin uses are removed after each start, so give each proxy its own directory. See [AOT compilation and caching](../plugins/wasm/lifecycle#aot-compilation-and-caching). |
 
 Every call into a WASM plugin has a deadline: `[events] handler_timeout` minus a margin (a fifth, at most 250 ms) for an event listener, a ban check or a permission snapshot, and `max_call_duration` after it was queued for a command, a tab completion, a scheduled task or a limbo callback. A ban check ends at `[ban] check_timeout` when that comes first. A call still running at its deadline is cut off, the plugin's instance is replaced by a fresh one, and the cut counts as a fault toward `[wasm.recovery]` with the cause `the call ran past the event deadline`. One slow call therefore costs its own event and a fresh instance, and the calls queued behind it run within their own deadlines. A call that is still queued at its deadline is dropped without running.
@@ -457,17 +457,17 @@ Startup fails when a value is out of range:
 
 - `epoch_tick` must be between `1ms` and `1s`.
 - `memory_limit_mb` must be between 1 and 4096.
-- `cpu_budget` and `codec_cpu_budget` must be at least one `epoch_tick` and at most `1h`.
+- `cpu_budget` must be at least one `epoch_tick` and at most `1h`; `codec_cpu_budget` must be greater than zero and at most `1h`.
 - `host_call_timeout` and `max_call_duration` must be greater than zero and at most `1h`.
 - `queue_capacity` must be between 1 and 1048576.
 - `instance_pool` must be at most 32768.
 - `cache_dir` must not be empty, and must not be `plugins_dir` or lie inside it, compared on the absolute paths with `.` and `..` resolved.
 
-The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first instead of the CPU budget trapping it.
+The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first instead of the CPU budget trapping it. It also warns when `codec_cpu_budget` is shorter than `epoch_tick` (for example a configuration that still sets `epoch_tick = "50ms"` and keeps the 5 ms codec budget): a codec call then gets one tick.
 
 ### Instance memory and address space
 
-Every WASM instance reserves about 4 GiB of virtual address space for its linear memory: one instance per loaded plugin, plus one per connection side for each codec filter plugin. The reservation is not memory. It lets the compiled plugin code skip bounds checks on memory accesses, and only the pages a plugin touches take RAM. The address space is finite, though. A 64-bit Linux process has 128 TiB of it, so the proxy can hold about 32 000 live instances; a virtual memory limit (`ulimit -v`, systemd `LimitAS=`, a container runtime setting) lowers the ceiling to one instance per 4 GiB of the limit. Past the ceiling, building an instance fails: a codec filter side passes packets through unfiltered, with an error in the log for each connection side, and a plugin cannot be loaded or restarted. The proxy does not cap the number of instances on its own; with the default on-demand allocation, this ceiling is the cap.
+Every WASM instance reserves about 4 GiB of virtual address space for its linear memory: one instance per loaded plugin, plus one per connection side for each codec filter plugin. The reservation is not memory. It lets the compiled plugin code skip bounds checks on memory accesses, and only the pages a plugin touches take RAM. The address space is finite, though. A 64-bit Linux process has 128 TiB of it, so the proxy can hold about 32 000 live instances; a virtual memory limit (`ulimit -v`, systemd `LimitAS=`, a container runtime setting) lowers the ceiling to one instance per 4 GiB of the limit. Past the ceiling, building an instance fails: a codec filter side passes packets through unfiltered (a [required filter](../plugins/wasm/codec-filters#required-filters) refuses the connection instead), with an error in the log limited to 10 a minute per filter, and a plugin cannot be loaded or restarted. The proxy does not cap the number of instances on its own; with the default on-demand allocation, this ceiling is the cap.
 
 With `instance_pool` set, the address space of every slot is reserved once at startup, about 4 GiB per slot. When that reservation fails the proxy logs a warning and falls back to on-demand allocation. Only the slots in use take memory, and a slot gives its memory back when its instance ends (the connection closes, or the plugin is unloaded or replaced).
 
@@ -497,6 +497,27 @@ After a fault the proxy starts a fresh instance of the plugin straight away, up 
 Each fault is logged at error level with the plugin, the call and the cause. A successful recovery is logged at info level with the instance generation, and a quarantine at warn level with the time until the next attempt. When the proxy cannot create an instance at all (the instance pool or the address space is exhausted, the data directory cannot be opened), it logs that at error level and waits `backoff_initial` before the next attempt; each attempt counts against `max_restarts`. While the proxy shuts down, no fresh instance is started.
 
 Startup fails when `max_restarts` is above 1000, when `window`, `backoff_initial` or `backoff_max` is zero or longer than `24h`, or when `backoff_initial` is longer than `backoff_max`.
+
+### Codec filter quarantine
+
+```toml
+[wasm.codec_quarantine]
+faults = 5
+window = "10s"
+backoff_initial = "10s"
+backoff_max = "5m"
+```
+
+A codec filter that traps (a panic, running past `codec_cpu_budget`, running out of memory) for connections from one client address is quarantined for that address. When one address reaches `faults` traps of the same filter within `window`, the filter's live instances on that address's connections stop filtering, and its new connections get no instance of the filter for `backoff_initial`: their packets pass through unfiltered, or, for a filter the plugin declared required, the connection is closed or refused. Other addresses keep the filter. A quarantine that follows a fault within `window` of the previous quarantine ending lasts twice as long, up to `backoff_max`; a whole `window` without a fault starts the backoff over. Each quarantine is logged as a warning with the plugin, the filter, the address, the time until retry and the cause, at most 10 a minute per filter. A failure to build an instance (no free `instance_pool` slot, no address space left) is not counted. See [Codec filters](../plugins/wasm/codec-filters#quarantine).
+
+| Key | What it controls |
+|-----|------------------|
+| `faults` | Traps of one filter from one address that trigger a quarantine. `0` turns the quarantine off. |
+| `window` | Sliding window over which the traps are counted. |
+| `backoff_initial` | Length of the first quarantine of an address. |
+| `backoff_max` | Longest a quarantine lasts. |
+
+Startup fails when `faults` is above 1000000, when `window`, `backoff_initial` or `backoff_max` is zero or longer than `24h`, or when `backoff_initial` is longer than `backoff_max`. `[plugins.<id>.wasm.codec_quarantine]` sets other values for the filters of one plugin.
 
 ### Registration quotas
 
@@ -545,7 +566,7 @@ Plugin configurations are keyed by plugin ID.
 - `deny` removes capabilities. It is applied after the baseline and the grants, so it can take away a baseline capability such as `player-write`, and a capability listed in both `permissions` and `deny` is denied. It also applies to compiled-in plugins.
 - `strict_capabilities` (WASM plugins, defaults to `false`) refuses to load the plugin when it imports a host function whose capability it lacks. Without it such a plugin loads, a warning names each import that will be refused, and the calls are refused when made. See [What a missing capability does](../plugins/wasm/capabilities#what-a-missing-capability-does).
 - `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
-- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except the proxy-wide `epoch_tick`, `instance_pool` and `cache_dir`, `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]` and `[plugins.<id>.wasm.quotas]` overrides `[wasm.quotas]`; keys it leaves out keep the proxy-wide value.
+- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except the proxy-wide `epoch_tick`, `instance_pool` and `cache_dir`, `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]`, `[plugins.<id>.wasm.quotas]` overrides `[wasm.quotas]` and `[plugins.<id>.wasm.codec_quarantine]` overrides `[wasm.codec_quarantine]`; keys it leaves out keep the proxy-wide value.
 - `[plugins.<id>.wasm.network]` lists the destinations a plugin with the `network` capability may reach, and `[[plugins.<id>.wasm.mounts]]` the host folders a plugin with `filesystem-extended` sees. See [Network & Extra Folders](../plugins/wasm/network).
 
 Unknown capability names in `permissions` or `deny` are ignored with a warning. The capability strings are listed in [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix). `path` is accepted for compatibility; WASM plugins are always discovered in `plugins_dir`.
@@ -588,10 +609,10 @@ purge_interval = "300s"
 enable_audit_log = true
 
 [wasm]
-epoch_tick = "50ms"
+epoch_tick = "1ms"
 memory_limit_mb = 64
 cpu_budget = "3s"
-codec_cpu_budget = "800ms"
+codec_cpu_budget = "5ms"
 host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
@@ -601,6 +622,12 @@ cache_dir = "./cache/wasm"
 max_restarts = 5
 window = "5m"
 backoff_initial = "1s"
+backoff_max = "5m"
+
+[wasm.codec_quarantine]
+faults = 5
+window = "10s"
+backoff_initial = "10s"
 backoff_max = "5m"
 
 [wasm.quotas]
