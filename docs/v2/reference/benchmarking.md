@@ -192,6 +192,43 @@ Example, 3 runs on a 16-thread Ryzen 7 3700X shared with other builds (load aver
 
 The per-packet cost of a healthy filter does not change. What changes is that a filter call can no longer hold a worker thread, and with it the network driver of a lightly loaded proxy, for more than a few milliseconds.
 
+## WASM plugins: what the contract costs
+
+`crates/infrarust-loader-wasm/benches/wasm_contract/` loads the `perf-probe` test fixture through the public loader and fires real events on the real event bus. Each measurement runs 3 times in fresh runtimes and the tables give the median and the spread.
+
+| Scenario | What it measures |
+|----------|------------------|
+| `events` | p50 and p99 of one `fire` with one WASM listener against one native listener: `PlayerClientBrandEvent` (cheap), `ProxyPingEvent` untouched and with its max players changed, `GameProfileRequestEvent` untouched and renamed; then events per second through one plugin with 16 tasks firing |
+| `hostcalls` | ns per host call made from a WASM handler (a named event loops N calls, minus the 1-call event): `players.list` with 0, 100 and 1,000 online players carrying a textures property, `players.count`, `config.get`, a `trace!` the proxy does not log, an `info!` it logs; native equivalents next to them |
+| `codec` | ns per 512 B packet through the `perf-probe` codec filter, with and without a `trace!` the proxy does not log |
+
+```bash
+cargo bench -p infrarust-loader-wasm --features wasm --bench wasm_contract -- events hostcalls codec
+CONTRACT_RUNS=5 CONTRACT_SCALE=0.2 cargo bench -p infrarust-loader-wasm --features wasm --bench wasm_contract -- events
+```
+
+A tracing subscriber that logs `info` and above is installed for the whole run, as in a proxy with the default log level. `codec_boundary.rs` also measures a 512 B packet served round robin over 1,000 open connections next to one hot connection, both on demand and with `instance_pool = 4096`.
+
+Example, 3 runs on a 16-thread Ryzen 7 3700X (load average 3), before and after the heavy ping fields stayed on the host, `players.list` answered light records, the SDK tested the log level before formatting and the capability gates were resolved at compile time:
+
+| Measure | Before | After |
+|---------|--------|-------|
+| `PlayerClientBrandEvent`, one WASM listener, p50 / p99 (native 0.13 µs) | 2.77 µs / 5.2 µs | 2.84 µs / 6.0 µs |
+| `ProxyPingEvent`, handler reads the virtual host, p50 / p99 (native 0.16 µs) | 7.96 µs / 11.2 µs | 3.75 µs / 5.5 µs |
+| `ProxyPingEvent`, handler changes the max players, p50 / p99 | 12.7 µs / 26.0 µs | 3.06 µs / 5.8 µs |
+| `GameProfileRequestEvent` untouched / renamed, p50 | 4.59 µs / 6.08 µs | 4.60 µs / 6.30 µs |
+| `ProxyPingEvent` through one plugin, 16 tasks firing (native 6.7 to 9.5 M/s) | 109,000/s | 344,000/s |
+| `PlayerClientBrandEvent` through one plugin, 16 tasks firing | 415,000/s | 416,000/s |
+| `players.list` with 0 / 100 / 1,000 players online (native `get_all_players` at 1,000: 10 µs) | 345 ns / 136 µs / 1.25 ms | 205 ns / 19 µs / 0.18 ms |
+| `players.count` / `config.get` host call | 263 ns / 367 ns | 118 ns / 290 ns |
+| `trace!` at a level the proxy does not log / `info!` it logs | 243 ns / 335 ns | 4 ns / 355 ns |
+| Capability check of a host call (`CapabilitySet::has`) | 12.7 ns | 0.5 ns |
+| Codec filter, 512 B pass / with a `trace!` the proxy does not log | 274 ns / 489 ns | 283 ns / 297 ns |
+| `codec_boundary`, 512 B pass on one hot connection / round robin over 1,000 connections | 286 ns / 541 ns | 279 ns / 532 ns |
+| The same with `instance_pool = 4096` | 291 ns / 631 ns | 282 ns / 544 ns |
+
+The round robin lines are the figure to plan with once many players are connected: each packet then reaches an instance whose memory the CPU caches no longer hold, which costs about twice the hot figure. Before and after, the codec rows measure the same code; their difference is noise.
+
 ## Quick reference
 
 ```bash
@@ -201,6 +238,8 @@ cargo bench -p infrarust-core      --bench intercepted_pipeline # Layer C
 # Layer D: see tools/mc-bench/README.md
 # Layer E: run the proxy with --features infrarust-core/bench-timing
 cargo bench -p infrarust-loader-wasm --features wasm --bench codec_exec -- isolation  # WASM codec isolation
+cargo bench -p infrarust-loader-wasm --features wasm --bench wasm_contract            # WASM contract costs
+cargo bench -p infrarust-loader-wasm --features wasm --bench codec_boundary           # WASM codec boundary
 ```
 
 Divan takes `--sample-count` and `--sample-size` for quicker runs, and filters by name,
@@ -210,7 +249,9 @@ for example `cargo bench -p infrarust-core --bench codec_chain -- filter_overhea
 
 The native-vs-WASM codec boundary is measured separately by
 `infrarust-loader-wasm/benches/codec_boundary.rs`, which needs the `wasm32-wasip2` target
-and built fixtures. Migrating it to divan is a mechanical follow-up gated on that fixture
+and built fixtures. Its per-packet figures come from one hot instance, which the CPU caches
+hold; its round robin line over 1,000 open connections is the figure to plan with for a proxy
+with many players (see the table above). Migrating it to divan is a mechanical follow-up gated on that fixture
 build.
 
 For deterministic CI regression gates, `iai-callgrind` (instruction counts, immune to CI
