@@ -6,9 +6,9 @@ mod support;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use infrarust_api::loader::LoaderError;
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::plugin::PluginMetadata;
-use infrarust_api::loader::LoaderError;
 
 use support::{fixture_path, fresh_loader};
 
@@ -23,7 +23,10 @@ fn probe_bytes(settings: &str) -> Vec<u8> {
         .position(|window| window == MARKER)
         .expect("lif-probe carries its settings blob")
         + MARKER.len();
-    assert!(settings.len() < BLOB_PAYLOAD, "settings too long for the blob");
+    assert!(
+        settings.len() < BLOB_PAYLOAD,
+        "settings too long for the blob"
+    );
     bytes[at..at + settings.len()].copy_from_slice(settings.as_bytes());
     bytes[at + settings.len()] = 0xFF;
     bytes
@@ -82,7 +85,9 @@ async fn a_zero_byte_wasm_does_not_stop_the_other_plugins() {
 #[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn random_bytes_do_not_stop_the_other_plugins() {
     let (_tmp, dir) = staged_with_good();
-    let noise: Vec<u8> = (0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    let noise: Vec<u8> = (0..4096u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
     std::fs::write(dir.join("noise.wasm"), noise).unwrap();
     assert_good_plugin_survives(&dir, "random-bytes .wasm").await;
 }
@@ -231,8 +236,8 @@ async fn a_huge_non_component_is_refused_quickly() {
         error_len < 4096,
         "the refusal of one junk file carries a {error_len}-byte error message starting with: {shown}"
     );
-    let metas = found
-        .unwrap_or_else(|_| panic!("a 512 MiB junk file must not fail discovery: {shown}"));
+    let metas =
+        found.unwrap_or_else(|_| panic!("a 512 MiB junk file must not fail discovery: {shown}"));
     assert_eq!(ids(&metas), ["good"]);
 }
 
@@ -252,11 +257,7 @@ impl Managed {
     }
 }
 
-async fn manage(
-    dir: &Path,
-    proxy_toml: &str,
-    extra: Vec<Box<dyn PluginLoader>>,
-) -> Managed {
+async fn manage(dir: &Path, proxy_toml: &str, extra: Vec<Box<dyn PluginLoader>>) -> Managed {
     let mut loaders = extra;
     loaders.push(Box::new(support::loader_from_toml(proxy_toml)));
     let mut manager = infrarust_core::plugin::manager::PluginManager::new(loaders);
@@ -340,7 +341,10 @@ async fn the_proxy_starts_with_its_good_plugins_when_plugins_dir_holds_a_zero_by
     let proxy = started.unwrap_or_else(|e| {
         panic!("a zero-byte .wasm in plugins_dir must not stop the proxy from starting: {e}")
     });
-    assert!(proxy.plugin_context("good").await.is_some(), "the good plugin is enabled");
+    assert!(
+        proxy.plugin_context("good").await.is_some(),
+        "the good plugin is enabled"
+    );
     proxy.shutdown().await.unwrap();
 }
 
@@ -440,8 +444,7 @@ async fn a_plugin_depending_on_a_config_disabled_plugin_is_not_enabled() {
     add_probe(&dir, "base", "id=base\n");
     add_probe(&dir, "dependent", "id=dependent\ndep=base\n");
     let loader = support::loader_from_toml("");
-    let mut manager =
-        infrarust_core::plugin::manager::PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = infrarust_core::plugin::manager::PluginManager::new(vec![Box::new(loader)]);
     manager.set_disabled_plugins(std::collections::HashSet::from(["base".to_owned()]));
     manager.discover_all(&dir).await.unwrap();
     let factory = std::sync::Arc::new(support::make_env(dir.clone()).factory);
@@ -493,7 +496,8 @@ async fn a_sleeping_metadata_export_does_not_hang_discovery() {
     let found = outcome.unwrap_or_else(|_| {
         panic!("discovery still blocked after {elapsed:?} on a metadata() that sleeps; max_call_duration is 2s")
     });
-    let metas = found.unwrap_or_else(|e| panic!("the sleeper must not fail discovery of the others: {e}"));
+    let metas =
+        found.unwrap_or_else(|e| panic!("the sleeper must not fail discovery of the others: {e}"));
     assert_eq!(ids(&metas), ["good"]);
 }
 
@@ -505,7 +509,8 @@ async fn a_spinning_metadata_export_is_cut_and_does_not_stop_the_others() {
     let started = Instant::now();
     let found = discover(&dir).await;
     eprintln!("spinning metadata: discovery took {:?}", started.elapsed());
-    let metas = found.unwrap_or_else(|e| panic!("the spinner must not fail discovery of the others: {e}"));
+    let metas =
+        found.unwrap_or_else(|e| panic!("the spinner must not fail discovery of the others: {e}"));
     assert_eq!(ids(&metas), ["good"]);
 }
 

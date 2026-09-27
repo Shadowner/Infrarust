@@ -87,7 +87,11 @@ pub fn mode_at(faults: &str, site: &str) -> Option<Mode> {
 pub fn directives(faults: &str) -> Vec<Vec<String>> {
     faults
         .lines()
-        .map(|line| line.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+        .map(|line| {
+            line.split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
         .filter(|words| !words.is_empty())
         .collect()
 }

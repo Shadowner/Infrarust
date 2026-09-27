@@ -116,8 +116,14 @@ async fn a_per_plugin_cpu_budget_override_binds_to_that_plugin() {
     let started = std::time::Instant::now();
     let outcome = enable(&loader, &factory, "slowen").await;
     let elapsed = started.elapsed();
-    eprintln!("cpu_budget = 300ms on a spinning on_enable: {elapsed:?}, ok={}", outcome.is_ok());
-    assert!(outcome.is_err(), "a spinning on_enable must be cut, not enabled");
+    eprintln!(
+        "cpu_budget = 300ms on a spinning on_enable: {elapsed:?}, ok={}",
+        outcome.is_ok()
+    );
+    assert!(
+        outcome.is_err(),
+        "a spinning on_enable must be cut, not enabled"
+    );
     assert!(
         elapsed < Duration::from_secs(3),
         "the 300ms per-plugin cpu_budget override was not applied: on_enable ran {elapsed:?}"

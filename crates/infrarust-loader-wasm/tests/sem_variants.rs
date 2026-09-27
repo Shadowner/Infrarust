@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
-use infrarust_api::events::client::{PlayerChannelRegisterEvent, PlayerSettingsChangedEvent};
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{EventPriority, ResultedEvent};
+use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
+use infrarust_api::events::client::{PlayerChannelRegisterEvent, PlayerSettingsChangedEvent};
 use infrarust_api::events::command::{CommandExecuteEvent, CommandExecuteResult};
 use infrarust_api::events::connection::{
     ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult, ServerPreConnectEvent,
@@ -25,7 +25,6 @@ use infrarust_api::events::lifecycle::{
     DisconnectCause, DisconnectEvent, GameProfileRequestEvent, PermissionsSetupEvent,
     PermissionsSetupResult, PostLoginEvent,
 };
-use infrarust_api::permissions::PermissionMap;
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 use infrarust_api::events::messaging::PluginMessageEvent;
 use infrarust_api::events::named::NamedEvent;
@@ -38,6 +37,7 @@ use infrarust_api::events::transfer::{PreTransferEvent, TransferOrigin};
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::messaging::{ChannelId, Endpoint, MessagePhase};
+use infrarust_api::permissions::PermissionMap;
 use infrarust_api::player::{
     ChatMode, ClientSettings, MainHand, ParticleStatus, Player, ResourcePackStatus, SkinParts,
 };
@@ -51,7 +51,9 @@ use infrarust_api::types::{
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_loader_wasm::WasmPluginLoader;
 
-use support::{EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, read_log, stage};
+use support::{
+    EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, read_log, stage,
+};
 
 const PROBE: &str = "sem-probe";
 
@@ -209,9 +211,10 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
         ],
     );
     let kicked = dump.dumped("KickedFromServerEvent");
-    for (line, result) in kicked
-        .iter()
-        .zip(["notify-text", "gate", "DisconnectPlayer(None)", "hub"])
+    for (line, result) in
+        kicked
+            .iter()
+            .zip(["notify-text", "gate", "DisconnectPlayer(None)", "hub"])
     {
         assert!(line.contains(result), "expected {result:?} in {line}");
     }
@@ -289,8 +292,12 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
             from_server: Some(ServerId::new("origin")),
         },
     ] {
-        bus.fire(LimboEnterEvent::new(steve(), vec!["gate".to_owned()], context))
-            .await;
+        bus.fire(LimboEnterEvent::new(
+            steve(),
+            vec!["gate".to_owned()],
+            context,
+        ))
+        .await;
     }
     expect_each(
         &dump.dumped("LimboEnterEvent"),
@@ -357,10 +364,7 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
         PacketDirection::Clientbound,
     ))
     .await;
-    expect_each(
-        &dump.dumped("PlayerChannelRegisterEvent"),
-        &["Clientbound"],
-    );
+    expect_each(&dump.dumped("PlayerChannelRegisterEvent"), &["Clientbound"]);
 
     bus.fire(PluginMessageEvent::new(
         steve(),
@@ -371,10 +375,7 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
         MessagePhase::Configuration,
     ))
     .await;
-    expect_each(
-        &dump.dumped("PluginMessageEvent"),
-        &["Configuration"],
-    );
+    expect_each(&dump.dumped("PluginMessageEvent"), &["Configuration"]);
     let message = &dump.dumped("PluginMessageEvent")[0];
     for needle in ["Client", "OldChan", "[255, 0, 254]"] {
         assert!(message.contains(needle), "expected {needle:?} in {message}");
@@ -394,7 +395,8 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
             BanSource::Plugin("moderation".to_owned()),
         ),
     ] {
-        let entry = BanEntry::new("ban-x", target, source.clone()).lasting(Duration::from_secs(3600));
+        let entry =
+            BanEntry::new("ban-x", target, source.clone()).lasting(Duration::from_secs(3600));
         bus.fire(BanIssuedEvent::new(entry.clone(), source.clone(), false))
             .await;
         bus.fire(BanRevokedEvent::new(entry, source, true)).await;
@@ -402,7 +404,10 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
     let issued = dump.dumped("BanIssuedEvent");
     expect_each(&issued, &["198.51.100.9", "2001:db8::/32", "moderation"]);
     for line in &issued {
-        assert!(line.contains("expires_at: Some"), "expected an expiry in {line}");
+        assert!(
+            line.contains("expires_at: Some"),
+            "expected an expiry in {line}"
+        );
     }
     expect_each(
         &dump.dumped("BanRevokedEvent"),
@@ -506,11 +511,14 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
     let profile = &dump.dumped("GameProfileRequestEvent")[0];
     assert_eq!(profile.matches("c2lnbmVk").count(), 2, "{profile}");
 
-    bus.fire(NamedEvent::new("bin", "", Bytes::from_static(&[0, 159, 146, 150])))
-        .await;
+    bus.fire(NamedEvent::new(
+        "bin",
+        "",
+        Bytes::from_static(&[0, 159, 146, 150]),
+    ))
+    .await;
     let named = &dump.dumped("NamedEvent")[0];
     assert!(named.contains("[0, 159, 146, 150]"), "{named}");
-
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -529,13 +537,25 @@ async fn rare_results_set_by_a_wasm_listener_apply_like_a_native_listeners() {
     let chat = bus
         .fire(ChatMessageEvent::new(steve(), "hi".to_owned(), false, None))
         .await;
-    assert!(matches!(chat.result(), ChatMessageResult::Deny { reason: None }), "{:?}", chat.result());
+    assert!(
+        matches!(chat.result(), ChatMessageResult::Deny { reason: None }),
+        "{:?}",
+        chat.result()
+    );
 
     let command = bus
-        .fire(CommandExecuteEvent::new(steve(), "spawn".to_owned(), false, None))
+        .fire(CommandExecuteEvent::new(
+            steve(),
+            "spawn".to_owned(),
+            false,
+            None,
+        ))
         .await;
     assert!(
-        matches!(command.result(), CommandExecuteResult::Deny { reason: None }),
+        matches!(
+            command.result(),
+            CommandExecuteResult::Deny { reason: None }
+        ),
         "{:?}",
         command.result()
     );
@@ -548,7 +568,10 @@ async fn rare_results_set_by_a_wasm_listener_apply_like_a_native_listeners() {
         ))
         .await;
     assert!(
-        matches!(handshake.result(), ConnectionHandshakeResult::Deny { reason: None }),
+        matches!(
+            handshake.result(),
+            ConnectionHandshakeResult::Deny { reason: None }
+        ),
         "{:?}",
         handshake.result()
     );
@@ -567,7 +590,10 @@ async fn rare_results_set_by_a_wasm_listener_apply_like_a_native_listeners() {
         ))
         .await;
     assert!(
-        matches!(kicked.result(), KickedFromServerResult::DisconnectPlayer { reason: None }),
+        matches!(
+            kicked.result(),
+            KickedFromServerResult::DisconnectPlayer { reason: None }
+        ),
         "{:?}",
         kicked.result()
     );

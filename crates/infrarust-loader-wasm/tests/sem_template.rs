@@ -52,7 +52,13 @@ async fn the_template_plugin_answers_hello_in_the_players_chat_as_getting_starte
     proxy.wait_for_player("Steve", T).await.unwrap();
 
     session.command("hello").await.unwrap();
-    assert_eq!(session.expect_system_text(T).await.unwrap(), "hello, world!");
+    assert_eq!(
+        session.expect_system_text(T).await.unwrap(),
+        "hello, world!"
+    );
     session.command("hello Steve").await.unwrap();
-    assert_eq!(session.expect_system_text(T).await.unwrap(), "hello, Steve!");
+    assert_eq!(
+        session.expect_system_text(T).await.unwrap(),
+        "hello, Steve!"
+    );
 }

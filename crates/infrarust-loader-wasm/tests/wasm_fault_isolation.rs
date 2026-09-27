@@ -132,7 +132,11 @@ async fn storm(mode: Mode, faulty_budget: &str) {
     }
     .with_subscriber(logs.clone())
     .await;
-    assert!(logs.matching("panicked").is_empty(), "{:?}", logs.matching("panicked"));
+    assert!(
+        logs.matching("panicked").is_empty(),
+        "{:?}",
+        logs.matching("panicked")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -285,10 +289,16 @@ async fn a_recovery_caused_by_a_waiting_plugin_does_not_wait_on_that_plugin() {
     lab.set_faults(LAB, "listen lab-x\nenable-fire lab-y\nnamed:lab-x panic");
     let took = lab.dispatch("peerlabfire lab-x").await;
     lab.wait_for("A's recovery to finish its fire", || {
-        lab.log(LAB).iter().any(|line| line.starts_with("fired lab-y"))
+        lab.log(LAB)
+            .iter()
+            .any(|line| line.starts_with("fired lab-y"))
     })
     .await;
-    println!("B -> A (traps) -> A's recovery fires to B took {took:?}; A: {:?}; B: {:?}", lab.log(LAB), lab.log(PEER));
+    println!(
+        "B -> A (traps) -> A's recovery fires to B took {took:?}; A: {:?}; B: {:?}",
+        lab.log(LAB),
+        lab.log(PEER)
+    );
     assert!(
         took < Duration::from_secs(1),
         "B waited {took:?}: A's recovery, done for B's call, waited on the busy B"

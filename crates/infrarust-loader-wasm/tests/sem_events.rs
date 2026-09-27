@@ -118,15 +118,28 @@ async fn every_limbo_entry_outcome_reaches_the_engine_as_the_guest_chose_it() {
         },
     );
     let denied = handler("denier").on_player_enter(session.as_ref()).await;
-    assert!(matches!(&denied, HandlerResult::Deny(reason) if reason.to_plain() == "no entry"), "{denied:?}");
-    let redirected = handler("redirector").on_player_enter(session.as_ref()).await;
-    assert!(matches!(&redirected, HandlerResult::Redirect(server) if server.as_str() == "hub"), "{redirected:?}");
+    assert!(
+        matches!(&denied, HandlerResult::Deny(reason) if reason.to_plain() == "no entry"),
+        "{denied:?}"
+    );
+    let redirected = handler("redirector")
+        .on_player_enter(session.as_ref())
+        .await;
+    assert!(
+        matches!(&redirected, HandlerResult::Redirect(server) if server.as_str() == "hub"),
+        "{redirected:?}"
+    );
     let chained = handler("chainer").on_player_enter(session.as_ref()).await;
-    assert!(matches!(&chained, HandlerResult::SendToLimbo(names) if names == &["keeper".to_owned()]), "{chained:?}");
+    assert!(
+        matches!(&chained, HandlerResult::SendToLimbo(names) if names == &["keeper".to_owned()]),
+        "{chained:?}"
+    );
     let timed = handler("timed").on_player_enter(session.as_ref()).await;
     let HandlerResult::HoldWithTimeout { after, on_timeout } = timed else {
         panic!("a timed hold stays a timed hold: {timed:?}");
     };
     assert_eq!(after, std::time::Duration::from_millis(1500));
-    assert!(matches!(*on_timeout, HandlerResult::Redirect(ref server) if server.as_str() == "fallback"));
+    assert!(
+        matches!(*on_timeout, HandlerResult::Redirect(ref server) if server.as_str() == "fallback")
+    );
 }

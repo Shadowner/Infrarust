@@ -18,8 +18,8 @@ use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_api::limbo::{LimboEntryContext, LimboHandler};
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::{Plugin, PluginContext};
-use infrarust_api::test_util::{MockBanService, MockConfigService, MockPlayerRegistry};
 use infrarust_api::test_util::RecordingLimboSession;
+use infrarust_api::test_util::{MockBanService, MockConfigService, MockPlayerRegistry};
 use infrarust_api::types::{PlayerId, ProtocolVersion, ServerId};
 use infrarust_core::ban::BanManager;
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
@@ -32,7 +32,6 @@ use infrarust_core::services::scheduler::SchedulerImpl;
 use infrarust_loader_wasm::WasmPluginLoader;
 
 use crate::support;
-
 
 pub const LAB: &str = "fault-lab";
 pub const PEER: &str = "fault-lab-peer";
@@ -258,12 +257,10 @@ impl Lab {
 
     pub async fn dispatch(&self, line: &str) -> Duration {
         let started = Instant::now();
-        let outcome = tokio::time::timeout(
-            PROMPTLY,
-            self.commands.dispatch(support::console(), line),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("`{line}` did not return within {PROMPTLY:?}"));
+        let outcome =
+            tokio::time::timeout(PROMPTLY, self.commands.dispatch(support::console(), line))
+                .await
+                .unwrap_or_else(|_| panic!("`{line}` did not return within {PROMPTLY:?}"));
         assert_eq!(outcome, DispatchOutcome::Executed, "{line}");
         started.elapsed()
     }
@@ -285,7 +282,6 @@ impl Lab {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
-
 }
 
 pub fn read_lines(path: &Path) -> Vec<String> {
@@ -351,7 +347,9 @@ pub fn rss_kib() -> u64 {
 }
 
 pub fn alive_tasks() -> usize {
-    tokio::runtime::Handle::current().metrics().num_alive_tasks()
+    tokio::runtime::Handle::current()
+        .metrics()
+        .num_alive_tasks()
 }
 
 pub fn count(lines: &[String], wanted: &str) -> usize {

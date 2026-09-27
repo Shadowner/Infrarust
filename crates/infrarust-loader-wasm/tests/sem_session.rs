@@ -21,7 +21,10 @@ const T: Duration = infrarust_test_harness::DEFAULT_TIMEOUT;
 const VERSION: ProtocolVersion = ProtocolVersion::V1_21;
 const PROBE: &str = "sem-probe";
 
-fn grant(plugins_dir: PathBuf, capabilities: &'static [&'static str]) -> impl FnOnce(&mut Table) + Send + 'static {
+fn grant(
+    plugins_dir: PathBuf,
+    capabilities: &'static [&'static str],
+) -> impl FnOnce(&mut Table) + Send + 'static {
     move |table| {
         table.insert(
             "plugins_dir".into(),
@@ -86,7 +89,11 @@ impl World {
     async fn wait_for(&self, line: &str) {
         let deadline = Instant::now() + T;
         while !self.log().iter().any(|seen| seen == line) {
-            assert!(Instant::now() < deadline, "never logged {line:?}: {:?}", self.log());
+            assert!(
+                Instant::now() < deadline,
+                "never logged {line:?}: {:?}",
+                self.log()
+            );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -116,7 +123,10 @@ impl World {
             .proxy
             .services()
             .command_manager
-            .dispatch(CommandSource::console(Arc::new(AllPermissionsChecker)), line)
+            .dispatch(
+                CommandSource::console(Arc::new(AllPermissionsChecker)),
+                line,
+            )
             .await;
         assert_eq!(outcome, DispatchOutcome::Executed, "{line}");
     }
@@ -131,7 +141,11 @@ impl World {
             .joined()
             .unwrap();
         let entered = self.wait_for_prefix("enter ", 1).await;
-        let id = entered.last().unwrap().trim_start_matches("enter ").to_owned();
+        let id = entered
+            .last()
+            .unwrap()
+            .trim_start_matches("enter ")
+            .to_owned();
         (session, id)
     }
 }
@@ -141,7 +155,9 @@ async fn a_held_player_released_from_a_later_command_reaches_the_backend() {
     let world = World::start("keeper", true).await;
     let (_session, id) = world.enter("Steve").await;
     world.console(&format!("hdone {id}")).await;
-    world.wait_for(&format!("hdone {id} ok cancelled=false")).await;
+    world
+        .wait_for(&format!("hdone {id} ok cancelled=false"))
+        .await;
     world
         .backend
         .next_connection(T)
@@ -151,7 +167,8 @@ async fn a_held_player_released_from_a_later_command_reaches_the_backend() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "W-47: limbo handle after departure answers Unavailable"]
-async fn a_session_handle_kept_after_the_player_left_reports_player_gone_and_completing_it_is_a_no_op() {
+async fn a_session_handle_kept_after_the_player_left_reports_player_gone_and_completing_it_is_a_no_op()
+ {
     let world = World::start("keeper", true).await;
     let (session, id) = world.enter("Steve").await;
     session.quit().await;
@@ -204,7 +221,11 @@ async fn completing_a_hold_with_another_timed_hold_keeps_the_player_out_of_the_b
     let (_session, id) = world.enter("Steve").await;
     world.console(&format!("hrearm {id}")).await;
     let answered = world.wait_for_prefix(&format!("hrearm {id} "), 1).await;
-    let reached = world.backend.next_connection(Duration::from_millis(800)).await.is_ok();
+    let reached = world
+        .backend
+        .next_connection(Duration::from_millis(800))
+        .await
+        .is_ok();
     assert!(
         !reached,
         "a gate that answers `complete(HoldWithTimeout {{ on_timeout: Deny }})` let the player through \

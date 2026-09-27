@@ -20,13 +20,19 @@ async fn ipv4_mapped_ipv6_addresses_never_reach_a_destination() {
 
     let v6_all = enable_probe(&["network"], &network_toml(&["[::/0]:*".to_owned()], "")).await;
     assert!(
-        v6_all.run(&format!("tcp {mapped} x")).await.starts_with("err "),
+        v6_all
+            .run(&format!("tcp {mapped} x"))
+            .await
+            .starts_with("err "),
         "an IPv6-all rule must not reach an IPv4 address in mapped form"
     );
 
     let v4_all = enable_probe(&["network"], &network_toml(&["0.0.0.0/0:*".to_owned()], "")).await;
     assert!(
-        v4_all.run(&format!("tcp {mapped} x")).await.starts_with("err "),
+        v4_all
+            .run(&format!("tcp {mapped} x"))
+            .await
+            .starts_with("err "),
         "wasmtime rejects an IPv4-mapped IPv6 literal before the allow-list, so it reaches nothing"
     );
     assert_eq!(
@@ -41,7 +47,10 @@ async fn the_unspecified_address_is_not_a_valid_connect_destination() {
     let port = free_port();
     let probe = enable_probe(&["network"], &network_toml(&["0.0.0.0/0:*".to_owned()], "")).await;
     let v4 = probe.run(&format!("tcp 0.0.0.0:{port} x")).await;
-    assert!(v4.starts_with("err "), "0.0.0.0 is not a connect target: {v4}");
+    assert!(
+        v4.starts_with("err "),
+        "0.0.0.0 is not a connect target: {v4}"
+    );
     let v6 = probe.run(&format!("tcp [::]:{port} x")).await;
     assert!(v6.starts_with("err "), "[::] is not a connect target: {v6}");
 }
@@ -49,11 +58,7 @@ async fn the_unspecified_address_is_not_a_valid_connect_destination() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_link_local_address_is_refused_by_a_narrow_allow_list() {
     let echo = EchoServer::start().await;
-    let probe = enable_probe(
-        &["network"],
-        &network_toml(&[echo.addr.to_string()], ""),
-    )
-    .await;
+    let probe = enable_probe(&["network"], &network_toml(&[echo.addr.to_string()], "")).await;
     assert_eq!(
         probe.run("tcp 169.254.169.254:80 x").await,
         DENIED,
@@ -123,13 +128,15 @@ async fn an_http_redirect_to_a_denied_host_is_not_followed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_large_http_response_body_streams_to_the_guest() {
-    let body: &'static str = Box::leak(vec![b'a'; 512 * 1024].into_iter().map(char::from).collect::<String>().into_boxed_str());
+    let body: &'static str = Box::leak(
+        vec![b'a'; 512 * 1024]
+            .into_iter()
+            .map(char::from)
+            .collect::<String>()
+            .into_boxed_str(),
+    );
     let server = HttpServer::start(body).await;
-    let probe = enable_probe(
-        &["network"],
-        &network_toml(&[server.addr.to_string()], ""),
-    )
-    .await;
+    let probe = enable_probe(&["network"], &network_toml(&[server.addr.to_string()], "")).await;
     let outcome = probe.run(&format!("http http://{}/", server.addr)).await;
     assert!(
         outcome.starts_with("ok 200") && outcome.len() >= 512 * 1024,

@@ -94,7 +94,8 @@ fn take_count(env: &TestEnv) {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-48: WASM stats plugin fails to enable when count is taken"]
-async fn the_wasm_stats_plugin_still_enables_when_its_command_name_is_taken_like_the_native_build() {
+async fn the_wasm_stats_plugin_still_enables_when_its_command_name_is_taken_like_the_native_build()
+{
     let tmp = tempfile::tempdir().unwrap();
     let native_env = make_env(tmp.path().to_path_buf());
     take_count(&native_env);

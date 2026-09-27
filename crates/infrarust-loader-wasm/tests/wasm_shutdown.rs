@@ -63,7 +63,10 @@ fn log_lines(dir: &Path, id: &str) -> Vec<String> {
 
 async fn wait_for_line(dir: &Path, id: &str, prefix: &str) {
     tokio::time::timeout(Duration::from_secs(10), async {
-        while !log_lines(dir, id).iter().any(|line| line.starts_with(prefix)) {
+        while !log_lines(dir, id)
+            .iter()
+            .any(|line| line.starts_with(prefix))
+        {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -119,7 +122,11 @@ async fn a_spinning_on_disable_is_cut_by_the_cpu_budget() {
 async fn shutdown_while_a_command_is_blocked_is_bounded() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "busy", "id=busy\ncmd=hold:sleep:600000\ndisable=sleep:600000\n");
+    add_probe(
+        &dir,
+        "busy",
+        "id=busy\ncmd=hold:sleep:600000\ndisable=sleep:600000\n",
+    );
     let mut running = start(&dir, SHORT_CALLS).await;
     start_command(&running.commands, "hold");
     wait_for_line(&dir, "busy", "cmd hold start").await;
@@ -142,10 +149,12 @@ async fn shutdown_with_several_stuck_plugins_is_not_serialised_per_plugin() {
         );
     }
     let mut running = start(&dir, SHORT_CALLS).await;
-    for (id, line) in plugins
-        .iter()
-        .zip(["stuck-a-hold", "stuck-b-hold", "stuck-c-hold", "stuck-d-hold"])
-    {
+    for (id, line) in plugins.iter().zip([
+        "stuck-a-hold",
+        "stuck-b-hold",
+        "stuck-c-hold",
+        "stuck-d-hold",
+    ]) {
         start_command(&running.commands, line);
         wait_for_line(&dir, id, &format!("cmd {line} start")).await;
     }
@@ -164,7 +173,11 @@ async fn shutdown_with_several_stuck_plugins_is_not_serialised_per_plugin() {
 async fn shutdown_of_a_quarantined_plugin_is_prompt() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
-    add_probe(&dir, "faulty", "id=faulty\npost-login=panic\ndisable=sleep:600000\n");
+    add_probe(
+        &dir,
+        "faulty",
+        "id=faulty\npost-login=panic\ndisable=sleep:600000\n",
+    );
     let mut running = start(
         &dir,
         "[wasm]\nmax_call_duration = \"2s\"\n[wasm.recovery]\nmax_restarts = 0\nbackoff_initial = \"1h\"\nbackoff_max = \"1h\"\n",
@@ -176,7 +189,9 @@ async fn shutdown_of_a_quarantined_plugin_is_prompt() {
     eprintln!("quarantined plugin: shutdown took {took:?}");
     assert!(took < Duration::from_secs(1), "{took:?}");
     assert!(
-        !log_lines(&dir, "faulty").iter().any(|line| line.starts_with("disable ")),
+        !log_lines(&dir, "faulty")
+            .iter()
+            .any(|line| line.starts_with("disable ")),
         "a quarantined plugin has no instance to run on_disable in"
     );
 }

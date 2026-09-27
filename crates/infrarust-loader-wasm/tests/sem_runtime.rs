@@ -22,7 +22,9 @@ use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::{EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, read_log, stage};
+use support::{
+    EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, read_log, stage,
+};
 
 const PROBE: &str = "sem-probe";
 const PROMPTLY: Duration = Duration::from_secs(10);
@@ -82,9 +84,12 @@ impl Probe {
             767,
             "203.0.113.7:40000".parse().unwrap(),
         );
-        tokio::time::timeout(PROMPTLY, self.env.event_bus.fire(PostLoginEvent::new(player)))
-            .await
-            .expect("the event finishes promptly");
+        tokio::time::timeout(
+            PROMPTLY,
+            self.env.event_bus.fire(PostLoginEvent::new(player)),
+        )
+        .await
+        .expect("the event finishes promptly");
     }
 
     async fn dispatch_as(&self, source: CommandSource, line: &str) -> DispatchOutcome {
@@ -358,7 +363,10 @@ async fn command_names_and_aliases_follow_the_shared_ownership_rules() {
     )
     .await;
     assert_eq!(probe.dispatch("w a b").await, DispatchOutcome::Executed);
-    assert_eq!(probe.dispatch("sem-probe:warp").await, DispatchOutcome::Executed);
+    assert_eq!(
+        probe.dispatch("sem-probe:warp").await,
+        DispatchOutcome::Executed
+    );
     assert_eq!(probe.dispatch("HUB x").await, DispatchOutcome::Executed);
     assert_eq!(
         probe.dispatch_as(unprivileged(), "hub").await,
@@ -381,7 +389,8 @@ async fn command_names_and_aliases_follow_the_shared_ownership_rules() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-44: unregister_command by alias answers Ok(false)"]
 async fn a_command_can_be_unregistered_by_any_label_it_answers_to() {
-    let probe = Probe::start("cmd Warp alias w\nunregister warp\ncmd Home alias h\nunregister h").await;
+    let probe =
+        Probe::start("cmd Warp alias w\nunregister warp\ncmd Home alias h\nunregister h").await;
     assert_eq!(probe.dispatch("warp").await, DispatchOutcome::Unknown);
     assert_eq!(
         probe.dispatch("home").await,
@@ -453,7 +462,10 @@ async fn a_command_with_a_huge_argument_list_reaches_the_guest_intact() {
 async fn a_mixed_case_command_unregistered_then_registered_again_by_a_recovered_instance_is_back() {
     let probe = Probe::start("tools\ncmd Warp").await;
     assert_eq!(probe.dispatch("warp").await, DispatchOutcome::Executed);
-    assert_eq!(probe.dispatch("unreg Warp").await, DispatchOutcome::Executed);
+    assert_eq!(
+        probe.dispatch("unreg Warp").await,
+        DispatchOutcome::Executed
+    );
     assert_eq!(probe.dispatch("warp").await, DispatchOutcome::Unknown);
     assert_eq!(probe.dispatch("trap").await, DispatchOutcome::Executed);
     probe.wait_for("enable recovered 1").await;
@@ -468,7 +480,10 @@ async fn a_mixed_case_command_unregistered_then_registered_again_by_a_recovered_
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lowercase_command_unregistered_then_registered_again_by_a_recovered_instance_is_back() {
     let probe = Probe::start("tools\ncmd warp").await;
-    assert_eq!(probe.dispatch("unreg warp").await, DispatchOutcome::Executed);
+    assert_eq!(
+        probe.dispatch("unreg warp").await,
+        DispatchOutcome::Executed
+    );
     assert_eq!(probe.dispatch("warp").await, DispatchOutcome::Unknown);
     assert_eq!(probe.dispatch("trap").await, DispatchOutcome::Executed);
     probe.wait_for("enable recovered 1").await;
@@ -502,8 +517,15 @@ async fn fire_named_returns_a_timeout_error_when_the_listeners_outlive_the_host_
     .await;
     let started = Instant::now();
     assert_eq!(probe.dispatch("ask").await, DispatchOutcome::Executed);
-    assert!(started.elapsed() < Duration::from_millis(1500), "{:?}", started.elapsed());
-    assert_eq!(probe.lines_starting("fire slow"), ["fire slow timeout after 300ms"]);
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        probe.lines_starting("fire slow"),
+        ["fire slow timeout after 300ms"]
+    );
 
     let quick = probe
         .env
@@ -511,7 +533,10 @@ async fn fire_named_returns_a_timeout_error_when_the_listeners_outlive_the_host_
         .fire(NamedEvent::new("quick", "text/plain", "ping"))
         .await;
     assert!(!quick.cancelled, "the WASM listener at LATE uncancelled it");
-    assert!(quick.response.is_none(), "the WASM listener cleared the response");
+    assert!(
+        quick.response.is_none(),
+        "the WASM listener cleared the response"
+    );
     assert_eq!(
         probe.lines_starting("named quick"),
         ["named quick saw cancelled=true response=early"]
@@ -526,7 +551,11 @@ async fn delays_and_intervals_fire_on_time_without_drifting() {
     let fired = tick_times(&probe.lines_starting("fired once "));
     let ticks = tick_times(&probe.lines_starting("tick acc "));
     assert_eq!(ticks.len(), 20);
-    assert!((290..=400).contains(&fired[0]), "delay fired at {} ms", fired[0]);
+    assert!(
+        (290..=400).contains(&fired[0]),
+        "delay fired at {} ms",
+        fired[0]
+    );
     let last = *ticks.last().unwrap();
     assert!(
         (950..=1200).contains(&last),
@@ -642,7 +671,9 @@ async fn a_second_wasm_plugin_cannot_take_a_command_or_alias_another_wasm_plugin
     let _peer = load_enabled(&loader, &env.factory, "scripted-peer").await;
     let _probe = load_enabled(&loader, &env.factory, PROBE).await;
     assert_eq!(
-        env.command_manager.dispatch(support::console(), "greet x").await,
+        env.command_manager
+            .dispatch(support::console(), "greet x")
+            .await,
         DispatchOutcome::Executed
     );
     assert_eq!(

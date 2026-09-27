@@ -81,9 +81,9 @@ async fn staged_good_with_cache() -> (tempfile::TempDir, PathBuf, PathBuf, Vec<u
 }
 
 async fn assert_rebuilt(dir: &Path, cwasm: &Path, original: &[u8], what: &str) {
-    let metas = discover(dir)
-        .await
-        .unwrap_or_else(|e| panic!("a {what} cache entry must be rebuilt, not fail discovery: {e}"));
+    let metas = discover(dir).await.unwrap_or_else(|e| {
+        panic!("a {what} cache entry must be rebuilt, not fail discovery: {e}")
+    });
     assert_eq!(ids(&metas), ["good"], "{what}");
     assert_eq!(
         std::fs::read(cwasm).unwrap(),
@@ -272,12 +272,18 @@ async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
             Err(e) => failures.push(e.to_string()),
         }
     }
-    assert!(failures.is_empty(), "concurrent discoveries failed: {failures:#?}");
+    assert!(
+        failures.is_empty(),
+        "concurrent discoveries failed: {failures:#?}"
+    );
     let leftovers: Vec<PathBuf> = cache_entries(&dir)
         .into_iter()
         .filter(|path| path.extension().is_none_or(|ext| ext != "cwasm"))
         .collect();
-    assert!(leftovers.is_empty(), "temporary files left in .cache: {leftovers:?}");
+    assert!(
+        leftovers.is_empty(),
+        "temporary files left in .cache: {leftovers:?}"
+    );
     assert_eq!(cwasm_entries(&dir).len(), 1);
 }
 
@@ -317,9 +323,11 @@ async fn toggling_instance_pool_does_not_recompile_on_every_start() {
     let mut previous: Option<Vec<u8>> = None;
     for pool in [0u32, 8, 0, 8] {
         let loader = loader_from_toml(&format!("[wasm]\ninstance_pool = {pool}\n"));
-        let before = std::fs::metadata(dir.join(".cache"))
-            .ok()
-            .and_then(|_| cwasm_entries(&dir).first().map(|p| std::fs::metadata(p).unwrap().modified().unwrap()));
+        let before = std::fs::metadata(dir.join(".cache")).ok().and_then(|_| {
+            cwasm_entries(&dir)
+                .first()
+                .map(|p| std::fs::metadata(p).unwrap().modified().unwrap())
+        });
         discover_with(&loader, &dir).await.unwrap();
         let entry = only_cwasm(&dir);
         let after = std::fs::metadata(&entry).unwrap().modified().unwrap();

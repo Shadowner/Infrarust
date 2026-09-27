@@ -30,7 +30,9 @@ use tracing::Level;
 use tracing::instrument::WithSubscriber;
 
 use support::log_capture::LogCapture;
-use support::{EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, read_log, stage};
+use support::{
+    EnvOptions, TestEnv, load_enabled, loader_from_toml, make_env_with, read_log, stage,
+};
 
 const PROBE: &str = "sem-probe";
 
@@ -164,7 +166,10 @@ async fn ban_calls_that_fail_or_trap_reach_the_caller_as_the_documented_errors()
         .await
         .unwrap();
     assert_eq!(
-        manager.refuse(&login("griefer")).await.map(|r| r.message.to_plain()),
+        manager
+            .refuse(&login("griefer"))
+            .await
+            .map(|r| r.message.to_plain()),
         Some("probe: banned".to_owned()),
         "{issued:?}"
     );
@@ -253,9 +258,18 @@ async fn perms_probe(config: &str) -> (Probe, Arc<PermissionService>) {
 async fn snapshot_nodes_are_trimmed_and_lowercased_on_both_sides_of_the_boundary() {
     let (_probe, permissions) = perms_probe("perms").await;
     let mixed = permissions.create_checker(&subject(3, "Mixed")).await;
-    assert_eq!(permissions.value(mixed.as_ref(), "warps.use"), Tristate::True);
-    assert_eq!(permissions.value(mixed.as_ref(), "Warps.Use"), Tristate::True);
-    assert_eq!(permissions.value(mixed.as_ref(), " WARPS.USE "), Tristate::True);
+    assert_eq!(
+        permissions.value(mixed.as_ref(), "warps.use"),
+        Tristate::True
+    );
+    assert_eq!(
+        permissions.value(mixed.as_ref(), "Warps.Use"),
+        Tristate::True
+    );
+    assert_eq!(
+        permissions.value(mixed.as_ref(), " WARPS.USE "),
+        Tristate::True
+    );
     assert_eq!(
         permissions.value(mixed.as_ref(), "warps.admin"),
         Tristate::False
@@ -281,7 +295,8 @@ async fn an_oversized_snapshot_leaves_the_player_with_the_node_defaults_and_a_wa
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_permission_provider_trapping_for_the_console_leaves_the_console_with_the_node_defaults() {
+async fn a_permission_provider_trapping_for_the_console_leaves_the_console_with_the_node_defaults()
+{
     let (probe, permissions) = perms_probe("perms console-trap").await;
     let console = permissions.console_checker().await;
     assert!(
@@ -322,7 +337,10 @@ async fn a_native_custom_checker_reaches_a_wasm_listener_as_the_snapshot_it_desc
     assert!(checker.has_permission("demo.use"));
     assert_eq!(
         probe.log(),
-        ["enable", "permsetup@192 saw custom admin=false rules=demo.use=true"]
+        [
+            "enable",
+            "permsetup@192 saw custom admin=false rules=demo.use=true"
+        ]
     );
 }
 
@@ -406,9 +424,11 @@ async fn a_wasm_listener_sees_and_can_undo_a_native_denial() {
         },
     )
     .await;
-    probe.bus().subscribe::<PreLoginEvent, _>(EventPriority::LAST, move |event| {
-        *observed.lock().unwrap() = Some(format!("{:?}", event.result()));
-    });
+    probe
+        .bus()
+        .subscribe::<PreLoginEvent, _>(EventPriority::LAST, move |event| {
+            *observed.lock().unwrap() = Some(format!("{:?}", event.result()));
+        });
     let event = probe
         .env
         .event_bus

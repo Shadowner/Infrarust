@@ -114,8 +114,14 @@ async fn hundreds_of_recoveries_leave_exactly_one_set_of_registrations_and_no_gr
         "recoveries={rounds} per_recovery={per_recovery:?} tasks {}->{} rss_kib {}->{} fds {}->{}",
         warm.0, after.0, warm.1, after.1, warm.2, after.2
     );
-    assert!(after.0 <= warm.0 + 4, "tokio tasks grew: {warm:?} -> {after:?}");
-    assert!(after.2 <= warm.2 + 4, "open fds grew: {warm:?} -> {after:?}");
+    assert!(
+        after.0 <= warm.0 + 4,
+        "tokio tasks grew: {warm:?} -> {after:?}"
+    );
+    assert!(
+        after.2 <= warm.2 + 4,
+        "open fds grew: {warm:?} -> {after:?}"
+    );
     assert!(
         after.1 < warm.1 + 64 * 1024,
         "RSS grew by {} KiB over {rounds} recoveries",
@@ -134,9 +140,12 @@ async fn hundreds_of_failed_restarts_leave_nothing_behind() {
     let before = (fault_lab::alive_tasks(), fault_lab::rss_kib(), open_fds());
     lab.set_faults(LAB, &format!("{EVERYTHING}\ncommand panic\nenable panic"));
     let started = Instant::now();
-    tokio::time::timeout(Duration::from_secs(120), lab.commands.dispatch(support::console(), "lab"))
-        .await
-        .expect("300 failed restarts end in a quarantine");
+    tokio::time::timeout(
+        Duration::from_secs(120),
+        lab.commands.dispatch(support::console(), "lab"),
+    )
+    .await
+    .expect("300 failed restarts end in a quarantine");
     let took = started.elapsed();
     let after = (fault_lab::alive_tasks(), fault_lab::rss_kib(), open_fds());
     let tried = fault_lab::count_prefix(&lab.log(LAB), "enable recovered");
@@ -148,8 +157,14 @@ async fn hundreds_of_failed_restarts_leave_nothing_behind() {
     assert_eq!(lab.tasks(LAB), 0, "no failed instance keeps a task");
     assert_eq!(lab.listeners(LAB), 0, "no failed instance keeps a listener");
     assert_eq!(registrations(&lab).commands, baseline.commands);
-    assert!(after.0 <= before.0 + 4, "tokio tasks grew: {before:?} -> {after:?}");
-    assert!(after.2 <= before.2 + 4, "open fds grew: {before:?} -> {after:?}");
+    assert!(
+        after.0 <= before.0 + 4,
+        "tokio tasks grew: {before:?} -> {after:?}"
+    );
+    assert!(
+        after.2 <= before.2 + 4,
+        "open fds grew: {before:?} -> {after:?}"
+    );
     assert!(
         after.1 < before.1 + 64 * 1024,
         "RSS grew by {} KiB over {tried} failed restarts",
@@ -173,9 +188,8 @@ async fn start_a_recovery_loop(lab: &Arc<Lab>) -> tokio::task::JoinHandle<Durati
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-13: queued callbacks served past their deadline"]
 async fn a_queued_call_is_answered_by_its_deadline_while_the_actor_is_stuck_in_a_recovery_loop() {
-    let lab = Arc::new(
-        Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await,
-    );
+    let lab =
+        Arc::new(Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await);
     let looping = start_a_recovery_loop(&lab).await;
 
     let handler = lab.limbo_handler(LAB, faults::LIMBO_HANDLER);
@@ -212,9 +226,8 @@ async fn a_queued_call_is_answered_by_its_deadline_while_the_actor_is_stuck_in_a
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn unloading_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_limit() {
-    let lab = Arc::new(
-        Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await,
-    );
+    let lab =
+        Arc::new(Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await);
     let looping = start_a_recovery_loop(&lab).await;
 
     let started = Instant::now();
@@ -235,9 +248,8 @@ async fn unloading_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_lim
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn disabling_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_limit() {
-    let lab = Arc::new(
-        Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await,
-    );
+    let lab =
+        Arc::new(Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await);
     let looping = start_a_recovery_loop(&lab).await;
 
     let plugin = lab.take(LAB);
@@ -309,7 +321,12 @@ async fn consecutive_quarantines_double_the_backoff_up_to_backoff_max() {
     }
     .with_subscriber(logs.clone())
     .await;
-    assert_eq!(retry_ins(&logs)[..5], ["1s", "2s", "4s", "4s", "4s"], "{:?}", logs.lines());
+    assert_eq!(
+        retry_ins(&logs)[..5],
+        ["1s", "2s", "4s", "4s", "4s"],
+        "{:?}",
+        logs.lines()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -367,7 +384,11 @@ async fn faults_further_apart_than_the_window_never_quarantine() {
     }
     .with_subscriber(logs.clone())
     .await;
-    assert!(logs.matching("quarantined").is_empty(), "{:?}", logs.lines());
+    assert!(
+        logs.matching("quarantined").is_empty(),
+        "{:?}",
+        logs.lines()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -391,7 +412,10 @@ async fn events_queued_for_a_replaced_instance_never_reach_the_fresh_instance() 
     }
     for event in fired {
         assert!(
-            tokio::time::timeout(PROMPTLY, event).await.unwrap().unwrap(),
+            tokio::time::timeout(PROMPTLY, event)
+                .await
+                .unwrap()
+                .unwrap(),
             "every event keeps the result it had"
         );
     }
@@ -424,8 +448,14 @@ async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault(
     }
     println!("{causes:#?}");
     assert!(causes[0].starts_with("enable recovered 1 "), "{causes:?}");
-    assert!(causes[1].starts_with("enable recovered 2 ") && causes[1].contains("max_call_duration"), "{causes:?}");
-    assert!(causes[2].starts_with("enable recovered 3 ") && causes[2].contains("interrupt"), "{causes:?}");
+    assert!(
+        causes[1].starts_with("enable recovered 2 ") && causes[1].contains("max_call_duration"),
+        "{causes:?}"
+    );
+    assert!(
+        causes[2].starts_with("enable recovered 3 ") && causes[2].contains("interrupt"),
+        "{causes:?}"
+    );
     assert!(causes[3].starts_with("enable recovered 4 "), "{causes:?}");
     assert!(
         causes[0].contains("fault-lab: command panics on purpose"),
@@ -540,7 +570,11 @@ async fn a_file_write_a_scheduled_task_made_before_it_trapped_is_on_disk() {
         lab.set_faults(LAB, "");
         tokio::time::sleep(Duration::from_millis(300)).await;
         let log = lab.log(LAB);
-        (fault_lab::count(&log, "task"), fault_lab::count_prefix(&log, "enable recovered"), log)
+        (
+            fault_lab::count(&log, "task"),
+            fault_lab::count_prefix(&log, "enable recovered"),
+            log,
+        )
     }
     .with_subscriber(logs.clone())
     .await;
@@ -556,5 +590,8 @@ async fn a_file_write_a_scheduled_task_made_before_it_trapped_is_on_disk() {
         "{} recoveries follow an instance whose only line is `enable`: the `task` line it wrote before trapping is gone",
         lost.len()
     );
-    assert!(written >= errors, "task lines {written} < task faults {errors}");
+    assert!(
+        written >= errors,
+        "task lines {written} < task faults {errors}"
+    );
 }

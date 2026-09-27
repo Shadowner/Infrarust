@@ -195,12 +195,14 @@ async fn every_fault_kind_in_other_event_families_leaves_their_result_unchanged(
         boxed(async move {
             let event = lab
                 .event_bus
-                .fire(infrarust_api::events::connection::ServerPreConnectEvent::new(
-                    fault_lab::player(1),
-                    infrarust_api::types::ServerId::from("lobby"),
-                    None,
-                    infrarust_api::events::connection::ConnectCause::Initial,
-                ))
+                .fire(
+                    infrarust_api::events::connection::ServerPreConnectEvent::new(
+                        fault_lab::player(1),
+                        infrarust_api::types::ServerId::from("lobby"),
+                        None,
+                        infrarust_api::events::connection::ConnectCause::Initial,
+                    ),
+                )
                 .await;
             match event.result() {
                 infrarust_api::events::connection::ServerPreConnectResult::Allowed => {
@@ -308,7 +310,12 @@ async fn every_fault_kind_in_a_scheduled_task_is_recovered_and_the_next_instance
     drive(&site, &trigger, limits()).await;
 }
 
-fn limbo_site(key: &'static str, op: &'static str, fallback: &'static str, healthy: &'static str) -> Site {
+fn limbo_site(
+    key: &'static str,
+    op: &'static str,
+    fallback: &'static str,
+    healthy: &'static str,
+) -> Site {
     Site {
         key,
         op,
@@ -378,7 +385,12 @@ async fn every_fault_kind_in_the_other_limbo_callbacks_does_nothing_and_recovers
                     .log(LAB)
                     .iter()
                     .any(|line| line.starts_with("enable recovered"));
-                if ran && !recovered { "present" } else { "absent" }.to_owned()
+                if ran && !recovered {
+                    "present"
+                } else {
+                    "absent"
+                }
+                .to_owned()
             })
         };
         drive(&site, &trigger, limits()).await;
@@ -468,7 +480,8 @@ async fn every_fault_kind_in_a_permission_snapshot_gives_the_node_defaults_and_r
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-32: Err from the first on_enable promotes the instance"]
-async fn every_fault_kind_in_the_first_on_enable_fails_the_enable_and_releases_what_it_registered() {
+async fn every_fault_kind_in_the_first_on_enable_fails_the_enable_and_releases_what_it_registered()
+{
     for mode in Mode::TRAPS.into_iter().chain([Mode::Refuse]) {
         let logs = LogCapture::at(Level::INFO);
         async {
@@ -545,7 +558,9 @@ async fn every_fault_kind_in_a_recovery_on_enable_counts_as_a_failed_restart_and
         let failed = logs.matching(FAILED);
         assert_eq!(failed.len(), 3, "{mode:?}: {failed:?}");
         assert!(
-            failed[1..].iter().all(|line| line.contains("op=\"on-enable\"")),
+            failed[1..]
+                .iter()
+                .all(|line| line.contains("op=\"on-enable\"")),
             "{mode:?}: {failed:?}"
         );
         assert_eq!(logs.matching("quarantined").len(), 1, "{mode:?}");
@@ -561,7 +576,10 @@ async fn every_fault_kind_in_on_disable_still_releases_the_plugin_in_bounded_tim
         )
         .await;
         assert!(!lab.codecs.owned_by(LAB).is_empty());
-        lab.set_faults(LAB, &format!("interval 50\nlisten lab-ping\ndisable {}", mode.as_str()));
+        lab.set_faults(
+            LAB,
+            &format!("interval 50\nlisten lab-ping\ndisable {}", mode.as_str()),
+        );
         let plugin = lab.take(LAB);
         let context = Arc::downgrade(&lab.context(LAB));
         let started = Instant::now();
@@ -569,7 +587,10 @@ async fn every_fault_kind_in_on_disable_still_releases_the_plugin_in_bounded_tim
             .await
             .unwrap_or_else(|_| panic!("{mode:?}: on_disable hangs"));
         let took = started.elapsed();
-        assert!(disabled.is_err(), "{mode:?}: the failed on_disable is reported");
+        assert!(
+            disabled.is_err(),
+            "{mode:?}: the failed on_disable is reported"
+        );
         assert!(took < Duration::from_secs(3), "{mode:?}: took {took:?}");
         assert_eq!(lab.listeners(LAB), 0, "{mode:?}");
         assert_eq!(lab.tasks(LAB), 0, "{mode:?}");
@@ -596,7 +617,8 @@ fn chain(lab: &Lab, connection: u64) -> CodecFilterChain {
 
 fn marked(chain: &mut CodecFilterChain) -> bool {
     let mut packet = RawPacket::new(faults::CODEC_MARK_PACKET, Bytes::from_static(b"original"));
-    matches!(chain.process(&mut packet), FilterResult::Pass { .. }) && &packet.data[..] == b"fault-lab"
+    matches!(chain.process(&mut packet), FilterResult::Pass { .. })
+        && &packet.data[..] == b"fault-lab"
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -624,19 +646,32 @@ async fn every_fault_kind_in_a_codec_filter_only_disables_that_connection_side()
             let verdict = filtered.process(&mut packet);
             let filter_took = started.elapsed();
             assert!(matches!(verdict, FilterResult::Pass { .. }), "{mode:?}");
-            assert!(!marked(&mut filtered), "{mode:?}: the trapped instance passes from then on");
-            assert!(marked(&mut healthy), "{mode:?}: other connections keep their filter");
+            assert!(
+                !marked(&mut filtered),
+                "{mode:?}: the trapped instance passes from then on"
+            );
+            assert!(
+                marked(&mut healthy),
+                "{mode:?}: other connections keep their filter"
+            );
             assert!(
                 create_took < Duration::from_secs(2) && filter_took < Duration::from_secs(2),
                 "{mode:?}: create {create_took:?}, filter {filter_took:?}"
             );
         }
-        assert!(logs.matching(RECOVERED).is_empty(), "the main instance is untouched");
+        assert!(
+            logs.matching(RECOVERED).is_empty(),
+            "the main instance is untouched"
+        );
         lab.dispatch("lab").await;
     }
     .with_subscriber(logs.clone())
     .await;
-    assert!(logs.matching(FAILED).is_empty(), "{:?}", logs.matching(FAILED));
+    assert!(
+        logs.matching(FAILED).is_empty(),
+        "{:?}",
+        logs.matching(FAILED)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -667,7 +702,8 @@ async fn a_plugin_whose_metadata_never_returns_does_not_hang_discovery() {
     support::add_fixture(tmp.path(), "metadata-sleep", "metadata-sleep");
     let loader = support::loader_from_toml(LIMITS);
     let started = Instant::now();
-    let discovered = tokio::time::timeout(Duration::from_secs(20), loader.discover(tmp.path())).await;
+    let discovered =
+        tokio::time::timeout(Duration::from_secs(20), loader.discover(tmp.path())).await;
     assert!(
         discovered.is_ok(),
         "discovery is still waiting on metadata() after {:?}",
@@ -689,6 +725,8 @@ async fn a_plugin_whose_metadata_traps_does_not_fail_the_plugin_manager_discover
     assert!(
         discovered.is_ok(),
         "one plugin whose metadata() traps fails the whole discovery, so the proxy does not start: {:?}",
-        discovered.err().map(|e| e.to_string().chars().take(200).collect::<String>())
+        discovered
+            .err()
+            .map(|e| e.to_string().chars().take(200).collect::<String>())
     );
 }

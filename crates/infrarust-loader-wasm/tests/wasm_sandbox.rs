@@ -30,11 +30,9 @@ struct SecProbe {
 
 async fn enable_sec(grants: &[&str], proxy_toml: &str) -> SecProbe {
     let (tmp, plugins_dir) = stage(SEC);
-    let options = grants
-        .iter()
-        .fold(EnvOptions::default(), |options, grant| {
-            options.grant(SEC, grant)
-        });
+    let options = grants.iter().fold(EnvOptions::default(), |options, grant| {
+        options.grant(SEC, grant)
+    });
     let env = make_env_with(plugins_dir.clone(), options);
     let loader = loader_from_toml(proxy_toml);
     loader.discover(&plugins_dir).await.unwrap();
@@ -115,7 +113,10 @@ async fn an_ephemeral_udp_socket_does_not_receive_from_an_unlisted_source() {
         .rsplit_once(':')
         .map(|(_, port)| port.to_owned())
         .unwrap_or_default();
-    assert!(!port.is_empty(), "the guest reported its bound port: {bound:?}");
+    assert!(
+        !port.is_empty(),
+        "the guest reported its bound port: {bound:?}"
+    );
 
     let source = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     for _ in 0..20 {
@@ -150,11 +151,7 @@ async fn a_plugin_cannot_listen_on_ipv6_by_default() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_exact_ipv6_rule_lets_a_plugin_listen_on_that_address() {
     let port = free_port();
-    let probe = enable_probe(
-        &["network"],
-        &network_toml(&[format!("[::1]:{port}")], ""),
-    )
-    .await;
+    let probe = enable_probe(&["network"], &network_toml(&[format!("[::1]:{port}")], "")).await;
     assert_eq!(
         probe.run(&format!("listen [::1]:{port}")).await,
         format!("ok [::1]:{port}")
@@ -166,7 +163,10 @@ async fn an_exact_ipv6_rule_lets_a_plugin_listen_on_that_address() {
 async fn an_ephemeral_bind_does_not_let_a_plugin_listen() {
     let probe = enable_probe(&["network"], &network_toml(&["0.0.0.0/0:*".to_owned()], "")).await;
     let bound = probe.run("udp-bind 0.0.0.0:0").await;
-    assert!(bound.starts_with("ok "), "an ephemeral UDP bind is allowed: {bound}");
+    assert!(
+        bound.starts_with("ok "),
+        "an ephemeral UDP bind is allowed: {bound}"
+    );
     assert_eq!(probe.run("listen 0.0.0.0:0").await, DENIED);
     assert_eq!(probe.run("listen [::]:0").await, DENIED);
 }
@@ -354,7 +354,11 @@ async fn a_plugin_cannot_unregister_another_plugins_command() {
 async fn a_plugin_cannot_unregister_another_plugins_codec_filter() {
     let world = enable_world(&[(SEC, &["codec-filter"]), ("net-codec", &["codec-filter"])]).await;
     assert!(
-        world.env.codec_registry.owned_by("net-codec").contains(&"reach".to_owned()),
+        world
+            .env
+            .codec_registry
+            .owned_by("net-codec")
+            .contains(&"reach".to_owned()),
         "net-codec owns the reach filter"
     );
 
@@ -364,7 +368,11 @@ async fn a_plugin_cannot_unregister_another_plugins_codec_filter() {
         "unregistering another plugin's codec filter must fail: {outcome}"
     );
     assert!(
-        world.env.codec_registry.owned_by("net-codec").contains(&"reach".to_owned()),
+        world
+            .env
+            .codec_registry
+            .owned_by("net-codec")
+            .contains(&"reach".to_owned()),
         "net-codec still owns reach after the forged unregister attempt"
     );
 }
@@ -466,7 +474,9 @@ async fn a_baseline_plugin_reads_every_other_plugins_config() {
         !dump.contains("TOP-SECRET-TOKEN"),
         "config-read is baseline, yet a plugin dumped another plugin's secret from the whole proxy config: {dump}"
     );
-    let value = probe.run("config-get plugins.secret-plugin.api_token").await;
+    let value = probe
+        .run("config-get plugins.secret-plugin.api_token")
+        .await;
     assert!(
         !value.contains("TOP-SECRET-TOKEN"),
         "a plugin read another plugin's config value: {value}"
@@ -476,7 +486,9 @@ async fn a_baseline_plugin_reads_every_other_plugins_config() {
 #[tokio::test(flavor = "multi_thread")]
 async fn writing_the_proxy_config_needs_config_write() {
     let probe = enable_sec(&[], "").await;
-    let outcome = probe.run("config-write [proxy]\\nbind=\\\"0.0.0.0:1\\\"").await;
+    let outcome = probe
+        .run("config-write [proxy]\\nbind=\\\"0.0.0.0:1\\\"")
+        .await;
     assert_eq!(
         outcome, "err ErrorKind::PermissionDenied",
         "write-proxy-config-document without config-write must be refused"
