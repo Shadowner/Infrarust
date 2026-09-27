@@ -65,6 +65,7 @@ enum Command {
 #[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    infrarust_core::terminal::color::init();
 
     if let Some(Command::Migrate {
         input,
