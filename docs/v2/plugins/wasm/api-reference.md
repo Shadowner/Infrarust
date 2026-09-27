@@ -53,7 +53,7 @@ world plugin {
 |--------|-----------------|---------|
 | `types` | none | Shared ids, errors, profiles, addresses and the text-component arena. |
 | `events` | none | The event records, results and the `event` / `event-outcome` variants, and the three reads of the ping being handled. |
-| `log` | none | `trace`/`debug`/`info`/`warn`/`error` to the host log. |
+| `log` | none | `trace`/`debug`/`info`/`warn`/`error` to the host log, and the most verbose level the proxy logs. |
 | `text` | none | Parse and serialize text components with the proxy's own parser. |
 | `event-bus` | `event-bus` (`chat-intercept` for `chat-message` and `command-execute`, `plugin-messaging` for `plugin-message`, `raw-packet` for packets) | Subscribe to event kinds, named events and packets by priority; fire named events. |
 | `players` | `player-read`, `player-write` for actions, `raw-packet` for `send-packet` | Look up players by id, name or UUID, and act on them by id. |
@@ -1054,6 +1054,9 @@ interface text {
 
 ```wit
 interface log {
+    enum level { error, warn, info, debug, trace }
+
+    max-level: func() -> option<level>;
     trace: func(message: string);
     debug: func(message: string);
     info: func(message: string);
@@ -1399,7 +1402,8 @@ interface providers {
 - `config-service` document functions mirror the native `ConfigService` and redact every secret. They also hide the other plugins' `[plugins.<id>]` blocks: the proxy documents keep only the caller's own block, and `get-value` on a key under another plugin answers `permission-denied` (see [Capabilities](./capabilities#config-read-sees-only-the-plugin-s-own-block)). `write-proxy-config-document` needs `config-write`; it puts the hidden blocks back before writing and answers `permission-denied` for a document that carries another plugin's block; a document that does not parse or validate answers `invalid-argument`, a failed write `unavailable`.
 - `load-balancer` mirrors the native `LoadBalancerService`; an unknown server or address answers `not-found`.
 - `messaging` takes a `channel-id` with a modern id, a legacy name or both, validated by the host (`invalid-argument` otherwise). `send-to-server` answers how many players could carry the message and `unavailable` when none could.
-- `proxy-info` and `plugin-registry` are always linked and never refuse: `granted-capabilities` lists what the plugin holds.
+- `log.max-level` answers the most verbose level the proxy logs anywhere, or `none` when it logs nothing. A line at a less verbose level than that can still be filtered out by the proxy's per-target filter, so the answer only rules lines out. The SDK asks once per instance and tests every log macro against the answer before it formats the message; a guest that calls `trace` and the others directly pays for the string it sends even when the proxy drops it. The proxy's log filter is fixed when it starts, so a plugin never needs to ask again. A panic line (`error` starting with `panicked at `) is sent whatever the level: the host keeps it as the cause of the fault.
+- `proxy-info` and `plugin-registry` are always linked and never refuse: `granted-capabilities` lists what the plugin holds. `plugin-info.health` is the health of a WASM plugin (`recovering` and `quarantined` carry the time until the next attempt when one is scheduled) and `none` for a native plugin; `state` is the lifecycle state of any plugin.
 - The `ban-service` records from `login-stage` to `ban-record-page` are the provider side of bans: what the host hands a ban provider and what it answers. `ban-record` carries a typed `ban-source` where the consumer-side `ban-entry` carries its display string. See [Bans](./bans).
 - `permissions.set-snapshot` replaces the snapshot of a player who holds one from this plugin (answered `not-found` otherwise, `player-gone` when the player is offline, `invalid-argument` above 65,536 rules) and refreshes the player's command tree. `release` clears it back to the node defaults and forgets it; releasing a player the plugin holds nothing for succeeds. See [Permissions](./permissions).
 - `providers.register-*` register the plugin as the provider named by `[ban] provider` or `[permissions] provider`. A plugin that is not the selected one is answered `conflict`. Registering again, for example from a recovered instance, keeps the first registration and succeeds.

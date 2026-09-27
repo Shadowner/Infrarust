@@ -446,7 +446,9 @@ warn!("retrying {attempt}/{max}");
 error!("failed: {err}");
 ```
 
-An `error` line that starts with `panicked at ` is taken as the message of a panic about to trap the plugin: the host logs it at `debug` and puts it in the cause of the fault instead. The SDK's panic hook sends such a line; see [The cause](./fault-model#the-cause).
+A macro whose level the proxy does not log formats nothing and makes no host call: the SDK asks the proxy once per instance for the most verbose level it logs (`log::max_level()`) and each macro compares its level with the answer first, which costs about a nanosecond. A line at an enabled level is formatted in the guest and sent to the host, which can still drop it under a per-target filter such as `RUST_LOG=info,infrarust_core=trace`. `log::enabled(Level::Debug)` answers the same question for code that builds an expensive message by hand. The proxy's log filter is set when it starts; the answer does not change while it runs.
+
+An `error` line that starts with `panicked at ` is taken as the message of a panic about to trap the plugin: the host logs it at `debug` and puts it in the cause of the fault instead. The SDK's panic hook sends such a line whatever the level; see [The cause](./fault-model#the-cause).
 
 ## Text components
 

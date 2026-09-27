@@ -238,7 +238,7 @@ A codec filter instance runs in its own synchronous store, separate from the plu
 
 | Import | Behaviour inside a filter |
 |--------|---------------------------|
-| `log` (`info!` and the other macros) | Written to the proxy log with the plugin id, at most 20 lines per second for all the plugin's filter instances together. Lines over the limit are dropped; the next line that gets through carries a `suppressed` count. A level the proxy does not log costs nothing and does not use up the budget. |
+| `log` (`info!` and the other macros) | Written to the proxy log with the plugin id, at most 20 lines per second for all the plugin's filter instances together. Lines over the limit are dropped; the next line that gets through carries a `suppressed` count. A macro at a level the proxy does not log formats nothing, makes no host call and does not use up the budget: the SDK asks the host for the proxy's level once when the instance is created, and each macro only compares its level with the answer. A line at a logged level costs its formatting and one host call. |
 | `wasi:clocks` wall and monotonic clocks | `now` and `resolution` work, so `Instant::now()` and `SystemTime::now()` do. |
 | `wasi:random` (`random`, `insecure`, `insecure-seed`) | Work, so `HashMap::new()` (its `RandomState` asks for a seed) and random numbers do. |
 | `wasi:cli/environment` | Empty environment, no arguments, no working directory. |
