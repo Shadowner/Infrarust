@@ -670,3 +670,50 @@ async fn a_hold_whose_session_went_on_to_another_limbo_is_forgotten() {
         held.completions()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_that_cannot_be_instantiated_again_waits_between_attempts() {
+    let logs = LogCapture::at(Level::ERROR);
+    async {
+        let lab = Lab::start(
+            vec![LabPlugin::lab("command panic")],
+            options("[wasm.recovery]\nmax_restarts = 5\nbackoff_initial = \"400ms\"\n"),
+        )
+        .await;
+        let data = lab.data(LAB);
+        std::fs::rename(&data, data.with_extension("moved")).unwrap();
+        std::fs::write(&data, b"a file where the data directory was").unwrap();
+
+        lab.dispatch("lab").await;
+        let attempts = logs.matching("fresh instance").len();
+        assert_eq!(
+            attempts,
+            1,
+            "one failed attempt, then a pause before the next: {:?}",
+            logs.lines()
+        );
+        let refused = lab.dispatch("lab").await;
+        assert!(
+            refused < Duration::from_millis(200),
+            "a call during the pause is answered at once: {refused:?}"
+        );
+        assert_eq!(logs.matching("fresh instance").len(), 1);
+
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let attempts = logs.matching("fresh instance").len();
+        assert!(
+            (2..=3).contains(&attempts),
+            "the next attempt comes after the pause: {:?}",
+            logs.lines()
+        );
+        assert!(
+            logs.matching("could not create a fresh instance")
+                .iter()
+                .all(|line| !line.contains("discarding it")),
+            "{:?}",
+            logs.lines()
+        );
+    }
+    .with_subscriber(logs.clone())
+    .await;
+}

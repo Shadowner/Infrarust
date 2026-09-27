@@ -27,9 +27,16 @@ enum Health {
     Starting(LiveInstance),
     Healthy(LiveInstance),
     Recovering,
+    Paused { until: Instant },
     Quarantined { until: Instant },
     Failed,
     Halted,
+}
+
+enum Restarted {
+    Enabled,
+    Faulted,
+    Unavailable(WasmLoaderError),
 }
 
 #[derive(Debug)]
@@ -55,7 +62,6 @@ pub(crate) enum Fault {
     Overran(Duration),
     PastDeadline(CallKind),
     Refused(String),
-    Unavailable(WasmLoaderError),
 }
 
 impl fmt::Display for Fault {
@@ -73,7 +79,6 @@ impl fmt::Display for Fault {
                 "the call ran past its deadline (max_call_duration after it was queued)",
             ),
             Self::Refused(message) => write!(f, "on_enable returned an error: {message}"),
-            Self::Unavailable(error) => write!(f, "no fresh instance could be created: {error}"),
         }
     }
 }
@@ -186,7 +191,7 @@ impl Supervisor {
 
     pub(crate) fn retry_at(&self) -> Option<Instant> {
         match self.health {
-            Health::Quarantined { until } => Some(until),
+            Health::Paused { until } | Health::Quarantined { until } => Some(until),
             _ => None,
         }
     }
@@ -217,7 +222,7 @@ impl Supervisor {
         let limit = self.factory.sandbox().max_call_duration;
         let live = match &mut self.health {
             Health::Starting(live) | Health::Healthy(live) => live,
-            Health::Recovering | Health::Quarantined { .. } => {
+            Health::Recovering | Health::Paused { .. } | Health::Quarantined { .. } => {
                 call.refuse(CallFailure::Quarantined);
                 return ControlFlow::Continue(());
             }
@@ -270,12 +275,13 @@ impl Supervisor {
         if self.halted() {
             return;
         }
+        let granted = matches!(self.health, Health::Paused { .. });
         self.health = Health::Recovering;
-        self.budget.retry(Instant::now());
-        let chain = CallChain::default().with(self.factory.plugin_id());
-        if !self.restart(&chain).await {
-            self.recover(&chain).await;
+        if !granted {
+            self.budget.retry(Instant::now());
         }
+        let chain = CallChain::default().with(self.factory.plugin_id());
+        self.attempt(&chain).await;
     }
 
     fn halted(&mut self) -> bool {
@@ -321,7 +327,7 @@ impl Supervisor {
         let limit = self.factory.sandbox().max_call_duration;
         let live = match &mut self.health {
             Health::Starting(live) | Health::Healthy(live) => live,
-            Health::Recovering | Health::Quarantined { .. } => {
+            Health::Recovering | Health::Paused { .. } | Health::Quarantined { .. } => {
                 call.refuse(CallFailure::Quarantined);
                 return;
             }
@@ -370,40 +376,71 @@ impl Supervisor {
     }
 
     async fn recover(&mut self, chain: &CallChain) {
-        loop {
-            if self.halted() {
-                return;
+        if self.granted() {
+            self.attempt(chain).await;
+        }
+    }
+
+    fn granted(&mut self) -> bool {
+        if self.halted() {
+            return false;
+        }
+        match self.budget.after_fault(Instant::now()) {
+            Verdict::Restart => true,
+            Verdict::Quarantine { until, backoff } => {
+                let policy = self.budget.policy();
+                tracing::warn!(plugin = %self.factory.plugin_id(),
+                    restarts = self.budget.restarts_in_window(),
+                    max_restarts = policy.max_restarts, window = ?policy.window,
+                    retry_in = ?backoff,
+                    "wasm plugin quarantined: it kept failing; retrying after the backoff");
+                self.health = Health::Quarantined { until };
+                false
             }
-            match self.budget.after_fault(Instant::now()) {
-                Verdict::Restart => {
-                    if self.restart(chain).await {
+        }
+    }
+
+    async fn attempt(&mut self, chain: &CallChain) {
+        loop {
+            match self.restart(chain).await {
+                Restarted::Enabled => return,
+                Restarted::Faulted => {
+                    if !self.granted() {
                         return;
                     }
                 }
-                Verdict::Quarantine { until, backoff } => {
-                    let policy = self.budget.policy();
-                    tracing::warn!(plugin = %self.factory.plugin_id(),
-                        restarts = self.budget.restarts_in_window(),
-                        max_restarts = policy.max_restarts, window = ?policy.window,
-                        retry_in = ?backoff,
-                        "wasm plugin quarantined: it kept failing; retrying after the backoff");
-                    self.health = Health::Quarantined { until };
+                Restarted::Unavailable(error) => {
+                    self.unavailable(&error);
                     return;
                 }
             }
         }
     }
 
-    async fn restart(&mut self, chain: &CallChain) -> bool {
+    fn unavailable(&mut self, error: &WasmLoaderError) {
+        let plugin = self.factory.plugin_id().to_owned();
+        let generation = self.generation;
+        if !self.granted() {
+            tracing::error!(plugin = %plugin, generation, %error,
+                "wasm plugin recovery could not create a fresh instance");
+            return;
+        }
+        let pause = self.budget.policy().backoff_initial;
+        tracing::error!(plugin = %plugin, generation, %error, retry_in = ?pause,
+            "wasm plugin recovery could not create a fresh instance; trying again after a pause");
+        let now = Instant::now();
+        self.health = Health::Paused {
+            until: now.checked_add(pause).unwrap_or(now + FAR_FUTURE),
+        };
+    }
+
+    async fn restart(&mut self, chain: &CallChain) -> Restarted {
         self.generation += 1;
         let generation = self.generation;
         let instance = self.instance.stamped(generation);
         let mut live = match self.factory.instantiate(generation, instance).await {
             Ok(live) => live,
-            Err(error) => {
-                self.report("instantiate", &Fault::Unavailable(error));
-                return false;
-            }
+            Err(error) => return Restarted::Unavailable(error),
         };
         let limit = self.factory.sandbox().max_call_duration;
         let reason = EnableReason::Recovered(RecoveryInfo {
@@ -430,13 +467,13 @@ impl Supervisor {
                 self.health = Health::Healthy(live);
                 self.instance.access().set_serving(true);
                 self.drop_guards();
-                true
+                Restarted::Enabled
             }
             Err(fault) => {
                 self.report("on-enable", &fault);
                 self.last_fault = fault.to_string();
                 self.discard(live);
-                false
+                Restarted::Faulted
             }
         }
     }
