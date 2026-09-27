@@ -150,7 +150,6 @@ async fn a_guest_can_fill_its_data_dir_without_a_quota() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-03: plugin id not validated by the host"]
 async fn a_hostile_plugin_id_cannot_place_the_data_dir_outside_plugins_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let plugins_dir = tmp.path().join("plugins");

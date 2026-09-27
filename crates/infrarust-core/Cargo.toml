@@ -33,6 +33,7 @@ test-support = ["infrarust-api/test-util"]
 
 [dependencies]
 infrarust-api = { workspace = true, features = ["serde"] }
+infrarust-plugin-common = { workspace = true }
 infrarust_config = { workspace = true }
 infrarust_protocol = { workspace = true }
 infrarust-transport = { workspace = true }

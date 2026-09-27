@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use infrarust_plugin_common::validate_plugin_id;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::command::CommandManager;
@@ -44,6 +45,8 @@ use super::tracking::{
     TrackingCodecFilterRegistry, TrackingCommandManager, TrackingEventBus, TrackingScheduler,
     TrackingTransportFilterRegistry,
 };
+
+const UNUSABLE_DATA_DIR: &str = ".invalid-plugin-id";
 
 pub struct HostRegistries {
     pub ban_manager: Option<Arc<BanManager>>,
@@ -371,6 +374,13 @@ impl PluginContext for PluginContextImpl {
     }
 
     fn data_dir(&self) -> PathBuf {
+        if let Err(invalid) = validate_plugin_id(&self.plugin_id) {
+            tracing::error!(
+                error = %invalid,
+                "No data directory for a plugin whose id breaks the plugin id rule"
+            );
+            return self.plugins_dir.join(UNUSABLE_DATA_DIR);
+        }
         let dir = self.plugins_dir.join(&self.plugin_id);
         if let Err(e) = std::fs::create_dir_all(&dir) {
             tracing::warn!(

@@ -172,6 +172,47 @@ fn data_dir_creates_missing_plugins_dir_too() {
 }
 
 #[test]
+fn data_dir_never_joins_an_id_that_breaks_the_plugin_id_rule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins_dir = tmp.path().join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    let outside = tmp.path().join("outside");
+    let hostile = [
+        "../escape".to_owned(),
+        "..".to_owned(),
+        outside.display().to_string(),
+        ".cache".to_owned(),
+        "a/b".to_owned(),
+        "Upper".to_owned(),
+        String::new(),
+    ];
+    let f = factory_in(&plugins_dir, Vec::new());
+    for id in &hostile {
+        let dir = f.context(id).data_dir();
+        assert!(
+            dir.starts_with(&plugins_dir) && dir != plugins_dir,
+            "{id:?} got {}",
+            dir.display()
+        );
+        assert!(!dir.exists(), "{id:?} created {}", dir.display());
+    }
+    let created: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        created,
+        ["plugins"],
+        "nothing is created next to plugins_dir"
+    );
+    assert_eq!(
+        std::fs::read_dir(&plugins_dir).unwrap().count(),
+        0,
+        "nothing is created inside plugins_dir either"
+    );
+}
+
+#[test]
 fn data_dir_is_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     let f = factory_in(tmp.path(), vec![("p", perms(&[], false))]);

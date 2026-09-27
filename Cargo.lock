@@ -1960,6 +1960,7 @@ dependencies = [
  "humantime",
  "infrarust-api",
  "infrarust-core",
+ "infrarust-plugin-common",
  "infrarust-transport",
  "infrarust_config",
  "infrarust_protocol",
