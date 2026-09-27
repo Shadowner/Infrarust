@@ -30,109 +30,93 @@ STD_TYPES = {
 NATIVE = "native infrarust / loader host code, not guest SDK code"
 
 SPEC = {
-    "getting-started.md:96": {"mode": "items", "prepend": "#[derive(Default)]\nstruct MyPlugin;",
-                              "replace": [["/* ... */", "fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> { Ok(()) }"]]},
-    "getting-started.md:113": {"mode": "plugin_items", "decl_body": "{ Ok(()) }"},
-    "getting-started.md:123": {"mode": "enable"},
-    "getting-started.md:135": {"mode": "enable"},
-    "index.md:78": {"mode": "enable"},
-    "index.md:92": {"mode": "enable"},
-    "index.md:125": {"mode": "enable"},
-    "events.md:34": {"mode": "decl", "owner": "Context"},
-    "events.md:52": {"mode": "enable"},
-    "events.md:82": {"mode": "enable"},
-    "events.md:158": {"mode": "enable"},
-    "events.md:170": {"mode": "enable"},
-    "events.md:192": {"mode": "enable"},
-    "events.md:205": {"mode": "enable"},
-    "events.md:229": {"mode": "enable"},
-    "events.md:247": {"mode": "full", "note": "verbatim: `append` is defined only on examples.md, not on this page"},
-    "commands.md:56": {"mode": "enable",
-                       "extra": "fn warp(_invocation: &CommandInvocation) {}\nfn complete_warps(_partial: &str) -> Vec<String> { Vec::new() }",
-                       "note": "helpers `warp` and `complete_warps` are not defined on the page; stubs added"},
-    "commands.md:77": {"mode": "decl"},
-    "commands.md:95": {"mode": "enable"},
-    "commands.md:110": {"mode": "enable", "prefix": "ctx.command(\"greet\")", "suffix": ".register()?;"},
-    "commands.md:126": {"mode": "enable", "extra": "fn start_event() {}",
-                        "note": "helper `start_event` is not defined on the page; stub added"},
-    "services.md:67": {"mode": "decl"},
-    "services.md:89": {"mode": "enable"},
-    "services.md:101": {"mode": "decl"},
-    "services.md:138": {"mode": "enable"},
-    "services.md:179": {"mode": "fn", "params": "player: Player"},
-    "services.md:196": {"mode": "decl"},
-    "services.md:207": {"mode": "enable"},
-    "services.md:218": {"mode": "decl"},
-    "services.md:248": {"mode": "enable"},
-    "services.md:279": {"mode": "enable"},
-    "services.md:296": {"mode": "decl"},
-    "services.md:306": {"mode": "enable"},
-    "services.md:314": {"mode": "decl"},
-    "services.md:332": {"mode": "decl"},
-    "services.md:347": {"mode": "decl"},
-    "services.md:360": {"mode": "enable"},
-    "services.md:370": {"mode": "decl"},
-    "services.md:387": {"mode": "enable"},
-    "services.md:401": {"mode": "decl", "owner": "Context"},
-    "services.md:415": {"mode": "enable"},
-    "services.md:428": {"mode": "fn", "params": "id: i32, state: &str, name: &str, attempt: u32, max: u32, err: Error"},
-    "services.md:440": {"mode": "fn", "params": "player: Player"},
-    "services.md:466": {"mode": "enable"},
-    "limbo.md:80": {"mode": "decl"},
-    "limbo.md:115": {"mode": "decl"},
-    "limbo.md:130": {"mode": "decl"},
-    "limbo.md:141": {"mode": "impl_items", "trait": "LimboHandler"},
-    "limbo.md:172": {"mode": "decl"},
-    "limbo.md:201": {"mode": "items"},
-    "limbo.md:244": {"mode": "decl"},
-    "limbo.md:284": {"mode": "items"},
-    "messaging.md:35": {"mode": "enable"},
-    "messaging.md:140": {"mode": "enable"},
-    "messaging.md:198": {"mode": "items"},
-    "permissions.md:21": {"mode": "enable"},
-    "permissions.md:50": {"mode": "enable"},
-    "permissions.md:127": {"mode": "fn", "params": "player: Player"},
-    "permissions.md:152": {"mode": "enable", "prefix": "let groups = Groups::default();",
-                           "extra": "#[derive(Clone, Default)]\nstruct Groups(Rc<RefCell<HashMap<String, PermissionSnapshot>>>);\n\nimpl Groups {\n    fn of(&self, username: &str) -> PermissionSnapshot {\n        self.0.borrow().get(username).cloned().unwrap_or_default()\n    }\n}",
-                           "note": "`groups` is the `Groups` provider of permissions.md:76, copied in"},
-    "codec-filters.md:75": {"mode": "enable"},
-    "codec-filters.md:87": {"mode": "items"},
-    "codec-filters.md:123": {"mode": "decl"},
-    "codec-filters.md:162": {"mode": "fn", "params": "packet: &mut Packet, packet_id: i32",
-                             "scoped_let": "let bytes: Vec<u8> = Vec::new();"},
-    "codec-filters.md:187": {"mode": "fn", "params": "out: &mut Injections"},
-    "codec-filters.md:196": {"mode": "items", "extra": "struct OpFilter;"},
-    "codec-filters.md:249": {"mode": "items"},
-    "lifecycle.md:39": {"mode": "skip", "reason": NATIVE},
-    "lifecycle.md:64": {"mode": "skip", "reason": NATIVE},
-    "lifecycle.md:99": {"mode": "skip", "reason": NATIVE},
-    "lifecycle.md:124": {"mode": "skip", "reason": NATIVE},
-    "lifecycle.md:140": {"mode": "skip", "reason": NATIVE},
-    "lifecycle.md:159": {"mode": "decl"},
-    "lifecycle.md:172": {"mode": "plugin_items"},
-    "network.md:152": {"mode": "full", "deps": {"wasip2": "\"1.0\""}},
-    "capabilities.md:17": {"mode": "skip", "reason": NATIVE},
-    "capabilities.md:78": {"mode": "skip", "reason": NATIVE},
-    "capabilities.md:92": {"mode": "skip", "reason": NATIVE},
-    "capabilities.md:112": {"mode": "skip", "reason": NATIVE},
-    "capabilities.md:140": {"mode": "skip", "reason": NATIVE},
-    "capabilities.md:191": {"mode": "skip", "reason": "raw wit-bindgen bindings of the capability-denied fixture, not the SDK"},
-    "capabilities.md:323": {"mode": "skip", "reason": NATIVE},
-    "migration-0.3.md:30": {"mode": "plugin_items", "after_marker": "// 0.3.0",
-                            "note": "only the 0.3.0 half; the 0.2.3 half is deliberately old code"},
-    "migration-0.3.md:150": {"mode": "fn", "params": "invocation: CommandInvocation, reply: String",
-                             "after_marker": "// 0.3.0",
-                             "note": "only the 0.3.0 half; the 0.2.3 half is deliberately old code"},
-    "threading.md:103": {"mode": "enable"},
-    "threading.md:113": {"mode": "enable"},
-    "virtual-backend.md:31": {"mode": "skip", "reason": NATIVE},
-    "virtual-backend.md:56": {"mode": "skip", "reason": NATIVE},
-    "virtual-backend.md:92": {"mode": "skip", "reason": NATIVE},
-    "building.md:100": {"mode": "items"},
-    "building.md:209": {"mode": "full", "deps": {"infrarust-plugin-stats": "{ path = \"%s\" }" % (ROOT / "plugins" / "infrarust-plugin-stats")}},
-    "building.md:244": {"mode": "skip", "reason": NATIVE},
-    "deploying.md:36": {"mode": "plugin_items", "attr": "#[plugin]"},
-    "architecture.md:136": {"mode": "plugin_items", "decl_body": "{ Ok(()) }"},
+    "getting-started.md: description = \"Logs joins, adds /hello\",": {
+        "mode": "items", "prepend": "#[derive(Default)]\nstruct MyPlugin;",
+        "replace": [["/* ... */", "fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> { Ok(()) }"]]},
+    "getting-started.md: fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;": {
+        "mode": "plugin_items", "decl_body": "{ Ok(()) }"},
+    "events.md: pub fn on<E: GuestEvent>(": {"mode": "decl", "owner": "Context"},
+    "commands.md: let registration = ctx": {
+        "mode": "enable",
+        "extra": "fn warp(_invocation: &CommandInvocation) {}\nfn complete_warps(_partial: &str) -> Vec<String> { Vec::new() }",
+        "note": "helpers `warp` and `complete_warps` are not defined on the page; stubs added"},
+    "commands.md: pub struct CommandInvocation {": {"mode": "decl"},
+    "commands.md: .map(|candidate| Suggestion::new(candidate).with_tooltip(\"greet them\"))": {
+        "mode": "enable", "prefix": "ctx.command(\"greet\")", "suffix": ".register()?;"},
+    "commands.md: let event = ctx.command(\"event\").handler(|_| start_event()).register()?;": {
+        "mode": "enable", "extra": "fn start_event() {}",
+        "note": "helper `start_event` is not defined on the page; stub added"},
+    "services.md: pub struct Error {": {"mode": "decl"},
+    "services.md: impl Players {": {"mode": "decl"},
+    "services.md: let bar = player.show_boss_bar(": {"mode": "fn", "params": "player: Player"},
+    "services.md: impl Servers {": {"mode": "decl"},
+    "services.md: pub enum BanTarget {": {"mode": "decl"},
+    "services.md: pub fn get(key: &str) -> Result<Option<String>, Error>;": {"mode": "decl"},
+    "services.md: pub fn server_document(server: &ServerId) -> Result<Option<String>, Error>;": {"mode": "decl"},
+    "services.md: impl LoadBalancer {": {"mode": "decl"},
+    "services.md: impl Messaging {": {"mode": "decl"},
+    "services.md: impl Proxy {": {"mode": "decl"},
+    "services.md: pub fn delay(&self, after: Duration, task: impl FnOnce() + 'static) -> Result<TaskHandle, Error>;": {
+        "mode": "decl", "owner": "Context"},
+    "services.md: trace!(\"inbound packet {id}\");": {
+        "mode": "fn", "params": "id: i32, state: &str, name: &str, attempt: u32, max: u32, err: Error"},
+    "services.md: let message = Component::text(\"Server: \")": {"mode": "fn", "params": "player: Player"},
+    "limbo.md: pub trait LimboHandler {": {"mode": "decl"},
+    "limbo.md: pub enum HandlerOutcome {": {"mode": "decl"},
+    "limbo.md: pub enum TimeoutOutcome {": {"mode": "decl"},
+    "limbo.md: .send_message(Component::text(\"Type /continue within 5s\"))": {
+        "mode": "impl_items", "trait": "LimboHandler"},
+    "limbo.md: pub enum EntryContext {": {"mode": "decl"},
+    "limbo.md: struct DelayedGate;": {"mode": "items"},
+    "limbo.md: pub enum SessionEndReason {": {"mode": "decl"},
+    "limbo.md: struct Boom;": {"mode": "items"},
+    "messaging.md: fn register_bungeecord(ctx: &Context) -> Result<(), PluginError> {": {"mode": "items"},
+    "permissions.md: let promoted = PermissionSnapshot::new().grant(\"warps.*\");": {
+        "mode": "fn", "params": "player: Player"},
+    "permissions.md: let groups = Groups::load();": {
+        "mode": "plugin_items",
+        "extra": "#[derive(Clone, Default)]\nstruct Groups(Rc<RefCell<HashMap<String, PermissionSnapshot>>>);\n\nimpl Groups {\n    fn load() -> Self {\n        Self::default()\n    }\n\n    fn of(&self, username: &str) -> PermissionSnapshot {\n        self.0.borrow().get(username).cloned().unwrap_or_default()\n    }\n}\n\nimpl PermissionProvider for Groups {\n    fn snapshot_for(&self, _subject: &PermissionSubject) -> PermissionSnapshot {\n        PermissionSnapshot::new()\n    }\n}",
+        "note": "the `Groups` provider of the page, with a stub `Groups::load`, copied in"},
+    "codec-filters.md: struct Counter {": {"mode": "items"},
+    "codec-filters.md: pub trait CodecFilter {": {"mode": "decl"},
+    "codec-filters.md: packet.id();": {
+        "mode": "fn", "params": "packet: &mut Packet, packet_id: i32",
+        "scoped_let": "let bytes: Vec<u8> = Vec::new();"},
+    "codec-filters.md: ^out.before(Packet::new(0xfe, b\"before\".to_vec()));": {
+        "mode": "fn", "params": "out: &mut Injections"},
+    "codec-filters.md: impl CodecFilter for OpFilter {": {"mode": "items", "extra": "struct OpFilter;"},
+    "codec-filters.md: struct Tally {": {"mode": "items"},
+    "lifecycle.md: // AotCache::cache_key in cache.rs": {"mode": "skip", "reason": NATIVE},
+    "lifecycle.md: let wit_md = bindings": {"mode": "skip", "reason": NATIVE},
+    "lifecycle.md: // load in loader.rs": {"mode": "skip", "reason": NATIVE},
+    "lifecycle.md: // InstanceFactory in instance.rs": {"mode": "skip", "reason": NATIVE},
+    "lifecycle.md: // SDK guest trait (infrarust-plugin-sdk)": {"mode": "decl"},
+    "lifecycle.md: fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {": {"mode": "plugin_items"},
+    "network.md: use std::io::{Read, Write};": {"mode": "full", "deps": {"wasip2": "\"1.0\""}},
+    "capabilities.md: // crates/infrarust-api/src/permissions.rs": {"mode": "skip", "reason": NATIVE},
+    "capabilities.md: pub fn baseline() -> Self {": {"mode": "skip", "reason": NATIVE},
+    "capabilities.md: pub fn native_trusted() -> Self {": {"mode": "skip", "reason": NATIVE},
+    "capabilities.md: pub fn from_config_strings(": {"mode": "skip", "reason": NATIVE},
+    "capabilities.md: pub fn from_config(grants": {"mode": "skip", "reason": NATIVE},
+    "capabilities.md: match ban_service::get(": {
+        "mode": "skip", "reason": "raw wit-bindgen bindings of the capability-denied fixture, not the SDK"},
+    "capabilities.md: // crates/infrarust-loader-wasm/src/imp/store_state.rs": {"mode": "skip", "reason": NATIVE},
+    "migration-0.3.md: fn on_enable(&self, ctx: &Context) -> Result<(), String> {": {
+        "mode": "plugin_items", "after_marker": "// 0.3.0",
+        "note": "only the 0.3.0 half; the 0.2.3 half is deliberately old code"},
+    "migration-0.3.md: if let Some(id) = invocation.player": {
+        "mode": "fn", "params": "invocation: CommandInvocation, reply: String", "after_marker": "// 0.3.0",
+        "note": "only the 0.3.0 half; the 0.2.3 half is deliberately old code"},
+    "virtual-backend.md: pub trait VirtualBackendHandler: Send + Sync {": {"mode": "skip", "reason": NATIVE},
+    "virtual-backend.md: pub trait VirtualBackendSession: Send + Sync + private::Sealed {": {"mode": "skip", "reason": NATIVE},
+    "virtual-backend.md: Capability::to_kebab()": {"mode": "skip", "reason": NATIVE},
+    "building.md: #![forbid(unsafe_code)]": {
+        "mode": "full",
+        "deps": {"infrarust-plugin-stats": "{ path = \"%s\" }" % (ROOT / "plugins" / "infrarust-plugin-stats")}},
+    "building.md: // crates/infrarust-loader-wasm/build.rs": {"mode": "skip", "reason": NATIVE},
+    "deploying.md: fn metadata(&self) -> PluginMetadata {": {"mode": "plugin_items", "attr": "#[plugin]"},
+    "architecture.md: fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;": {
+        "mode": "plugin_items", "decl_body": "{ Ok(()) }"},
 }
 
 
@@ -482,13 +466,47 @@ def build(key, fence, rows, spec):
     return src
 
 
+def anchored(anchor, rows):
+    if anchor.startswith("^"):
+        return next((r.strip() for r in rows if r.strip()), "") == anchor[1:]
+    return anchor in "\n".join(rows)
+
+
+def match_specs(found):
+    by_page = {}
+    for spec_key, spec in SPEC.items():
+        page, anchor = spec_key.split(": ", 1)
+        by_page.setdefault(page, []).append((anchor, spec_key, spec))
+    matched, hits, problems = {}, {}, []
+    for page, fence, rows in found:
+        key = f"{page}:{fence}"
+        specs = [(spec_key, spec) for anchor, spec_key, spec in by_page.get(page, []) if anchored(anchor, rows)]
+        for spec_key, _ in specs:
+            hits.setdefault(spec_key, []).append(key)
+        if len(specs) > 1:
+            problems.append(f"{key} matches several SPEC entries: " + ", ".join(repr(k) for k, _ in specs))
+        elif specs:
+            matched[key] = specs[0][1]
+    for spec_key in SPEC:
+        where = hits.get(spec_key, [])
+        if len(where) != 1:
+            problems.append(f"SPEC entry {spec_key!r} matches {len(where)} blocks" + (f": {', '.join(where)}" if where else ""))
+    if problems:
+        print("stale SPEC entries (each key is `<page>: <text>`, the text found in exactly one rust block of the page, or `<page>: ^<line>` for the block whose first line it is):")
+        for problem in problems:
+            print("   " + problem)
+        sys.exit(2)
+    return matched
+
+
 def gen(out):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     manifest, members = [], []
+    matched = match_specs(list(blocks()))
     for page, fence, rows in blocks():
         key = f"{page}:{fence}"
-        spec = SPEC.get(key)
+        spec = matched.get(key)
         auto = spec is None
         if auto:
             joined = "\n".join(rows)
