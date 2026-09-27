@@ -217,3 +217,40 @@ async fn a_spinning_codec_filter_does_not_stop_the_proxy_from_reading_its_socket
         "sockets waited {worst:?} while a codec filter spun on another task"
     );
 }
+
+#[test]
+fn a_runtime_dropped_while_a_listener_spins_shuts_down() {
+    for round in 0..4 {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let lab = Arc::new(
+                    Lab::start(
+                        vec![LabPlugin::lab("event:chat-message spin")],
+                        LabOptions {
+                            proxy_toml: "[wasm]\ncpu_budget = \"5s\"\n".to_owned(),
+                            ..LabOptions::default()
+                        },
+                    )
+                    .await,
+                );
+                let bus = Arc::clone(&lab);
+                tokio::spawn(async move {
+                    let _ = bus.event_bus.fire(fault_lab::chat()).await;
+                });
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            });
+            drop(runtime);
+            let _ = done.send(());
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_secs(30)).is_ok(),
+            "round {round}: the runtime did not finish dropping while a listener spun"
+        );
+    }
+}
