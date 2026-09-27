@@ -182,13 +182,13 @@ async fn a_held_player_released_from_a_later_command_reaches_the_backend() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "W-47: limbo handle after departure answers Unavailable"]
 async fn a_session_handle_kept_after_the_player_left_reports_player_gone_and_completing_it_is_a_no_op()
  {
     let world = World::start("keeper", true).await;
     let (session, id) = world.enter("Steve").await;
     session.quit().await;
     world.wait_for(&format!("ended {id}")).await;
+    world.console_until("hcount", "hcount 1 cancelled=1").await;
     world.console(&format!("hsend {id}")).await;
     world.console(&format!("hdone {id}")).await;
     let sent = world.wait_for_prefix(&format!("hsend {id} "), 1).await;

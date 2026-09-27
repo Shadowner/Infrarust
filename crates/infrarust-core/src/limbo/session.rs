@@ -6,6 +6,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -78,6 +79,13 @@ impl LimboSessionImpl {
     fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<HandlerResult>>> {
         lock(&self.complete_slot)
     }
+
+    fn push(&self, frame: PacketFrame) -> Result<(), PlayerError> {
+        self.client_sender.try_send(frame).map_err(|e| match e {
+            TrySendError::Closed(_) => PlayerError::Disconnected,
+            TrySendError::Full(_) => PlayerError::SendFailed(e.to_string()),
+        })
+    }
 }
 
 impl private::Sealed for LimboSessionImpl {}
@@ -103,9 +111,7 @@ impl LimboSession for LimboSessionImpl {
         )
         .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
-        self.client_sender
-            .try_send(frame)
-            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+        self.push(frame)
     }
 
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
@@ -114,9 +120,7 @@ impl LimboSession for LimboSessionImpl {
                 .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
         for frame in frames {
-            self.client_sender
-                .try_send(frame)
-                .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
+            self.push(frame)?;
         }
         Ok(())
     }
@@ -126,9 +130,7 @@ impl LimboSession for LimboSessionImpl {
             packets::build_action_bar(&message, self.protocol_version, &self.packet_registry)
                 .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
-        self.client_sender
-            .try_send(frame)
-            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+        self.push(frame)
     }
 
     fn complete(&self, result: HandlerResult) {
@@ -303,6 +305,42 @@ mod tests {
         drop(rx);
 
         let result = session.send_message(Component::text("should fail"));
-        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(PlayerError::Disconnected)),
+            "{result:?}"
+        );
+        assert!(matches!(
+            session.send_action_bar(Component::text("gone")),
+            Err(PlayerError::Disconnected)
+        ));
+        assert!(matches!(
+            session
+                .handle()
+                .send_title(TitleData::new(Component::text("gone"), Component::text(""))),
+            Err(PlayerError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn a_full_client_queue_is_a_send_failure_not_a_departure() {
+        let (tx, _rx) = mpsc::channel(1);
+        let registry = Arc::new(infrarust_protocol::registry::build_default_registry());
+        let session = LimboSessionImpl::new(
+            PlayerId::new(3),
+            test_profile(),
+            ProtocolVersion::V1_21,
+            LimboEntryContext::PluginRedirect { from_server: None },
+            tx,
+            CancellationToken::new(),
+            registry,
+        );
+        session
+            .send_message(Component::text("fills the queue"))
+            .unwrap();
+        let result = session.send_message(Component::text("no room"));
+        assert!(
+            matches!(result, Err(PlayerError::SendFailed(_))),
+            "{result:?}"
+        );
     }
 }
