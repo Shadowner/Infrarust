@@ -5,9 +5,9 @@ runs:
   using: 'composite'
   steps:
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7.0.0
       with:
-        node-version: 22
+        node-version: 24.21.0
         cache: 'yarn'
         cache-dependency-path: plugins/infrarust-plugin-admin-api/frontend/yarn.lock
 

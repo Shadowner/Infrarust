@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
-ARG RUST_VERSION=1.94
-ARG ALPINE_VERSION=3.21
-ARG NODE_VERSION=22
+ARG RUST_VERSION=1.98.1
+ARG ALPINE_VERSION=3.24
+ARG NODE_VERSION=24.21.0
 
 # Stage 1: Build the admin frontend
-FROM docker.io/library/node:${NODE_VERSION}-alpine AS frontend-builder
+FROM docker.io/library/node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS frontend-builder
 
 WORKDIR /frontend
 COPY plugins/infrarust-plugin-admin-api/frontend/ ./
