@@ -89,7 +89,7 @@ The registries inside it each track one kind of thing:
 
 - The connection registry tracks active player sessions and is what the player-count subcommands and the server manager read.
 - The player registry resolves connected players by name or UUID on top of the connection registry.
-- The packet registry holds packet codecs keyed by protocol version. Infrarust supports 36 Minecraft versions, from 1.7.2 (protocol 4) to 26.2 (protocol 776), defined in `crates/infrarust_protocol/src/version.rs`. Each packet type declares its own per-version ID table via `Packet::IDS`; the registry indexes those tables rather than owning them.
+- The packet registry holds packet codecs keyed by protocol version. Infrarust supports 37 Minecraft versions, from 1.7.2 (protocol 4) to 26.3 (protocol 777), defined in `crates/infrarust_protocol/src/version.rs`. Each packet type declares its own per-version ID table via `Packet::IDS`; the registry indexes those tables rather than owning them.
 - The command manager registers and dispatches the in-game `/infrarust` subcommands.
 - The codec filter registry builds the per-connection codec filter chain used by intercepted modes.
 - The transport filter registry keeps the transport filter chain, rebuilt whenever a filter is added or removed. Each connection's task runs the chain after the PROXY protocol header and before the connection pipeline; it can reject the peer at the socket level, and the filters that accepted the connection are closed when the connection context is dropped.

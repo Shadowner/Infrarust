@@ -69,7 +69,7 @@ Use an intercepted mode when you need the proxy to understand what's happening i
 - You want centralized Mojang authentication across multiple backend servers.
 - You need the proxy to start a backend on demand and hold the player in limbo until it's ready.
 
-The tradeoff: intercepted modes depend on Infrarust's protocol implementation. They work with Minecraft 1.7.2 through 1.21.11. Future protocol versions require an Infrarust update before they'll work in intercepted mode. Parsing every packet also uses more CPU than raw byte copying.
+The tradeoff: intercepted modes depend on Infrarust's protocol implementation. They work with Minecraft 1.7.2 through 26.3. Future protocol versions require an Infrarust update before they'll work in intercepted mode. Parsing every packet also uses more CPU than raw byte copying.
 
 ## Choosing between the two
 
@@ -85,7 +85,7 @@ If yes, use an intercepted mode. You get server switching, plugin support, and f
 | Packet inspection | No | Yes |
 | Server switching | No | Yes |
 | Plugin support | No | Yes |
-| Minecraft versions | All (1.7+) | 1.7.2 through 1.21.11 |
+| Minecraft versions | All (1.7+) | 1.7.2 through 26.3 |
 | Backend `online-mode` | `true` | `false` |
 | Requires domain | Yes | Optional (if in a network) |
 

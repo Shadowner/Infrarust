@@ -198,7 +198,7 @@ When a player connects and the backend is down, the proxy starts the server proc
 Client-only is an intercepted mode. These rules apply:
 
 - The backend **must** run with `online-mode=false`. The proxy already authenticated the player.
-- Works with Minecraft versions that Infrarust can parse (currently 1.7.2 through 1.21.11). Future protocol versions require an Infrarust update.
+- Works with Minecraft versions that Infrarust can parse (currently 1.7.2 through 26.3). Future protocol versions require an Infrarust update.
 - Domains are optional if the server belongs to a network and is only reachable via server switching.
 - Higher resource usage than forwarding modes because the proxy parses every packet instead of copying raw bytes.
 
