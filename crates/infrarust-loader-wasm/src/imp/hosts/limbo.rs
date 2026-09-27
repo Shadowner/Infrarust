@@ -130,7 +130,7 @@ fn action_bar(target: &impl LimboTarget, message: &wt::Component) -> HostResult<
 }
 
 fn complete(target: &impl LimboTarget, outcome: &wl::HandlerResult) -> HostResult<()> {
-    let outcome = convert::complete_result_from_wit(outcome).map_err(|e| invalid_component(&e))?;
+    let outcome = convert::complete_result_from_wit(outcome)?;
     target.complete(outcome);
     Ok(())
 }

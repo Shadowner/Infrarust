@@ -232,7 +232,6 @@ async fn many_players_held_at_once_are_all_tracked_and_all_released_when_they_le
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "W-23: complete() with Hold lets the player through"]
 async fn completing_a_hold_with_another_timed_hold_keeps_the_player_out_of_the_backend() {
     let world = World::start("keeper", true).await;
     let (_session, id) = world.enter("Steve").await;
@@ -249,4 +248,28 @@ async fn completing_a_hold_with_another_timed_hold_keeps_the_player_out_of_the_b
          to the backend; the guest was told {:?}",
         answered[0]
     );
+    assert_eq!(
+        answered[0],
+        format!("hrearm {id} invalid-argument cancelled=false"),
+        "complete cannot start another hold, so the guest is told its outcome was refused"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_rearm_leaves_the_hold_for_a_later_completion() {
+    let world = World::start("keeper", true).await;
+    let (_session, id) = world.enter("Steve").await;
+    world.console(&format!("hrearm {id}")).await;
+    world
+        .wait_for(&format!("hrearm {id} invalid-argument cancelled=false"))
+        .await;
+    world.console(&format!("hdone {id}")).await;
+    world
+        .wait_for(&format!("hdone {id} ok cancelled=false"))
+        .await;
+    world
+        .backend
+        .next_connection(T)
+        .await
+        .expect("the hold outlives the refused re-arm and a later Accept releases the player");
 }

@@ -28,7 +28,7 @@ use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::permissions as wp;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
-use crate::host_error::{HostResult, host_error};
+use crate::host_error::{HostResult, host_error, invalid_component};
 
 macro_rules! wit_enum_map {
     (
@@ -461,11 +461,19 @@ pub(crate) fn timeout_outcome_with(
     })
 }
 
-pub(crate) fn complete_result_from_wit(r: &wl::HandlerResult) -> Result<HandlerResult, ArenaError> {
-    Ok(match handler_result_from_wit(r)? {
-        HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. } => HandlerResult::Accept,
-        other => other,
-    })
+const HOLD_NOT_A_COMPLETION: &str = "complete ends a hold and cannot start another: pass accept, deny, redirect or send-to-limbo; the current hold and its deadline stay in place";
+
+pub(crate) fn complete_result_from_wit(r: &wl::HandlerResult) -> HostResult<HandlerResult> {
+    if matches!(
+        r,
+        wl::HandlerResult::Hold | wl::HandlerResult::HoldWithTimeout(_)
+    ) {
+        return Err(host_error(
+            wt::ErrorKind::InvalidArgument,
+            HOLD_NOT_A_COMPLETION,
+        ));
+    }
+    handler_result_from_wit(r).map_err(|e| invalid_component(&e))
 }
 
 pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntryContext {
@@ -696,23 +704,36 @@ mod tests {
     }
 
     #[test]
-    fn complete_coerces_holds_to_accept() {
-        assert!(matches!(
-            complete_result_from_wit(&wl::HandlerResult::Hold),
-            Ok(HandlerResult::Accept)
-        ));
-        let hwt = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
-            after_ms: 1,
-            on_timeout: wl::TimeoutOutcome::Accept,
+    fn complete_refuses_a_hold_instead_of_releasing_the_player() {
+        let rearm = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
+            after_ms: 30_000,
+            on_timeout: wl::TimeoutOutcome::Deny(text("too slow")),
         });
-        assert!(matches!(
-            complete_result_from_wit(&hwt),
-            Ok(HandlerResult::Accept)
-        ));
+        for hold in [wl::HandlerResult::Hold, rearm] {
+            let refused = complete_result_from_wit(&hold).unwrap_err();
+            assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument, "{hold:?}");
+            assert_eq!(refused.message, HOLD_NOT_A_COMPLETION, "{hold:?}");
+        }
         assert!(matches!(
             complete_result_from_wit(&wl::HandlerResult::Redirect("lobby".to_owned())),
             Ok(HandlerResult::Redirect(_))
         ));
+        assert!(matches!(
+            complete_result_from_wit(&wl::HandlerResult::Accept),
+            Ok(HandlerResult::Accept)
+        ));
+    }
+
+    #[test]
+    fn complete_refuses_an_invalid_text_as_an_invalid_component() {
+        let invalid = wl::HandlerResult::Deny(wt::Component { nodes: Vec::new() });
+        let refused = complete_result_from_wit(&invalid).unwrap_err();
+        assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument);
+        assert!(
+            refused.message.starts_with("invalid text component"),
+            "{}",
+            refused.message
+        );
     }
 
     #[test]
