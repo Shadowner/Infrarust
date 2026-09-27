@@ -6,7 +6,7 @@
 //! a required field — and a client that saves an untouched document restores
 //! the live secret through [`reinject`] instead of overwriting it.
 
-use toml_edit::{DocumentMut, TableLike};
+use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 /// Stands in for a secret in a document that leaves the proxy. Never a
 /// credential: [`WebConfig::resolve_api_key`](crate::WebConfig::resolve_api_key)
@@ -69,12 +69,129 @@ pub fn still_redacted(doc: &DocumentMut, paths: &[&[&str]]) -> Vec<String> {
             path.split_last().is_some_and(|(key, parent)| {
                 table_at(doc, parent)
                     .and_then(|table| table.get(key))
-                    .and_then(toml_edit::Item::as_str)
+                    .and_then(Item::as_str)
                     == Some(REDACTED)
             })
         })
         .map(|path| path.join("."))
         .collect()
+}
+
+pub const PLUGINS: &str = "plugins";
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PluginScopeError {
+    #[error("the document is not valid TOML: {0}")]
+    Invalid(String),
+    #[error("the stored configuration could not be read: {0}")]
+    Unreadable(String),
+    #[error("a plugin cannot write another plugin's block: {}", dotted(.0))]
+    OtherPlugins(Vec<String>),
+}
+
+pub fn names_another_plugin(key: &str, plugin_id: &str) -> bool {
+    let mut segments = key.split('.');
+    segments.next() == Some(PLUGINS) && segments.next().is_some_and(|id| id != plugin_id)
+}
+
+pub fn plugin_view(document: &str, plugin_id: &str) -> Result<String, PluginScopeError> {
+    let mut doc = document
+        .parse::<DocumentMut>()
+        .map_err(|e| PluginScopeError::Unreadable(e.to_string()))?;
+    hide_other_plugins(&mut doc, plugin_id);
+    Ok(doc.to_string())
+}
+
+pub fn plugins_value_view(value: &str, plugin_id: &str) -> Result<String, PluginScopeError> {
+    let mut wrapper: toml::Table = toml::from_str(&format!("{PLUGINS} = {value}"))
+        .map_err(|e| PluginScopeError::Unreadable(e.to_string()))?;
+    let Some(toml::Value::Table(mut plugins)) = wrapper.remove(PLUGINS) else {
+        return Err(PluginScopeError::Unreadable(format!(
+            "`{PLUGINS}` is not a table"
+        )));
+    };
+    plugins.retain(|id, _| id == plugin_id);
+    Ok(toml::Value::Table(plugins).to_string())
+}
+
+pub fn plugin_write(
+    submitted: &str,
+    current: &str,
+    plugin_id: &str,
+) -> Result<String, PluginScopeError> {
+    let mut doc = submitted
+        .parse::<DocumentMut>()
+        .map_err(|e| PluginScopeError::Invalid(e.to_string()))?;
+    let others = other_plugins(&doc, plugin_id);
+    if !others.is_empty() {
+        return Err(PluginScopeError::OtherPlugins(others));
+    }
+    let current = current
+        .parse::<DocumentMut>()
+        .map_err(|e| PluginScopeError::Unreadable(e.to_string()))?;
+    restore_other_plugins(&mut doc, &current, plugin_id);
+    Ok(doc.to_string())
+}
+
+fn hide_other_plugins(doc: &mut DocumentMut, plugin_id: &str) {
+    if doc
+        .get(PLUGINS)
+        .is_some_and(|plugins| plugins.as_table_like().is_none())
+    {
+        doc.remove(PLUGINS);
+    }
+    if let Some(plugins) = table_at_mut(doc, &[PLUGINS]) {
+        for id in other_plugin_ids(&*plugins, plugin_id) {
+            plugins.remove(&id);
+        }
+    }
+}
+
+fn other_plugins(doc: &DocumentMut, plugin_id: &str) -> Vec<String> {
+    table_at(doc, &[PLUGINS])
+        .map(|plugins| other_plugin_ids(plugins, plugin_id))
+        .unwrap_or_default()
+}
+
+fn restore_other_plugins(doc: &mut DocumentMut, current: &DocumentMut, plugin_id: &str) {
+    let blocks: Vec<(String, Item)> = table_at(current, &[PLUGINS])
+        .map(|stored| {
+            stored
+                .iter()
+                .filter(|(id, _)| *id != plugin_id)
+                .map(|(id, block)| (id.to_owned(), block.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if blocks.is_empty() {
+        return;
+    }
+    if !doc.contains_key(PLUGINS) {
+        let mut plugins = Table::new();
+        plugins.set_implicit(true);
+        doc.insert(PLUGINS, Item::Table(plugins));
+    }
+    if let Some(plugins) = table_at_mut(doc, &[PLUGINS]) {
+        for (id, block) in blocks {
+            plugins.insert(&id, block);
+        }
+    }
+}
+
+fn other_plugin_ids(plugins: &dyn TableLike, plugin_id: &str) -> Vec<String> {
+    plugins
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| *id != plugin_id)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn dotted(ids: &[String]) -> String {
+    ids.iter()
+        .map(|id| format!("{PLUGINS}.{id}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn table_at<'a>(doc: &'a DocumentMut, path: &[&str]) -> Option<&'a dyn TableLike> {
@@ -206,6 +323,204 @@ mod tests {
 
         reinject(&mut redacted, &current, SERVER_SECRETS);
         assert!(redacted.to_string().contains("ptlc_x"));
+    }
+
+    const PLUGIN_BLOCKS: &str = "\
+bind = \"0.0.0.0:25565\"
+
+# the other plugin's block
+[plugins.other]
+path = \"/srv/other.wasm\"
+permissions = [\"ban\"]
+
+[plugins.other.wasm]
+max_memory = \"64MiB\"
+
+[plugins.mine]
+permissions = [\"limbo\"]
+
+[web]
+bind = \"127.0.0.1:8080\"
+";
+
+    fn plugins_of(text: &str) -> toml::Table {
+        let document: toml::Table = toml::from_str(text).unwrap();
+        document
+            .get(PLUGINS)
+            .and_then(toml::Value::as_table)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_plugin_view_keeps_its_own_block_and_the_rest_of_the_document() {
+        let view = plugin_view(PLUGIN_BLOCKS, "mine").unwrap();
+
+        assert!(!view.contains("other"), "{view}");
+        assert!(!view.contains("/srv/other.wasm"), "{view}");
+        assert!(!view.contains("64MiB"), "{view}");
+        assert!(view.contains("[plugins.mine]"), "{view}");
+        assert!(view.contains("127.0.0.1:8080"), "{view}");
+        assert!(view.contains("0.0.0.0:25565"), "{view}");
+        assert_eq!(plugins_of(&view).keys().collect::<Vec<_>>(), ["mine"]);
+    }
+
+    #[test]
+    fn a_plugin_view_hides_dotted_and_inline_blocks() {
+        for text in [
+            "plugins.other.path = \"/srv/other.wasm\"\nplugins.mine.enabled = true\n",
+            "plugins = { other = { path = \"/srv/other.wasm\" }, mine = { enabled = true } }\n",
+            "[plugins]\nother = { path = \"/srv/other.wasm\" }\nmine = { enabled = true }\n",
+        ] {
+            let view = plugin_view(text, "mine").unwrap();
+            assert!(!view.contains("/srv/other.wasm"), "{view}");
+            assert_eq!(
+                plugins_of(&view).keys().collect::<Vec<_>>(),
+                ["mine"],
+                "{view}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plugin_with_no_block_sees_no_plugin_block() {
+        let view = plugin_view(PLUGIN_BLOCKS, "stranger").unwrap();
+        assert!(plugins_of(&view).is_empty(), "{view}");
+        assert!(view.contains("127.0.0.1:8080"), "{view}");
+    }
+
+    #[test]
+    fn a_plugins_entry_that_is_not_a_table_is_hidden_whole() {
+        let view = plugin_view(
+            "bind = \"0.0.0.0:25565\"\n[[plugins]]\nid = \"other\"\ntoken = \"SECRET\"\n",
+            "mine",
+        )
+        .unwrap();
+        assert!(!view.contains("SECRET"), "{view}");
+        assert!(view.contains("0.0.0.0:25565"), "{view}");
+    }
+
+    #[test]
+    fn a_document_that_is_not_toml_has_no_plugin_view() {
+        assert!(matches!(
+            plugin_view("[plugins.other] token=SECRET", "mine"),
+            Err(PluginScopeError::Unreadable(_))
+        ));
+    }
+
+    #[test]
+    fn a_key_under_another_plugin_is_named_by_its_second_segment() {
+        for key in [
+            "plugins.other",
+            "plugins.other.path",
+            "plugins.nobody.x",
+            "plugins.mine-too.path",
+            "plugins.",
+        ] {
+            assert!(names_another_plugin(key, "mine"), "{key}");
+        }
+        for key in [
+            "plugins",
+            "plugins.mine",
+            "plugins.mine.permissions",
+            "bind",
+            "web.bind",
+            "wasm.plugins.other",
+        ] {
+            assert!(!names_another_plugin(key, "mine"), "{key}");
+        }
+    }
+
+    #[test]
+    fn the_plugins_value_keeps_only_the_callers_entry() {
+        let value = "{ mine = { enabled = true }, other = { path = \"/srv/other.wasm\" } }";
+        assert_eq!(
+            plugins_value_view(value, "mine").unwrap(),
+            "{ mine = { enabled = true } }"
+        );
+        assert_eq!(plugins_value_view(value, "stranger").unwrap(), "{}");
+        assert!(plugins_value_view("\"text\"", "mine").is_err());
+        assert!(plugins_value_view("{ unclosed", "mine").is_err());
+    }
+
+    #[test]
+    fn a_plugin_write_puts_the_other_blocks_back() {
+        let view = plugin_view(PLUGIN_BLOCKS, "mine").unwrap();
+        let edited = view.replace("0.0.0.0:25565", "0.0.0.0:25566");
+
+        let written = plugin_write(&edited, PLUGIN_BLOCKS, "mine").unwrap();
+
+        assert!(written.contains("0.0.0.0:25566"), "{written}");
+        assert!(written.contains("# the other plugin's block"), "{written}");
+        assert_eq!(plugins_of(&written), plugins_of(PLUGIN_BLOCKS), "{written}");
+    }
+
+    #[test]
+    fn a_plugin_write_that_drops_its_own_block_keeps_the_others() {
+        let written = plugin_write(
+            "bind = \"0.0.0.0:25565\"\n[web]\nbind = \"127.0.0.1:8080\"\n",
+            PLUGIN_BLOCKS,
+            "mine",
+        )
+        .unwrap();
+
+        let mut expected = plugins_of(PLUGIN_BLOCKS);
+        expected.remove("mine");
+        assert_eq!(plugins_of(&written), expected, "{written}");
+    }
+
+    #[test]
+    fn a_plugin_write_keeps_blocks_whatever_their_layout() {
+        let stored = [
+            "plugins.other.path = \"/srv/other.wasm\"\nplugins.mine.enabled = true\n",
+            "plugins = { other = { path = \"/srv/other.wasm\" }, mine = { enabled = true } }\n",
+            PLUGIN_BLOCKS,
+        ];
+        let submitted = [
+            "bind = \"0.0.0.0:1\"\n",
+            "plugins.mine.enabled = false\n",
+            "plugins = { mine = { enabled = false } }\n",
+            "[plugins]\nmine = { enabled = false }\n",
+            "[plugins.mine]\nenabled = false\n",
+        ];
+        for current in stored {
+            for text in submitted {
+                let written = plugin_write(text, current, "mine").unwrap();
+                let plugins = plugins_of(&written);
+                assert_eq!(
+                    plugins.get("other"),
+                    plugins_of(current).get("other"),
+                    "{current:?} + {text:?} -> {written}"
+                );
+                assert_eq!(
+                    plugins.get("mine"),
+                    plugins_of(text).get("mine"),
+                    "{current:?} + {text:?} -> {written}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_plugin_write_that_names_another_plugin_is_refused() {
+        let submitted = "[plugins.other]\npermissions = [\"server-manage\"]\n[plugins.mine]\n";
+
+        assert_eq!(
+            plugin_write(submitted, PLUGIN_BLOCKS, "mine"),
+            Err(PluginScopeError::OtherPlugins(vec!["other".to_owned()]))
+        );
+        assert_eq!(
+            PluginScopeError::OtherPlugins(vec!["other".to_owned()]).to_string(),
+            "a plugin cannot write another plugin's block: plugins.other"
+        );
+    }
+
+    #[test]
+    fn a_plugin_write_that_is_not_toml_is_invalid() {
+        assert!(matches!(
+            plugin_write("bind = [unclosed", PLUGIN_BLOCKS, "mine"),
+            Err(PluginScopeError::Invalid(_))
+        ));
     }
 
     #[test]
