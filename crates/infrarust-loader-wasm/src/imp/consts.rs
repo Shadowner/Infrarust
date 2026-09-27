@@ -6,6 +6,10 @@ pub(crate) const CACHE_SUBDIR: &str = ".cache";
 
 pub(crate) const WASMTIME_CACHE_TAG: &str = "wasmtime-45";
 
+pub(crate) const MAX_COMPONENT_BYTES: u64 = 256 * 1024 * 1024;
+
+pub(crate) const ERROR_TEXT_LIMIT: usize = 1024;
+
 pub(crate) use infrarust_plugin_wit::WORLD_VERSION;
 
 pub(crate) const PLAYER_SWITCH_TIMEOUT: Duration = Duration::from_millis(250);

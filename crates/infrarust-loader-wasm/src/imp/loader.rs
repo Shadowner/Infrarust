@@ -15,7 +15,7 @@ use crate::config::WasmLoaderConfig;
 use crate::consts::CACHE_SUBDIR;
 use crate::contract::check as check_contract;
 use crate::epoch::EpochTicker;
-use crate::error::WasmLoaderError;
+use crate::error::{WasmLoaderError, bounded};
 use crate::gates::check_imports;
 use crate::instance::InstanceFactory;
 use crate::linker::build_linker;
@@ -143,7 +143,7 @@ impl PluginLoader for WasmPluginLoader {
                     Err(error) => {
                         tracing::error!(
                             path = %path.display(),
-                            error = %error,
+                            error = %bounded(&error),
                             "WASM plugin refused"
                         );
                     }

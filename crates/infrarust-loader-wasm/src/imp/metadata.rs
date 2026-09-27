@@ -9,7 +9,7 @@ use wasmtime::{Engine, Store};
 use crate::bindings::Plugin as PluginBindings;
 use crate::bindings::exports::infrarust::plugin::guest::PluginMetadata as WitMetadata;
 use crate::config::SandboxLimits;
-use crate::error::WasmLoaderError;
+use crate::error::{WasmLoaderError, bounded};
 use crate::linker::build_linker;
 use crate::store_state::{PluginStoreState, build_probe_state, install_epoch_control};
 
@@ -30,7 +30,7 @@ pub(crate) async fn extract_metadata(
         })??;
     validate_plugin_id(&wit_md.id).map_err(|invalid| WasmLoaderError::Metadata {
         path: path.to_path_buf(),
-        reason: invalid.to_string(),
+        reason: bounded(&invalid),
     })?;
 
     let mut metadata = PluginMetadata::new(wit_md.id, wit_md.name, wit_md.version);
@@ -66,7 +66,7 @@ async fn call_metadata(
         .await
         .map_err(|e| WasmLoaderError::Metadata {
             path: path.to_path_buf(),
-            reason: e.to_string(),
+            reason: bounded(format_args!("{e:#}")),
         })?;
 
     bindings
@@ -75,6 +75,6 @@ async fn call_metadata(
         .await
         .map_err(|e| WasmLoaderError::Metadata {
             path: path.to_path_buf(),
-            reason: format!("metadata() trapped: {e}"),
+            reason: bounded(format_args!("metadata() trapped: {e:#}")),
         })
 }

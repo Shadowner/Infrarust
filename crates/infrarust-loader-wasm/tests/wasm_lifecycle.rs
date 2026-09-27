@@ -347,7 +347,9 @@ async fn a_non_utf8_file_name_is_loaded() {
 
 const HUGE_SPARSE_LEN: u64 = 512 * 1024 * 1024;
 const SHOWN_ERROR_BYTES: usize = 300;
+const REFUSAL_BOUND: usize = 4096;
 
+#[derive(Default)]
 struct BoundedText {
     prefix: String,
     len: usize,
@@ -356,10 +358,7 @@ struct BoundedText {
 impl BoundedText {
     fn of(value: &impl std::fmt::Display) -> Self {
         use std::fmt::Write;
-        let mut text = Self {
-            prefix: String::new(),
-            len: 0,
-        };
+        let mut text = Self::default();
         let _ = write!(text, "{value}");
         text
     }
@@ -378,8 +377,74 @@ impl std::fmt::Write for BoundedText {
     }
 }
 
+type BoundedEvent = std::collections::BTreeMap<&'static str, BoundedText>;
+
+#[derive(Clone, Default)]
+struct BoundedLog {
+    events: std::sync::Arc<std::sync::Mutex<Vec<BoundedEvent>>>,
+}
+
+impl BoundedLog {
+    fn refusals_of(&self, path: &Path) -> Vec<(usize, usize, String)> {
+        let path = path.display().to_string();
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                event
+                    .get("message")
+                    .is_some_and(|text| text.prefix == "WASM plugin refused")
+                    && event.get("path").is_some_and(|text| text.prefix == path)
+            })
+            .map(|event| {
+                let line = event.values().map(|text| text.len).sum();
+                let error = event.get("error");
+                (
+                    line,
+                    error.map_or(0, |text| text.len),
+                    error.map(|text| text.prefix.clone()).unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
+}
+
+struct BoundedFields<'a>(&'a mut BoundedEvent);
+
+impl tracing::field::Visit for BoundedFields<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        let text = self.0.entry(field.name()).or_default();
+        let _ = write!(text, "{value:?}");
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        use std::fmt::Write;
+        let text = self.0.entry(field.name()).or_default();
+        let _ = text.write_str(value);
+    }
+}
+
+impl tracing::Subscriber for BoundedLog {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        *metadata.level() <= Level::ERROR
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut fields = BoundedEvent::new();
+        event.record(&mut BoundedFields(&mut fields));
+        self.events.lock().unwrap().push(fields);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-21: no file header check, huge or misleading errors"]
 async fn a_huge_non_component_is_refused_quickly() {
     let (_tmp, dir) = staged_with_good().await;
     let huge = dir.join("huge.wasm");
@@ -395,23 +460,97 @@ async fn a_huge_non_component_is_refused_quickly() {
             "huge.wasm must be a sparse file, yet {allocated} bytes are allocated on disk"
         );
     }
+    let logs = BoundedLog::default();
     let started = Instant::now();
-    let found = discover(&dir).await;
+    let found = discover(&dir).with_subscriber(logs.clone()).await;
     let elapsed = started.elapsed();
     let error = found.as_ref().err().map(BoundedText::of);
     let error_len = error.as_ref().map_or(0, |text| text.len);
+    let refusals = logs.refusals_of(&huge);
     eprintln!(
-        "huge sparse .wasm: discovery took {elapsed:?}, ok={}, error message length={error_len}",
-        found.is_ok()
+        "huge sparse .wasm: discovery took {elapsed:?}, ok={}, error message length={error_len}, refusal lines (length, error length)={:?}",
+        found.is_ok(),
+        refusals
+            .iter()
+            .map(|(line, error, _)| (*line, *error))
+            .collect::<Vec<_>>()
     );
     let shown = error.map(|text| text.prefix).unwrap_or_default();
     assert!(
-        error_len < 4096,
+        error_len < REFUSAL_BOUND,
         "the refusal of one junk file carries a {error_len}-byte error message starting with: {shown:?}"
     );
     let metas =
         found.unwrap_or_else(|_| panic!("a 512 MiB junk file must not fail discovery: {shown:?}"));
     assert_eq!(ids(&metas), ["good"]);
+    assert_eq!(
+        refusals.len(),
+        1,
+        "huge.wasm is refused by one log line: {refusals:?}"
+    );
+    let (line, error, prefix) = &refusals[0];
+    assert!(
+        *line < REFUSAL_BOUND,
+        "the refusal line of one junk file is {line} bytes long (error {error} bytes) and starts with: {prefix:?}"
+    );
+    assert!(
+        prefix.contains("WebAssembly component"),
+        "the refusal says the file is not a component: {prefix:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "a junk file is refused from its first bytes, yet discovery took {elapsed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_non_component_file_is_refused_with_its_own_reason() {
+    let (_tmp, dir) = staged_with_good().await;
+    let mut expected = vec![
+        ("empty.wasm", b"".to_vec(), "the file is empty"),
+        (
+            "core.wasm",
+            b"\0asm\x01\0\0\0".to_vec(),
+            "core WebAssembly module",
+        ),
+        (
+            "text.wasm",
+            b"(component)\n".to_vec(),
+            "text format is not accepted",
+        ),
+        (
+            "elf.wasm",
+            b"\x7fELF\x02\x01\x01\0\0\0\0\0".to_vec(),
+            "magic bytes",
+        ),
+    ];
+    for (name, bytes, _) in &expected {
+        std::fs::write(dir.join(name), bytes).unwrap();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let locked = add_probe(&dir, "locked", "id=locked\n");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&locked).is_err() {
+            expected.push(("locked.wasm", Vec::new(), "cannot read the plugin file"));
+        } else {
+            std::fs::remove_file(&locked).unwrap();
+        }
+    }
+    let (found, logs) = discover_logged(&dir).await;
+    assert_eq!(ids(&found.unwrap()), ["good"]);
+    let refusals = logs.matching("WASM plugin refused");
+    assert_eq!(refusals.len(), expected.len(), "{refusals:?}");
+    for (name, _, reason) in &expected {
+        let path = dir.join(name).display().to_string();
+        let line = refusals
+            .iter()
+            .find(|line| line.contains(&path))
+            .unwrap_or_else(|| panic!("{name} is not refused: {refusals:?}"));
+        assert!(line.contains(reason), "{name}: {line}");
+        assert!(!line.contains("directory"), "{name}: {line}");
+    }
 }
 
 struct Managed {
