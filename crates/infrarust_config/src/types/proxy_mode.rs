@@ -32,4 +32,42 @@ impl ProxyMode {
     pub const fn is_forwarding(&self) -> bool {
         matches!(self, Self::Passthrough | Self::ZeroCopy | Self::ServerOnly)
     }
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Passthrough => "passthrough",
+            Self::ZeroCopy => "zero_copy",
+            Self::ClientOnly => "client_only",
+            Self::Offline => "offline",
+            Self::ServerOnly => "server_only",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::ProxyMode;
+
+    #[derive(serde::Deserialize)]
+    struct Holder {
+        mode: ProxyMode,
+    }
+
+    #[test]
+    fn as_str_is_the_name_the_config_accepts() {
+        for mode in [
+            ProxyMode::Passthrough,
+            ProxyMode::ZeroCopy,
+            ProxyMode::ClientOnly,
+            ProxyMode::Offline,
+            ProxyMode::ServerOnly,
+            ProxyMode::Full,
+        ] {
+            let parsed: Holder = toml::from_str(&format!("mode = \"{}\"", mode.as_str())).unwrap();
+            assert_eq!(parsed.mode, mode);
+        }
+    }
 }
