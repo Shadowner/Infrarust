@@ -533,7 +533,6 @@ async fn a_wasm_id_colliding_with_a_native_plugin_does_not_stop_the_native_one()
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-08: plugin enabled although its hard dependency is not"]
 async fn a_plugin_whose_hard_dependency_failed_to_enable_is_not_enabled() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
@@ -551,7 +550,6 @@ async fn a_plugin_whose_hard_dependency_failed_to_enable_is_not_enabled() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-08: plugin enabled although its hard dependency is not"]
 async fn a_plugin_depending_on_a_config_disabled_plugin_is_not_enabled() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();

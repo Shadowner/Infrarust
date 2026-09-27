@@ -205,6 +205,17 @@ impl PluginManager {
                 self.states.insert(plugin_id.clone(), PluginState::Disabled);
                 continue;
             }
+            if let Some(dependency) = self.hard_dependency_not_enabled(plugin_id) {
+                let error = PluginManagerError::DependencyNotEnabled {
+                    plugin: plugin_id.clone(),
+                    dependency,
+                };
+                tracing::error!(plugin = %plugin_id, error = %error, "Plugin not enabled");
+                self.states
+                    .insert(plugin_id.clone(), PluginState::Error(error.to_string()));
+                errors.push(error);
+                continue;
+            }
             let Some(&at) = self.loader_of.get(plugin_id) else {
                 errors.push(PluginManagerError::NoLoader(plugin_id.clone()));
                 continue;
@@ -275,6 +286,16 @@ impl PluginManager {
 
         self.context_factory = Some(context_factory);
         errors
+    }
+
+    fn hard_dependency_not_enabled(&self, plugin_id: &str) -> Option<String> {
+        self.discovered
+            .get(plugin_id)?
+            .dependencies
+            .iter()
+            .filter(|dep| !dep.optional)
+            .find(|dep| !matches!(self.states.get(&dep.id), Some(PluginState::Enabled)))
+            .map(|dep| dep.id.clone())
     }
 
     /// Disables all plugins in reverse order, then unloads via loaders.

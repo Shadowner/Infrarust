@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use infrarust_api::plugin::PluginMetadata;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
 use infrarust_core::plugin::static_loader::StaticPluginLoader;
@@ -184,6 +185,81 @@ async fn a_missing_dependency_refuses_its_plugin_and_its_dependents_with_one_err
             manager.plugin_state(id)
         );
     }
+}
+
+#[tokio::test]
+async fn a_plugin_is_not_enabled_when_a_hard_dependency_failed_to_enable() {
+    let loader = StaticPluginLoader::new();
+    registered(&loader, TestPlugin::new("base").fail_on_enable());
+    let mid = registered(&loader, TestPlugin::new("mid").depends_on("base"));
+    let top = registered(&loader, TestPlugin::new("top").depends_on("mid"));
+    let ok = registered(&loader, TestPlugin::new("ok"));
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(factory()).await;
+
+    assert!(ok.is_enabled());
+    assert_eq!(mid.enable_calls(), 0);
+    assert_eq!(top.enable_calls(), 0);
+    let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert_eq!(
+        errors[1..],
+        [
+            "plugin 'mid' requires 'base', which is not enabled",
+            "plugin 'top' requires 'mid', which is not enabled",
+        ]
+    );
+    for (id, error) in [("mid", &errors[1]), ("top", &errors[2])] {
+        assert!(
+            matches!(manager.plugin_state(id), Some(PluginState::Error(e)) if e == error),
+            "{id}: {:?}",
+            manager.plugin_state(id)
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_plugin_is_not_enabled_when_a_hard_dependency_is_disabled_in_the_config() {
+    let loader = StaticPluginLoader::new();
+    let base = registered(&loader, TestPlugin::new("base"));
+    let dependent = registered(&loader, TestPlugin::new("dependent").depends_on("base"));
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.set_disabled_plugins(std::collections::HashSet::from(["base".to_string()]));
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(factory()).await;
+
+    assert!(!base.is_enabled() && !dependent.is_enabled());
+    assert!(matches!(
+        manager.plugin_state("base"),
+        Some(PluginState::Disabled)
+    ));
+    let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        errors,
+        ["plugin 'dependent' requires 'base', which is not enabled"]
+    );
+}
+
+#[tokio::test]
+async fn an_optional_dependency_that_failed_does_not_keep_its_dependent_off() {
+    let loader = StaticPluginLoader::new();
+    registered(&loader, TestPlugin::new("base").fail_on_enable());
+    let relaxed = TestPlugin::new("relaxed");
+    let instance = relaxed.clone();
+    loader.register(
+        PluginMetadata::new("relaxed", "relaxed", "1.0.0").optional_dependency("base"),
+        move || Box::new(instance.clone()),
+    );
+
+    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    manager.discover_all(Path::new("plugins")).await.unwrap();
+    let errors = manager.load_and_enable_all(factory()).await;
+
+    assert!(relaxed.is_enabled());
+    assert_eq!(errors.len(), 1, "{errors:?}");
 }
 
 #[tokio::test]
