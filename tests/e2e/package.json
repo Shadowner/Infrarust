@@ -10,6 +10,6 @@
     "realclient": "node src/real/run.js"
   },
   "dependencies": {
-    "minecraft-protocol": "^1.63.0"
+    "minecraft-protocol": "1.68.0"
   }
 }
