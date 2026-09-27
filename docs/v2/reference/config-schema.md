@@ -379,7 +379,7 @@ How the proxy recovers a WASM plugin after a fault (a trap, a call cut off by `m
 |--------|------|---------|-------------|
 | `max_restarts` | integer | `5` | Fresh instances the proxy starts straight away within `window`. One more fault quarantines the plugin |
 | `window` | duration | `"5m"` | Sliding window over which restarts are counted |
-| `backoff_initial` | duration | `"1s"` | How long the first quarantine lasts. Each quarantine in a row doubles it |
+| `backoff_initial` | duration | `"1s"` | How long the first quarantine lasts. Each quarantine in a row doubles it. Also the pause between two attempts that could not create an instance |
 | `backoff_max` | duration | `"5m"` | Longest a quarantine lasts |
 
 While a plugin is quarantined every call to it is answered at once without running guest code: events keep their result, commands do nothing, limbo handlers deny the player. When the backoff has passed the proxy tries a fresh instance again.

@@ -488,10 +488,10 @@ After a fault the proxy starts a fresh instance of the plugin straight away, up 
 |-----|------------------|
 | `max_restarts` | Fresh instances started straight away within `window`. `0` quarantines the plugin on its first fault. |
 | `window` | Sliding window over which restarts are counted. |
-| `backoff_initial` | Length of the first quarantine. |
+| `backoff_initial` | Length of the first quarantine, and the pause before the next attempt when no fresh instance could be created at all. |
 | `backoff_max` | Longest a quarantine lasts. |
 
-Each fault is logged at error level with the plugin, the call and the cause. A successful recovery is logged at info level with the instance generation, and a quarantine at warn level with the time until the next attempt.
+Each fault is logged at error level with the plugin, the call and the cause. A successful recovery is logged at info level with the instance generation, and a quarantine at warn level with the time until the next attempt. When the proxy cannot create an instance at all (the instance pool or the address space is exhausted, the data directory cannot be opened), it logs that at error level and waits `backoff_initial` before the next attempt; each attempt counts against `max_restarts`. While the proxy shuts down, no fresh instance is started.
 
 Startup fails when `max_restarts` is above 1000, when `window`, `backoff_initial` or `backoff_max` is zero or longer than `24h`, or when `backoff_initial` is longer than `backoff_max`.
 
