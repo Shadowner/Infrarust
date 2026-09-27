@@ -270,7 +270,6 @@ async fn two_plugins_relaying_to_each_other_stop_by_themselves() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-14: recovery runs outside the faulting call chain"]
 async fn a_recovery_caused_by_a_waiting_plugin_does_not_wait_on_that_plugin() {
     let lab = Lab::start(
         vec![

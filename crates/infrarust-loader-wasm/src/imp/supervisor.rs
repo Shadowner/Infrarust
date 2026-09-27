@@ -157,7 +157,7 @@ impl Supervisor {
             call.refuse(CallFailure::Expired);
             return ControlFlow::Continue(());
         }
-        match run_guest(live, call.as_mut(), deadline, limit, chain).await {
+        match run_guest(live, call.as_mut(), deadline, limit, chain.clone()).await {
             Ok(()) => {
                 if kind == JobKind::Enable {
                     self.promote();
@@ -167,7 +167,7 @@ impl Supervisor {
             Err(fault) => {
                 let fault = Arc::new(fault);
                 let failure = fault.failure();
-                self.fail(op, &fault).await;
+                self.fail(op, &fault, &chain).await;
                 call.refuse(failure);
             }
         }
@@ -177,8 +177,9 @@ impl Supervisor {
     pub(crate) async fn retry(&mut self) {
         self.health = Health::Recovering;
         self.budget.retry(Instant::now());
-        if !self.restart().await {
-            self.recover().await;
+        let chain = CallChain::default().with(self.factory.plugin_id());
+        if !self.restart(&chain).await {
+            self.recover(&chain).await;
         }
     }
 
@@ -239,7 +240,7 @@ impl Supervisor {
         };
     }
 
-    async fn fail(&mut self, op: &'static str, fault: &Fault) {
+    async fn fail(&mut self, op: &'static str, fault: &Fault, chain: &CallChain) {
         self.report(op, fault);
         self.last_fault = fault.to_string();
         let enabled = matches!(self.health, Health::Healthy(_));
@@ -248,17 +249,17 @@ impl Supervisor {
             self.discard(live);
         }
         if enabled {
-            self.recover().await;
+            self.recover(chain).await;
         } else {
             self.health = Health::Failed;
         }
     }
 
-    async fn recover(&mut self) {
+    async fn recover(&mut self, chain: &CallChain) {
         loop {
             match self.budget.after_fault(Instant::now()) {
                 Verdict::Restart => {
-                    if self.restart().await {
+                    if self.restart(chain).await {
                         return;
                     }
                 }
@@ -276,7 +277,7 @@ impl Supervisor {
         }
     }
 
-    async fn restart(&mut self) -> bool {
+    async fn restart(&mut self, chain: &CallChain) -> bool {
         self.generation += 1;
         let generation = self.generation;
         let instance = self.instance.stamped(generation);
@@ -292,8 +293,7 @@ impl Supervisor {
             attempt: u32::try_from(generation - FIRST_GENERATION).unwrap_or(u32::MAX),
             cause: self.last_fault.clone(),
         });
-        let chain = CallChain::default().with(self.factory.plugin_id());
-        match chain.scope(enable(&mut live, limit, &reason)).await {
+        match chain.clone().scope(enable(&mut live, limit, &reason)).await {
             Ok(()) => {
                 let ctx = self.factory.ctx();
                 let stale = self.factory.registrations().sweep(generation);
