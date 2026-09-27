@@ -5,8 +5,9 @@ mod support;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use infrarust_api::events::chat::ChatMessageEvent;
 use infrarust_api::events::lifecycle::PreLoginEvent;
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::plugin::{Plugin, PluginHealth, PluginRuntimeStatus, PluginState};
@@ -68,6 +69,20 @@ fn pre_login() -> PreLoginEvent {
         "127.0.0.1:25565".parse().unwrap(),
         ProtocolVersion::MINECRAFT_1_21,
         "play.example.com".to_owned(),
+    )
+}
+
+fn chat() -> ChatMessageEvent {
+    ChatMessageEvent::new(
+        support::session_player(
+            1,
+            nil_profile("Steve"),
+            ProtocolVersion::MINECRAFT_1_21.raw(),
+            "127.0.0.1:40000".parse().unwrap(),
+        ),
+        "hello".to_owned(),
+        false,
+        None,
     )
 }
 
@@ -177,4 +192,52 @@ async fn a_disabled_plugin_reports_it_is_stopped() {
     fx.plugin.on_disable().await.unwrap();
     assert_eq!(fx.status().health, PluginHealth::Stopped);
     assert_eq!(fx.status().queue.depth, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_slow_listener_shows_in_the_queue_depth_and_the_time_calls_waited() {
+    const EVENTS: usize = 8;
+    const HANDLER: Duration = Duration::from_millis(100);
+
+    let fx = enable_scripted("on chat-message normal sleep 100", "").await;
+    let idle = fx.status();
+    assert_eq!(idle.queue.depth, 0);
+    assert_eq!(idle.queue.capacity, 1024);
+    assert_eq!(idle.queue.recent.span, Duration::from_secs(60));
+
+    let bus = Arc::clone(&fx.env.event_bus);
+    let fired: Vec<_> = (0..EVENTS)
+        .map(|_| {
+            let bus = Arc::clone(&bus);
+            tokio::spawn(async move { bus.fire(chat()).await })
+        })
+        .collect();
+
+    let started = Instant::now();
+    let mut deepest = 0;
+    while started.elapsed() < PROMPTLY && fired.iter().any(|task| !task.is_finished()) {
+        deepest = deepest.max(fx.status().queue.depth);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    for task in fired {
+        task.await.unwrap();
+    }
+    assert!(
+        deepest >= EVENTS / 2,
+        "the events waited in the queue behind the slow listener: at most {deepest} seen"
+    );
+
+    let recent = fx.status().queue.recent;
+    assert_eq!(recent.taken, 1 + EVENTS as u64, "on_enable and every event");
+    assert!(recent.peak_depth >= EVENTS / 2, "{recent:?}");
+    let last_in_line = HANDLER * (EVENTS as u32 - 2);
+    assert!(
+        recent.wait_max >= last_in_line && recent.wait_p99 >= last_in_line,
+        "the last event waited for the ones before it: {recent:?}"
+    );
+    assert!(
+        recent.wait_p50 >= HANDLER && recent.wait_p50 <= recent.wait_p99,
+        "{recent:?}"
+    );
+    assert_eq!(fx.status().queue.depth, 0, "drained");
 }

@@ -207,6 +207,7 @@ impl Supervisor {
             generation,
             chain,
             mut call,
+            ..
         } = job;
         let chain = chain.with(self.factory.plugin_id());
         if kind == JobKind::Disable {
@@ -511,6 +512,12 @@ impl Supervisor {
                 Restarted::Faulted
             }
         }
+    }
+
+    pub(crate) fn taken(&self, job: &Job, waiting: usize) {
+        self.instance
+            .board()
+            .taken(job.queued, waiting.saturating_add(1));
     }
 
     fn set_health(&mut self, health: Health) {

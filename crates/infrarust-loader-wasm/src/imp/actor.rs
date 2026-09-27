@@ -222,6 +222,7 @@ pub(crate) struct Job {
     pub(crate) generation: Option<u64>,
     pub(crate) chain: CallChain,
     pub(crate) call: Box<dyn GuestCall>,
+    pub(crate) queued: Instant,
 }
 
 impl Job {
@@ -254,6 +255,7 @@ impl Job {
                 call: Some(call),
                 value: None,
             }),
+            queued: Instant::now(),
         }
     }
 }
@@ -647,6 +649,7 @@ async fn run(mut supervisor: Supervisor, mut queue: mpsc::Receiver<Job>, halt: A
         let Some(job) = job else {
             break;
         };
+        supervisor.taken(&job, queue.len());
         if halt.stopping() {
             job.call.refuse(CallFailure::Stopped);
             break;
