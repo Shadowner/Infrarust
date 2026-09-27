@@ -56,6 +56,7 @@ enum Decision {
     Allow,
     Deny(Refusal),
     Lookup,
+    Cached,
 }
 
 enum Mode {
@@ -99,6 +100,7 @@ pub(crate) struct NetworkPolicy {
     resolver: Arc<dyn Resolver>,
     lookup_timeout: Duration,
     denials: SharedRateLimit,
+    inbound_denials: SharedRateLimit,
     pub(super) tls: OnceLock<Result<Arc<rustls::ClientConfig>, String>>,
 }
 
@@ -160,6 +162,7 @@ impl NetworkPolicy {
             resolver,
             lookup_timeout,
             denials: SharedRateLimit::new(DENIED_CALL_LOG_INTERVAL, DENIAL_LOG_BURST),
+            inbound_denials: SharedRateLimit::new(DENIED_CALL_LOG_INTERVAL, DENIAL_LOG_BURST),
             tls: OnceLock::new(),
         }
     }
@@ -189,7 +192,7 @@ impl NetworkPolicy {
             match policy.decide(addr, usage) {
                 Decision::Allow => Box::pin(async { true }),
                 Decision::Deny(refusal) => {
-                    policy.report_denied(usage_label(usage), addr, refusal);
+                    policy.report_socket_denied(usage, addr, refusal);
                     Box::pin(async { false })
                 }
                 Decision::Lookup => {
@@ -199,6 +202,10 @@ impl NetworkPolicy {
                             .with_current_subscriber(),
                     ))
                 }
+                Decision::Cached => {
+                    let policy = Arc::clone(&policy);
+                    Box::pin(async move { policy.finish_cached_check(addr, usage).await })
+                }
             }
         }
     }
@@ -206,7 +213,15 @@ impl NetworkPolicy {
     async fn finish_check(&self, addr: SocketAddr, usage: SocketAddrUse) -> bool {
         let allowed = self.resolved_contains(addr).await;
         if !allowed {
-            self.report_denied(usage_label(usage), addr, Refusal::AllowList);
+            self.report_socket_denied(usage, addr, Refusal::AllowList);
+        }
+        allowed
+    }
+
+    async fn finish_cached_check(&self, addr: SocketAddr, usage: SocketAddrUse) -> bool {
+        let allowed = self.cached_contains(addr).await;
+        if !allowed {
+            self.report_socket_denied(usage, addr, Refusal::AllowList);
         }
         allowed
     }
@@ -230,19 +245,25 @@ impl NetworkPolicy {
                     Decision::Deny(Refusal::AllowList)
                 }
             }
-            SocketAddrUse::TcpAccept | SocketAddrUse::UdpReceive => Decision::Allow,
             SocketAddrUse::TcpConnect | SocketAddrUse::UdpSend => {
-                if rules
-                    .iter()
-                    .any(|rule| rule.matches_ip(addr.ip(), addr.port()))
-                {
-                    Decision::Allow
-                } else if self.hostnames.iter().any(|slot| slot.covers(addr.port())) {
-                    Decision::Lookup
-                } else {
-                    Decision::Deny(Refusal::AllowList)
-                }
+                self.decide_peer(rules, addr, Decision::Lookup)
             }
+            SocketAddrUse::TcpAccept | SocketAddrUse::UdpReceive => {
+                self.decide_peer(rules, addr, Decision::Cached)
+            }
+        }
+    }
+
+    fn decide_peer(&self, rules: &[NetworkRule], addr: SocketAddr, by_name: Decision) -> Decision {
+        if rules
+            .iter()
+            .any(|rule| rule.matches_ip(addr.ip(), addr.port()))
+        {
+            Decision::Allow
+        } else if self.hostnames.iter().any(|slot| slot.covers(addr.port())) {
+            by_name
+        } else {
+            Decision::Deny(Refusal::AllowList)
         }
     }
 
@@ -252,21 +273,33 @@ impl NetworkPolicy {
             Decision::Allow => true,
             Decision::Deny(_) => false,
             Decision::Lookup => self.resolved_contains(addr).await,
+            Decision::Cached => self.cached_contains(addr).await,
         }
     }
 
-    async fn resolved_contains(&self, addr: SocketAddr) -> bool {
+    async fn cached_contains(&self, addr: SocketAddr) -> bool {
         let ip = addr.ip();
-        let candidates: Vec<&HostnameSlot> = self
+        for slot in self
             .hostnames
             .iter()
             .filter(|slot| slot.covers(addr.port()))
-            .collect();
-        for slot in &candidates {
+        {
             if slot.state.lock().await.ips.contains(&ip) {
                 return true;
             }
         }
+        false
+    }
+
+    async fn resolved_contains(&self, addr: SocketAddr) -> bool {
+        if self.cached_contains(addr).await {
+            return true;
+        }
+        let ip = addr.ip();
+        let candidates = self
+            .hostnames
+            .iter()
+            .filter(|slot| slot.covers(addr.port()));
         for slot in candidates {
             let mut state = slot.state.lock().await;
             if state.ips.contains(&ip) {
@@ -418,6 +451,30 @@ impl NetworkPolicy {
             "wasm plugin network access refused by the {reason}: {kind} to {destination}"
         );
     }
+
+    fn report_socket_denied(&self, usage: SocketAddrUse, addr: SocketAddr, refusal: Refusal) {
+        let kind = usage_label(usage);
+        if !is_inbound(usage) {
+            self.report_denied(kind, addr, refusal);
+            return;
+        }
+        let Some(suppressed) = self.inbound_denials.admit(std::time::Instant::now()) else {
+            return;
+        };
+        let reason = refusal.reason();
+        tracing::warn!(
+            plugin = %self.plugin_id,
+            kind,
+            source = %addr,
+            reason,
+            suppressed,
+            "wasm plugin network access refused by the {reason}: {kind} from {addr}"
+        );
+    }
+}
+
+fn is_inbound(usage: SocketAddrUse) -> bool {
+    matches!(usage, SocketAddrUse::TcpAccept | SocketAddrUse::UdpReceive)
 }
 
 fn canonical(addr: SocketAddr) -> SocketAddr {
@@ -507,6 +564,162 @@ mod tests {
     }
 
     const CONNECT: SocketAddrUse = SocketAddrUse::TcpConnect;
+
+    const EVERY_USE: [SocketAddrUse; 7] = [
+        SocketAddrUse::TcpBind,
+        SocketAddrUse::TcpListen,
+        SocketAddrUse::TcpAccept,
+        SocketAddrUse::TcpConnect,
+        SocketAddrUse::UdpBind,
+        SocketAddrUse::UdpSend,
+        SocketAddrUse::UdpReceive,
+    ];
+
+    async fn udp_connect(policy: &Arc<NetworkPolicy>, target: SocketAddr) -> bool {
+        check(policy, target, SocketAddrUse::UdpSend).await
+            || check(policy, target, SocketAddrUse::UdpReceive).await
+    }
+
+    #[test]
+    fn every_use_is_listed_once() {
+        let labels: std::collections::HashSet<&str> =
+            EVERY_USE.iter().map(|usage| usage_label(*usage)).collect();
+        assert_eq!(labels.len(), EVERY_USE.len());
+        for usage in EVERY_USE {
+            let inbound = match usage {
+                SocketAddrUse::TcpAccept | SocketAddrUse::UdpReceive => true,
+                SocketAddrUse::TcpBind
+                | SocketAddrUse::TcpListen
+                | SocketAddrUse::TcpConnect
+                | SocketAddrUse::UdpBind
+                | SocketAddrUse::UdpSend => false,
+            };
+            assert_eq!(is_inbound(usage), inbound, "{usage:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn every_use_checks_its_address_against_the_rules() {
+        let resolver = Arc::new(FakeResolver::default());
+        resolver.answer("db.internal", &["192.168.5.5"]);
+        let policy = policy_with(
+            &["127.0.0.1:9000", "10.0.0.0/8:*", "db.internal:5432"],
+            &resolver,
+        );
+        policy.warm().await;
+        for usage in EVERY_USE {
+            let (exact, range, named) = match usage {
+                SocketAddrUse::TcpBind | SocketAddrUse::TcpListen | SocketAddrUse::UdpBind => {
+                    (true, false, false)
+                }
+                SocketAddrUse::TcpConnect
+                | SocketAddrUse::UdpSend
+                | SocketAddrUse::TcpAccept
+                | SocketAddrUse::UdpReceive => (true, true, true),
+            };
+            assert_eq!(
+                check(&policy, addr("127.0.0.1:9000"), usage).await,
+                exact,
+                "{usage:?} on an exact rule"
+            );
+            assert_eq!(
+                check(&policy, addr("10.1.2.3:40000"), usage).await,
+                range,
+                "{usage:?} in a range rule"
+            );
+            assert_eq!(
+                check(&policy, addr("192.168.5.5:5432"), usage).await,
+                named,
+                "{usage:?} on a resolved hostname rule"
+            );
+            assert!(
+                !check(&policy, addr("192.168.5.6:5432"), usage).await,
+                "{usage:?} on an address the hostname does not resolve to"
+            );
+            assert!(
+                !check(&policy, addr("127.0.0.1:9001"), usage).await,
+                "{usage:?} on a port no rule covers"
+            );
+            assert!(
+                !check(&policy, addr("172.16.0.1:9000"), usage).await,
+                "{usage:?} on an address no rule covers"
+            );
+        }
+        assert_eq!(resolver.calls(), 1, "the cache was fresh for every miss");
+    }
+
+    #[tokio::test]
+    async fn inbound_peers_must_match_a_rule_by_address_and_port() {
+        let resolver = Arc::new(FakeResolver::default());
+        let policy = policy_with(&["127.0.0.1:5432", "10.0.0.0/8:*", "[::1]:*"], &resolver);
+        for usage in [SocketAddrUse::UdpReceive, SocketAddrUse::TcpAccept] {
+            assert!(check(&policy, addr("127.0.0.1:5432"), usage).await);
+            assert!(!check(&policy, addr("127.0.0.1:5433"), usage).await);
+            assert!(check(&policy, addr("10.20.30.40:51000"), usage).await);
+            assert!(check(&policy, addr("[::ffff:10.0.0.1]:51000"), usage).await);
+            assert!(!check(&policy, addr("11.0.0.1:53"), usage).await);
+            assert!(check(&policy, addr("[::1]:1"), usage).await);
+            assert!(!check(&policy, addr("[::2]:1"), usage).await);
+        }
+        assert!(udp_connect(&policy, addr("127.0.0.1:5432")).await);
+        assert!(!udp_connect(&policy, addr("127.0.0.1:5433")).await);
+        assert!(!udp_connect(&policy, addr("192.168.0.1:53")).await);
+        assert_eq!(resolver.calls(), 0, "inbound checks never resolve");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inbound_peers_of_a_hostname_rule_are_matched_against_the_cache_only() {
+        let resolver = Arc::new(FakeResolver::default());
+        resolver.answer("db.internal", &["10.9.9.9"]);
+        let policy = policy_with(&["db.internal:5432"], &resolver);
+
+        for usage in [SocketAddrUse::UdpReceive, SocketAddrUse::TcpAccept] {
+            assert!(
+                !check(&policy, addr("10.9.9.9:5432"), usage).await,
+                "{usage:?} before the name was ever resolved"
+            );
+        }
+        assert_eq!(resolver.calls(), 0, "a receive never triggers a lookup");
+
+        policy.warm().await;
+        assert_eq!(resolver.calls(), 1);
+        for usage in [SocketAddrUse::UdpReceive, SocketAddrUse::TcpAccept] {
+            assert!(check(&policy, addr("10.9.9.9:5432"), usage).await);
+            assert!(!check(&policy, addr("10.9.9.9:5433"), usage).await);
+            assert!(!check(&policy, addr("10.9.9.8:5432"), usage).await);
+        }
+
+        resolver.answer("db.internal", &["10.9.9.8"]);
+        tokio::time::advance(HOSTNAME_REFRESH_INTERVAL).await;
+        assert!(
+            !check(&policy, addr("10.9.9.8:5432"), SocketAddrUse::UdpReceive).await,
+            "a stale cache is not refreshed by a receive"
+        );
+        assert_eq!(resolver.calls(), 1);
+
+        assert!(check(&policy, addr("10.9.9.8:5432"), SocketAddrUse::UdpSend).await);
+        assert_eq!(resolver.calls(), 2, "the send miss refreshed the rule");
+        assert!(check(&policy, addr("10.9.9.8:5432"), SocketAddrUse::UdpReceive).await);
+        assert!(!check(&policy, addr("10.9.9.9:5432"), SocketAddrUse::UdpReceive).await);
+        assert_eq!(resolver.calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn inbound_refusals_do_not_use_up_the_log_budget_of_the_plugins_own_calls() {
+        let resolver = Arc::new(FakeResolver::default());
+        let policy = policy_with(&["127.0.0.1:5432"], &resolver);
+        for _ in 0..DENIAL_LOG_BURST * 4 {
+            assert!(!check(&policy, addr("203.0.113.9:4000"), SocketAddrUse::UdpReceive).await);
+            assert!(!check(&policy, addr("203.0.113.9:4000"), SocketAddrUse::TcpAccept).await);
+        }
+        let now = std::time::Instant::now();
+        assert!(policy.denials.admit(now).is_some());
+        assert_eq!(policy.inbound_denials.admit(now), None);
+
+        assert!(!check(&policy, addr("203.0.113.9:4000"), CONNECT).await);
+        assert!(!check(&policy, addr("203.0.113.9:4000"), SocketAddrUse::UdpSend).await);
+        assert!(policy.denials.admit(now).is_some());
+    }
 
     #[tokio::test]
     async fn ip_rules_allow_without_any_lookup() {
@@ -628,6 +841,9 @@ mod tests {
         assert!(check(&policy, addr("[::]:0"), SocketAddrUse::UdpBind).await);
         assert!(!check(&policy, addr("0.0.0.0:5000"), SocketAddrUse::UdpBind).await);
         assert!(check(&policy, addr("127.0.0.1:9000"), SocketAddrUse::UdpBind).await);
+        assert!(check(&policy, addr("127.0.0.1:9000"), SocketAddrUse::TcpListen).await);
+        assert!(!check(&policy, addr("0.0.0.0:0"), SocketAddrUse::TcpListen).await);
+        assert!(!check(&policy, addr("127.0.0.1:0"), SocketAddrUse::TcpListen).await);
         assert_eq!(resolver.calls(), 0, "binds never consult hostname rules");
     }
 
@@ -663,13 +879,7 @@ mod tests {
             assert!(!policy.is_active());
             assert!(!policy.dns());
             assert!(!policy.has_hostnames());
-            for usage in [
-                SocketAddrUse::TcpConnect,
-                SocketAddrUse::TcpBind,
-                SocketAddrUse::TcpListen,
-                SocketAddrUse::UdpBind,
-                SocketAddrUse::UdpSend,
-            ] {
+            for usage in EVERY_USE {
                 assert!(!check(policy, addr("127.0.0.1:0"), usage).await);
                 assert!(!check(policy, addr("127.0.0.1:80"), usage).await);
             }

@@ -74,7 +74,6 @@ impl SecProbe {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-06: UdpReceive and TcpAccept always allowed"]
 async fn a_udp_socket_cannot_connect_to_a_denied_address() {
     let allowed = UdpSink::start().await;
     let denied = UdpSink::start().await;
@@ -88,7 +87,6 @@ async fn a_udp_socket_cannot_connect_to_a_denied_address() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-06: UdpReceive and TcpAccept always allowed"]
 async fn an_ephemeral_udp_socket_does_not_receive_from_an_unlisted_source() {
     let allowed = UdpSink::start().await;
     let probe = std::sync::Arc::new(
