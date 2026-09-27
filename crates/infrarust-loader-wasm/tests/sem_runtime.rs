@@ -248,7 +248,6 @@ fn tick_times(lines: &[String]) -> Vec<u64> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-10: slow interval runs pile up in the plugin queue"]
 async fn an_interval_slower_than_its_period_does_not_starve_the_plugins_other_calls() {
     let probe = Probe::start("interval slow 20 100 0\ncmd ping").await;
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -267,7 +266,6 @@ async fn an_interval_slower_than_its_period_does_not_starve_the_plugins_other_ca
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-10: slow interval runs pile up in the plugin queue"]
 async fn an_interval_slower_than_its_period_keeps_at_least_one_period_between_runs_like_native() {
     let probe = Probe::start("interval slow 20 100 0").await;
     tokio::time::sleep(Duration::from_millis(1200)).await;
@@ -283,7 +281,6 @@ async fn an_interval_slower_than_its_period_keeps_at_least_one_period_between_ru
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-10: slow interval runs pile up in the plugin queue"]
 async fn an_interval_slower_than_its_period_does_not_flood_the_log_with_expired_runs() {
     let logs = LogCapture::at(Level::WARN);
     async {
@@ -564,7 +561,6 @@ async fn delays_and_intervals_fire_on_time_without_drifting() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-10: slow interval runs pile up in the plugin queue"]
 async fn disabling_a_plugin_whose_interval_is_slower_than_its_period_returns_promptly() {
     let probe = Probe::start("interval slow 20 100 0").await;
     tokio::time::sleep(Duration::from_secs(3)).await;

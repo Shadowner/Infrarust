@@ -35,8 +35,7 @@ impl PluginStoreState {
             Duration::from_millis(after),
             Box::new(move || {
                 tasks.fired(id);
-                proxies::dispatch_scheduled_task(instance, handler);
-                Box::pin(async {})
+                Box::pin(proxies::run_scheduled_task(instance, handler))
             }),
         );
         self.bind_task(id, handle);
@@ -56,10 +55,7 @@ impl PluginStoreState {
         let handle = ctx.scheduler().repeat(
             Duration::from_millis(period),
             initial_delay.map(Duration::from_millis),
-            Box::new(move || {
-                proxies::dispatch_scheduled_task(instance.clone(), handler);
-                Box::pin(async {})
-            }),
+            Box::new(move || Box::pin(proxies::run_scheduled_task(instance.clone(), handler))),
         );
         self.bind_task(id, handle);
         Ok(id)
