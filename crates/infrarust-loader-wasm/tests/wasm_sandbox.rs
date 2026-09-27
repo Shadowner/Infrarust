@@ -128,12 +128,11 @@ async fn an_ephemeral_udp_socket_does_not_receive_from_an_unlisted_source() {
     }
 
     let outcome = tokio::time::timeout(Duration::from_secs(5), recv).await;
-    match outcome {
-        Ok(Ok(line)) => assert!(
+    if let Ok(Ok(line)) = outcome {
+        assert!(
             !line.contains("unsolicited"),
             "an ephemeral UDP socket received a datagram from a source no allow-list rule covers: {line}"
-        ),
-        _ => {}
+        );
     }
 }
 
