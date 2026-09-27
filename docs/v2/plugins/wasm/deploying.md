@@ -230,6 +230,8 @@ guest = "/shared"
 
 Without the matching capability the table is ignored and a warning says so. `network` with an empty list refuses everything. A missing mount directory fails the load of that plugin, naming the plugin and the path. The rules, what each one allows, and the security trade-offs are on [Network & Extra Folders](./network).
 
+Neither the data directory nor a writable mount has a size limit, and a hard link that another program places in either one gives the plugin access to the linked file. Put plugin data on storage with its own quota and keep other programs from writing into these folders; see [Disk use and hard links](./capabilities#disk-use-and-hard-links).
+
 ## Next steps
 
 - [Building a Plugin](./building): produce the `.wasm` artifact.

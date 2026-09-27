@@ -138,6 +138,8 @@ A mount is a second WASI preopen next to the data directory, which stays at `/`.
 
 A read-only mount grants read permission on the folder and its files, so writes, creations and deletions fail. `..` cannot leave a mount or the data directory: the host refuses a path that climbs above the preopened folder, even one that would come back inside it, and a symbolic link that points outside the folder is refused the same way.
 
+A writable mount has no size limit, like the data directory, and a hard link that another program places in a mount gives the plugin access to the linked file. See [Disk use and hard links](./capabilities#disk-use-and-hard-links) before sharing a folder that other programs write to.
+
 ### Restarts
 
 A fresh instance built after a fault gets the same rules and the same mounts as the first one. The instance used to read a plugin's metadata at discovery gets neither.

@@ -328,6 +328,14 @@ builder
 
 There is no inherited stdio. With `filesystem-extended`, each entry of `[[plugins.<id>.wasm.mounts]]` adds one more preopen at its `guest` path: `FsPerms::ReadOnly` for a read-only mount (the default), `FsPerms::ReadWrite` otherwise. A host directory that does not exist fails that plugin's load. Without the capability the mounts are ignored with one warning, and the plugin sees only its data directory. `..` cannot climb out of a preopen, and a symbolic link that points outside it is refused.
 
+### Disk use and hard links
+
+The filesystem sandbox controls which paths a plugin can open. Two things it does not control are left to the operator.
+
+**No disk quota.** The proxy does not count what a plugin writes. It can write to its data directory, and to every writable mount, until the filesystem that holds them is full, in bytes or in inodes. If the proxy's own files (logs, the AOT cache, config) live on the same filesystem, they stop being written too. To bound a plugin, put its data directory (`plugins_dir/<plugin-id>`), or all of `plugins_dir`, on storage that has a limit of its own: a filesystem project or user quota, a separate partition, a `tmpfs` mounted with `size=`, or a container volume with a size cap.
+
+**Hard links are not checked.** The checks on `..` and symbolic links look at the path the guest opens. A hard link is not a path to somewhere else: it is a second name for the same file. If another program or user creates a hard link inside a plugin's data directory or mount to a file elsewhere on the host, the plugin reads that file through the link, and can change it when the folder is writable and the proxy user may write the file. The plugin cannot create such a link itself, because it cannot name a file outside its folders. Keep each data directory owned by the proxy user and writable by it alone, and do not let other programs write into a plugin's data directory or into a writable mount.
+
 ### Network
 
 Without `network`, the WASI context refuses every socket address, name lookups are off and every `wasi:http` request fails with `HTTP-request-denied`. The `wasi:sockets` and `wasi:http` interfaces are still linked, so a plugin that imports them loads and gets a refusal instead of a link error.
