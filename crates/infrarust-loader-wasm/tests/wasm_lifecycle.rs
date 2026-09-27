@@ -180,11 +180,64 @@ async fn a_symlinked_wasm_is_loaded_once() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-20: scanner follows directory symlink loops"]
 async fn a_directory_symlink_loop_does_not_stop_discovery() {
     let (_tmp, dir) = staged_with_good();
     std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
     assert_good_plugin_survives(&dir, "symlink loop to plugins_dir").await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_directory_reached_through_two_links_is_scanned_once() {
+    let (_tmp, dir) = staged_with_good();
+    std::fs::create_dir(dir.join("real")).unwrap();
+    add_probe(&dir.join("real"), "shared", "id=shared\n");
+    std::os::unix::fs::symlink(dir.join("real"), dir.join("alias")).unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("real").join("up")).unwrap();
+    let (found, logs) = discover_logged(&dir).await;
+    assert_eq!(
+        ids(&found.unwrap()),
+        ["good", "shared"],
+        "{:?}",
+        logs.lines()
+    );
+    assert!(logs.lines().is_empty(), "{:?}", logs.lines());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wasm_file_reached_through_two_paths_is_probed_once() {
+    let (_tmp, dir) = staged_with_good();
+    std::fs::create_dir(dir.join("links")).unwrap();
+    std::os::unix::fs::symlink(dir.join("good.wasm"), dir.join("links").join("again.wasm"))
+        .unwrap();
+    let (found, logs) = discover_logged(&dir).await;
+    assert_eq!(ids(&found.unwrap()), ["good"]);
+    assert!(logs.lines().is_empty(), "{:?}", logs.lines());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_subdirectory_is_skipped_and_logged() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_tmp, dir) = staged_with_good();
+    let locked = dir.join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    add_probe(&locked, "hidden", "id=hidden\n");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let (found, logs) = discover_logged(&dir).await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(ids(&found.unwrap()), ["good"]);
+    let skipped = logs.matching("cannot be read");
+    assert_eq!(skipped.len(), 1, "{:?}", logs.lines());
+    assert!(
+        skipped[0].contains(&locked.display().to_string()),
+        "{skipped:?}"
+    );
 }
 
 #[cfg(unix)]

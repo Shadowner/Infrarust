@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
@@ -246,29 +246,79 @@ impl PluginLoader for WasmPluginLoader {
     }
 }
 
-fn scan_wasm_files(dir: &Path) -> Result<Vec<PathBuf>, LoaderError> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let entries =
-            std::fs::read_dir(&current).map_err(|source| LoaderError::DirectoryNotAccessible {
-                path: current.clone(),
-                source,
-            })?;
-        for entry in entries {
-            let entry = entry.map_err(|source| LoaderError::DirectoryNotAccessible {
-                path: current.clone(),
-                source,
-            })?;
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().and_then(|n| n.to_str()) != Some(CACHE_SUBDIR) {
-                    stack.push(path);
-                }
-            } else if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
-                out.push(path);
-            }
+fn scan_wasm_files(root: &Path) -> Result<Vec<PathBuf>, LoaderError> {
+    let top = sorted_entries(root).map_err(|source| LoaderError::DirectoryNotAccessible {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let mut scan = Scan::default();
+    scan.dirs.insert(identity(root));
+    let mut stack = Vec::new();
+    push_in_order(&mut stack, scan.take(top));
+    while let Some(dir) = stack.pop() {
+        match sorted_entries(&dir) {
+            Ok(entries) => push_in_order(&mut stack, scan.take(entries)),
+            Err(error) => tracing::error!(
+                path = %dir.display(),
+                error = %error,
+                "WASM plugin directory skipped: it cannot be read"
+            ),
         }
     }
-    Ok(out)
+    Ok(scan.files)
+}
+
+#[derive(Default)]
+struct Scan {
+    dirs: HashSet<PathBuf>,
+    file_ids: HashSet<PathBuf>,
+    files: Vec<PathBuf>,
+}
+
+impl Scan {
+    fn take(&mut self, entries: Vec<PathBuf>) -> Vec<PathBuf> {
+        let mut subdirs = Vec::new();
+        for path in entries {
+            if path.is_dir() {
+                if path.file_name().and_then(|n| n.to_str()) == Some(CACHE_SUBDIR) {
+                    continue;
+                }
+                if self.dirs.insert(identity(&path)) {
+                    subdirs.push(path);
+                } else {
+                    tracing::debug!(
+                        path = %path.display(),
+                        "plugin directory already scanned through another path, skipped"
+                    );
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
+                if self.file_ids.insert(identity(&path)) {
+                    self.files.push(path);
+                } else {
+                    tracing::debug!(
+                        path = %path.display(),
+                        "plugin file already found through another path, skipped"
+                    );
+                }
+            }
+        }
+        subdirs
+    }
+}
+
+fn push_in_order(stack: &mut Vec<PathBuf>, mut subdirs: Vec<PathBuf>) {
+    subdirs.reverse();
+    stack.extend(subdirs);
+}
+
+fn sorted_entries(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut entries = std::fs::read_dir(dir)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort();
+    Ok(entries)
+}
+
+fn identity(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
