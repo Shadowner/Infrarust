@@ -483,6 +483,33 @@ Each fault is logged at error level with the plugin, the call and the cause. A s
 
 Startup fails when `max_restarts` is above 1000, when `window`, `backoff_initial` or `backoff_max` is zero or longer than `24h`, or when `backoff_initial` is longer than `backoff_max`.
 
+### Registration quotas
+
+```toml
+[wasm.quotas]
+event_listeners = 1024
+commands = 256
+scheduled_tasks = 1024
+plugin_channels = 128
+codec_filters = 32
+limbo_handlers = 64
+```
+
+Each key caps how many registrations of one kind a WASM plugin may hold at the same time. A quota counts what the plugin holds now, not what it ever registered: unsubscribing a listener, cancelling a task, or unregistering a command, a channel or a codec filter frees room, and a one-shot task stops counting once it has run. A registration past the quota is refused with a host error of kind `limit-exceeded`, and the plugin keeps what it already held. The proxy logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance.
+
+| Key | What it counts |
+|-----|----------------|
+| `event_listeners` | Event and named-event subscriptions, plus one per packet filter of each packet subscription. |
+| `commands` | Commands the plugin registered. Registering a name it already holds replaces that command and takes no more room. |
+| `scheduled_tasks` | Delays that have not run yet and intervals that are not cancelled. |
+| `plugin_channels` | Plugin messaging channels the plugin registered. |
+| `codec_filters` | Codec filter ids the plugin registered. |
+| `limbo_handlers` | Limbo handler names the plugin registered. |
+
+A plugin that propagates a refused registration with `?` in `on_enable` fails to enable, as with any other host error. After a fault, the listeners, tasks, commands and limbo handlers of the discarded instance do not count against the fresh one; plugin channels and codec filters are kept across a recovery and keep counting. `[plugins.<id>.wasm.quotas]` sets other quotas for one plugin.
+
+Startup fails when a quota is 0 or above 1048576.
+
 ## Plugins
 
 ```toml
@@ -503,7 +530,7 @@ Plugin configurations are keyed by plugin ID.
 - `deny` removes capabilities. It is applied after the baseline and the grants, so it can take away a baseline capability such as `player-write`, and a capability listed in both `permissions` and `deny` is denied. It also applies to compiled-in plugins.
 - `strict_capabilities` (WASM plugins, defaults to `false`) refuses to load the plugin when it imports a host function whose capability it lacks. Without it such a plugin loads, a warning names each import that will be refused, and the calls are refused when made. See [What a missing capability does](../plugins/wasm/capabilities#what-a-missing-capability-does).
 - `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
-- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`, and `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]`; keys it leaves out keep the proxy-wide value.
+- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`, `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]` and `[plugins.<id>.wasm.quotas]` overrides `[wasm.quotas]`; keys it leaves out keep the proxy-wide value.
 - `[plugins.<id>.wasm.network]` lists the destinations a plugin with the `network` capability may reach, and `[[plugins.<id>.wasm.mounts]]` the host folders a plugin with `filesystem-extended` sees. See [Network & Extra Folders](../plugins/wasm/network).
 
 Unknown capability names in `permissions` or `deny` are ignored with a warning. The capability strings are listed in [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix). `path` is accepted for compatibility; WASM plugins are always discovered in `plugins_dir`.
@@ -559,6 +586,14 @@ max_restarts = 5
 window = "5m"
 backoff_initial = "1s"
 backoff_max = "5m"
+
+[wasm.quotas]
+event_listeners = 1024
+commands = 256
+scheduled_tasks = 1024
+plugin_channels = 128
+codec_filters = 32
+limbo_handlers = 64
 
 # [telemetry]
 # enabled = true

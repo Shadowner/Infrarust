@@ -132,6 +132,7 @@ interface types {
         invalid-state,
         unsupported,
         internal,
+        limit-exceeded,
     }
 
     record host-error {
@@ -321,6 +322,7 @@ Every fallible host function returns `result<T, host-error>`. The `kind` is the 
 | `invalid-state` | The player is not in a state that allows the action, such as no backend yet, or the call would wait on the player's own session while that session is waiting on the plugin. |
 | `unsupported` | The proxy does not offer the service. |
 | `internal` | Anything else. |
+| `limit-exceeded` | The plugin already holds as many registrations of that kind as its quota allows: event listeners, commands, scheduled tasks, plugin channels, codec filters or limbo handlers (`[wasm.quotas]`). The message names the quota key. Releasing a registration of that kind frees room. |
 
 A host function traps the guest only on a host invariant bug, such as a stale resource handle.
 
@@ -1379,7 +1381,8 @@ interface providers {
 
 - `ban-service.ban` records the plugin as the ban's source. `unban` answers the removed entry. `list` pages through bans with the cursor from the previous page.
 - `command-manager.register` answers what the host registered, including the aliases it rejected because they are taken. The `handler-id` routes invocations and completions back into `handle-command` and `tab-complete`.
-- `scheduler.interval` takes an optional initial delay; without one the first run waits one period. The `handler-id` routes back into `on-scheduled-task`.
+- `scheduler.interval` takes an optional initial delay; without one the first run waits one period. Each later run starts one period after the previous `on-scheduled-task` call returns, so at most one run waits in the plugin's queue. The `handler-id` routes back into `on-scheduled-task`. A `task-handle` is only meaningful to the plugin that got it; `cancel` of a handle it does not hold, or of a delay that already ran, does nothing.
+- Every registering function (`event-bus.subscribe`, `subscribe-named`, `subscribe-packets`, `command-manager.register`, `scheduler.delay`, `scheduler.interval`, `messaging.register-channel`, `codec-registry.register-codec-filter`, `limbo.register-limbo-handler`) answers `limit-exceeded` when the plugin holds its quota of that kind.
 - `codec-registry` filter priorities run from `first` to `last`; see [Codec Filters](./codec-filters).
 - `config-service` document functions mirror the native `ConfigService` and redact every secret. `write-proxy-config-document` needs `config-write`; a document that does not parse or validate answers `invalid-argument`, a failed write `unavailable`.
 - `load-balancer` mirrors the native `LoadBalancerService`; an unknown server or address answers `not-found`.

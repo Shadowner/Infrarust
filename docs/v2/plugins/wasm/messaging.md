@@ -53,7 +53,7 @@ A plugin only hears about channels it registered:
 | `Messaging::unregister(&channel)` | `Result<bool, Error>` | Stop; `true` when this plugin had registered it |
 | `Messaging::channels()` | `Result<Vec<ChannelId>, Error>` | The channels this plugin registered |
 
-Registrations belong to the plugin. They are removed when the plugin is disabled or unloaded, and they are kept across a [recovery](./fault-model), since they live on the host; registering the same channel again in the new instance's `on_enable` changes nothing. When two plugins register the same channel, each message fires one event that both see, and the channel stays registered until both removed it.
+Registrations belong to the plugin. They are removed when the plugin is disabled or unloaded, and they are kept across a [recovery](./fault-model), since they live on the host; registering the same channel again in the new instance's `on_enable` changes nothing. A plugin holds at most `[wasm.quotas] plugin_channels` channels (128 by default): past it, `register` returns `LimitExceeded` for a channel the plugin does not already hold, and `unregister` frees room. When two plugins register the same channel, each message fires one event that both see, and the channel stays registered until both removed it.
 
 Registering a channel also makes the proxy announce it to backends with `minecraft:register` (`REGISTER` below 1.13), next to the client's own channels, because a Bukkit plugin only sends a message on a channel the player registered. A channel registered later reaches the backends players join afterwards. Sending does not require registering the channel.
 

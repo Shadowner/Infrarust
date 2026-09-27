@@ -81,10 +81,11 @@ pub enum ErrorKind {
     InvalidState,
     Unsupported,
     Internal,
+    LimitExceeded,
 }
 ```
 
-`Error` implements `std::error::Error`, and `?` turns it into the `PluginError` that `on_enable` and `on_disable` return. A call the plugin lacks the capability for returns `PermissionDenied` with a message that names it, for example `missing capability: ban`. The host also logs that refusal, at most once a minute per capability. See [the WIT error kinds](./api-reference#errors) for when each kind is raised.
+`Error` implements `std::error::Error`, and `?` turns it into the `PluginError` that `on_enable` and `on_disable` return. A call the plugin lacks the capability for returns `PermissionDenied` with a message that names it, for example `missing capability: ban`. The host also logs that refusal, at most once a minute per capability. A registration (event subscription, command, scheduled task, plugin channel, codec filter, limbo handler) past the plugin's [quota](./capabilities#registration-quotas) returns `LimitExceeded`. `ErrorKind` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm. See [the WIT error kinds](./api-reference#errors) for when each kind is raised.
 
 ```rust
 match Bans::is_banned(&BanTarget::Username("Griefer".into())) {
@@ -355,7 +356,7 @@ impl Messaging {
 }
 ```
 
-Registering a channel is what makes the proxy fire [`PluginMessageEvent`](./events#plugin-messages) for it. `send_to_player` sends to the client, `send_to_backend` to the backend that player is on, and `send_to_server` through any player connected to that server; it answers how many players could carry the message and returns `Unavailable` when none is there. A message to a backend is limited to 32767 bytes, one to a client to 1 MiB.
+Registering a channel is what makes the proxy fire [`PluginMessageEvent`](./events#plugin-messages) for it. `register` returns `LimitExceeded` when the plugin already holds `[wasm.quotas] plugin_channels` channels (128 by default); registering a channel it holds again always succeeds. `send_to_player` sends to the client, `send_to_backend` to the backend that player is on, and `send_to_server` through any player connected to that server; it answers how many players could carry the message and returns `Unavailable` when none is there. A message to a backend is limited to 32767 bytes, one to a client to 1 MiB.
 
 ```rust
 let channel = ChannelId::modern("myplugin:sync");
@@ -410,7 +411,11 @@ pub fn interval_with_delay(
 pub fn cancel(&self, handle: TaskHandle);
 ```
 
-`delay` runs the closure once after the duration and drops it right after. `interval` runs it every period, the first time one period from now; `interval_with_delay` sets the first run separately. Both fire through the host's `on-scheduled-task` dispatch back into the plugin. `cancel` (or `TaskHandle::cancel`) stops the task on the host and drops the closure in the guest; calling it from inside the task's own callback is fine, and the closure is dropped once that call returns.
+`delay` runs the closure once after the duration and drops it right after. `interval` runs it repeatedly, the first time one period from now; `interval_with_delay` sets the first run separately. Both fire through the host's `on-scheduled-task` dispatch back into the plugin. `cancel` (or `TaskHandle::cancel`) stops the task on the host and drops the closure in the guest; calling it from inside the task's own callback is fine, and the closure is dropped once that call returns. Cancelling a delay that has already run does nothing.
+
+An interval behaves like a native repeating task: the next run starts one period after the previous run returns, not on a fixed clock. A run that takes longer than the period, or waits behind other calls in the plugin's queue, pushes the next one back instead of queueing more, so at most one run of an interval waits in the queue and the plugin's commands and events are not starved by it. A 1-second interval whose run takes 300 ms runs about every 1.3 seconds.
+
+A plugin holds at most `[wasm.quotas] scheduled_tasks` live tasks (1024 by default): delays that have not run yet and intervals that are not cancelled. Past it, `delay` and `interval` return `LimitExceeded`. A delay stops counting once it has run.
 
 ```rust
 use std::time::Duration;

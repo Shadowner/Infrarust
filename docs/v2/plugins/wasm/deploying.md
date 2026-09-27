@@ -181,6 +181,7 @@ Each plugin runs in an isolated wasmtime instance with hard limits:
 | Memory | Linear memory is capped per instance at `memory_limit_mb` (64 MiB). |
 | Call time | One call may run for `max_call_duration` (60 s), host calls included; each host call that waits on the proxy (server start and stop, bans, `connect`, `transfer`, `request-cookie`, permission refresh, permission snapshots with `set-snapshot` and `release`, named events) is capped at `host_call_timeout` (30 s), and `switch-server` at 250 ms. |
 | Call queue | The plugin handles one call at a time; up to `queue_capacity` (1024) calls wait, further calls are refused immediately. |
+| Registrations | At most 1024 event listeners, 256 commands, 1024 live scheduled tasks, 128 plugin channels, 32 codec filters and 64 limbo handlers held at once, set in `[wasm.quotas]`. A registration past a quota is refused with `limit-exceeded`. |
 | Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. With `filesystem-extended`, the folders listed in `[[plugins.<id>.wasm.mounts]]` as well, read-only by default. |
 | Network | None by default. With `network`, only the destinations listed in `[plugins.<id>.wasm.network] allow`. |
 
@@ -194,9 +195,12 @@ queue_capacity = 1024
 [plugins.my_plugin.wasm]
 memory_limit_mb = 128
 queue_capacity = 4096
+
+[plugins.my_plugin.wasm.quotas]
+scheduled_tasks = 4096
 ```
 
-Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range.
+Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. `[plugins.<id>.wasm.recovery]` and `[plugins.<id>.wasm.quotas]` override `[wasm.recovery]` and `[wasm.quotas]` the same way, key by key. A plugin that schedules a delay per player, for example, may need a larger `scheduled_tasks` quota than the rest. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range, and [Registration quotas](../../configuration/global#registration-quotas) for what each quota counts.
 
 Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy, or reach files and hosts you did not list. Capability details are in [Capabilities](./capabilities).
 

@@ -143,7 +143,7 @@ The host keeps one command table for every plugin, native and WASM alike, and ap
 - A bare name goes to the first plugin that registers it. If another plugin already owns the name, your registration is refused.
 - An alias that is reserved or already taken is skipped; the command keeps its other names and the alias shows up in `rejected_aliases`.
 
-A refused registration returns an `Error`: `Conflict` for a name that is reserved or owned by another plugin, `InvalidArgument` for a name that is not a valid command name, `PermissionDenied` without the `command` capability. The guest keeps no handler for a refused command, so `unregister_command` on it returns `Ok(false)`. The host also logs the refusal, rate-limited so a guest that retries in a loop cannot flood the log.
+A refused registration returns an `Error`: `Conflict` for a name that is reserved or owned by another plugin, `InvalidArgument` for a name that is not a valid command name, `PermissionDenied` without the `command` capability, `LimitExceeded` when the plugin already holds `[wasm.quotas] commands` commands (256 by default). Registering a name the plugin already holds replaces it and never hits the quota; unregistering a command frees room for another. The guest keeps no handler for a refused command, so `unregister_command` on it returns `Ok(false)`. The host also logs the refusal, rate-limited so a guest that retries in a loop cannot flood the log.
 
 `unregister_command` goes through the same ownership check on the host: it can only remove commands this plugin registered, even if the guest passes another plugin's name.
 

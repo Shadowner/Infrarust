@@ -394,6 +394,33 @@ backoff_initial = "1s"
 backoff_max = "5m"
 ```
 
+#### `[wasm.quotas]`
+
+How many registrations of each kind one WASM plugin may hold at the same time. A quota counts what the plugin holds now: unregistering, unsubscribing, cancelling, or a delay that has run frees room. A registration past a quota answers the guest a `host-error` of kind `limit-exceeded` and logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `event_listeners` | integer | `1024` | Event and named-event subscriptions, plus one per packet filter of each packet subscription |
+| `commands` | integer | `256` | Commands. Registering a held name again replaces it and takes no more room |
+| `scheduled_tasks` | integer | `1024` | Delays not yet run and intervals not cancelled |
+| `plugin_channels` | integer | `128` | Plugin messaging channels |
+| `codec_filters` | integer | `32` | Codec filter ids |
+| `limbo_handlers` | integer | `64` | Limbo handler names |
+
+After a fault, what the discarded instance held of listeners, tasks, commands and limbo handlers does not count against the fresh instance. Plugin channels and codec filters are kept across a recovery and keep counting.
+
+Validation: each quota between 1 and 1048576.
+
+```toml
+[wasm.quotas]
+event_listeners = 1024
+commands = 256
+scheduled_tasks = 1024
+plugin_channels = 128
+codec_filters = 32
+limbo_handlers = 64
+```
+
 ### `[plugins.<id>]`
 
 Per-plugin configuration, keyed by plugin ID. WASM plugins are discovered from `plugins_dir`.
@@ -417,7 +444,7 @@ enabled = true
 
 #### `[plugins.<id>.wasm]`
 
-Overrides the `[wasm]` limits for one plugin. Accepts `memory_limit_mb`, `cpu_budget`, `codec_cpu_budget`, `host_call_timeout`, `max_call_duration` and `queue_capacity` (not `epoch_tick`, which is proxy-wide), and a `recovery` table with any of the `[wasm.recovery]` keys. A key left out keeps the `[wasm]` value. The same validation applies to the resulting limits.
+Overrides the `[wasm]` limits for one plugin. Accepts `memory_limit_mb`, `cpu_budget`, `codec_cpu_budget`, `host_call_timeout`, `max_call_duration` and `queue_capacity` (not `epoch_tick`, which is proxy-wide), a `recovery` table with any of the `[wasm.recovery]` keys, and a `quotas` table with any of the `[wasm.quotas]` keys. A key left out keeps the `[wasm]` value. The same validation applies to the resulting limits.
 
 ```toml
 [plugins.auth.wasm]
@@ -426,6 +453,9 @@ max_call_duration = "10s"
 
 [plugins.auth.wasm.recovery]
 max_restarts = 2
+
+[plugins.auth.wasm.quotas]
+commands = 512
 ```
 
 #### `[plugins.<id>.wasm.network]`
@@ -729,6 +759,10 @@ max_restarts = 5
 window = "5m"
 backoff_initial = "1s"
 backoff_max = "5m"
+
+[wasm.quotas]
+commands = 256
+scheduled_tasks = 1024
 
 [default_motd.online]
 text = "§cNo server found for this domain"

@@ -39,7 +39,7 @@ pub fn on<E: GuestEvent>(
 ) -> Result<EventSubscription, Error>
 ```
 
-`on` returns an error when the host refuses the subscription: without the `event-bus` capability, for `ChatMessageEvent` or `CommandExecuteEvent` without `chat-intercept`, or for `PluginMessageEvent` without `plugin-messaging`. The error's kind is `PermissionDenied`. The `?` in `on_enable` turns it into a failed enable; drop the error instead if the plugin should run without that event.
+`on` returns an error when the host refuses the subscription: without the `event-bus` capability, for `ChatMessageEvent` or `CommandExecuteEvent` without `chat-intercept`, or for `PluginMessageEvent` without `plugin-messaging`. The error's kind is `PermissionDenied`. A plugin that already holds `[wasm.quotas] event_listeners` listeners (1024 by default) gets `LimitExceeded` instead; cancelling a subscription frees room. The `?` in `on_enable` turns either into a failed enable; drop the error instead if the plugin should run without that event.
 
 :::tip
 Subscribe in `on_enable`. The subscription stays active for the life of the plugin unless you cancel it, so you do not need to keep the returned handle.
@@ -238,7 +238,7 @@ ctx.on_packets(
 )?;
 ```
 
-The proxy only builds the event for the packet ids someone subscribed to, and the lookup stays constant time, so unrelated packets pay nothing. A matching packet waits on the connection's path for a full guest call: a hop through the plugin's call queue and across the component boundary, which costs far more than a native handler and grows when the plugin is busy with another call or event. Keep filters narrow. A [codec filter](./codec-filters) runs inside the connection with its own per-connection instance and is the tool for anything on the hot path; `on_packets` suits occasional packets. `event-bus.subscribe` with the `raw-packet` kind is refused with `InvalidArgument`, since a packet subscription needs its filters.
+The proxy only builds the event for the packet ids someone subscribed to, and the lookup stays constant time, so unrelated packets pay nothing. A matching packet waits on the connection's path for a full guest call: a hop through the plugin's call queue and across the component boundary, which costs far more than a native handler and grows when the plugin is busy with another call or event. Keep filters narrow. A [codec filter](./codec-filters) runs inside the connection with its own per-connection instance and is the tool for anything on the hot path; `on_packets` suits occasional packets. `event-bus.subscribe` with the `raw-packet` kind is refused with `InvalidArgument`, since a packet subscription needs its filters. Each filter of an `on_packets` call counts as one listener toward the `event_listeners` quota.
 
 ## Multiple handlers and ordering
 

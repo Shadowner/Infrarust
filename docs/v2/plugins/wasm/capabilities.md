@@ -251,7 +251,7 @@ Use it for a plugin that cannot do its job without the capabilities it imports, 
 
 ## The sandbox
 
-Every WASM plugin runs under limits enforced by the wasmtime runtime: a CPU budget, a linear-memory cap, a wall-clock limit per call, a bounded call queue, a filesystem view and a network allow-list. The numbers come from the `[wasm]` table of `infrarust.toml`, and `[plugins.<id>.wasm]` overrides them for one plugin. The defaults:
+Every WASM plugin runs under limits enforced by the wasmtime runtime and the host: a CPU budget, a linear-memory cap, a wall-clock limit per call, a bounded call queue, registration quotas, a filesystem view and a network allow-list. The numbers come from the `[wasm]` table of `infrarust.toml`, and `[plugins.<id>.wasm]` overrides them for one plugin. The defaults:
 
 | Key | Default | Applies to |
 |-----|---------|------------|
@@ -262,6 +262,7 @@ Every WASM plugin runs under limits enforced by the wasmtime runtime: a CPU budg
 | `host_call_timeout` | `30s` | One host call that waits on the proxy: server-manager `start` and `stop`, ban-service calls, `connect`, `transfer`, `request-cookie`, `refresh-permissions`, `fire-named`, `set-snapshot`, `release`, and HTTP request timeouts. `switch-server` has its own 250 ms cap |
 | `max_call_duration` | `60s` | Wall-clock time of one guest call, host calls included |
 | `queue_capacity` | `1024` | Calls waiting for a busy plugin |
+| `[wasm.quotas]` | see below | Registrations one plugin holds at once |
 
 ```toml
 [wasm]
@@ -315,6 +316,30 @@ Each plugin instance is owned by its own task. Every call into the guest (events
 - At most `queue_capacity` jobs wait. When the queue is full, a new call is refused immediately rather than waiting: an event gets no answer from the plugin, a command does nothing, a tab completion returns no suggestions. A warning naming the plugin and the operation is logged, at most once every 5 seconds per plugin.
 - `max_call_duration` is the safety net for a call that never returns, for instance an `on_enable` that makes many slow host calls in a row (lifecycle calls carry no deadline). The call is abandoned and the instance is replaced by a fresh one, because wasmtime cannot re-enter a component whose call was cut off.
 - `on_disable` is the last job: jobs queued behind it are dropped, and the task stops once it has run. Unloading a plugin stops its task the same way and drops the instance.
+- A scheduled task waits for its run to finish. An interval puts at most one run in the queue, and its next run comes one period after that run returns, so an interval slower than its period does not fill the queue.
+
+### Registration quotas
+
+A plugin cannot grow the host's tables without bound. `[wasm.quotas]` caps what one plugin holds at the same time:
+
+| Key | Default | Counts |
+|-----|---------|--------|
+| `event_listeners` | `1024` | Event and named-event subscriptions, plus one per packet filter of each packet subscription |
+| `commands` | `256` | Registered commands |
+| `scheduled_tasks` | `1024` | Delays not yet run and intervals not cancelled |
+| `plugin_channels` | `128` | Registered plugin messaging channels |
+| `codec_filters` | `32` | Registered codec filter ids |
+| `limbo_handlers` | `64` | Registered limbo handler names |
+
+```toml
+[wasm.quotas]
+commands = 128
+
+[plugins.warps.wasm.quotas]
+commands = 1024
+```
+
+The count is of what the plugin holds now: unregistering, unsubscribing or cancelling frees room, and a delay stops counting once it has run. Registering a command, channel, codec filter or limbo handler name the plugin already holds takes no more room. A registration past the quota is refused with a `host-error` of kind `limit-exceeded` (`ErrorKind::LimitExceeded` in the SDK), and the host logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance. A plugin that returns such an error from `on_enable` with `?` fails to enable. After a fault the fresh instance starts from what it registers again, except plugin channels and codec filters, which are kept across a recovery. The accepted ranges are in [Global Settings](../../configuration/global#registration-quotas).
 
 ### Filesystem and WASI
 

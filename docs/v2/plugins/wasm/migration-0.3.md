@@ -60,6 +60,7 @@ fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
 | `PlayerError::SwitchFailed("host call timed out")` | `ErrorKind::Timeout` |
 | `PlayerError::NotActive` | `ErrorKind::InvalidState` |
 | a malformed UUID trapped the plugin | impossible: UUIDs are `Uuid` values |
+| registrations had no limit | `ErrorKind::LimitExceeded` past the plugin's `[wasm.quotas]` (listeners, commands, tasks, channels, codec filters, limbo handlers) |
 
 The player reads (`Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `count`) still answer `None`, an empty list or `0` without `player-read`.
 
@@ -241,6 +242,8 @@ These do not show up as compile errors, so check them by hand:
 - **Import gate.** The host checks every capability a host function needs when the component is loaded, not only when the function is called. A plugin that imports `subscribe-packets` needs both `raw-packet` and `event-bus`; with one of them missing it is refused at load, and the report names each missing capability. Under 0.2.3 such a plugin loaded and then had every subscription refused.
 - **Ban ranges in a guest `BanProvider`.** The SDK's `ip_in_range` now matches v4-mapped ranges (`::ffff:10.0.0.0/104` is `10.0.0.0/8`) and compares usernames with the same Unicode lowercase the native api uses, so a guest provider and the built-in store agree on what a ban matches.
 - **Limbo handlers across a recovery.** When a plugin is restarted after a trap, the limbo handler names its new generation does not register again are released instead of staying taken and answering "unavailable".
+- **Registration quotas.** A plugin holds at most 1024 event listeners, 256 commands, 1024 live scheduled tasks, 128 plugin channels, 32 codec filters and 64 limbo handlers by default. Past a quota the registration returns `ErrorKind::LimitExceeded`, a new `error-kind` case (`limit-exceeded`) in the 0.3.0 contract; a `match` on `ErrorKind` needs a wildcard arm, since the enum is `#[non_exhaustive]`. The operator raises a quota under `[wasm.quotas]` or `[plugins.<id>.wasm.quotas]`.
+- **Intervals wait for their run.** An interval's next run starts one period after the previous run returns, like a native repeating task, and at most one run of an interval waits in the plugin's queue.
 - **Shared enums.** `ServerState`, `ProxyMode`, `Capability` and the other enums listed under [Types](#types) are the same types as in the native api and are `#[non_exhaustive]`.
 
 ## Checklist
