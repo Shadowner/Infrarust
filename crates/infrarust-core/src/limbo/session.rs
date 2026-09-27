@@ -138,6 +138,16 @@ impl LimboSession for LimboSessionImpl {
     }
 
     fn complete_scoped(&self, hold_id: u64, result: HandlerResult) {
+        if matches!(
+            result,
+            HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. }
+        ) {
+            tracing::warn!(
+                player = %self.profile.username,
+                "limbo complete() was passed a hold; it ends a hold and cannot start another, so the player stays held and the current hold keeps its deadline"
+            );
+            return;
+        }
         let mut slot = self.lock_slot();
         if hold_id == self.current_hold_id()
             && let Some(tx) = slot.take()
@@ -342,5 +352,28 @@ mod tests {
             matches!(result, Err(PlayerError::SendFailed(_))),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn a_hold_passed_to_complete_is_refused_and_the_hold_stays_open() {
+        let (session, _rx) = make_session();
+        let mut complete_rx = session.begin_handler();
+        let handle = session.handle();
+
+        session.complete(HandlerResult::Hold);
+        handle.complete(HandlerResult::HoldWithTimeout {
+            after: std::time::Duration::from_secs(30),
+            on_timeout: Box::new(HandlerResult::Accept),
+        });
+        assert!(
+            complete_rx.try_recv().is_err(),
+            "a hold is not a completion and must not release the player"
+        );
+
+        handle.complete(HandlerResult::Deny(Component::text("bye")));
+        match complete_rx.try_recv() {
+            Ok(HandlerResult::Deny(reason)) => assert_eq!(reason, Component::text("bye")),
+            other => panic!("the later completion still ends the hold, got {other:?}"),
+        }
     }
 }

@@ -741,6 +741,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_hold_passed_to_complete_keeps_the_player_held_until_a_real_completion() {
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
+
+        complete_later(&p.limbo.session, 20, HandlerResult::Hold);
+        complete_later(
+            &p.limbo.session,
+            150,
+            HandlerResult::Deny(Component::text("done")),
+        );
+
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
+        match result {
+            LimboChainResult::Kick(reason) => assert_eq!(reason, Component::text("done")),
+            other => panic!("the refused hold released the player: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hold_passed_to_complete_leaves_the_current_deadline_in_place() {
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
+            name: "timed",
+            result: HandlerResult::HoldWithTimeout {
+                after: Duration::from_millis(150),
+                on_timeout: Box::new(HandlerResult::Deny(Component::text("timed out"))),
+            },
+        })];
+
+        complete_later(
+            &p.limbo.session,
+            20,
+            HandlerResult::HoldWithTimeout {
+                after: Duration::from_secs(30),
+                on_timeout: Box::new(HandlerResult::Accept),
+            },
+        );
+
+        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
+        match result {
+            LimboChainResult::Kick(reason) => assert_eq!(reason, Component::text("timed out")),
+            other => panic!("the refused hold changed the deadline: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_hold_with_timeout_nested_hold_coerced_to_accept() {
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
             name: "nested",
