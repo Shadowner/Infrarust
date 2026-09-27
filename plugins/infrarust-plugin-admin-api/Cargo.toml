@@ -6,6 +6,9 @@ rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 description = "HTTP REST API plugin for Infrarust proxy administration"
+keywords = ["minecraft", "proxy", "plugin", "admin", "rest"]
+categories = ["game-development", "web-programming::http-server"]
+include = ["Cargo.toml", "build.rs", "src/**/*", "tests/**/*", "frontend/.output/public/**/*"]
 
 [package.metadata.docs.rs]
 all-features = true
