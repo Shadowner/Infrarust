@@ -69,11 +69,6 @@ impl Renderer {
         let glyphs = self.glyphs();
         let lines = match output {
             CommandOutput::Block(block) => self.block(block),
-            CommandOutput::Table { table, footer } => {
-                let mut lines = vec![table.to_string()];
-                lines.extend(footer.iter().map(|footer| footer.trim().to_string()));
-                lines
-            }
             CommandOutput::Lines(lines) => {
                 lines.iter().map(|line| self.output_line(line)).collect()
             }
@@ -102,7 +97,6 @@ impl Renderer {
     fn output_line(&self, line: &OutputLine) -> String {
         let glyphs = self.glyphs();
         match line {
-            OutputLine::Info(message) => message.clone(),
             OutputLine::Success(message) => self.status(Tone::Ok, glyphs.ok, message),
             OutputLine::Warning(message) => self.status(Tone::Warn, glyphs.warn, message),
             OutputLine::Error(message) => self.status(Tone::Err, glyphs.error, message),
@@ -442,9 +436,8 @@ mod tests {
                 OutputLine::Success("a".into()),
                 OutputLine::Warning("b".into()),
                 OutputLine::Error("c".into()),
-                OutputLine::Info("d".into()),
             ])),
-            "ok: a\nwarn: b\nerror: c\nd"
+            "ok: a\nwarn: b\nerror: c"
         );
         assert_eq!(plain(&CommandOutput::None), "");
     }

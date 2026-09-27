@@ -4,7 +4,6 @@ pub mod output;
 pub mod parser;
 pub mod render;
 
-use std::io::IsTerminal;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -31,7 +30,6 @@ pub struct ConsoleServices {
     pub command_manager: Arc<CommandManagerImpl>,
     pub shutdown: CancellationToken,
     pub start_time: Instant,
-    is_tty: bool,
 }
 
 impl ConsoleServices {
@@ -59,12 +57,7 @@ impl ConsoleServices {
             command_manager,
             shutdown,
             start_time,
-            is_tty: std::io::stdout().is_terminal(),
         }
-    }
-
-    pub fn is_tty(&self) -> bool {
-        self.is_tty
     }
 }
 

@@ -1,16 +1,9 @@
 use std::fmt;
 
-use comfy_table::Table as LegacyTable;
-use comfy_table::{ContentArrangement, presets};
-
 use crate::terminal::{Mark, Tone};
 
 pub enum CommandOutput {
     Block(Block),
-    Table {
-        table: LegacyTable,
-        footer: Option<String>,
-    },
     Lines(Vec<OutputLine>),
     Success(String),
     Note(String),
@@ -73,7 +66,6 @@ pub enum Hint {
 }
 
 pub enum OutputLine {
-    Info(String),
     Success(String),
     Warning(String),
     Error(String),
@@ -327,19 +319,6 @@ impl CommandCategory {
             Self::System => "System",
         }
     }
-}
-
-pub(crate) fn legacy_table() -> LegacyTable {
-    let mut table = LegacyTable::new();
-    if crate::terminal::color::enabled() {
-        table
-            .load_preset(presets::UTF8_FULL_CONDENSED)
-            .set_content_arrangement(ContentArrangement::Dynamic);
-    } else {
-        table.load_preset(presets::ASCII_MARKDOWN);
-        table.force_no_tty();
-    }
-    table
 }
 
 #[cfg(test)]

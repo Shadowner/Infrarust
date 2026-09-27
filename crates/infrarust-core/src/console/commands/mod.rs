@@ -8,10 +8,8 @@ pub mod system;
 
 use std::time::Duration;
 
-use comfy_table::{Cell, Table};
-
 use super::dispatcher::{CommandDispatcher, ConsoleCommand};
-use super::output::{CommandOutput, legacy_table};
+use super::output::CommandOutput;
 use super::parser::parse_duration_arg;
 
 pub(crate) fn usage(command: &dyn ConsoleCommand) -> CommandOutput {
@@ -32,32 +30,6 @@ pub(crate) mod args {
                 Err(_) => (None, rest(args)),
             },
             None => (None, None),
-        }
-    }
-}
-
-pub(crate) struct TableBuilder {
-    table: Table,
-    rows: usize,
-}
-
-pub(crate) fn table(headers: &[&str]) -> TableBuilder {
-    let mut table = legacy_table();
-    table.set_header(headers.to_vec());
-    TableBuilder { table, rows: 0 }
-}
-
-impl TableBuilder {
-    pub fn row<C: Into<Cell>>(&mut self, cells: impl IntoIterator<Item = C>) -> &mut Self {
-        self.table.add_row(cells);
-        self.rows += 1;
-        self
-    }
-
-    pub fn finish(self, unit: &str) -> CommandOutput {
-        CommandOutput::Table {
-            table: self.table,
-            footer: Some(format!(" {} {unit}(s)", self.rows)),
         }
     }
 }
@@ -128,19 +100,5 @@ mod tests {
             args::duration_and_reason(&["1h"]),
             (Some(Duration::from_secs(3600)), None)
         );
-    }
-
-    #[test]
-    fn table_footer_counts_the_rows() {
-        let mut builder = table(&["A", "B"]);
-        builder.row([Cell::new("1"), Cell::new("2")]);
-        builder.row([Cell::new("3"), Cell::new("4")]);
-        match builder.finish("row") {
-            CommandOutput::Table { table, footer } => {
-                assert_eq!(footer.as_deref(), Some(" 2 row(s)"));
-                assert_eq!(table.row_count(), 2);
-            }
-            _ => panic!("expected a table"),
-        }
     }
 }
