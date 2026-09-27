@@ -479,10 +479,18 @@ async fn every_fault_kind_in_a_permission_snapshot_gives_the_node_defaults_and_r
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn every_trap_in_the_first_on_enable_fails_the_enable_and_releases_what_it_registered() {
+    first_on_enable_fails_and_releases_what_it_registered(&Mode::TRAPS).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 #[ignore = "W-32: Err from the first on_enable promotes the instance"]
-async fn every_fault_kind_in_the_first_on_enable_fails_the_enable_and_releases_what_it_registered()
-{
-    for mode in Mode::TRAPS.into_iter().chain([Mode::Refuse]) {
+async fn an_err_from_the_first_on_enable_fails_the_enable_and_releases_what_it_registered() {
+    first_on_enable_fails_and_releases_what_it_registered(&[Mode::Refuse]).await;
+}
+
+async fn first_on_enable_fails_and_releases_what_it_registered(modes: &[Mode]) {
+    for &mode in modes {
         let logs = LogCapture::at(Level::INFO);
         async {
             let lab = Lab::stage(
