@@ -455,7 +455,6 @@ async fn a_command_with_a_huge_argument_list_reaches_the_guest_intact() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-22: mixed-case command lost after unregister and recovery"]
 async fn a_mixed_case_command_unregistered_then_registered_again_by_a_recovered_instance_is_back() {
     let probe = Probe::start("tools\ncmd Warp").await;
     assert_eq!(probe.dispatch("warp").await, DispatchOutcome::Executed);

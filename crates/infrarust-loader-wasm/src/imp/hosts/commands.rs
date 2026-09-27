@@ -16,6 +16,10 @@ fn registration_to_wit(registration: &CommandRegistration) -> wcm::CommandRegist
     }
 }
 
+fn command_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
 fn spec_from_wit(spec: wcm::CommandSpec) -> CommandSpec {
     let mut native = CommandSpec::new(spec.name)
         .aliases(spec.aliases)
@@ -53,7 +57,7 @@ impl PluginStoreState {
         self.check("command-manager", "register")?;
         let ctx = self.services()?;
         let instance = self.instance_ref(CallKind::Callback)?.any_generation();
-        let name = spec.name.clone();
+        let name = command_key(&spec.name);
         let binding = match self
             .registrations()
             .bind_command(&name, self.generation(), handler)
@@ -99,13 +103,14 @@ impl PluginStoreState {
 
     fn unregister_command(&mut self, name: &str) -> HostResult<()> {
         self.check("command-manager", "unregister")?;
+        let key = command_key(name);
         let Ok(ctx) = self.services() else {
-            self.registrations().unbind_command(name);
+            self.registrations().unbind_command(&key);
             return Ok(());
         };
         match ctx.command_manager().unregister(name) {
             Ok(()) => {
-                self.registrations().unbind_command(name);
+                self.registrations().unbind_command(&key);
                 Ok(())
             }
             Err(error) => {
