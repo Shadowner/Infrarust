@@ -461,6 +461,7 @@ interface events {
         allowed,
         redirect(server-id),
         send-to-limbo(list<string>),
+        denied(component),
     }
 
     enum connect-cause {
@@ -609,6 +610,7 @@ interface events {
 
     record game-profile-request-result {
         profile: game-profile,
+        denied: option<component>,
     }
 
     record command-execute-event {
@@ -889,7 +891,13 @@ interface events {
 }
 ```
 
-`permissions-setup-result` is `use-default` or `custom(permission-snapshot)`: a custom snapshot becomes the player's checker, held by the host so that `permissions.set-snapshot` can change it later (see [Permissions](./permissions)). A custom checker set by a native plugin reaches the guest as `custom` with the snapshot it describes, or an empty one when the native checker cannot describe itself. `game-profile-request-result` wraps the profile the player gets, and the record's `original` is the profile the proxy started from. `named-event-result` is the pair the listeners leave behind, `cancelled` and `response`, and returning it replaces both. `raw-packet-event` carries only the player id, like the native `RawPacketEvent`.
+`permissions-setup-result` is `use-default` or `custom(permission-snapshot)`: a custom snapshot becomes the player's checker, held by the host so that `permissions.set-snapshot` can change it later (see [Permissions](./permissions)). A custom checker set by a native plugin reaches the guest as `custom` with the snapshot it describes, or an empty one when the native checker cannot describe itself. `player-choose-initial-server-result` shows a deny set by an earlier handler as `denied(component)`, and returning `denied` disconnects the player with that text. `game-profile-request-result` wraps the profile the player gets and the current deny: `denied` is `some(reason)` when an earlier handler refused the login, returning `none` lifts that deny, and returning `some(reason)` refuses the login with that text. The record's `original` is the profile the proxy started from. A deny that comes back as the guest received it keeps the native component untouched. `named-event-result` is the pair the listeners leave behind, `cancelled` and `response`, and returning it replaces both. `raw-packet-event` carries only the player id, like the native `RawPacketEvent`.
+
+### The ping response
+
+`proxy-ping-result` carries the four cheap fields of the response (`max-players`, `online-players`, `protocol` and `version-name`). The description, the favicon and the player sample stay on the host: in the event they are always `none`, and the guest reads them during the call with `ping-description`, `ping-favicon` and `ping-player-sample`. Those three answer `none` or an empty list outside a `proxy-ping` call. Each read converts one field and copies it into the guest, so a handler that never reads them never pays for them.
+
+In an outcome the four cheap fields set the response, and each of the three heavy fields replaces the response's value only when it is `some`: `description: some(component)` replaces the description, `favicon: some(none)` removes the favicon, `player-sample: some(list)` replaces the sample. A heavy field left at `none` keeps what the response had, including parts of the description the contract cannot carry. The SDK fills an outcome that way: it sends a heavy field back only when the handler set it.
 
 `ban-issued` and `ban-revoked` reuse `ban-entry` and `ban-source` from `ban-service`, and `limbo-enter` reuses `limbo-entry-context` from `limbo`. A plugin that only reads those events imports the types, not the functions, so it needs neither `ban` nor `limbo`.
 

@@ -168,13 +168,13 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | --- | --- | --- |
 | `PreLoginEvent` | `profile`, `remote_addr: SocketAddr`, `protocol`, `server_domain` | `PreLoginResult`: `allow()`, `deny(reason)`, `force_offline()`, `force_online()` |
 | `PermissionsSetupEvent` | `player`, `online_mode` | `PermissionsSetupResult`: `use_default()`, `provide(snapshot)` |
-| `PlayerChooseInitialServerEvent` | `player`, `initial_server` | `PlayerChooseInitialServerResult`: `allow()`, `redirect_to(server)`, `send_to_limbo(handlers)` |
+| `PlayerChooseInitialServerEvent` | `player`, `initial_server` | `PlayerChooseInitialServerResult`: `allow()`, `redirect_to(server)`, `send_to_limbo(handlers)`, `deny(reason)` |
 | `ServerPreConnectEvent` | `player`, `server`, `previous_server`, `cause: ConnectCause` | `ServerPreConnectResult`: `allow()`, `redirect_to(server)`, `send_to_limbo(handlers)`, `deny(reason)` |
 | `KickedFromServerEvent` | `player`, `server`, `reason: Option<Component>`, `cause: KickCause`, `during_connect`, `previous_server` | `KickedFromServerResult`: `disconnect(reason)`, `redirect_to(server)`, `send_to_limbo(handlers)`, `notify(message)` |
 | `ChatMessageEvent` | `player`, `message`, `signed`, `server` | `ChatMessageResult`: `allow()`, `deny(reason)`, `deny_silently()`, `modify(message)`. Needs `chat-intercept` |
 | `ProxyPingEvent` | `remote_addr`, `server`, `virtual_host`, `protocol`, `legacy` | the ping response, field by field: `max_players()`, `online_players()`, `version_name()`, `version_protocol()`, `description()`, `favicon()`, `player_sample()` and a `set_` for each; `response()` and `set_response(r)` for the whole `PingResponse` |
 | `ConnectionHandshakeEvent` | `remote_addr`, `virtual_host`, `raw_host`, `port`, `protocol`, `intent: HandshakeIntent`, `legacy`, `server` | `ConnectionHandshakeResult`: `allow()`, `deny(reason)`, `deny_silently()`, `drop_silently()` |
-| `GameProfileRequestEvent` | `original: GameProfile`, `online_mode`, `remote_addr`, `virtual_host`, `protocol` | the profile the player gets: `profile()`, `profile_mut()`, `set_profile(p)`, `is_modified()` |
+| `GameProfileRequestEvent` | `original: GameProfile`, `online_mode`, `remote_addr`, `virtual_host`, `protocol` | the profile the player gets: `profile()`, `profile_mut()`, `set_profile(p)`, `is_modified()`; the deny: `denied()`, `deny(reason)`, `allow()` |
 | `LoginEvent` | `player`, `online_mode` | `LoginResult`: `allow()`, `deny(reason)` |
 | `CommandExecuteEvent` | `player`, `command`, `signed`, `server`; `label()` is the first word | `CommandExecuteResult`: `allow()`, `deny(reason)`, `deny_silently()`, `modify(command)`, `forward_to_backend()`. Needs `chat-intercept` |
 | `PreTransferEvent` | `player`, `host`, `port`, `origin: TransferOrigin` | `PreTransferResult`: `allow()`, `deny(reason)`, `redirect(host, port)` |
@@ -183,6 +183,8 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | `RawPacketEvent` | `player: PlayerId`, `direction`, `packet_id`, `data` | `RawPacketResult`: `pass()`, `drop_packet()`, `modify(packet_id, data)`. Needs `raw-packet`, subscribed with `on_packets` |
 
 Every reason and message is anything that converts into a `Component`, so `deny("Banned")` and `deny(Component::text("Banned").color(NamedColor::Red))` both work.
+
+`PlayerChooseInitialServerEvent::deny(reason)` disconnects the player with that text instead of sending them to a server; a later handler sees `PlayerChooseInitialServerResult::Denied(reason)` and can still redirect or allow.
 
 `ConnectCause` is `Initial`, `Switch`, `LimboExit`, `KickRedirect` or `PluginMessage`. `KickCause` is `Unreachable(error)`, `LoginRefused`, `ConfigDisconnect`, `PlayDisconnect` or `ConnectionLost`. `KickedFromServerEvent` starts with the proxy's default, which depends on the case: `DisconnectPlayer(None)` for a kick from a server the player had finished joining; for a connection that failed, `Notify` with the reason when the player can stay on their current server, `SendToLimbo` with the server's `limbo_handlers` when those handlers resolve, and `DisconnectPlayer(None)` otherwise.
 
@@ -199,7 +201,7 @@ ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
 
 `PermissionsSetupEvent::provide(snapshot)` replaces the player's checker with a `PermissionSnapshot` for this session; `use_default()` keeps the checker of the active provider. The host holds the snapshot, so `Permissions::set_snapshot` can change it while the player is online. See [Permissions](./permissions).
 
-`GameProfileRequestEvent` hands you the profile the player is about to get. Edit it in place with `profile_mut()`; `original` stays the profile the proxy started from, and a handler that leaves the profile alone keeps whatever an earlier handler set.
+`GameProfileRequestEvent` hands you the profile the player is about to get. Edit it in place with `profile_mut()`; `original` stays the profile the proxy started from, and a handler that leaves the profile alone keeps whatever an earlier handler set. `deny(reason)` refuses the login with that text, `denied()` shows a deny an earlier handler set, and `allow()` lifts it, as for the native event.
 
 ```rust
 ctx.on::<GameProfileRequestEvent>(EventPriority::Normal, |event| {

@@ -105,7 +105,7 @@ A handler that only logs is unchanged in behaviour. A handler that called `allow
 | `ServerConnectedEvent { player_id, server }` | adds `previous_server` |
 | `KickedFromServerEvent::reason: String` (JSON, empty when none) | `reason: Option<Component>`, plus `cause: KickCause`, `during_connect`, `previous_server` |
 | `KickedFromServerEvent::disconnect_player(reason)` | `disconnect(reason)` |
-| `PlayerChooseInitialServerEvent::redirect(server)` | `redirect_to(server)` |
+| `PlayerChooseInitialServerEvent::redirect(server)` | `redirect_to(server)`; `deny(reason)` disconnects the player, and an earlier deny shows as `PlayerChooseInitialServerResult::Denied` |
 | no `PlayerInfo::settings`, `known_channels` | `settings: Option<ClientSettings>`, `known_channels: Vec<String>` |
 | `ChatMessageEvent { player_id, message }` | adds `signed` and `server`; `deny_silently()` denies without a reason |
 | `DisconnectEvent { player_id, username, last_server }` | `player`, `last_server: Option<ServerId>`, `cause: DisconnectCause` |
@@ -126,7 +126,7 @@ Every reason and message argument takes `impl Into<Component>`, so `deny("Banned
 |-------|--------|-------------------------------|
 | `ConnectionHandshakeEvent` | allow, deny, drop silently | |
 | `ConnectionRejectedEvent` | none | |
-| `GameProfileRequestEvent` | the profile | |
+| `GameProfileRequestEvent` | the profile, and a deny (`deny`, `denied`, `allow`) | |
 | `LoginEvent` | allowed, denied | |
 | `CommandExecuteEvent` | allow, deny, modify, forward to backend | `chat-intercept` |
 | `LimboEnterEvent`, `LimboExitEvent` | none | |
