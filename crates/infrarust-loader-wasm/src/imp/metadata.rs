@@ -2,6 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use infrarust_api::plugin::PluginMetadata;
+use infrarust_plugin_common::validate_plugin_id;
 use wasmtime::component::Component;
 use wasmtime::{Engine, Store};
 
@@ -27,6 +28,10 @@ pub(crate) async fn extract_metadata(
             path: path.to_path_buf(),
             reason: format!("metadata() did not return within {limit:?}"),
         })??;
+    validate_plugin_id(&wit_md.id).map_err(|invalid| WasmLoaderError::Metadata {
+        path: path.to_path_buf(),
+        reason: invalid.to_string(),
+    })?;
 
     let mut metadata = PluginMetadata::new(wit_md.id, wit_md.name, wit_md.version);
     for author in wit_md.authors {

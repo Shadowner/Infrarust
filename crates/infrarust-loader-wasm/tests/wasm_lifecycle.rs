@@ -666,15 +666,18 @@ async fn load_probe_with_id(id_settings: &str) -> Result<(tempfile::TempDir, Pat
     std::fs::create_dir(&plugins_dir).unwrap();
     add_probe(&plugins_dir, "probe", id_settings);
     let loader = fresh_loader();
+    let logs = LogCapture::at(Level::ERROR);
     let metas = tokio::time::timeout(DISCOVERY_BOUND, loader.discover(&plugins_dir))
+        .with_subscriber(logs.clone())
         .await
         .map_err(|_| "discover hung".to_owned())?
         .map_err(|e| format!("discover: {e}"))?;
-    let id = metas
-        .iter()
-        .map(|m| m.id.clone())
-        .next()
-        .ok_or("no metadata discovered")?;
+    let id = metas.iter().map(|m| m.id.clone()).next().ok_or_else(|| {
+        format!(
+            "refused at discovery: {}",
+            logs.matching("WASM plugin refused").join(" | ")
+        )
+    })?;
     let env = support::make_env(plugins_dir.clone());
     let plugin = loader
         .load(&id, &env.factory)
@@ -711,66 +714,79 @@ fn escapes(root: &Path, plugins_dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+fn assert_refused_by_the_id_rule(
+    outcome: Result<(tempfile::TempDir, PathBuf), String>,
+    expected: &str,
+) {
+    match outcome {
+        Ok((tmp, plugins_dir)) => panic!(
+            "the host loaded a plugin whose id breaks the #[plugin] rule [a-z0-9][a-z0-9_-]{{0,63}}; log.txt files outside plugins_dir: {:?}",
+            escapes(tmp.path(), &plugins_dir)
+        ),
+        Err(reason) => assert!(
+            reason.contains("refused at discovery") && reason.contains(expected),
+            "expected a discovery refusal saying {expected:?}, got: {reason}"
+        ),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-03: plugin id not validated by the host"]
 async fn a_dot_dot_plugin_id_cannot_write_outside_plugins_dir() {
     let outcome = load_probe_with_id("id=../escape\n").await;
-    match outcome {
-        Ok((tmp, plugins_dir)) => {
-            let leaked = escapes(tmp.path(), &plugins_dir);
-            assert!(
-                leaked.is_empty(),
-                "a `..` in the plugin id let the guest write outside plugins_dir: {leaked:?}"
-            );
-        }
-        Err(reason) => {
-            assert!(
-                reason.contains("id") || reason.contains("load") || reason.contains("format"),
-                "a `..` id should be refused with a clear error, got: {reason}"
-            );
-        }
-    }
+    assert_refused_by_the_id_rule(
+        outcome,
+        "plugin id `../escape` must start with a lowercase letter or a digit",
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-03: plugin id not validated by the host"]
+async fn a_dot_dot_inside_a_plugin_id_is_refused() {
+    let outcome = load_probe_with_id("id=up/../../escape\n").await;
+    assert_refused_by_the_id_rule(outcome, "plugin id `up/../../escape` contains `/`");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_absolute_plugin_id_cannot_redirect_the_data_dir() {
     let target = tempfile::tempdir().unwrap();
-    let id = format!("id={}\n", target.path().join("stolen").display());
-    let outcome = load_probe_with_id(&id).await;
-    if outcome.is_ok() {
-        let leaked = escapes(target.path(), Path::new("/nonexistent-plugins"));
-        assert!(
-            leaked.is_empty(),
-            "an absolute plugin id redirected the data dir outside plugins_dir: {leaked:?}"
-        );
-    }
+    let stolen = target.path().join("stolen");
+    let outcome = load_probe_with_id(&format!("id={}\n", stolen.display())).await;
+    assert!(
+        escapes(target.path(), Path::new("/nonexistent-plugins")).is_empty(),
+        "an absolute plugin id redirected the data dir outside plugins_dir"
+    );
+    assert_refused_by_the_id_rule(outcome, "must start with a lowercase letter or a digit");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_empty_plugin_id_is_handled_without_a_panic() {
+async fn a_dot_prefixed_plugin_id_cannot_take_the_cache_directory() {
+    let outcome = load_probe_with_id("id=.cache\n").await;
+    assert_refused_by_the_id_rule(outcome, "plugin id `.cache` must start with");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_plugin_id_is_refused() {
     let outcome = load_probe_with_id("id=\n").await;
-    eprintln!("empty id outcome: {outcome:?}");
-    if let Ok((tmp, plugins_dir)) = outcome {
-        assert!(escapes(tmp.path(), &plugins_dir).is_empty());
-    }
+    assert_refused_by_the_id_rule(outcome, "a plugin id cannot be empty");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-03: plugin id not validated by the host"]
 async fn a_unicode_plugin_id_is_refused_like_the_plugin_macro_refuses_it() {
     let outcome = load_probe_with_id("id=café-plugin\n").await;
-    if let Ok((_tmp, plugins_dir)) = &outcome {
-        panic!(
-            "the host loaded `café-plugin`, an id outside the #[plugin] rule [a-z0-9][a-z0-9_-]{{0,63}}, into {}",
-            plugins_dir.join("café-plugin").display()
-        );
-    }
+    assert_refused_by_the_id_rule(outcome, "plugin id `café-plugin` contains `é`");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_very_long_plugin_id_does_not_crash_the_loader() {
+async fn a_plugin_id_longer_than_64_characters_is_refused() {
     let id = "a".repeat(300);
     let outcome = load_probe_with_id(&format!("id={id}\n")).await;
-    eprintln!("300-char id outcome ok={}", outcome.is_ok());
+    assert_refused_by_the_id_rule(outcome, "is longer than 64 characters");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_64_character_plugin_id_is_loaded() {
+    let id = "a".repeat(64);
+    let (_tmp, plugins_dir) = load_probe_with_id(&format!("id={id}\n"))
+        .await
+        .unwrap_or_else(|reason| panic!("a 64-character id is inside the rule: {reason}"));
+    assert!(plugins_dir.join(&id).is_dir());
 }
