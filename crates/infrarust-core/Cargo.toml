@@ -58,6 +58,7 @@ reqwest = { workspace = true }
 wildmatch = { workspace = true }
 comfy-table = { workspace = true }
 console = { workspace = true }
+chrono = { workspace = true }
 humantime = { workspace = true }
 flate2 = { workspace = true }
 
