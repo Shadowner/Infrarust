@@ -283,6 +283,37 @@ impl PlayerInfo {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PlayerSummary {
+    pub player: PlayerRef,
+    pub current_server: Option<ServerId>,
+}
+
+impl PlayerSummary {
+    #[must_use]
+    pub const fn id(&self) -> PlayerId {
+        self.player.id
+    }
+
+    #[must_use]
+    pub const fn handle(&self) -> Player {
+        Player::new(self.player.id)
+    }
+
+    #[must_use]
+    pub fn info(&self) -> Option<PlayerInfo> {
+        Players::get(self.player.id)
+    }
+
+    pub(crate) fn from_wit(summary: wp::PlayerSummary) -> Self {
+        Self {
+            player: PlayerRef::from_wit(summary.player),
+            current_server: summary.current_server.map(ServerId::from),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Player {
     id: PlayerId,
@@ -429,18 +460,18 @@ impl Players {
     }
 
     #[must_use]
-    pub fn list() -> Vec<PlayerInfo> {
+    pub fn list() -> Vec<PlayerSummary> {
         wp::list(None)
             .into_iter()
-            .map(PlayerInfo::from_wit)
+            .map(PlayerSummary::from_wit)
             .collect()
     }
 
     #[must_use]
-    pub fn on_server(server: &ServerId) -> Vec<PlayerInfo> {
+    pub fn on_server(server: &ServerId) -> Vec<PlayerSummary> {
         wp::list(Some(server.as_str()))
             .into_iter()
-            .map(PlayerInfo::from_wit)
+            .map(PlayerSummary::from_wit)
             .collect()
     }
 
@@ -496,6 +527,23 @@ mod tests {
         assert_eq!(info.remote_addr, "10.0.0.1:40000".parse().unwrap());
         assert_eq!(info.current_server, Some(ServerId::from("lobby")));
         assert_eq!(info.ping, Some(Duration::from_millis(42)));
+    }
+
+    #[test]
+    fn a_player_summary_names_the_player_and_the_server() {
+        let summary = PlayerSummary::from_wit(wp::PlayerSummary {
+            player: wt::PlayerRef {
+                id: 9,
+                uuid: wt::Uuid { hi: 3, lo: 4 },
+                username: "Alex".into(),
+            },
+            current_server: Some("survival".into()),
+        });
+        assert_eq!(summary.id(), PlayerId::new(9));
+        assert_eq!(summary.handle().id(), PlayerId::new(9));
+        assert_eq!(summary.player.username, "Alex");
+        assert_eq!(summary.player.uuid, Uuid::from_u64_pair(3, 4));
+        assert_eq!(summary.current_server, Some(ServerId::from("survival")));
     }
 
     #[test]

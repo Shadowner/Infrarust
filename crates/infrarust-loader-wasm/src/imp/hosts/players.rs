@@ -131,10 +131,17 @@ async fn bounded<T>(
     }
 }
 
-fn infos(players: &[Arc<dyn Player>]) -> Vec<wp::PlayerInfo> {
+fn player_summary(player: &dyn Player) -> wp::PlayerSummary {
+    wp::PlayerSummary {
+        player: convert::player_ref(player),
+        current_server: convert::server_id_opt(&player.current_server()),
+    }
+}
+
+fn summaries(players: &[Arc<dyn Player>]) -> Vec<wp::PlayerSummary> {
     players
         .iter()
-        .map(|player| player_info(&**player))
+        .map(|player| player_summary(&**player))
         .collect()
 }
 
@@ -233,14 +240,16 @@ impl wp::Host for PluginStoreState {
             }))
     }
 
-    async fn list(&mut self, server: Option<String>) -> wasmtime::Result<Vec<wp::PlayerInfo>> {
+    async fn list(&mut self, server: Option<String>) -> wasmtime::Result<Vec<wp::PlayerSummary>> {
         Ok(self
             .readable(gate!("players", "list"))
             .map(|ctx| {
                 let registry = ctx.player_registry();
                 match server {
-                    Some(server) => infos(&registry.get_players_on_server(&ServerId::from(server))),
-                    None => infos(&registry.get_all_players()),
+                    Some(server) => {
+                        summaries(&registry.get_players_on_server(&ServerId::from(server)))
+                    }
+                    None => summaries(&registry.get_all_players()),
                 }
             })
             .unwrap_or_default())

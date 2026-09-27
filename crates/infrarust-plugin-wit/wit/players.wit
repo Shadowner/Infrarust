@@ -22,6 +22,11 @@ interface players {
         known-channels: list<string>,
     }
 
+    record player-summary {
+        player: player-ref,
+        current-server: option<server-id>,
+    }
+
     variant connection-result {
         success,
         already-connected,
@@ -67,7 +72,7 @@ interface players {
     get: func(id: player-id) -> option<player-info>;
     get-by-name: func(username: string) -> option<player-info>;
     get-by-uuid: func(id: uuid) -> option<player-info>;
-    %list: func(server: option<server-id>) -> list<player-info>;
+    %list: func(server: option<server-id>) -> list<player-summary>;
     count: func(server: option<server-id>) -> u32;
 
     send-message: func(player: player-id, message: component) -> result<_, host-error>;

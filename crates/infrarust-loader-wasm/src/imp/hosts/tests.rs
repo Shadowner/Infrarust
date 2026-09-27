@@ -125,6 +125,19 @@ async fn players_are_read_by_id_name_and_uuid() {
             .len(),
         0
     );
+    let listed = players::Host::list(&mut state, Some("lobby".into()))
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].player.id, 7);
+    assert_eq!(listed[0].player.username, "Steve");
+    assert_eq!(
+        listed[0].player.uuid,
+        crate::convert::uuid_to_wit(uuid),
+        "a listed player carries the same reference as its full record"
+    );
+    assert_eq!(listed[0].current_server.as_deref(), Some("lobby"));
+    assert_eq!(players::Host::list(&mut state, None).await.unwrap(), listed);
 }
 
 #[tokio::test]

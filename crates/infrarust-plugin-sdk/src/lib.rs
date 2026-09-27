@@ -74,7 +74,7 @@ pub use permissions::{
 };
 pub use player::{
     BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult, Player,
-    PlayerInfo, Players, ResourcePackRequest, TitleData,
+    PlayerInfo, PlayerSummary, Players, ResourcePackRequest, TitleData,
 };
 pub use plugin::{Plugin, PluginDependency, PluginMetadata};
 pub use services::{
@@ -161,7 +161,7 @@ pub mod prelude {
     };
     pub use crate::player::{
         BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult,
-        Player, PlayerInfo, Players, ResourcePackRequest, TitleData,
+        Player, PlayerInfo, PlayerSummary, Players, ResourcePackRequest, TitleData,
     };
     pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
     pub use crate::services::{
