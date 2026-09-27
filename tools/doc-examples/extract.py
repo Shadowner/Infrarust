@@ -86,7 +86,6 @@ SPEC = {
         "mode": "fn", "params": "out: &mut Injections"},
     "codec-filters.md: impl CodecFilter for OpFilter {": {"mode": "items", "extra": "struct OpFilter;"},
     "codec-filters.md: struct Tally {": {"mode": "items"},
-    "lifecycle.md: // AotCache::cache_key in cache.rs": {"mode": "skip", "reason": NATIVE},
     "lifecycle.md: let wit_md = bindings": {"mode": "skip", "reason": NATIVE},
     "lifecycle.md: // load in loader.rs": {"mode": "skip", "reason": NATIVE},
     "lifecycle.md: // InstanceFactory in instance.rs": {"mode": "skip", "reason": NATIVE},

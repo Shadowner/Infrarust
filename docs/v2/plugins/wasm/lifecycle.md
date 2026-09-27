@@ -41,7 +41,7 @@ stateDiagram-v2
 
 ## Discovery
 
-The loader reads the top level of the plugin directory, in sorted order, and takes each regular file named `*.wasm`, or symlink to one. It never enters a subdirectory: the plugins' data directories (`plugins_dir/<id>`, mounted read-write as each guest's `/`) and `.cache` live there, and a component a plugin writes into its data directory must not become a plugin at the next start. A file reached through two links is probed once, under the first name in sorted order.
+The loader reads the top level of the plugin directory, in sorted order, and takes each regular file named `*.wasm`, or symlink to one. It never enters a subdirectory: the plugins' data directories (`plugins_dir/<id>`, mounted read-write as each guest's `/`) live there, and a component a plugin writes into its data directory must not become a plugin at the next start. A file reached through two links is probed once, under the first name in sorted order.
 
 If the plugin directory does not exist, discovery returns an empty list. If it exists but cannot be read, discovery fails and the proxy does not start. Everything below that is per plugin:
 
@@ -49,43 +49,81 @@ If the plugin directory does not exist, discovery returns an empty list. If it e
 |---------|--------------|
 | An entry named `*.wasm` is a directory | Ignored |
 | An entry named `*.wasm` cannot be read (a dangling symlink or a symlink loop) or is not a regular file (a FIFO, a socket) | That entry is refused and never opened |
-| A file cannot be read, is empty, is not a WebAssembly component, or does not compile | That file is refused |
+| A file cannot be read, is empty, is not a binary WebAssembly component, is larger than 256 MiB, or does not compile | That file is refused, see [File check](#file-check) |
 | The component targets another contract | That file is refused, see [Contract check](#contract-check) |
 | `metadata()` traps, runs out of time, or reports an invalid id | That file is refused, see [Metadata probe](#metadata-probe) |
 | Several files report the same id | All of them are refused, see [Duplicate ids and dependencies](#duplicate-ids-and-dependencies) |
 
-A refused file is logged once at `error`, as `WASM plugin refused`, with its path and the cause. Discovery goes on with the next file, and the proxy starts with the plugins that passed.
+A refused file is logged once at `error`, as `WASM plugin refused`, with its path and the cause. The cause is cut at 1 KiB and ends with `[...]` when it was longer, so a compiler error or a guest's trap message cannot flood the log. Discovery goes on with the next file, and the proxy starts with the plugins that passed.
+
+## File check
+
+The loader opens each file and reads its first eight bytes before reading the rest. A component starts with the WebAssembly magic `\0asm` followed by the component header `0d 00 01 00`. Any other file is refused from those bytes:
+
+| File | Cause logged |
+|------|--------------|
+| Empty | `not a WebAssembly component: the file is empty` |
+| Shorter than the header | `not a WebAssembly component: the file ends inside the WebAssembly header` |
+| A core module (`\0asm 01 00 00 00`) | `not a WebAssembly component: it is a core WebAssembly module; build the plugin as a component for wasm32-wasip2 with the Infrarust plugin SDK` |
+| A component in another binary encoding | `not a WebAssembly component: it is a component in binary encoding version 14, this host reads version 13` |
+| WebAssembly text, starting with `(` or `;` | `not a WebAssembly component: WebAssembly text format is not accepted, compile it to a binary component` |
+| Anything else | `not a WebAssembly component: the file does not start with the WebAssembly magic bytes \0asm` |
+| Larger than 256 MiB | `the plugin file is <size> bytes, above the 268435456-byte limit for a component` |
+| Unreadable | `cannot read the plugin file: <system error>` |
+
+The proxy is built without wasmtime's text parser, so WebAssembly text never reaches the compiler. A 512 MiB file of junk is refused in milliseconds, without the rest of it being read.
 
 ## AOT compilation and caching
 
-Each `*.wasm` is compiled ahead of time and stored as a `.cwasm` artifact under `<plugins_dir>/.cache`. Compilation runs on a blocking task pool (`tokio::task::spawn_blocking`) so it does not stall the async runtime.
+Each component is compiled ahead of time to native code. Compilation runs on a blocking task pool (`tokio::task::spawn_blocking`) so it does not stall the async runtime. The result is kept in the AOT cache, the directory named by `[wasm] cache_dir`, so the next start loads it instead of compiling again. The default is `./cache/wasm`, resolved from the working directory like `plugins_dir` and `servers_dir`. The cache never lives in `plugins_dir`: startup fails when `cache_dir` is `plugins_dir` or a directory inside it.
 
-The cache key is a SHA-256 hash of the component bytes mixed with two version tags from `consts.rs`:
+### Cache key
 
-| Tag | Constant | Value |
-|-----|----------|-------|
-| Cache subdirectory | `CACHE_SUBDIR` | `.cache` |
-| wasmtime line marker | `WASMTIME_CACHE_TAG` | `wasmtime-45` |
-| WIT world version | `WORLD_VERSION` | `0.3.0` |
+An entry is a file named `<key>.cwasm`, where the key is the SHA-256 of three parts:
 
-```rust
-// AotCache::cache_key in cache.rs
-hasher.update(wasm);
-hasher.update(b"\0");
-hasher.update(WASMTIME_CACHE_TAG.as_bytes()); // wasmtime-45
-hasher.update(b"\0");
-hasher.update(WORLD_VERSION.as_bytes());      // 0.3.0
-```
+| Part | What it covers |
+|------|----------------|
+| The component bytes | The `.wasm` file |
+| The engine tag | A SHA-256 of wasmtime's `precompile_compatibility_hash()` for the proxy's engine: the exact wasmtime version, the target and its CPU features, and the engine settings that shape compiled code |
+| The contract version | `WORLD_VERSION`, `0.3.0` |
 
-A change to the component bytes, the wasmtime tag, or the world version produces a different key, so the artifact is recompiled. A stale or corrupt `.cwasm` is removed and rebuilt on the next load.
+Changing the plugin, running a proxy built with another wasmtime version (patch releases included), moving the cache to a CPU with other features, or changing the contract gives a new key, and the plugin is compiled again. `instance_pool` does not change the compiled code, so it does not change the key. The engine tag comes from wasmtime itself, and a test compares the key with the one of the wasmtime version in `Cargo.lock`, so it cannot fall behind a wasmtime upgrade.
 
 :::info
 The WIT contract is `infrarust:plugin@0.3.0`. `WORLD_VERSION` in `infrarust-plugin-wit` is the single source for that version: the loader's cache key and contract check both read it, and a test keeps it equal to the package declaration in `wit/world.wit`.
 :::
 
+### Loading and writing an entry
+
+For each plugin the loader computes the key and looks for `<key>.cwasm` in `cache_dir`. When the entry exists and passes the checks below, it is loaded. Otherwise the component is compiled in memory and loaded from the compiled bytes, which are then written to the cache: first to a temporary file with a random name in `cache_dir` (`<key>.<random>.cwasm.tmp`), flushed to disk, then renamed over `<key>.cwasm`. The rename is atomic, so a reader never sees a partial entry, and several loaders writing the same entry at once, in one process or in containers that share a volume, each leave a complete one.
+
+An entry that exists but does not load, because it is corrupt or was written by another engine, is compiled again. It is replaced only when the fresh compilation loads, with a warning `AOT cache entry could not be loaded; replaced by a fresh compilation`. When the fresh compilation does not load either, the entry is kept and the plugin is refused with the whole cause, for example with `instance_pool` set: `failed to load the compiled component of <path>: module table does not fit in pooling allocator requirements: table index 0 has a minimum element size of 20000 which exceeds the limit of 512`.
+
+### What the loader trusts
+
+Loading an entry runs its content as native code inside the proxy, and wasmtime cannot verify it. The loader does not sign or authenticate entries: a process that can write into `cache_dir` as the proxy user can already replace the proxy binary. It relies on `cache_dir` being writable by the proxy user only, which is why it is kept out of `plugins_dir`, and on Unix it loads an entry only when the opened file:
+
+- is a regular file, not a symbolic link, and was not swapped between that check and the read;
+- is owned by the user the proxy runs as;
+- is not writable by group or others.
+
+Any other entry is logged as `AOT cache entry refused; the plugin is compiled again and the entry replaced`, with the reason (`owned by uid 0, not by the user the proxy runs as (uid 1000)`, `writable by group or others (mode 664)`, `not a regular file`), then compiled again and replaced by an entry the proxy owns. The directories the cache creates have mode `0700` and its entries `0600`. On Windows only the regular-file check applies; restrict the directory with its access control list.
+
 :::warning
-The loader writes `.cwasm` files atomically into its own cache directory and deserializes only artifacts it produced. Never place a hand-written `.cwasm` in `.cache`; deposit `*.wasm` and let the loader compile it.
+Never put a `.cwasm` in the cache by hand. Deposit `*.wasm` in `plugins_dir` and let the loader compile it.
 :::
+
+### Unwritable cache directory
+
+When `cache_dir` cannot be created or written (a read-only filesystem, a container working directory the proxy user does not own), the loader logs one warning, `AOT cache directory cannot be written; plugins are compiled in memory and compiled again at the next start`, with the directory and the error. Every plugin is then compiled in memory and loads normally: the cache never causes a plugin to be refused. Each start then pays the compilation, about 0.1 s for a typical plugin.
+
+### Removing unused entries
+
+After each discovery the loader removes from `cache_dir` every entry whose key no plugin file of that discovery maps to, so the artifact of a replaced or deleted plugin is gone after the next start. It also removes temporary files older than ten minutes, which a crash during a write can leave. It only touches the names it writes itself: 64 lowercase hexadecimal digits followed by `.cwasm`, or that name's temporary pattern. Two proxies that share one `cache_dir` with different plugins remove each other's entries and compile them again at their next start; give each proxy its own `cache_dir`.
+
+### The cache of earlier versions
+
+Earlier versions kept the cache in `plugins_dir/.cache`. That directory is no longer read and its entries are not migrated, since anyone allowed to add plugin files could have put an entry there. When the loader finds it, it logs once, at `info`, that the directory is no longer read and can be deleted.
 
 ## Contract check
 
@@ -146,13 +184,13 @@ A plugin refused here shows the `error` state with the same message. The proxy t
 
 ## Load
 
-`load` looks the plugin up by `id` in the discovered set, asks the context factory for a `PluginContext`, and reads the capabilities granted to that context. It compares the component's imports with those capabilities: each import the plugin lacks the capability for is logged once, or refuses the load when `strict_capabilities` is set (see [Capabilities](./capabilities#the-load-time-report)). The linker wires in every host interface; the capabilities are checked again on each gated call.
+`load` looks the plugin up by `id` in the discovered set, asks the context factory for a `PluginContext`, and reads the capabilities granted to that context. It compares the component's imports with those capabilities: each import the plugin lacks the capability for is logged once, or refuses the load when `strict_capabilities` is set (see [Capabilities](./capabilities#the-load-time-report)). The linker wires in every host interface; the capabilities are checked again on each gated call. It holds nothing specific to a plugin, so the loader builds it once, with its engine, and the metadata probe and every load share it.
 
 ```rust
 // load in loader.rs
 let capabilities = ctx.capabilities().clone();
 check_imports(&self.engine, &entry.component, plugin_id, &capabilities, strict)?;
-let linker = build_linker(&self.engine, plugin_id)?;
+// self.linker was built once in WasmPluginLoader::new
 
 // CodecFilter is opt-in: a separate sync instantiator is built only when granted
 let codec = if capabilities.has(Capability::CodecFilter) {

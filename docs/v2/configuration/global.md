@@ -430,6 +430,7 @@ host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
 instance_pool = 0
+cache_dir = "./cache/wasm"
 ```
 
 Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and handles one call at a time: its event listeners, commands, scheduled tasks and limbo callbacks wait in a queue and run in order.
@@ -444,6 +445,7 @@ Limits that apply to every WASM plugin. Each plugin runs in its own sandbox and 
 | `max_call_duration` | Wall-clock limit on one call into a plugin, host calls included. A call still running at this limit is abandoned and the plugin's instance is replaced by a fresh one. It is also the deadline of a command, a tab completion, a scheduled task or a limbo callback, counted from when the call is queued. |
 | `queue_capacity` | How many calls may wait for a busy plugin. When the queue is full a new call is refused on the spot: an event gets no answer from that plugin (an access event is then denied, see below) and a command does nothing. The refusal is logged as a warning, at most once every 5 seconds per plugin. |
 | `instance_pool` | Proxy-wide only. `0` (the default) creates every WASM instance on demand. A positive value reserves that many instance slots at startup and recycles them, which cuts the cost of building the codec filter instances of a new connection by about 40%. Count one slot per loaded plugin plus two per connection and per codec filter plugin, since each connection side gets its own instance. When every slot is taken, a codec filter instance cannot be built and that connection side passes packets through unfiltered, with an error in the log, and no plugin can be loaded or restarted until a slot frees up. While the pool is on, a plugin whose function table has more than 512 entries cannot be loaded. See [Instance memory and address space](#instance-memory-and-address-space) for what a slot reserves and keeps resident. |
+| `cache_dir` | Proxy-wide only. Directory of the AOT cache, where each plugin is kept compiled to native code so that later starts skip compilation. Resolved from the working directory, like `plugins_dir`. It must not be `plugins_dir` or a directory inside it, since whoever may add plugin files must not be able to plant native code; keep it writable by the proxy user only. When it cannot be created or written, the proxy logs one warning and compiles the plugins in memory at each start. Entries no plugin uses are removed after each start, so give each proxy its own directory. See [AOT compilation and caching](../plugins/wasm/lifecycle#aot-compilation-and-caching). |
 
 Every call into a WASM plugin has a deadline: `[events] handler_timeout` minus a margin (a fifth, at most 250 ms) for an event listener, a ban check or a permission snapshot, and `max_call_duration` after it was queued for a command, a tab completion, a scheduled task or a limbo callback. A ban check ends at `[ban] check_timeout` when that comes first. A call still running at its deadline is cut off, the plugin's instance is replaced by a fresh one, and the cut counts as a fault toward `[wasm.recovery]` with the cause `the call ran past the event deadline`. One slow call therefore costs its own event and a fresh instance, and the calls queued behind it run within their own deadlines. A call that is still queued at its deadline is dropped without running.
 
@@ -459,6 +461,7 @@ Startup fails when a value is out of range:
 - `host_call_timeout` and `max_call_duration` must be greater than zero and at most `1h`.
 - `queue_capacity` must be between 1 and 1048576.
 - `instance_pool` must be at most 32768.
+- `cache_dir` must not be empty, and must not be `plugins_dir` or lie inside it, compared on the absolute paths with `.` and `..` resolved.
 
 The proxy logs a warning, without refusing to start, when `cpu_budget` is longer than `max_call_duration`: the wall-clock limit then stops a busy guest call first instead of the CPU budget trapping it.
 
@@ -468,7 +471,7 @@ Every WASM instance reserves about 4 GiB of virtual address space for its linear
 
 With `instance_pool` set, the address space of every slot is reserved once at startup, about 4 GiB per slot. When that reservation fails the proxy logs a warning and falls back to on-demand allocation. Only the slots in use take memory, and a slot gives its memory back when its instance ends (the connection closes, or the plugin is unloaded or replaced).
 
-Each pooled instance has room for two function tables of 4 KiB, 512 entries each. A plugin takes one entry per function it reaches through a function pointer or a trait object; the plugins built with the SDK in the Infrarust repository use between 70 and 300. A plugin with a larger table fails to load with `module table does not fit in pooling allocator requirements`; run it with `instance_pool = 0`, where tables have no fixed size.
+Each pooled instance has room for two function tables of 4 KiB, 512 entries each. A plugin takes one entry per function it reaches through a function pointer or a trait object; the plugins built with the SDK in the Infrarust repository use between 70 and 300. A plugin with a larger table fails to load with `module table does not fit in pooling allocator requirements: table index 0 has a minimum element size of <n> which exceeds the limit of 512`; run it with `instance_pool = 0`, where tables have no fixed size. Its AOT cache entry is kept, and loads once the pool is off.
 
 Transparent huge pages set to `always` (`/sys/kernel/mm/transparent_hugepage/enabled`) let the kernel back the pool's tables with 2 MiB pages. The tables of a closed connection are still given back, but a 2 MiB page that holds a table still in use can stay resident as a whole. All pooled tables together take 8 KiB per slot (32 MiB for 4096 slots), which bounds that effect. With `madvise` or `never`, only the pages in use are resident.
 
@@ -542,7 +545,7 @@ Plugin configurations are keyed by plugin ID.
 - `deny` removes capabilities. It is applied after the baseline and the grants, so it can take away a baseline capability such as `player-write`, and a capability listed in both `permissions` and `deny` is denied. It also applies to compiled-in plugins.
 - `strict_capabilities` (WASM plugins, defaults to `false`) refuses to load the plugin when it imports a host function whose capability it lacks. Without it such a plugin loads, a warning names each import that will be refused, and the calls are refused when made. See [What a missing capability does](../plugins/wasm/capabilities#what-a-missing-capability-does).
 - `enabled` skips the plugin when set to `false` (defaults to `true` when omitted).
-- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except `epoch_tick`, `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]` and `[plugins.<id>.wasm.quotas]` overrides `[wasm.quotas]`; keys it leaves out keep the proxy-wide value.
+- `[plugins.<id>.wasm]` overrides the `[wasm]` limits for that plugin. It accepts every key of `[wasm]` except the proxy-wide `epoch_tick`, `instance_pool` and `cache_dir`, `[plugins.<id>.wasm.recovery]` overrides `[wasm.recovery]` and `[plugins.<id>.wasm.quotas]` overrides `[wasm.quotas]`; keys it leaves out keep the proxy-wide value.
 - `[plugins.<id>.wasm.network]` lists the destinations a plugin with the `network` capability may reach, and `[[plugins.<id>.wasm.mounts]]` the host folders a plugin with `filesystem-extended` sees. See [Network & Extra Folders](../plugins/wasm/network).
 
 Unknown capability names in `permissions` or `deny` are ignored with a warning. The capability strings are listed in [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix). `path` is accepted for compatibility; WASM plugins are always discovered in `plugins_dir`.
@@ -592,6 +595,7 @@ codec_cpu_budget = "800ms"
 host_call_timeout = "30s"
 max_call_duration = "60s"
 queue_capacity = 1024
+cache_dir = "./cache/wasm"
 
 [wasm.recovery]
 max_restarts = 5

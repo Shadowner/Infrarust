@@ -25,18 +25,25 @@ Infrarust inside Docker expects a config volume mounted at `/app/config`. The la
 ```
 config/
 ├── infrarust.toml
+├── cache/
+│   └── wasm/        ← compiled WASM plugins, written by the proxy
 ├── plugins/
 └── servers/
     └── survival.toml
 ```
 
-Set `servers_dir` and `plugins_dir` in your `infrarust.toml` to paths inside the container:
+Set `servers_dir`, `plugins_dir` and, if you run WASM plugins, `[wasm] cache_dir` in your `infrarust.toml` to paths inside the container:
 
 ```toml
 bind = "0.0.0.0:25565"
 servers_dir = "/app/config/servers"
 plugins_dir = "/app/config/plugins"
+
+[wasm]
+cache_dir = "/app/config/cache/wasm"
 ```
+
+The image runs as user `65532` in `/app`, a directory that user cannot write. With the default `cache_dir`, `./cache/wasm`, the proxy logs `AOT cache directory cannot be written` and compiles every WASM plugin again at each start. Point `cache_dir` at a writable directory, in the config volume as above or in a volume of its own owned by `65532`. Keep it out of `plugins_dir`: the proxy refuses to start with a cache inside it.
 
 ## Running with docker run
 

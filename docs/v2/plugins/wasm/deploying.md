@@ -23,7 +23,7 @@ Copy your compiled artifact into that directory:
 cp target/wasm32-wasip2/release/my_plugin.wasm ./plugins/
 ```
 
-Only the top level of `plugins_dir` is scanned: every regular file with a `.wasm` extension directly in it, or a symlink to such a file, is a plugin candidate. Subdirectories are never entered. They hold the plugins' data directories, `plugins_dir/<plugin-id>`, which each plugin can write to, and the `.cache` directory; scanning them would let a plugin drop a component there and have it loaded at the next start as another plugin. A file reached through two links is loaded once.
+Only the top level of `plugins_dir` is scanned: every regular file with a `.wasm` extension directly in it, or a symlink to such a file, is a plugin candidate. Subdirectories are never entered. They hold the plugins' data directories, `plugins_dir/<plugin-id>`, which each plugin can write to; scanning them would let a plugin drop a component there and have it loaded at the next start as another plugin. A file reached through two links is loaded once.
 
 Keep backup copies and old versions outside `plugins_dir`, or in a subdirectory, where they are ignored. Two copies at the top level that report the same id make the proxy refuse both, see [The plugin id](#the-plugin-id).
 
@@ -166,7 +166,7 @@ The proxy reads which contract each component was built for before running any o
 
 ### A refused plugin does not stop the others
 
-Each problem found at discovery refuses only the plugin it concerns, logged at `error` with the file and the cause, and the proxy starts with the rest. That covers a file that cannot be read or is not a component (an empty or truncated upload), a `metadata()` that traps or does not return within the smaller of `max_call_duration` and 5 seconds, an invalid or duplicate id, a missing hard dependency and a dependency cycle. A plugin whose hard dependency is refused, disabled with `enabled = false`, or fails to enable is not enabled either. Only a `plugins_dir` that exists but cannot be read stops the proxy. The full list is in [Lifecycle](./lifecycle#discovery).
+Each problem found at discovery refuses only the plugin it concerns, logged at `error` with the file and the cause, and the proxy starts with the rest. That covers a file that cannot be read or is not a binary component (an empty or truncated upload, WebAssembly text, a core module, a file larger than 256 MiB), a `metadata()` that traps or does not return within the smaller of `max_call_duration` and 5 seconds, an invalid or duplicate id, a missing hard dependency and a dependency cycle. A plugin whose hard dependency is refused, disabled with `enabled = false`, or fails to enable is not enabled either. Only a `plugins_dir` that exists but cannot be read stops the proxy. The full list is in [Lifecycle](./lifecycle#discovery).
 
 ### A trap during `on_enable` fails the plugin
 
@@ -174,12 +174,22 @@ If the guest traps during its first `on_enable` (a panic, an out-of-bounds acces
 
 ## The AOT cache
 
-The proxy precompiles each `.wasm` to a native `.cwasm` artifact under a `.cache` subdirectory inside `plugins_dir`. Subsequent startups load the cached artifact and skip compilation.
+The proxy compiles each `.wasm` to native code and keeps the result in the directory named by `cache_dir` in the `[wasm]` table, so later starts skip compilation:
 
-The cache key is the content hash of the `.wasm` plus a wasmtime version tag plus the WIT contract version (`infrarust:plugin@0.3.0`). Changing the plugin, upgrading wasmtime, or bumping the contract produces a new key, so stale artifacts are never reused. A `.cwasm` that fails to load is detected, removed, and recompiled automatically.
+```toml
+[wasm]
+cache_dir = "./cache/wasm"  # the default, relative to the working directory
+```
+
+- The cache is kept apart from `plugins_dir` on purpose. An entry runs as native code inside the proxy, so whoever may add `.wasm` files must not be able to write there. The proxy refuses to start when `cache_dir` is `plugins_dir` or lies inside it. Make the directory writable by the proxy user only: on Unix the proxy ignores and replaces an entry that another user owns, that group or others can write, or that is a symbolic link.
+- An entry is keyed on the content of the `.wasm`, the exact wasmtime version and engine settings of the proxy, and the contract version (`infrarust:plugin@0.3.0`). A changed plugin, a proxy built with another wasmtime, or a new contract is compiled again. An entry that fails to load is compiled again and replaced.
+- After each start the proxy removes the entries that no plugin in `plugins_dir` uses, so replacing or removing a plugin does not leave its old artifact behind. Give each proxy its own `cache_dir`: proxies that share one with different plugins remove each other's entries.
+- When `cache_dir` cannot be created or written, on a read-only filesystem for example, the proxy logs one warning naming it and compiles every plugin in memory at each start. The plugins still load.
+
+The details, from the cache key to the file checks, are in [Lifecycle](./lifecycle#aot-compilation-and-caching).
 
 ::: tip
-The `.cache` directory is safe to delete. The proxy recreates it on the next startup by recompiling from the `.wasm` files. You never place a `.cwasm` there by hand.
+The cache directory is safe to delete: the proxy compiles the plugins again at the next start. Never put a `.cwasm` there by hand. A `plugins_dir/.cache` directory left by an earlier version is no longer read and can be deleted; the proxy says so once in its log.
 :::
 
 ## Sandbox limits

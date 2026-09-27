@@ -17,13 +17,12 @@ A WASM plugin is a single `.wasm` file that implements the `infrarust:plugin` co
 plugins/
   my-filter.wasm
   analytics.wasm
-  .cache/          ← AOT compilation cache, managed automatically
 ```
 
-The loader will find both files on the next startup. Put every `.wasm` directly in the plugins directory: subdirectories are not scanned. They are where plugins keep their data (`plugins/<id>/`) and where the `.cache` lives, and a plugin can write to its own data directory, so a component found there is never loaded. A backup copy left in a subdirectory is ignored.
+The loader will find both files on the next startup. Put every `.wasm` directly in the plugins directory: subdirectories are not scanned. They are where plugins keep their data (`plugins/<id>/`), and a plugin can write to its own data directory, so a component found there is never loaded. A backup copy left in a subdirectory is ignored.
 
 ::: tip
-AOT-compiled `.cwasm` artifacts land in `plugins/.cache/`. They speed up subsequent startups by skipping recompilation. The cache is keyed on the WASM binary hash and the wasmtime version, so a wasmtime upgrade or a changed plugin automatically triggers recompilation.
+The compiled plugins are cached in `[wasm] cache_dir`, `./cache/wasm` by default, next to `plugins/` and never inside it. The cache speeds up later startups by skipping compilation, is keyed on the plugin's content and the wasmtime version, and can be deleted at any time. See [The AOT cache](./wasm/deploying#the-aot-cache).
 :::
 
 ## Configuring a plugin in infrarust.toml
