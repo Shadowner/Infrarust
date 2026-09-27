@@ -130,7 +130,7 @@ impl ConsoleCommand for FindPlayerCommand {
                         OutputLine::Info(format!("  Connected: {}", player.is_connected())),
                     ])
                 }
-                Err(error) => CommandOutput::Error(error.to_string()),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -171,7 +171,7 @@ impl ConsoleCommand for KickCommand {
                     "Kicked {} (reason: {})",
                     kicked.player, kicked.reason
                 )),
-                Err(error) => CommandOutput::Error(error.to_string()),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -212,12 +212,12 @@ impl ConsoleCommand for KickIpCommand {
 
             let ip: std::net::IpAddr = match ip_str.parse() {
                 Ok(ip) => ip,
-                Err(_) => return CommandOutput::Error(format!("Invalid IP address: '{ip_str}'")),
+                Err(_) => return CommandOutput::error(format!("Invalid IP address: '{ip_str}'")),
             };
 
             let sessions = services.connection_registry.find_by_ip(&ip);
             if sessions.is_empty() {
-                return CommandOutput::Error(format!("No players connected from {ip}"));
+                return CommandOutput::error(format!("No players connected from {ip}"));
             }
 
             let count = sessions.len();
@@ -277,7 +277,7 @@ impl ConsoleCommand for SendCommand {
                 Ok(sent) => {
                     CommandOutput::Success(format!("Sent {} to {}", sent.player, sent.server))
                 }
-                Err(error) => CommandOutput::Error(error.to_string()),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -390,18 +390,18 @@ impl ConsoleCommand for MsgCommand {
             match services.player_registry.get_player(name) {
                 Some(player) => {
                     if !player.is_active() {
-                        return CommandOutput::Error(format!(
+                        return CommandOutput::error(format!(
                             "Player '{name}' is on a passive proxy path and cannot receive messages"
                         ));
                     }
                     match player.send_message(Component::text(&message)) {
                         Ok(()) => CommandOutput::Success(format!("Message sent to {name}")),
                         Err(e) => {
-                            CommandOutput::Error(format!("Failed to send message to {name}: {e}"))
+                            CommandOutput::error(format!("Failed to send message to {name}: {e}"))
                         }
                     }
                 }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+                None => CommandOutput::error(format!("Player '{name}' not found")),
             }
         })
     }
@@ -450,7 +450,7 @@ impl ConsoleCommand for BroadcastCommand {
                     "Broadcast sent to {} player(s)",
                     sent.recipients
                 )),
-                Err(error) => CommandOutput::Error(error.to_string()),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -561,7 +561,7 @@ mod tests {
 
     fn error_text(output: CommandOutput) -> String {
         match output {
-            CommandOutput::Error(text) => text,
+            CommandOutput::Error(failure) => failure.message,
             CommandOutput::Success(text) => panic!("expected an error, got success: {text}"),
             _ => panic!("expected an error line"),
         }

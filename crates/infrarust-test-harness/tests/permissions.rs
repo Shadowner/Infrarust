@@ -448,7 +448,9 @@ async fn the_console_runs_commands_under_its_own_checker() {
     let proxy = start(&backend, vec![perms_plugin(&perms, &calls)], select_perms()).await;
 
     match run_console(&proxy, "demo").await {
-        CommandOutput::Error(message) => assert!(message.contains("may not run"), "{message}"),
+        CommandOutput::Error(failure) => {
+            assert!(failure.message.contains("may not run"), "{failure}")
+        }
         _ => panic!("the provider denied demo.use to the console"),
     }
     assert!(seen(&calls).is_empty());

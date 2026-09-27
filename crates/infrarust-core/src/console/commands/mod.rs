@@ -11,11 +11,11 @@ use std::time::Duration;
 use comfy_table::{Cell, Table};
 
 use super::dispatcher::{CommandDispatcher, ConsoleCommand};
-use super::output::{CommandOutput, OutputRenderer};
+use super::output::{CommandOutput, legacy_table};
 use super::parser::parse_duration_arg;
 
 pub(crate) fn usage(command: &dyn ConsoleCommand) -> CommandOutput {
-    CommandOutput::Error(format!("Usage: {}", command.usage()))
+    CommandOutput::usage(command.usage())
 }
 
 pub(crate) mod args {
@@ -42,7 +42,7 @@ pub(crate) struct TableBuilder {
 }
 
 pub(crate) fn table(headers: &[&str]) -> TableBuilder {
-    let mut table = OutputRenderer::new().create_table();
+    let mut table = legacy_table();
     table.set_header(headers.to_vec());
     TableBuilder { table, rows: 0 }
 }

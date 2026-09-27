@@ -71,7 +71,7 @@ impl ConsoleCommand for ConfigCommand {
                     Some(value) => {
                         CommandOutput::Lines(vec![OutputLine::Info(format!("  {key} = {value}"))])
                     }
-                    None => CommandOutput::Error(format!("Configuration key '{key}' not found")),
+                    None => CommandOutput::error(format!("Configuration key '{key}' not found")),
                 };
             }
 

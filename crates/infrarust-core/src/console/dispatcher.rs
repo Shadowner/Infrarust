@@ -4,7 +4,7 @@ use std::pin::Pin;
 use infrarust_api::command::CommandSource;
 
 use super::ConsoleServices;
-use super::output::{CommandCategory, CommandOutput};
+use super::output::{CommandCategory, CommandOutput, Failure, Hint};
 use super::parser;
 use crate::services::command_manager::DispatchOutcome;
 
@@ -96,13 +96,58 @@ impl CommandDispatcher {
         match services.command_manager.dispatch(console, line).await {
             DispatchOutcome::Executed => CommandOutput::None,
             DispatchOutcome::Denied => {
-                CommandOutput::Error(format!("The console may not run '{name}'."))
+                CommandOutput::error(format!("The console may not run '{name}'."))
             }
-            DispatchOutcome::Unknown => CommandOutput::Error(format!(
-                "Unknown command: '{name}'. Type 'help' for available commands."
-            )),
+            DispatchOutcome::Unknown => {
+                let plugin_names: Vec<String> = services
+                    .command_manager
+                    .list()
+                    .into_iter()
+                    .map(|info| info.spec.name)
+                    .collect();
+                let known = self
+                    .commands
+                    .iter()
+                    .flat_map(|cmd| {
+                        std::iter::once(cmd.name()).chain(cmd.aliases().iter().copied())
+                    })
+                    .chain(plugin_names.iter().map(String::as_str));
+                let hint = match closest(&name, known) {
+                    Some(candidate) => {
+                        format!("did you mean {candidate}? type help to list commands")
+                    }
+                    None => "type help to list commands".to_string(),
+                };
+                Failure::new(format!("Unknown command '{name}'"))
+                    .with_hint(Hint::Note(hint))
+                    .into()
+            }
         }
     }
+}
+
+fn closest<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let limit = (input.chars().count() / 2).clamp(1, 2);
+    candidates
+        .map(|candidate| (edit_distance(input, candidate), candidate))
+        .filter(|(distance, _)| *distance <= limit)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, candidate)| candidate)
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut previous: Vec<usize> = (0..=b.len()).collect();
+    for (i, left) in a.chars().enumerate() {
+        let mut current = Vec::with_capacity(b.len() + 1);
+        current.push(i + 1);
+        for (j, right) in b.iter().enumerate() {
+            let substitution = previous[j] + usize::from(left != *right);
+            current.push(substitution.min(previous[j + 1] + 1).min(current[j] + 1));
+        }
+        previous = current;
+    }
+    previous[b.len()]
 }
 
 #[cfg(test)]
@@ -155,6 +200,23 @@ mod tests {
         assert_eq!(infos[0].aliases, vec!["m", "test"]);
         assert_eq!(infos[0].description, "A mock command");
         assert_eq!(infos[0].category, CommandCategory::System);
+    }
+
+    #[test]
+    fn closest_suggests_a_near_miss_only() {
+        let names = ["kick", "kick-ip", "ban", "list"];
+        assert_eq!(closest("kik", names.into_iter()), Some("kick"));
+        assert_eq!(closest("lsit", names.into_iter()), Some("list"));
+        assert_eq!(closest("nope", names.into_iter()), None);
+        assert_eq!(closest("xyz", names.into_iter()), None);
+    }
+
+    #[test]
+    fn edit_distance_counts_single_character_edits() {
+        assert_eq!(edit_distance("kick", "kick"), 0);
+        assert_eq!(edit_distance("kik", "kick"), 1);
+        assert_eq!(edit_distance("lsit", "list"), 2);
+        assert_eq!(edit_distance("", "ban"), 3);
     }
 
     #[test]

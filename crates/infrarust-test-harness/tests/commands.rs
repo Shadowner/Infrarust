@@ -463,7 +463,9 @@ async fn the_console_runs_plugin_commands() {
         assert!(matches!(output, CommandOutput::None), "{line}");
     }
     match dispatcher.dispatch("nope", &services).await {
-        CommandOutput::Error(message) => assert!(message.contains("Unknown command"), "{message}"),
+        CommandOutput::Error(failure) => {
+            assert!(failure.message.contains("Unknown command"), "{failure}")
+        }
         _ => panic!("an unknown console command must be reported"),
     }
 

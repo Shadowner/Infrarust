@@ -2,6 +2,7 @@ pub mod commands;
 pub mod dispatcher;
 pub mod output;
 pub mod parser;
+pub mod render;
 
 use std::io::IsTerminal;
 use std::sync::Arc;
@@ -70,18 +71,15 @@ impl ConsoleServices {
 pub struct ConsoleTask {
     services: Arc<ConsoleServices>,
     dispatcher: dispatcher::CommandDispatcher,
-    renderer: output::OutputRenderer,
 }
 
 impl ConsoleTask {
     pub fn new(services: Arc<ConsoleServices>) -> Self {
         let mut dispatcher = dispatcher::CommandDispatcher::new();
         commands::register_all(&mut dispatcher);
-        let renderer = output::OutputRenderer::new();
         Self {
             services,
             dispatcher,
-            renderer,
         }
     }
 
@@ -136,7 +134,10 @@ impl ConsoleTask {
             }
 
             let output = self.dispatcher.dispatch(trimmed, &self.services).await;
-            self.renderer.render(output).await;
+            let rendered = render::Renderer::detect().render(&output);
+            if !rendered.is_empty() {
+                println!("{rendered}");
+            }
         }
     }
 }

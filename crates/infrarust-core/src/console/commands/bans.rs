@@ -83,7 +83,7 @@ impl ConsoleCommand for BanIpCommand {
             };
 
             let Some(target) = parse_address_target(ip_str) else {
-                return CommandOutput::Error(format!("Invalid IP address or range: '{ip_str}'"));
+                return CommandOutput::error(format!("Invalid IP address or range: '{ip_str}'"));
             };
             issue_ban(
                 services,
@@ -136,8 +136,8 @@ impl ConsoleCommand for UnbanCommand {
                     tracing::info!(target: "console", player = name, "Player unbanned from console");
                     CommandOutput::Success(format!("Unbanned {name}"))
                 }
-                Ok(None) => CommandOutput::Error(format!("Player '{name}' is not banned")),
-                Err(e) => CommandOutput::Error(format!("Failed to unban {name}: {e}")),
+                Ok(None) => CommandOutput::error(format!("Player '{name}' is not banned")),
+                Err(e) => CommandOutput::error(format!("Failed to unban {name}: {e}")),
             }
         })
     }
@@ -177,7 +177,7 @@ impl ConsoleCommand for UnbanIpCommand {
             };
 
             let Some(target) = parse_address_target(ip_str) else {
-                return CommandOutput::Error(format!("Invalid IP address or range: '{ip_str}'"));
+                return CommandOutput::error(format!("Invalid IP address or range: '{ip_str}'"));
             };
             let ip = ip_str;
 
@@ -186,8 +186,8 @@ impl ConsoleCommand for UnbanIpCommand {
                     tracing::info!(target: "console", ip = %ip, "IP unbanned from console");
                     CommandOutput::Success(format!("Unbanned IP {ip}"))
                 }
-                Ok(None) => CommandOutput::Error(format!("IP {ip} is not banned")),
-                Err(e) => CommandOutput::Error(format!("Failed to unban IP {ip}: {e}")),
+                Ok(None) => CommandOutput::error(format!("IP {ip} is not banned")),
+                Err(e) => CommandOutput::error(format!("Failed to unban IP {ip}: {e}")),
             }
         })
     }
@@ -224,7 +224,7 @@ impl ConsoleCommand for BanListCommand {
         Box::pin(async move {
             let bans = match BanService::list_all(services.ban_manager.as_ref()).await {
                 Ok(bans) => bans,
-                Err(e) => return CommandOutput::Error(format!("Failed to fetch bans: {e}")),
+                Err(e) => return CommandOutput::error(format!("Failed to fetch bans: {e}")),
             };
 
             let active: Vec<&BanEntry> = bans.iter().filter(|b| !b.is_expired()).collect();
@@ -297,7 +297,7 @@ impl ConsoleCommand for BanInfoCommand {
                     ])
                 }
                 Ok(None) => CommandOutput::Success(format!("{arg} is not banned")),
-                Err(e) => CommandOutput::Error(format!("Failed to check ban: {e}")),
+                Err(e) => CommandOutput::error(format!("Failed to check ban: {e}")),
             }
         })
     }
@@ -317,7 +317,7 @@ async fn issue_ban(
         .await
     {
         Ok(issued) => issued,
-        Err(e) => return CommandOutput::Error(format!("Failed to ban {label}: {e}")),
+        Err(e) => return CommandOutput::error(format!("Failed to ban {label}: {e}")),
     };
 
     let duration_str = duration

@@ -127,7 +127,7 @@ impl ConsoleCommand for ServerCommand {
             let server_id = ServerId::new(*id);
             let cfg = match services.config_service.get_server_config(&server_id) {
                 Some(c) => c,
-                None => return CommandOutput::Error(format!("Server '{id}' not found")),
+                None => return CommandOutput::error(format!("Server '{id}' not found")),
             };
 
             let players = services.player_registry.online_count_on(&server_id);
@@ -193,7 +193,7 @@ impl ConsoleCommand for StartServerCommand {
             let sm = match services.server_manager.as_ref() {
                 Some(sm) => sm,
                 None => {
-                    return CommandOutput::Error("Server management is not configured".to_string());
+                    return CommandOutput::error("Server management is not configured".to_string());
                 }
             };
 
@@ -205,7 +205,7 @@ impl ConsoleCommand for StartServerCommand {
 
             match sm.start_server(id).await {
                 Ok(()) => CommandOutput::Success(format!("Server '{id}' started")),
-                Err(e) => CommandOutput::Error(format!("Failed to start server '{id}': {e}")),
+                Err(e) => CommandOutput::error(format!("Failed to start server '{id}': {e}")),
             }
         })
     }
@@ -243,7 +243,7 @@ impl ConsoleCommand for StopServerCommand {
             let sm = match services.server_manager.as_ref() {
                 Some(sm) => sm,
                 None => {
-                    return CommandOutput::Error("Server management is not configured".to_string());
+                    return CommandOutput::error("Server management is not configured".to_string());
                 }
             };
 
@@ -255,7 +255,7 @@ impl ConsoleCommand for StopServerCommand {
 
             match sm.stop_server(id).await {
                 Ok(()) => CommandOutput::Success(format!("Server '{id}' stopped")),
-                Err(e) => CommandOutput::Error(format!("Failed to stop server '{id}': {e}")),
+                Err(e) => CommandOutput::error(format!("Failed to stop server '{id}': {e}")),
             }
         })
     }

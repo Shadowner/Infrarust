@@ -102,7 +102,7 @@ impl ConsoleCommand for PluginCommand {
 
             let meta = match plugins.iter().find(|p| p.id == *id) {
                 Some(m) => m,
-                None => return CommandOutput::Error(format!("Plugin '{id}' not found")),
+                None => return CommandOutput::error(format!("Plugin '{id}' not found")),
             };
 
             let state = pm

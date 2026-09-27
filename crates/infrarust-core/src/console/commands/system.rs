@@ -66,7 +66,7 @@ impl ConsoleCommand for HelpCommand {
                         OutputLine::Info(format!("  Usage: {}", info.usage)),
                     ]);
                 }
-                return CommandOutput::Error(format!("Unknown command: '{lower}'"));
+                return CommandOutput::error(format!("Unknown command: '{lower}'"));
             }
 
             let is_tty = std::io::stdout().is_terminal();
@@ -389,7 +389,7 @@ impl ConsoleCommand for GcCommand {
                     "GC cycle completed. {} active ban(s) remaining.",
                     bans.len()
                 )),
-                Err(e) => CommandOutput::Error(format!("GC failed: {e}")),
+                Err(e) => CommandOutput::error(format!("GC failed: {e}")),
             }
         })
     }

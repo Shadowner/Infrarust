@@ -52,7 +52,7 @@ impl ConsoleCommand for OpCommand {
                         .builtin()
                         .trusts_offline_admins()
                 {
-                    return CommandOutput::Error(format!(
+                    return CommandOutput::error(format!(
                         "Player '{}' is connected in offline mode — only online-mode players can be admin unless [permissions] trust_offline_admins is set.",
                         username
                     ));
@@ -62,7 +62,7 @@ impl ConsoleCommand for OpCommand {
                 match crate::permissions::resolve_username_to_uuid(username).await {
                     Ok(uuid) => uuid,
                     Err(e) => {
-                        return CommandOutput::Error(format!(
+                        return CommandOutput::error(format!(
                             "Failed to resolve '{}': {}",
                             username, e
                         ));
@@ -120,7 +120,7 @@ impl ConsoleCommand for DeopCommand {
                 match crate::permissions::resolve_username_to_uuid(username).await {
                     Ok(uuid) => uuid,
                     Err(e) => {
-                        return CommandOutput::Error(format!(
+                        return CommandOutput::error(format!(
                             "Failed to resolve '{}': {}",
                             username, e
                         ));
@@ -135,7 +135,7 @@ impl ConsoleCommand for DeopCommand {
                     username, uuid
                 ))
             } else {
-                CommandOutput::Error(format!("'{}' (UUID: {}) was not an admin.", username, uuid))
+                CommandOutput::error(format!("'{}' (UUID: {}) was not an admin.", username, uuid))
             }
         })
     }
@@ -198,7 +198,7 @@ impl ConsoleCommand for OpListCommand {
 fn delegated(services: &ConsoleServices) -> Option<CommandOutput> {
     let selection = services.permission_service.selection();
     selection.plugin_id().map(|plugin| {
-        CommandOutput::Error(format!(
+        CommandOutput::error(format!(
             "Permissions come from the '{plugin}' plugin ([permissions] provider); manage admins there."
         ))
     })
