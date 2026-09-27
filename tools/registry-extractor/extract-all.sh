@@ -22,6 +22,8 @@ EXTRACTOR_BIN="$PROJECT_ROOT/target/release/registry-extractor"
 
 CONTAINER_NAME="infrarust-registry-extractor"
 DOCKER_IMAGE="itzg/minecraft-server:java21"
+DOCKER_IMAGE_JAVA25="itzg/minecraft-server:java25"
+JAVA25_FROM_PROTOCOL=775
 HOST_PORT=25599
 STARTUP_TIMEOUT=300  # 5 minutes
 
@@ -39,6 +41,9 @@ VERSIONS=(
   "1.21.7:772"
   "1.21.9:773"
   "1.21.11:774"
+  "26.1:775"
+  "26.2:776"
+  "26.3:777"
 )
 
 # ─── CLI flags ───────────────────────────────────────────────────────────────
@@ -110,6 +115,11 @@ wait_for_server() {
 
 start_server() {
   local mc_version="$1"
+  local protocol="$2"
+  local image="$DOCKER_IMAGE"
+  if [ "$protocol" -ge "$JAVA25_FROM_PROTOCOL" ]; then
+    image="$DOCKER_IMAGE_JAVA25"
+  fi
 
   cleanup_container
 
@@ -122,11 +132,12 @@ start_server() {
     -e VERSION="$mc_version" \
     -e TYPE=VANILLA \
     -e ONLINE_MODE=false \
+    -e ENABLE_WHITELIST=false \
     -e MEMORY=512M \
     -e SPAWN_PROTECTION=0 \
     -e VIEW_DISTANCE=4 \
     -e MAX_TICK_TIME=-1 \
-    "$DOCKER_IMAGE" >/dev/null
+    "$image" >/dev/null
 
   wait_for_server
 }
@@ -198,7 +209,7 @@ for entry in "${VERSIONS[@]}"; do
   log "Processing MC $mc_version → protocol $protocol"
   log "────────────────────────────────────────────────"
 
-  if start_server "$mc_version"; then
+  if start_server "$mc_version" "$protocol"; then
     if extract_version "$mc_version" "$protocol"; then
       succeeded=$((succeeded + 1))
     else
