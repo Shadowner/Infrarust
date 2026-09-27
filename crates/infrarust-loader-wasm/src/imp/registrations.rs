@@ -64,6 +64,12 @@ struct Hold {
     generation: u64,
 }
 
+impl Hold {
+    fn ended(&self) -> bool {
+        self.handle.cancellation_token().is_cancelled()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Stale {
     pub(crate) commands: Vec<String>,
@@ -208,7 +214,9 @@ impl Registrations {
     }
 
     pub(crate) fn track_hold(&self, handle: SessionHandle, generation: u64) {
-        lock(&self.holds).insert(handle.player_id(), Hold { handle, generation });
+        let mut holds = lock(&self.holds);
+        holds.retain(|_, hold| !hold.ended());
+        holds.insert(handle.player_id(), Hold { handle, generation });
     }
 
     pub(crate) fn release_hold(&self, player: PlayerId) {
@@ -218,6 +226,9 @@ impl Registrations {
     pub(crate) fn fail_holds(&self, generation: Option<u64>) -> usize {
         let mut failed = Vec::new();
         lock(&self.holds).retain(|_, hold| {
+            if hold.ended() {
+                return false;
+            }
             let owned = generation.is_none_or(|generation| hold.generation == generation);
             if owned {
                 failed.push(hold.handle.clone());
@@ -448,5 +459,29 @@ mod tests {
 
         assert_eq!(registrations.fail_holds(None), 1);
         assert_eq!(new.completions().len(), 1);
+    }
+
+    #[test]
+    fn a_hold_whose_session_ended_is_dropped_without_being_completed() {
+        let registrations = Registrations::default();
+        let (moved, held) = (session(1), session(2));
+        registrations.track_hold(moved.handle(), 1);
+        moved.cancellation_token().cancel();
+        assert_eq!(lock(&registrations.holds).len(), 1);
+        registrations.track_hold(held.handle(), 1);
+        assert_eq!(
+            lock(&registrations.holds).len(),
+            1,
+            "tracking a new hold forgets the ones whose session ended"
+        );
+
+        let gone = session(3);
+        registrations.track_hold(gone.handle(), 1);
+        gone.cancellation_token().cancel();
+        assert_eq!(registrations.fail_holds(Some(1)), 1);
+        assert!(moved.completions().is_empty());
+        assert!(gone.completions().is_empty());
+        assert_eq!(held.completions().len(), 1);
+        assert!(lock(&registrations.holds).is_empty());
     }
 }

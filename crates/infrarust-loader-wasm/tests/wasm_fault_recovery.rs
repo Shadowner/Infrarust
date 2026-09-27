@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::ChatMessageResult;
-use infrarust_api::limbo::HandlerResult;
+use infrarust_api::limbo::{HandlerResult, LimboSession};
 use infrarust_api::loader::PluginLoader;
 use tracing::Level;
 use tracing::instrument::WithSubscriber;
@@ -632,5 +632,41 @@ async fn a_file_write_a_scheduled_task_made_before_it_trapped_is_on_disk() {
     assert!(
         written >= errors,
         "task lines {written} < task faults {errors}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hold_whose_session_went_on_to_another_limbo_is_forgotten() {
+    let lab = Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options("")).await;
+    let handler = lab.limbo_handler(LAB, faults::LIMBO_HANDLER);
+    let moved = fault_lab::limbo_session(7);
+    assert!(matches!(
+        handler.on_player_enter(moved.as_ref()).await,
+        HandlerResult::Hold
+    ));
+    moved.cancellation_token().cancel();
+    let held = fault_lab::limbo_session(8);
+    assert!(matches!(
+        handler.on_player_enter(held.as_ref()).await,
+        HandlerResult::Hold
+    ));
+
+    lab.set_faults(LAB, "limbo\ncommand panic");
+    lab.dispatch("lab").await;
+    lab.wait_for("the fault to release the held player", || {
+        !held.completions().is_empty()
+    })
+    .await;
+
+    assert!(
+        moved.completions().is_empty(),
+        "the session ended when the player went on to another limbo, so the fault no longer \
+         releases it: {:?}",
+        moved.completions()
+    );
+    assert!(
+        matches!(held.completions().as_slice(), [HandlerResult::Deny(_)]),
+        "the player still held is released with a deny: {:?}",
+        held.completions()
     );
 }
