@@ -134,6 +134,8 @@ On `on_disable`, a plugin with a live instance runs its guest `on_disable` as us
 
 A disable or an unload that arrives while the plugin is replacing its instance stops the recovery: the restart in progress ends (it is bounded by `max_call_duration`), no further restart is tried, and `on_disable` is skipped since there is no live instance. Either returns within one `max_call_duration` instead of waiting for every restart the budget still allows.
 
+A proxy shutdown goes further. The call a plugin is running when the shutdown starts is cut, which is not counted as a fault: the instance is discarded without a recovery, and the plugin stops without `on_disable`. From then on no plugin gets a fresh instance, whatever faults, and a restart in progress is cut too. See [Proxy shutdown](./lifecycle#proxy-shutdown) for the limits on `on_disable` and on the whole plugin phase.
+
 ## Configuration
 
 ```toml

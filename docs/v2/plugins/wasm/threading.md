@@ -147,7 +147,7 @@ Each job carries a deadline, fixed when it is queued:
 |----------------------|----------|
 | Event handler, ban provider call, permission snapshot | `[events] handler_timeout` minus a margin (9.75 s with the default 10 s); a ban check ends at `[ban] check_timeout` when that comes first |
 | Command, tab completion, scheduled task, limbo callback | `max_call_duration` in `[wasm]` (60 s by default) |
-| `on_enable`, `on_disable` | none |
+| `on_enable`, `on_disable` | none; during a proxy shutdown `on_disable` is stopped after 5 seconds, see [Proxy shutdown](./lifecycle#proxy-shutdown) |
 
 The margin is a fifth of the budget, at most 250 ms. It keeps an event's deadline before the moment the event bus gives up on the listener, so the plugin's answer, or the proxy's deny when there is none, is applied to the event. A ban check takes the deadline of the ban manager that asked, which stops waiting at `check_timeout`.
 

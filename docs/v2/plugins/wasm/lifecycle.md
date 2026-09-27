@@ -248,7 +248,7 @@ Each call into the guest carries a deadline, fixed when the call is queued:
 | Event handler | `[events] handler_timeout` minus a margin (9.75 s with the default 10 s) | The event bus stops waiting for the listener at `handler_timeout`; the margin lets the plugin's answer, or the proxy's deny, reach the event first |
 | Ban provider call, permission snapshot | The same as an event; a ban check ends at `[ban] check_timeout` when that comes first | The login waits on the answer; see [Bans](./bans) and [Permissions](./permissions) |
 | Command, tab completion, scheduled task, limbo callback | `max_call_duration` (60 s by default), counted from when the call is queued | Nothing in the proxy stops waiting earlier |
-| `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run. Each is still cut off at `max_call_duration` |
+| `on_enable`, `on_disable` | none | The proxy waits for them, and `on_disable` must run. Each is still cut off at `max_call_duration`, and during a proxy shutdown `on_disable` is stopped after 5 seconds, see [Proxy shutdown](#proxy-shutdown) |
 
 The margin is a fifth of the budget, capped at 250 ms. The deadline has four effects:
 
@@ -261,7 +261,21 @@ See [Host services](./services#slow-services-and-deadlines) for the plugin-side 
 
 ## Disable
 
-`on_disable` is called on proxy shutdown and when the plugin alone is disabled. `ctx.disable_reason()` reports which: `DisableReason::Shutdown` when the proxy is stopping, `DisableReason::Unload` otherwise. It is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance. A plugin that is replacing its instance after a fault stops recovering as soon as the restart in progress ends, so `on_disable` and `unload` wait for one restart at most, not for the whole restart budget.
+`on_disable` is called on proxy shutdown and when the plugin alone is disabled. `ctx.disable_reason()` reports which: `DisableReason::Shutdown` when the proxy is stopping, `DisableReason::Unload` otherwise. When the plugin alone is disabled, `on_disable` is queued behind any call still running, and it is the last job of the plugin's task: calls queued behind it are dropped and the task stops once it has run, dropping the instance. A plugin that is replacing its instance after a fault stops recovering as soon as the restart in progress ends, so `on_disable` and `unload` wait for one restart at most, not for the whole restart budget.
+
+### Proxy shutdown
+
+The proxy stops in three steps: it closes the player sessions and waits for the connections to drain (`drain_timeout`, 30 seconds by default), it fires `ProxyShutdownEvent`, then it disables the plugins. The event and the plugins together get 10 seconds, the plugin phase.
+
+- **Calls in flight are cut when the shutdown starts.** A guest call still running when the proxy starts to stop, and the calls queued behind it, are not waited for: the sessions they serve are closing anyway. The host cuts the call, discards the instance and logs `wasm plugin call cut: the proxy is shutting down; the plugin stops without running on_disable`. An access event whose listener is cut this way is denied, see [A listener that does not answer](./events#a-listener-that-does-not-answer). A plugin whose call was cut has no instance left, so it gets neither `ProxyShutdownEvent` nor `on_disable`. A plugin that was idle at that moment keeps its instance: it receives the events of the closing sessions, `ProxyShutdownEvent` and `on_disable` as usual. Calls that start after the shutdown began are not cut by it; their own [deadline](#deadlines) still applies.
+- **No recovery.** A plugin that faults once the shutdown has started is not given a fresh instance, and a quarantined plugin is not retried.
+- **Plugins are disabled in parallel, dependents first.** The plugins that no enabled plugin depends on are disabled first, all at once; then the plugins only those depended on, and so on down to the plugins everything else depends on. Each level starts once the previous one is done. Native and WASM plugins take part in the same levels.
+- **`on_disable` is stopped after 5 seconds.** A guest `on_disable` still running then is cut, the proxy logs `Plugin on_disable() did not return in time during shutdown; stopping the plugin without it`, and the plugin's listeners, tasks, limbo holds and codec filters are removed as usual. `max_call_duration` still applies when it is shorter.
+- **The plugin phase ends after 10 seconds.** When it runs out, `on_disable` is no longer waited for: a level that has not finished is cut, and the next levels are stopped without running `on_disable`. Their cleanup still runs, and every plugin task is stopped before the proxy exits, so no guest is left running a call when the runtime shuts down.
+
+A second SIGTERM or Ctrl-C while the proxy is stopping exits at once, with code 143 for SIGTERM and 130 for Ctrl-C, after one log line. The console `stop` command counts as the first request, so a single signal after it exits at once. The 5 and 10 second limits are fixed for the `infrarust` binary; a program that embeds the proxy sets them with `ProxyRuntimeBuilder::plugin_disable_timeout` and `plugin_shutdown_timeout`.
+
+### No live instance
 
 If the plugin is quarantined, or its first `on_enable` failed, there is no live instance: the guest call is skipped and `on_disable` returns `Ok(())` with a warning. That is why the contract's `DisableReason::Quarantine` is never sent today. For a live instance the budget is reset and the guest `on_disable` runs. An `Err(message)` is surfaced as `PluginError::Other` carrying the message; a trap during `on_disable` is logged and returned as an `Other` error wrapping the loader error, and no fresh instance is started. In every case the host then removes the instance's event listeners and scheduled tasks, releases the players it holds in limbo, removes the plugin's codec filters, and stops the task. `unload` does the same without running the guest.
 
