@@ -59,11 +59,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     echo "Build completed successfully"
 
+RUN mkdir -p /image-root/app/cache/wasm && \
+    chown -R 65532:65532 /image-root/app/cache && \
+    chmod 0700 /image-root/app/cache /image-root/app/cache/wasm
+
 # Stage 3: Runtime
 FROM scratch AS runtime
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/local/bin/infrarust /sbin/infrarust
+COPY --from=builder /image-root/app /app
 
 WORKDIR /app
 VOLUME ["/app/config"]

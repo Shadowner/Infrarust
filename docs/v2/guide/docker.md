@@ -25,25 +25,33 @@ Infrarust inside Docker expects a config volume mounted at `/app/config`. The la
 ```
 config/
 ├── infrarust.toml
-├── cache/
-│   └── wasm/        ← compiled WASM plugins, written by the proxy
 ├── plugins/
 └── servers/
     └── survival.toml
 ```
 
-Set `servers_dir`, `plugins_dir` and, if you run WASM plugins, `[wasm] cache_dir` in your `infrarust.toml` to paths inside the container:
+Set `servers_dir` and `plugins_dir` in your `infrarust.toml` to paths inside the container:
 
 ```toml
 bind = "0.0.0.0:25565"
 servers_dir = "/app/config/servers"
 plugins_dir = "/app/config/plugins"
-
-[wasm]
-cache_dir = "/app/config/cache/wasm"
 ```
 
-The image runs as user `65532` in `/app`, a directory that user cannot write. With the default `cache_dir`, `./cache/wasm`, the proxy logs `AOT cache directory cannot be written` and compiles every WASM plugin again at each start. Point `cache_dir` at a writable directory, in the config volume as above or in a volume of its own owned by `65532`. Keep it out of `plugins_dir`: the proxy refuses to start with a cache inside it.
+WASM plugins are compiled once and cached in `/app/cache/wasm`, the default `[wasm] cache_dir` resolved from the image's working directory `/app`. The image creates that directory for the user it runs as (`65532`), readable and writable by that user only, so the cache needs no configuration. It lives in the container's writable layer: it survives a restart of the container, and a new container, after pulling a new image for example, compiles the plugins again at its first start. To keep the cache across containers, mount a named volume at `/app/cache`; Docker fills a new named volume with the directory from the image, owner included:
+
+```yaml
+services:
+  infrarust:
+    volumes:
+      - ./config:/app/config
+      - wasm-cache:/app/cache
+
+volumes:
+  wasm-cache:
+```
+
+A bind mount at `/app/cache` needs a host directory that uid `65532` can write, ideally owned by it with mode `0700` to keep other users out; otherwise the proxy logs `AOT cache directory cannot be written` and compiles the plugins at each start. Do not place the cache under `plugins_dir`: the proxy refuses to start with `cache_dir` inside it.
 
 ## Running with docker run
 
