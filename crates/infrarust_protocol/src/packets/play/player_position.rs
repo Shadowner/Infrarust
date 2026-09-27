@@ -34,16 +34,16 @@ impl Packet for CSynchronizePlayerPosition {
         V1_16   => 0x35,
         V1_16_2 => 0x34,
         V1_17   => 0x38,
-        V1_18   => 0x39,
         V1_19   => 0x36,
         V1_19_1 => 0x39,
         V1_19_3 => 0x38,
         V1_19_4 => 0x3C,
         V1_20_2 => 0x3E,
-        V1_20_3 => 0x40,
-        V1_20_5 => 0x42,
+        V1_20_5 => 0x40,
+        V1_21_2 => 0x42,
         V1_21_5 => 0x41,
         V1_21_9 => 0x46,
+        V26_1   => 0x48,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {

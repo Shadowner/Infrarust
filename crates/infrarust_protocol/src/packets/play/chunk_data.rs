@@ -37,6 +37,7 @@ impl Packet for CChunkData {
         V1_21_2 => 0x28,
         V1_21_5 => 0x27,
         V1_21_9 => 0x2C,
+        V26_1   => 0x2D,
     ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
