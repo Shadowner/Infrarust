@@ -1,17 +1,17 @@
-//! Ban commands: ban, ban-ip, unban, unban-ip, banlist, baninfo.
-
 use std::future::Future;
 use std::pin::Pin;
+use std::time::{Duration, SystemTime};
 
-use comfy_table::Cell;
 use infrarust_api::services::ban_service::{
     BanEntry, BanRequest, BanService, BanSource, BanTarget, IpNet, UnbanRequest,
 };
 
 use crate::console::ConsoleServices;
-use crate::console::commands::{args, table, usage};
+use crate::console::commands::{args, usage};
 use crate::console::dispatcher::ConsoleCommand;
-use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
+use crate::console::output::{
+    Block, CommandCategory, CommandOutput, Fields, Line, OutputLine, Span, Table,
+};
 use crate::console::parser::{format_duration_short, parse_ban_target};
 
 pub struct BanCommand;
@@ -227,24 +227,7 @@ impl ConsoleCommand for BanListCommand {
                 Err(e) => return CommandOutput::error(format!("Failed to fetch bans: {e}")),
             };
 
-            let active: Vec<&BanEntry> = bans.iter().filter(|b| !b.is_expired()).collect();
-
-            if active.is_empty() {
-                return CommandOutput::Success("No active bans".to_string());
-            }
-
-            let mut table = table(&["ID", "Target", "Type", "Reason", "Source", "Remaining"]);
-            for ban in &active {
-                table.row([
-                    Cell::new(&ban.id),
-                    Cell::new(format_ban_target(&ban.target)),
-                    Cell::new(ban.target.display_type()),
-                    Cell::new(ban.reason.as_deref().unwrap_or("-")),
-                    Cell::new(&ban.source),
-                    Cell::new(remaining_of(ban)),
-                ]);
-            }
-            table.finish("active ban")
+            bans_output(&bans, SystemTime::now())
         })
     }
 }
@@ -281,22 +264,8 @@ impl ConsoleCommand for BanInfoCommand {
             let target = parse_ban_target(arg);
 
             match services.ban_manager.get(&target).await {
-                Ok(Some(ban)) => {
-                    let remaining = remaining_of(&ban);
-                    CommandOutput::Lines(vec![
-                        OutputLine::Info(format!("  ID: {}", ban.id)),
-                        OutputLine::Info(format!("  Target: {}", format_ban_target(&ban.target))),
-                        OutputLine::Info(format!("  Type: {}", ban.target.display_type())),
-                        OutputLine::Info(format!(
-                            "  Reason: {}",
-                            ban.reason.as_deref().unwrap_or("No reason specified")
-                        )),
-                        OutputLine::Info(format!("  Source: {}", ban.source)),
-                        OutputLine::Info(format!("  Remaining: {remaining}")),
-                        OutputLine::Info(format!("  Permanent: {}", ban.is_permanent())),
-                    ])
-                }
-                Ok(None) => CommandOutput::Success(format!("{arg} is not banned")),
+                Ok(Some(ban)) => ban_block(&ban, SystemTime::now()).into(),
+                Ok(None) => CommandOutput::Note(format!("{arg} is not banned")),
                 Err(e) => CommandOutput::error(format!("Failed to check ban: {e}")),
             }
         })
@@ -320,38 +289,95 @@ async fn issue_ban(
         Err(e) => return CommandOutput::error(format!("Failed to ban {label}: {e}")),
     };
 
-    let duration_str = duration
-        .map(format_duration_short)
-        .unwrap_or_else(|| "permanently".to_string());
-    let reason_str = reason.as_deref().unwrap_or("No reason specified");
-
     tracing::info!(
         target: "console",
         banned = label,
-        duration = %duration_str,
-        reason = %reason_str,
+        duration = %duration.map_or_else(|| "permanently".to_string(), format_duration_short),
+        reason = %reason.as_deref().unwrap_or("No reason specified"),
         "ban issued from console"
     );
 
-    let mut lines = vec![OutputLine::Success(format!(
-        "Banned {label} {duration_str} (reason: {reason_str})"
-    ))];
-    if issued.kicked > 0 {
-        lines.push(OutputLine::Success(format!(
-            "Kicked {} player(s){kicked_scope}",
-            issued.kicked
-        )));
+    let banned = ban_summary(label, duration, reason.as_deref());
+    if issued.kicked == 0 {
+        return CommandOutput::Success(banned);
     }
-    CommandOutput::Lines(lines)
+    CommandOutput::Lines(vec![
+        OutputLine::Success(banned),
+        OutputLine::Success(format!("Kicked {} player(s){kicked_scope}", issued.kicked)),
+    ])
 }
 
-fn remaining_of(ban: &BanEntry) -> String {
-    if ban.is_permanent() {
-        return "permanent".to_string();
+fn ban_summary(label: &str, duration: Option<Duration>, reason: Option<&str>) -> String {
+    let span = duration.map_or_else(
+        || "permanently".to_string(),
+        |duration| format!("for {}", format_duration_short(duration)),
+    );
+    match reason {
+        Some(reason) => format!("Banned {label} {span} ({reason})"),
+        None => format!("Banned {label} {span}"),
     }
-    ban.remaining()
-        .map(format_duration_short)
-        .unwrap_or_else(|| "expired".to_string())
+}
+
+fn bans_output(bans: &[BanEntry], now: SystemTime) -> CommandOutput {
+    let active: Vec<&BanEntry> = bans
+        .iter()
+        .filter(|ban| ban.expires_at.is_none_or(|expires| expires > now))
+        .collect();
+    if active.is_empty() {
+        return CommandOutput::Note("No active bans".to_string());
+    }
+
+    let mut table = Table::new(&["ID", "Target", "Type", "Remaining", "Source", "Reason"]);
+    for ban in &active {
+        table.row([
+            Line::from(ban.id.as_str()),
+            Span::entity(format_ban_target(&ban.target)).into(),
+            Line::from(ban.target.display_type()),
+            remaining_cell(ban, now).into(),
+            Line::from(ban.source.to_string()),
+            reason_cell(ban).into(),
+        ]);
+    }
+
+    Block::new("Bans")
+        .meta(format!("{} active", active.len()))
+        .table(table)
+        .into()
+}
+
+fn ban_block(ban: &BanEntry, now: SystemTime) -> Block {
+    let mut fields = Fields::new()
+        .field("id", ban.id.as_str())
+        .field("reason", reason_cell(ban))
+        .field("source", ban.source.to_string())
+        .field("remaining", remaining_cell(ban, now))
+        .field("issued", timestamp(ban.created_at));
+    if let Some(expires) = ban.expires_at {
+        fields.push("expires", timestamp(expires));
+    }
+    Block::new(format_ban_target(&ban.target))
+        .meta(format!("{} ban", ban.target.display_type()))
+        .fields(fields)
+}
+
+fn remaining_cell(ban: &BanEntry, now: SystemTime) -> Span {
+    match ban.expires_at {
+        None => Span::muted("permanent"),
+        Some(expires) => expires.duration_since(now).map_or_else(
+            |_| Span::muted("expired"),
+            |left| Span::warn(format_duration_short(left)),
+        ),
+    }
+}
+
+fn reason_cell(ban: &BanEntry) -> Span {
+    ban.reason
+        .as_deref()
+        .map_or_else(|| Span::muted("-"), Span::plain)
+}
+
+fn timestamp(time: SystemTime) -> String {
+    humantime::format_rfc3339_seconds(time).to_string()
 }
 
 fn format_ban_target(target: &BanTarget) -> String {
@@ -374,7 +400,7 @@ fn parse_address_target(arg: &str) -> Option<BanTarget> {
 fn console_ban(
     target: BanTarget,
     reason: Option<String>,
-    duration: Option<std::time::Duration>,
+    duration: Option<Duration>,
 ) -> BanRequest {
     let mut request = BanRequest::new(target).source(BanSource::Console);
     request.reason = reason;
@@ -384,4 +410,103 @@ fn console_ban(
 
 fn console_unban(target: BanTarget) -> UnbanRequest {
     UnbanRequest::new(target).source(BanSource::Console)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::console::render::Renderer;
+
+    fn plain(output: &CommandOutput) -> String {
+        Renderer::new(false, None).render(output)
+    }
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    const NOW: u64 = 1_790_000_000;
+
+    fn bans() -> Vec<BanEntry> {
+        let mut griefer = BanEntry::new(
+            "b1",
+            BanTarget::Username("Griefer".into()),
+            BanSource::Console,
+        )
+        .reason("griefing spawn");
+        griefer.created_at = at(NOW - 600);
+        griefer.expires_at = Some(at(NOW + 3600));
+        let mut bot = BanEntry::new(
+            "b2",
+            BanTarget::Ip("203.0.113.7".parse().unwrap()),
+            BanSource::Plugin("guard".into()),
+        );
+        bot.created_at = at(NOW - 60);
+        let mut lapsed = BanEntry::new("b3", BanTarget::Username("Old".into()), BanSource::System);
+        lapsed.expires_at = Some(at(NOW - 1));
+        vec![griefer, bot, lapsed]
+    }
+
+    #[test]
+    fn ban_summary_names_the_span_and_the_reason() {
+        assert_eq!(
+            ban_summary("Notch", Some(Duration::from_secs(3600)), Some("spam")),
+            "Banned Notch for 1h (spam)"
+        );
+        assert_eq!(
+            ban_summary("IP 10.0.0.1", None, None),
+            "Banned IP 10.0.0.1 permanently"
+        );
+    }
+
+    #[test]
+    fn banlist_lists_active_bans_with_the_reason_last() {
+        assert_eq!(
+            plain(&bans_output(&bans(), at(NOW))),
+            "# Bans - 2 active\n\
+             | ID   TARGET        TYPE       REMAINING   SOURCE         REASON\n\
+             | b1   Griefer       username   1h          console        griefing spawn\n\
+             | b2   203.0.113.7   IP         permanent   plugin:guard   -"
+        );
+    }
+
+    #[test]
+    fn banlist_without_active_bans_is_a_note() {
+        let lapsed = bans().split_off(2);
+        assert_eq!(plain(&bans_output(&lapsed, at(NOW))), "- No active bans");
+    }
+
+    #[test]
+    fn remaining_tones_temporary_bans_as_warnings() {
+        let bans = bans();
+        assert_eq!(remaining_cell(&bans[0], at(NOW)), Span::warn("1h"));
+        assert_eq!(remaining_cell(&bans[1], at(NOW)), Span::muted("permanent"));
+        assert_eq!(remaining_cell(&bans[2], at(NOW)), Span::muted("expired"));
+    }
+
+    #[test]
+    fn baninfo_shows_the_ban_as_fields() {
+        let bans = bans();
+        assert_eq!(
+            plain(&ban_block(&bans[0], at(NOW)).into()),
+            "# Griefer - username ban\n\
+             | id         b1\n\
+             | reason     griefing spawn\n\
+             | source     console\n\
+             | remaining  1h\n\
+             | issued     2026-09-21T14:03:20Z\n\
+             | expires    2026-09-21T15:13:20Z"
+        );
+        assert_eq!(
+            plain(&ban_block(&bans[1], at(NOW)).into()),
+            "# 203.0.113.7 - IP ban\n\
+             | id         b2\n\
+             | reason     -\n\
+             | source     plugin:guard\n\
+             | remaining  permanent\n\
+             | issued     2026-09-21T14:12:20Z"
+        );
+    }
 }
