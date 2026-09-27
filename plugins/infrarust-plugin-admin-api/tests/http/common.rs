@@ -1,12 +1,15 @@
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{self, HeaderName, HeaderValue, Request, Response, StatusCode, header};
 use http_body_util::BodyExt;
-use infrarust_api::plugin::{PluginMetadata, PluginState};
+use infrarust_api::plugin::{
+    PluginFault, PluginHealth, PluginMetadata, PluginQueueStats, PluginRestarts,
+    PluginRuntimeStatus, PluginState, QueueWindow,
+};
 use infrarust_api::services::config_service::{ConfigWriteError, ServerSource};
 use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
 use infrarust_api::services::plugin_registry::PluginInfo;
@@ -132,14 +135,41 @@ fn load_balancer() -> MockLoadBalancerService {
 }
 
 fn plugin_registry() -> MockPluginRegistry {
-    MockPluginRegistry::new().with_plugin(PluginInfo {
-        metadata: PluginMetadata::new("admin_api", "Admin API", "0.1.0")
-            .author("Test")
-            .description("Test plugin")
-            .depends_on("core"),
-        state: PluginState::Enabled,
-        runtime: None,
-    })
+    MockPluginRegistry::new()
+        .with_plugin(PluginInfo {
+            metadata: PluginMetadata::new("admin_api", "Admin API", "0.1.0")
+                .author("Test")
+                .description("Test plugin")
+                .depends_on("core"),
+            state: PluginState::Enabled,
+            runtime: None,
+        })
+        .with_plugin(PluginInfo {
+            metadata: PluginMetadata::new("flaky", "Flaky", "0.2.0"),
+            state: PluginState::Enabled,
+            runtime: Some(quarantined_runtime()),
+        })
+}
+
+fn quarantined_runtime() -> PluginRuntimeStatus {
+    let recent = QueueWindow::new(Duration::from_secs(60), 1234, 12).waits(
+        Duration::from_micros(21),
+        Duration::from_micros(1_250),
+        Duration::from_millis(3),
+    );
+    PluginRuntimeStatus::new(
+        PluginHealth::Quarantined {
+            retry_in: Duration::from_millis(12_500),
+        },
+        7,
+        PluginQueueStats::new(3, 1024, recent),
+    )
+    .with_restarts(PluginRestarts::new(5, 5, Duration::from_secs(300)))
+    .with_last_fault(PluginFault::new(
+        "the call ran past the event deadline",
+        Duration::from_secs(4),
+        7,
+    ))
 }
 
 pub struct TestApiBuilder {
