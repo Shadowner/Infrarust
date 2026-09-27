@@ -581,7 +581,6 @@ async fn shutdown_disables_a_dependent_before_its_dependency() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-02: metadata() has no time bound"]
 async fn a_sleeping_metadata_export_does_not_hang_discovery() {
     let (_tmp, dir) = staged_with_good();
     add_probe(&dir, "sleeper", "id=sleeper\nmeta=sleep:3600000\n");
@@ -595,6 +594,48 @@ async fn a_sleeping_metadata_export_does_not_hang_discovery() {
     let metas =
         found.unwrap_or_else(|e| panic!("the sleeper must not fail discovery of the others: {e}"));
     assert_eq!(ids(&metas), ["good"]);
+}
+
+async fn discover_with_a_sleeper(proxy_toml: &str, warm_first: bool) -> (Duration, LogCapture) {
+    let (_tmp, dir) = staged_with_good();
+    add_probe(&dir, "sleeper", "id=sleeper\nmeta=sleep:3600000\n");
+    let loader = support::loader_from_toml(proxy_toml);
+    if warm_first {
+        loader.discover(&dir).await.unwrap();
+    }
+    let logs = LogCapture::at(Level::ERROR);
+    let started = Instant::now();
+    let found = tokio::time::timeout(DISCOVERY_BOUND, loader.discover(&dir))
+        .with_subscriber(logs.clone())
+        .await
+        .expect("discovery finishes in bounded time");
+    let elapsed = started.elapsed();
+    assert_eq!(ids(&found.unwrap()), ["good"]);
+    (elapsed, logs)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_is_cut_at_max_call_duration_when_that_is_shorter_than_five_seconds() {
+    let (elapsed, logs) =
+        discover_with_a_sleeper("[wasm]\nmax_call_duration = \"1s\"\n", true).await;
+    assert!(
+        elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(4),
+        "discovery with a cached sleeper took {elapsed:?}, the metadata limit is 1s"
+    );
+    let refusals = logs.matching("metadata() did not return within 1s");
+    assert_eq!(refusals.len(), 1, "{:?}", logs.lines());
+    assert!(refusals[0].contains("sleeper.wasm"), "{refusals:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_is_cut_at_five_seconds_under_the_default_max_call_duration() {
+    let (elapsed, logs) = discover_with_a_sleeper("", false).await;
+    assert!(
+        elapsed >= Duration::from_secs(5),
+        "the sleeper was cut after {elapsed:?}, before the 5s metadata limit"
+    );
+    let refusals = logs.matching("metadata() did not return within 5s");
+    assert_eq!(refusals.len(), 1, "{:?}", logs.lines());
 }
 
 #[tokio::test(flavor = "multi_thread")]

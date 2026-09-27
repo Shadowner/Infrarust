@@ -1,14 +1,18 @@
 use std::path::Path;
+use std::time::Duration;
 
 use infrarust_api::plugin::PluginMetadata;
 use wasmtime::component::Component;
 use wasmtime::{Engine, Store};
 
 use crate::bindings::Plugin as PluginBindings;
+use crate::bindings::exports::infrarust::plugin::guest::PluginMetadata as WitMetadata;
 use crate::config::SandboxLimits;
 use crate::error::WasmLoaderError;
 use crate::linker::build_linker;
 use crate::store_state::{PluginStoreState, build_probe_state, install_epoch_control};
+
+pub(crate) const METADATA_TIME_LIMIT: Duration = Duration::from_secs(5);
 
 pub(crate) async fn extract_metadata(
     engine: &Engine,
@@ -16,27 +20,13 @@ pub(crate) async fn extract_metadata(
     path: &Path,
     sandbox: &SandboxLimits,
 ) -> Result<PluginMetadata, WasmLoaderError> {
-    let probe_id = path.display().to_string();
-    let mut store = Store::new(engine, build_probe_state(probe_id.clone(), sandbox));
-    install_epoch_control(&mut store, sandbox.max_epoch_yields);
-    store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
-
-    let linker = build_linker(engine, &probe_id)?;
-    let bindings = PluginBindings::instantiate_async(&mut store, component, &linker)
+    let limit = METADATA_TIME_LIMIT.min(sandbox.max_call_duration);
+    let wit_md = tokio::time::timeout(limit, call_metadata(engine, component, path, sandbox))
         .await
-        .map_err(|e| WasmLoaderError::Metadata {
+        .map_err(|_| WasmLoaderError::Metadata {
             path: path.to_path_buf(),
-            reason: e.to_string(),
-        })?;
-
-    let wit_md = bindings
-        .infrarust_plugin_guest()
-        .call_metadata(&mut store)
-        .await
-        .map_err(|e| WasmLoaderError::Metadata {
-            path: path.to_path_buf(),
-            reason: format!("metadata() trapped: {e}"),
-        })?;
+            reason: format!("metadata() did not return within {limit:?}"),
+        })??;
 
     let mut metadata = PluginMetadata::new(wit_md.id, wit_md.name, wit_md.version);
     for author in wit_md.authors {
@@ -53,4 +43,33 @@ pub(crate) async fn extract_metadata(
         };
     }
     Ok(metadata)
+}
+
+async fn call_metadata(
+    engine: &Engine,
+    component: &Component,
+    path: &Path,
+    sandbox: &SandboxLimits,
+) -> Result<WitMetadata, WasmLoaderError> {
+    let probe_id = path.display().to_string();
+    let mut store = Store::new(engine, build_probe_state(probe_id.clone(), sandbox));
+    install_epoch_control(&mut store, sandbox.max_epoch_yields);
+    store.limiter(|s: &mut PluginStoreState| s.limits_mut() as &mut dyn wasmtime::ResourceLimiter);
+
+    let linker = build_linker(engine, &probe_id)?;
+    let bindings = PluginBindings::instantiate_async(&mut store, component, &linker)
+        .await
+        .map_err(|e| WasmLoaderError::Metadata {
+            path: path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+
+    bindings
+        .infrarust_plugin_guest()
+        .call_metadata(&mut store)
+        .await
+        .map_err(|e| WasmLoaderError::Metadata {
+            path: path.to_path_buf(),
+            reason: format!("metadata() trapped: {e}"),
+        })
 }

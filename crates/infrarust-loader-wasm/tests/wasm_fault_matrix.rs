@@ -702,7 +702,6 @@ async fn a_plugin_whose_metadata_traps_does_not_stop_the_others_from_being_disco
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-02: metadata() has no time bound"]
 async fn a_plugin_whose_metadata_never_returns_does_not_hang_discovery() {
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
