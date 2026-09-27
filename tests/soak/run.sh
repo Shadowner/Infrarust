@@ -32,6 +32,7 @@ FLAKY_KNOBS=""
 POST_PROBE=0
 FLAKY_CPU_BUDGET=250ms
 CODEC_BUDGET=200ms
+EPOCH_TICK=""
 
 usage() {
   cat <<'USAGE'
@@ -48,6 +49,7 @@ Usage: tests/soak/run.sh [options]
   --instance-pool <n>          [wasm] instance_pool
   --attackers <n>              bots from 127.0.0.2 whose connections the faulty codec filter traps or spins on
   --codec-budget <d|default>   codec_cpu_budget of soak-codec-faulty (default 200ms)
+  --epoch-tick <d>             [wasm] epoch_tick (default: the proxy default)
   --flaky-knobs <file>         soak.txt for soak-flaky instead of the scenario's
   --post-probe <s>             after the load stops, run 5 fresh bots for this long before shutdown
   --flaky-cpu-budget <d|default>  cpu_budget of soak-flaky (default 250ms)
@@ -74,6 +76,7 @@ while [[ $# -gt 0 ]]; do
     --instance-pool) INSTANCE_POOL="$2"; shift 2 ;;
     --attackers) ATTACKERS="$2"; shift 2 ;;
     --codec-budget) CODEC_BUDGET="$2"; shift 2 ;;
+    --epoch-tick) EPOCH_TICK="$2"; shift 2 ;;
     --flaky-knobs) FLAKY_KNOBS="$2"; shift 2 ;;
     --post-probe) POST_PROBE="$2"; shift 2 ;;
     --flaky-cpu-budget) FLAKY_CPU_BUDGET="$2"; shift 2 ;;
@@ -190,6 +193,7 @@ requests_per_minute = 1000000
 
 [wasm]
 instance_pool = $INSTANCE_POOL
+$(if [[ -n "$EPOCH_TICK" ]]; then printf 'epoch_tick = "%s"\n' "$EPOCH_TICK"; fi)
 
 [plugins.soak-witness]
 permissions = ["chat-intercept"]

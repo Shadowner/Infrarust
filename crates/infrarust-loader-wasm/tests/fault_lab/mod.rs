@@ -76,6 +76,7 @@ pub struct LabOptions {
     pub ban_manager: Option<Arc<BanManager>>,
     pub permissions: Option<Arc<PermissionService>>,
     pub extra: Vec<(&'static str, &'static str, String)>,
+    pub grants: Vec<(&'static str, &'static str)>,
 }
 
 pub struct Lab {
@@ -126,6 +127,13 @@ impl Lab {
                 .or_default()
                 .permissions
                 .push("chat-intercept".to_owned());
+        }
+        for (id, permission) in &options.grants {
+            grants
+                .entry((*id).to_owned())
+                .or_default()
+                .permissions
+                .push((*permission).to_owned());
         }
         let event_bus = Arc::new(EventBusImpl::with_config(options.bus.unwrap_or_default()));
         let commands = Arc::new(CommandManagerImpl::new());

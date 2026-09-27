@@ -88,3 +88,8 @@ wasm = [
 [[bench]]
 name = "codec_boundary"
 harness = false
+
+[[bench]]
+name = "codec_exec"
+path = "benches/codec_exec/main.rs"
+harness = false
