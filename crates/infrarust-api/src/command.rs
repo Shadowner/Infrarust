@@ -139,7 +139,7 @@ impl SuggestContext {
     ) -> Self {
         let raw_args = raw_args.into();
         let mut args: Vec<String> = raw_args.split_whitespace().map(String::from).collect();
-        if !raw_args.is_empty() && raw_args.ends_with(char::is_whitespace) {
+        if raw_args.is_empty() || raw_args.ends_with(char::is_whitespace) {
             args.push(String::new());
         }
         Self {

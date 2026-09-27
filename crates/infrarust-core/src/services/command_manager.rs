@@ -696,4 +696,45 @@ mod tests {
         );
         assert_eq!(taken(&calls), ["p:admin:"]);
     }
+
+    struct Tokens;
+
+    impl CommandHandler for Tokens {
+        fn execute<'a>(&'a self, _ctx: CommandContext) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn suggest<'a>(&'a self, ctx: SuggestContext) -> BoxFuture<'a, Vec<Suggestion>> {
+            Box::pin(async move {
+                vec![Suggestion::new(format!(
+                    "{:?} {:?} {:?}",
+                    ctx.args,
+                    ctx.raw_args,
+                    ctx.partial()
+                ))]
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_last_token_is_the_one_under_the_cursor_even_for_the_first_argument() {
+        let m = CommandManagerImpl::new();
+        m.register_owned("p", CommandSpec::new("warp"), Box::new(Tokens))
+            .unwrap();
+        let cases = [
+            ("warp ", r#"[""] "" """#),
+            ("warp  ", r#"[""] " " """#),
+            ("warp a", r#"["a"] "a" "a""#),
+            ("warp a ", r#"["a", ""] "a " """#),
+            ("warp  a  b", r#"["a", "b"] " a  b" "b""#),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                m.suggest(console(), input).await,
+                Some(vec![Suggestion::new(expected)]),
+                "{input:?}"
+            );
+        }
+        assert_eq!(m.suggest(console(), "warp").await, None);
+    }
 }

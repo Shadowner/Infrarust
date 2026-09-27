@@ -425,7 +425,6 @@ async fn tab_completion_hands_the_completer_the_tokens_typed_so_far() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "W-43: no empty token after the first argument's trailing space"]
 async fn tab_completion_of_the_first_argument_gets_an_empty_token_after_the_trailing_space() {
     let probe = Probe::start("tab warp").await;
     assert_eq!(
