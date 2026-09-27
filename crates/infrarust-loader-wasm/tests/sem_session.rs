@@ -131,6 +131,22 @@ impl World {
         assert_eq!(outcome, DispatchOutcome::Executed, "{line}");
     }
 
+    async fn console_until(&self, line: &str, expected: &str) {
+        let deadline = Instant::now() + T;
+        loop {
+            self.console(line).await;
+            if self.log().iter().any(|seen| seen == expected) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "never logged {expected:?}: {:?}",
+                self.log()
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     async fn enter(&self, name: &str) -> (ClientSession, String) {
         let session = self
             .proxy
@@ -210,8 +226,9 @@ async fn many_players_held_at_once_are_all_tracked_and_all_released_when_they_le
         session.quit().await;
     }
     world.wait_for_prefix("ended ", 20).await;
-    world.console("hcount").await;
-    world.wait_for("hcount 20 cancelled=20").await;
+    world
+        .console_until("hcount", "hcount 20 cancelled=20")
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
