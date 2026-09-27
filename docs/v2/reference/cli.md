@@ -70,6 +70,10 @@ cargo build --release --features telemetry
 
 Once running, Infrarust drops you into an interactive console. Type `help` to see all commands. The full list is below, grouped by category.
 
+Replies that span several lines open with a `◆ Title` header and keep a `│` rail down the left edge, so they stay easy to tell apart from the log lines printed around them. Tables are plain aligned columns; on a narrow terminal the last column is cut with `…`. One-line replies start with `✓` (done), `!` (warning) or `✗` (error). A command typed with missing arguments prints its usage, and a mistyped command name suggests the closest one.
+
+Without colors (see [Colors](#colors)) the same replies use ASCII markers: `#` for the header, `|` for the rail, and `ok:`, `warn:` or `error:` in front of one-line replies, which keeps `docker logs` output easy to grep.
+
 #### Players
 
 | Command | Aliases | Usage | Description |
@@ -277,3 +281,17 @@ The tool prints live stats every 5 seconds (successes, errors, connection failur
 | Variable | Description |
 |----------|-------------|
 | `RUST_LOG` | Overrides `--log-level`. Accepts [tracing directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) like `infrarust=debug,infrarust_core=trace`. |
+| `INFRARUST_COLOR` | `auto` (default), `always` or `never`. Takes priority over the variables below. See [Colors](#colors). |
+| `NO_COLOR` | Any non-empty value turns colors off. |
+| `FORCE_COLOR`, `CLICOLOR_FORCE` | Any value other than `0` turns colors on, even without a terminal. |
+| `COLORTERM` | `truecolor` or `24bit` enables 24-bit colors when colors are forced; otherwise the 256-color palette is used. |
+
+### Colors
+
+In `auto` mode Infrarust colors the console, the logs and the startup banner only when standard output is a terminal. Game panels such as Pterodactyl or Pelican display colors without giving the process a terminal, so set `INFRARUST_COLOR=always` there. Set `INFRARUST_COLOR=never` to keep plain ASCII output, for example when logs go to a file.
+
+When standard output is a terminal, log lines use a short local time, and fields that do not fit on the line wrap below the message. Otherwise each event stays on a single line with a full UTC timestamp, in `key=value` form:
+
+```
+2026-09-27T14:02:11Z INFO  player joined  player=Notch server=lobby span=session>login
+```

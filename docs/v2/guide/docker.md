@@ -71,11 +71,12 @@ services:
 
 ## Environment variables
 
-Infrarust reads one environment variable at runtime:
+Infrarust reads these environment variables at runtime:
 
 | Variable | Description |
 |----------|-------------|
 | `RUST_LOG` | Log level filter. Overrides the `--log-level` CLI flag. Accepts `trace`, `debug`, `info`, `warn`, `error`, or module-level filters like `infrarust_core=debug`. |
+| `INFRARUST_COLOR` | `auto` (default), `always` or `never`. Containers started without `-t` have no terminal, so `auto` prints plain text; use `always` for panels like Pterodactyl that display colors. See [Colors](../reference/cli#colors). |
 
 Set it in your Compose file or `docker run`:
 
