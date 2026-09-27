@@ -160,22 +160,71 @@ async fn a_non_utf8_file_name_is_loaded() {
     assert_eq!(ids(&metas), ["latin1"]);
 }
 
+const HUGE_SPARSE_LEN: u64 = 512 * 1024 * 1024;
+const SHOWN_ERROR_BYTES: usize = 300;
+
+struct BoundedText {
+    prefix: String,
+    len: usize,
+}
+
+impl BoundedText {
+    fn of(value: &impl std::fmt::Display) -> Self {
+        use std::fmt::Write;
+        let mut text = Self {
+            prefix: String::new(),
+            len: 0,
+        };
+        let _ = write!(text, "{value}");
+        text
+    }
+}
+
+impl std::fmt::Write for BoundedText {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.len += s.len();
+        for ch in s.chars() {
+            if self.prefix.len() + ch.len_utf8() > SHOWN_ERROR_BYTES {
+                break;
+            }
+            self.prefix.push(ch);
+        }
+        Ok(())
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_huge_non_component_is_refused_quickly() {
     let (_tmp, dir) = staged_with_good();
-    let file = std::fs::File::create(dir.join("huge.wasm")).unwrap();
-    file.set_len(512 * 1024 * 1024).unwrap();
+    let huge = dir.join("huge.wasm");
+    let file = std::fs::File::create(&huge).unwrap();
+    file.set_len(HUGE_SPARSE_LEN).unwrap();
     drop(file);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let allocated = std::fs::metadata(&huge).unwrap().blocks() * 512;
+        assert!(
+            allocated < 1024 * 1024,
+            "huge.wasm must be a sparse file, yet {allocated} bytes are allocated on disk"
+        );
+    }
     let started = Instant::now();
     let found = discover(&dir).await;
     let elapsed = started.elapsed();
-    let error_len = found.as_ref().err().map_or(0, |e| e.to_string().len());
-    eprintln!("huge sparse .wasm: discovery took {elapsed:?}, ok={}, error message length={error_len}", found.is_ok());
-    assert!(error_len < 4096, "the refusal of one junk file carries a {error_len}-byte error message");
-    let metas = found.unwrap_or_else(|e| {
-        let shown: String = e.to_string().chars().take(300).collect();
-        panic!("a 512 MiB junk file must not fail discovery: {shown}")
-    });
+    let error = found.as_ref().err().map(BoundedText::of);
+    let error_len = error.as_ref().map_or(0, |text| text.len);
+    eprintln!(
+        "huge sparse .wasm: discovery took {elapsed:?}, ok={}, error message length={error_len}",
+        found.is_ok()
+    );
+    let shown = error.map(|text| text.prefix).unwrap_or_default();
+    assert!(
+        error_len < 4096,
+        "the refusal of one junk file carries a {error_len}-byte error message starting with: {shown}"
+    );
+    let metas = found
+        .unwrap_or_else(|_| panic!("a 512 MiB junk file must not fail discovery: {shown}"));
     assert_eq!(ids(&metas), ["good"]);
 }
 
