@@ -12,6 +12,18 @@ fn text(message: &str) -> Component {
     Component::text(message)
 }
 
+fn initial_server(result: &PlayerChooseInitialServerResult) -> String {
+    match result {
+        PlayerChooseInitialServerResult::Allowed => "allowed".to_owned(),
+        PlayerChooseInitialServerResult::Redirect(server) => format!("redirect:{}", server.as_str()),
+        PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
+            format!("limbo:{}", handlers.join(","))
+        }
+        PlayerChooseInitialServerResult::Denied(reason) => format!("denied:{}", reason.to_plain()),
+        _ => "unknown".to_owned(),
+    }
+}
+
 fn json(component: &Component) -> String {
     component
         .to_json()
@@ -432,10 +444,17 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
         EventName::PlayerChooseInitialServer => {
             ctx.on::<PlayerChooseInitialServerEvent>(at, move |e| {
                 let id = e.player.id.to_string();
-                let fields = [id.as_str(), &e.player.username, e.initial_server.as_str()];
+                let current = initial_server(e.result());
+                let fields = [
+                    id.as_str(),
+                    &e.player.username,
+                    e.initial_server.as_str(),
+                    &current,
+                ];
                 seen(event, priority, &fields, &action);
                 match &action {
                     Action::Allow => e.allow(),
+                    Action::Deny(reason) => e.deny(text(reason)),
                     Action::Redirect(server) => e.redirect_to(server.as_str()),
                     Action::Limbo(handlers) => e.send_to_limbo(handlers.clone()),
                     _ => {}
@@ -541,6 +560,7 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
             let online = e.online_mode.to_string();
             let remote = e.remote_addr.to_string();
             let protocol = e.protocol.to_string();
+            let denied = e.denied().map(Component::to_plain);
             let fields = [
                 e.original.username.as_str(),
                 &uuid,
@@ -549,10 +569,14 @@ fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
                 or_dash(e.virtual_host.as_deref()),
                 &protocol,
                 e.profile().username.as_str(),
+                or_dash(denied.as_deref()),
             ];
             seen(event, priority, &fields, &action);
-            if let Action::Rename(name) = &action {
-                e.profile_mut().username = name.clone();
+            match &action {
+                Action::Rename(name) => e.profile_mut().username = name.clone(),
+                Action::Allow => e.allow(),
+                Action::Deny(reason) => e.deny(text(reason)),
+                _ => {}
             }
         }),
         EventName::CommandExecute => ctx.on::<CommandExecuteEvent>(at, move |e| {

@@ -3,12 +3,13 @@ use crate::bindings::events as we;
 use crate::component::{Component, from_host};
 use crate::types::{FromWit, PlayerRef, ServerId};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PlayerChooseInitialServerResult {
     Allowed,
     Redirect(ServerId),
     SendToLimbo(Vec<String>),
+    Denied(Component),
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,10 @@ impl PlayerChooseInitialServerEvent {
     pub fn send_to_limbo(&mut self, handlers: Vec<String>) {
         self.set_result(PlayerChooseInitialServerResult::SendToLimbo(handlers));
     }
+
+    pub fn deny(&mut self, reason: impl Into<Component>) {
+        self.set_result(PlayerChooseInitialServerResult::Denied(reason.into()));
+    }
 }
 
 guest_event!(
@@ -58,6 +63,9 @@ guest_event!(
             we::PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
                 PlayerChooseInitialServerResult::SendToLimbo(handlers)
             }
+            we::PlayerChooseInitialServerResult::Denied(reason) => {
+                PlayerChooseInitialServerResult::Denied(from_host(reason))
+            }
         }),
     },
     result,
@@ -70,6 +78,9 @@ guest_event!(
         }
         PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
             we::PlayerChooseInitialServerResult::SendToLimbo(handlers)
+        }
+        PlayerChooseInitialServerResult::Denied(reason) => {
+            we::PlayerChooseInitialServerResult::Denied(reason.to_arena())
         }
     }
 );
@@ -345,6 +356,36 @@ mod tests {
             redirected.into_outcome(),
             EventOutcome::ServerPreConnect(we::ServerPreConnectResult::ConnectTo(
                 "backend-2".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn an_initial_server_choice_sees_an_earlier_deny_and_can_deny() {
+        let event = |result| {
+            PlayerChooseInitialServerEvent::from_event(Event::PlayerChooseInitialServer(
+                we::PlayerChooseInitialServerEvent {
+                    player: steve(),
+                    initial_server: "hub".into(),
+                    result,
+                },
+            ))
+            .unwrap()
+        };
+        let full = Component::text("Full");
+        let denied = event(we::PlayerChooseInitialServerResult::Denied(full.to_arena()));
+        assert_eq!(
+            denied.result(),
+            &PlayerChooseInitialServerResult::Denied(full)
+        );
+        assert_eq!(denied.into_outcome(), EventOutcome::Unchanged);
+
+        let mut closing = event(we::PlayerChooseInitialServerResult::Allowed);
+        closing.deny("Closed");
+        assert_eq!(
+            closing.into_outcome(),
+            EventOutcome::PlayerChooseInitialServer(we::PlayerChooseInitialServerResult::Denied(
+                Component::text("Closed").to_arena()
             ))
         );
     }

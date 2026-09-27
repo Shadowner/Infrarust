@@ -325,6 +325,22 @@ fn text(message: &str) -> Component {
     Component::text(message)
 }
 
+fn initial_server(result: &PlayerChooseInitialServerResult) -> String {
+    match result {
+        PlayerChooseInitialServerResult::Allowed => "allowed".to_owned(),
+        PlayerChooseInitialServerResult::Redirect(server) => {
+            format!("redirect:{}", server.as_str())
+        }
+        PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } => {
+            format!("limbo:{}", limbo_handlers.join(","))
+        }
+        PlayerChooseInitialServerResult::Denied { reason } => {
+            format!("denied:{}", reason.to_plain())
+        }
+        _ => "unknown".to_owned(),
+    }
+}
+
 fn state(state: ServerState) -> &'static str {
     match state {
         ServerState::Online => "online",
@@ -385,6 +401,7 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
                 let online = e.online_mode.to_string();
                 let remote = e.remote_addr.to_string();
                 let protocol = e.protocol_version.raw().to_string();
+                let denied = e.denied().map(Component::to_plain);
                 seen.record(&[
                     &original.username,
                     &uuid,
@@ -393,9 +410,13 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
                     or_dash(e.virtual_host.as_deref()),
                     &protocol,
                     &e.profile.username,
+                    or_dash(denied.as_deref()),
                 ]);
-                if let Action::Rename(name) = &seen.action {
-                    e.profile.username = name.clone();
+                match &seen.action {
+                    Action::Rename(name) => e.profile.username = name.clone(),
+                    Action::Allow => e.allow(),
+                    Action::Deny(reason) => e.deny(text(reason)),
+                    _ => {}
                 }
             })
         }
@@ -716,9 +737,18 @@ fn subscribe(bus: &dyn EventBus, log: PathBuf, event: EventName, priority: u8, a
         EventName::PlayerChooseInitialServer => {
             bus.subscribe(at, move |e: &mut PlayerChooseInitialServerEvent| {
                 let id = e.player_id().as_u64().to_string();
-                seen.record(&[&id, &e.profile().username, e.initial_server.as_str()]);
+                let current = initial_server(e.result());
+                seen.record(&[
+                    &id,
+                    &e.profile().username,
+                    e.initial_server.as_str(),
+                    &current,
+                ]);
                 let result = match &seen.action {
                     Action::Allow => PlayerChooseInitialServerResult::Allowed,
+                    Action::Deny(reason) => PlayerChooseInitialServerResult::Denied {
+                        reason: text(reason),
+                    },
                     Action::Redirect(server) => {
                         PlayerChooseInitialServerResult::Redirect(ServerId::new(server.as_str()))
                     }

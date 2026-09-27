@@ -277,6 +277,7 @@ pub struct GameProfileRequestEvent {
     pub virtual_host: Option<String>,
     pub protocol: i32,
     profile: ResultCell<GameProfile>,
+    denied: ResultCell<Option<Component>>,
 }
 
 impl GameProfileRequestEvent {
@@ -297,24 +298,49 @@ impl GameProfileRequestEvent {
     pub fn is_modified(&self) -> bool {
         *self.profile.get() != self.original
     }
+
+    #[must_use]
+    pub fn denied(&self) -> Option<&Component> {
+        self.denied.get().as_ref()
+    }
+
+    pub fn deny(&mut self, reason: impl Into<Component>) {
+        self.denied.set(Some(reason.into()));
+    }
+
+    pub fn allow(&mut self) {
+        self.denied.set(None);
+    }
 }
 
-guest_event!(
-    GameProfileRequestEvent,
-    GameProfileRequest,
-    |e| Self {
-        original: GameProfile::from_wit(e.original),
-        online_mode: e.online_mode,
-        remote_addr: socket_from_wit(e.remote_addr),
-        virtual_host: e.virtual_host,
-        protocol: e.protocol,
-        profile: ResultCell::new(GameProfile::from_wit(e.result.profile)),
-    },
-    profile,
-    |profile| we::GameProfileRequestResult {
-        profile: profile.to_wit(),
+impl crate::event::GuestEvent for GameProfileRequestEvent {
+    const KIND: we::EventKind = we::EventKind::GameProfileRequest;
+
+    fn from_event(ev: we::Event) -> Option<Self> {
+        let we::Event::GameProfileRequest(e) = ev else {
+            return None;
+        };
+        Some(Self {
+            original: GameProfile::from_wit(e.original),
+            online_mode: e.online_mode,
+            remote_addr: socket_from_wit(e.remote_addr),
+            virtual_host: e.virtual_host,
+            protocol: e.protocol,
+            profile: ResultCell::new(GameProfile::from_wit(e.result.profile)),
+            denied: ResultCell::new(e.result.denied.map(from_host)),
+        })
     }
-);
+
+    fn into_outcome(self) -> we::EventOutcome {
+        if !self.profile.is_dirty() && !self.denied.is_dirty() {
+            return we::EventOutcome::Unchanged;
+        }
+        we::EventOutcome::GameProfileRequest(we::GameProfileRequestResult {
+            profile: self.profile.get().to_wit(),
+            denied: self.denied.get().as_ref().map(Component::to_arena),
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -468,6 +494,7 @@ mod tests {
                     protocol: 767,
                     result: we::GameProfileRequestResult {
                         profile: profile.clone(),
+                        denied: None,
                     },
                 },
             ))
@@ -481,5 +508,62 @@ mod tests {
             panic!("a profile edit answers game-profile-request");
         };
         assert_eq!(result.profile.username, "Alex");
+    }
+
+    fn profile_request(denied: Option<wt::Component>) -> GameProfileRequestEvent {
+        let profile = wt::GameProfile {
+            uuid: wt::Uuid { hi: 0, lo: 1 },
+            username: "Steve".into(),
+            properties: vec![],
+        };
+        GameProfileRequestEvent::from_event(Event::GameProfileRequest(
+            we::GameProfileRequestEvent {
+                original: profile.clone(),
+                online_mode: true,
+                remote_addr: wt::SocketAddress {
+                    ip: wt::IpAddress::Ipv4((127, 0, 0, 1)),
+                    port: 1,
+                },
+                virtual_host: None,
+                protocol: 767,
+                result: we::GameProfileRequestResult { profile, denied },
+            },
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_profile_request_sees_an_earlier_deny_and_can_deny_or_allow() {
+        let banned = Component::text("Banned");
+        let seen = profile_request(Some(banned.to_arena()));
+        assert_eq!(seen.denied(), Some(&banned));
+        assert_eq!(seen.into_outcome(), EventOutcome::Unchanged);
+
+        let mut allowed = profile_request(Some(banned.to_arena()));
+        allowed.allow();
+        let EventOutcome::GameProfileRequest(result) = allowed.into_outcome() else {
+            panic!("an allow answers game-profile-request");
+        };
+        assert_eq!(result.denied, None);
+        assert_eq!(result.profile.username, "Steve");
+
+        let mut denied = profile_request(None);
+        denied.deny("Closed");
+        let EventOutcome::GameProfileRequest(result) = denied.into_outcome() else {
+            panic!("a deny answers game-profile-request");
+        };
+        assert_eq!(result.denied, Some(Component::text("Closed").to_arena()));
+    }
+
+    #[test]
+    fn a_profile_edit_carries_the_deny_it_saw() {
+        let banned = Component::text("Banned");
+        let mut renamed = profile_request(Some(banned.to_arena()));
+        renamed.profile_mut().username = "Alex".into();
+        let EventOutcome::GameProfileRequest(result) = renamed.into_outcome() else {
+            panic!("a profile edit answers game-profile-request");
+        };
+        assert_eq!(result.profile.username, "Alex");
+        assert_eq!(result.denied, Some(banned.to_arena()));
     }
 }

@@ -148,7 +148,7 @@ pub fn fields(event: EventName) -> Vec<String> {
             "false",
             "lobby",
         ]),
-        EventName::PlayerChooseInitialServer => owned(&[id, USERNAME, "hub"]),
+        EventName::PlayerChooseInitialServer => owned(&[id, USERNAME, "hub", "allowed"]),
         EventName::ProxyPing => ping_fields(&motd().to_json()),
         EventName::ProxyInitialize | EventName::ProxyShutdown => Vec::new(),
         EventName::ConfigReload => owned(&["file", "survival", "-", "lobby"]),
@@ -156,9 +156,9 @@ pub fn fields(event: EventName) -> Vec<String> {
         EventName::ChatMessage => owned(&[id, CHAT, "false", "lobby"]),
         EventName::BackendHealth => owned(&["10.0.0.2:25565", "lobby,survival", "draining"]),
         EventName::Login => owned(&[id, USERNAME, "true"]),
-        EventName::GameProfileRequest => {
-            owned(&[USERNAME, UUID, "false", REMOTE, DOMAIN, "767", USERNAME])
-        }
+        EventName::GameProfileRequest => owned(&[
+            USERNAME, UUID, "false", REMOTE, DOMAIN, "767", USERNAME, "-",
+        ]),
         EventName::CommandExecute => owned(&[id, COMMAND, "true", "lobby"]),
         EventName::ConnectionHandshake => owned(&[
             REMOTE,
@@ -298,6 +298,7 @@ fn initial_server(result: &PlayerChooseInitialServerResult) -> Outcome {
             Outcome::same(format!("redirect:{}", server.as_str()))
         }
         PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } => limbo(limbo_handlers),
+        PlayerChooseInitialServerResult::Denied { reason } => Outcome::component("denied", reason),
         _ => Outcome::same("unknown"),
     }
 }
@@ -573,7 +574,10 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
                 protocol,
             );
             let event = bus.fire(event).await;
-            Outcome::same(format!("profile:{}", event.profile.username))
+            match event.denied() {
+                Some(reason) => Outcome::component("denied", reason),
+                None => Outcome::same(format!("profile:{}", event.profile.username)),
+            }
         }
         EventName::CommandExecute => {
             let event = CommandExecuteEvent::new(

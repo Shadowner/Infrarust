@@ -107,6 +107,7 @@ interface events {
         allowed,
         redirect(server-id),
         send-to-limbo(list<string>),
+        denied(component),
     }
 
     enum connect-cause {
@@ -255,6 +256,7 @@ interface events {
 
     record game-profile-request-result {
         profile: game-profile,
+        denied: option<component>,
     }
 
     record command-execute-event {

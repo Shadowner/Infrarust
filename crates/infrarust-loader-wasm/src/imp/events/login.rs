@@ -213,6 +213,7 @@ impl WasmEvent for GameProfileRequestEvent {
             protocol: self.protocol_version.raw(),
             result: we::GameProfileRequestResult {
                 profile: convert::game_profile_to_wit(&self.profile),
+                denied: self.denied().map(component::to_wit),
             },
         })
     }
@@ -222,7 +223,16 @@ impl WasmEvent for GameProfileRequestEvent {
             return unmatched(&outcome);
         };
         self.profile = convert::game_profile_from_wit(result.profile);
-        Applied::Set
+        let mut texts = Texts::default();
+        match result.denied {
+            None => self.allow(),
+            Some(reason) => {
+                if self.denied().map(component::to_wit).as_ref() != Some(&reason) {
+                    self.deny(texts.convert(&reason));
+                }
+            }
+        }
+        texts.applied()
     }
 
     fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
@@ -366,13 +376,73 @@ mod tests {
         renamed.username = "Alex".into();
         assert_eq!(
             event.apply(we::EventOutcome::GameProfileRequest(
-                we::GameProfileRequestResult { profile: renamed }
+                we::GameProfileRequestResult {
+                    profile: renamed,
+                    denied: None,
+                }
             )),
             Applied::Set
         );
         assert_eq!(event.profile.username, "Alex");
         assert_eq!(event.original(), &profile);
         assert!(event.is_modified());
+    }
+
+    fn profile_request() -> GameProfileRequestEvent {
+        GameProfileRequestEvent::new(
+            steve().profile().clone(),
+            false,
+            "203.0.113.7:51234".parse().unwrap(),
+            None,
+            ProtocolVersion::new(767),
+        )
+    }
+
+    fn profile_result(event: &GameProfileRequestEvent) -> we::GameProfileRequestResult {
+        let we::Event::GameProfileRequest(record) = event.to_wit() else {
+            panic!("a profile request is sent as game-profile-request");
+        };
+        record.result
+    }
+
+    #[test]
+    fn a_profile_request_shows_and_takes_a_deny() {
+        let mut event = profile_request();
+        assert_eq!(profile_result(&event).denied, None);
+        event.deny(Component::text("Banned"));
+        assert_eq!(
+            profile_result(&event).denied,
+            Some(component::to_wit(&Component::text("Banned")))
+        );
+
+        let mut allowed = profile_result(&event);
+        allowed.denied = None;
+        event.apply(we::EventOutcome::GameProfileRequest(allowed));
+        assert_eq!(event.denied(), None);
+
+        let mut denied = profile_result(&event);
+        denied.denied = Some(component::to_wit(&Component::text("Closed")));
+        event.apply(we::EventOutcome::GameProfileRequest(denied));
+        assert_eq!(event.denied(), Some(&Component::text("Closed")));
+    }
+
+    #[test]
+    fn an_echoed_profile_deny_keeps_the_native_reason() {
+        let reason = Component::text("Banned").hover(infrarust_api::types::HoverEvent::show_item(
+            "minecraft:stone",
+            1,
+        ));
+        let mut event = profile_request();
+        event.deny(reason.clone());
+        let mut echoed = profile_result(&event);
+        echoed.profile.username = "Alex".into();
+        event.apply(we::EventOutcome::GameProfileRequest(echoed));
+        assert_eq!(event.profile.username, "Alex");
+        assert_eq!(
+            event.denied(),
+            Some(&reason),
+            "a deny the guest only echoed keeps what the contract cannot carry"
+        );
     }
 
     #[test]

@@ -33,6 +33,9 @@ impl WasmEvent for PlayerChooseInitialServerEvent {
                 PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } => {
                     we::PlayerChooseInitialServerResult::SendToLimbo(limbo_handlers.clone())
                 }
+                PlayerChooseInitialServerResult::Denied { reason } => {
+                    we::PlayerChooseInitialServerResult::Denied(component::to_wit(reason))
+                }
                 _ => we::PlayerChooseInitialServerResult::Allowed,
             },
         })
@@ -42,6 +45,7 @@ impl WasmEvent for PlayerChooseInitialServerEvent {
         let we::EventOutcome::PlayerChooseInitialServer(result) = outcome else {
             return unmatched(&outcome);
         };
+        let mut texts = Texts::default();
         self.set_result(match result {
             we::PlayerChooseInitialServerResult::Allowed => {
                 PlayerChooseInitialServerResult::Allowed
@@ -52,8 +56,13 @@ impl WasmEvent for PlayerChooseInitialServerEvent {
             we::PlayerChooseInitialServerResult::SendToLimbo(limbo_handlers) => {
                 PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers }
             }
+            we::PlayerChooseInitialServerResult::Denied(reason) => {
+                PlayerChooseInitialServerResult::Denied {
+                    reason: texts.convert(&reason),
+                }
+            }
         });
-        Applied::Set
+        texts.applied()
     }
 
     fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
@@ -258,6 +267,52 @@ mod tests {
             Some(ServerId::new("lobby")),
             KickedFromServerResult::default(),
         )
+    }
+
+    fn initial_result(
+        event: &PlayerChooseInitialServerEvent,
+    ) -> we::PlayerChooseInitialServerResult {
+        let we::Event::PlayerChooseInitialServer(record) = event.to_wit() else {
+            panic!("an initial server choice is sent as player-choose-initial-server");
+        };
+        record.result
+    }
+
+    #[test]
+    fn an_initial_server_choice_shows_and_takes_a_deny() {
+        let mut event = PlayerChooseInitialServerEvent::new(steve(), ServerId::new("hub"));
+        assert_eq!(
+            initial_result(&event),
+            we::PlayerChooseInitialServerResult::Allowed
+        );
+        event.deny(Component::text("Full"));
+        assert_eq!(
+            initial_result(&event),
+            we::PlayerChooseInitialServerResult::Denied(component::to_wit(&Component::text(
+                "Full"
+            ))),
+            "a guest sees a deny set before it, not an allowed result"
+        );
+
+        event.apply(we::EventOutcome::PlayerChooseInitialServer(
+            we::PlayerChooseInitialServerResult::Allowed,
+        ));
+        assert!(matches!(
+            event.result(),
+            PlayerChooseInitialServerResult::Allowed
+        ));
+        assert_eq!(
+            event.apply(we::EventOutcome::PlayerChooseInitialServer(
+                we::PlayerChooseInitialServerResult::Denied(component::to_wit(&Component::text(
+                    "Closed"
+                ))),
+            )),
+            Applied::Set
+        );
+        assert!(matches!(
+            event.result(),
+            PlayerChooseInitialServerResult::Denied { reason } if *reason == Component::text("Closed")
+        ));
     }
 
     #[test]

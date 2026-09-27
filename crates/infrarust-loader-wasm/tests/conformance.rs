@@ -761,9 +761,105 @@ conformance!(
             [
                 seen(E::PreLogin, LATE),
                 seen(E::ServerPreConnect, LATE),
-                seen(E::PlayerChooseInitialServer, LATE),
+                seen_with(
+                    E::PlayerChooseInitialServer,
+                    LATE,
+                    &initial_server_fields("redirect:lobby"),
+                ),
                 seen(E::ChatMessage, LATE),
             ],
+        ),
+);
+
+fn initial_server_fields(current: &str) -> Vec<String> {
+    let mut fields = support::conformance::fields(E::PlayerChooseInitialServer);
+    *fields
+        .last_mut()
+        .expect("the current result is the last field") = current.to_owned();
+    fields
+}
+
+fn game_profile_fields(denied: &str) -> Vec<String> {
+    let mut fields = support::conformance::fields(E::GameProfileRequest);
+    *fields
+        .last_mut()
+        .expect("the current deny is the last field") = denied.to_owned();
+    fields
+}
+
+conformance!(
+    game_profile_request_deny_native,
+    game_profile_request_deny_wasm,
+    single(
+        "on game-profile-request normal deny \"Nope\"",
+        "denied:Nope"
+    ),
+);
+
+conformance!(
+    player_choose_initial_server_deny_native,
+    player_choose_initial_server_deny_wasm,
+    single(
+        "on player-choose-initial-server normal deny \"Full\"",
+        "denied:Full"
+    ),
+);
+
+conformance!(
+    a_later_listener_sees_an_earlier_deny_native,
+    a_later_listener_sees_an_earlier_deny_wasm,
+    Scenario::new()
+        .plugin(
+            "scripted",
+            [
+                "on game-profile-request early deny \"Nope\"",
+                "on player-choose-initial-server early deny \"Full\"",
+            ],
+        )
+        .plugin(
+            "scripted-peer",
+            [
+                "on game-profile-request late record",
+                "on player-choose-initial-server late record",
+            ],
+        )
+        .fire(E::GameProfileRequest, "denied:Nope")
+        .fire(E::PlayerChooseInitialServer, "denied:Full")
+        .log(
+            "scripted",
+            [
+                seen(E::GameProfileRequest, EARLY),
+                seen(E::PlayerChooseInitialServer, EARLY),
+            ],
+        )
+        .log(
+            "scripted-peer",
+            [
+                seen_with(E::GameProfileRequest, LATE, &game_profile_fields("Nope")),
+                seen_with(
+                    E::PlayerChooseInitialServer,
+                    LATE,
+                    &initial_server_fields("denied:Full"),
+                ),
+            ],
+        ),
+);
+
+conformance!(
+    a_later_allow_lifts_an_earlier_profile_deny_native,
+    a_later_allow_lifts_an_earlier_profile_deny_wasm,
+    Scenario::new()
+        .plugin("scripted", ["on game-profile-request early deny \"Nope\""])
+        .plugin("scripted-peer", ["on game-profile-request late allow"])
+        .fire(E::GameProfileRequest, "profile:Steve")
+        .log("scripted", [seen(E::GameProfileRequest, EARLY)])
+        .log(
+            "scripted-peer",
+            [seen_with(
+                E::GameProfileRequest,
+                LATE,
+                &game_profile_fields("Nope")
+            )],
         ),
 );
 

@@ -141,6 +141,7 @@ impl EventName {
                     | Self::PlayerChooseInitialServer
                     | Self::ChatMessage
                     | Self::Login
+                    | Self::GameProfileRequest
                     | Self::CommandExecute
                     | Self::ConnectionHandshake
                     | Self::PreTransfer
@@ -149,8 +150,10 @@ impl EventName {
                 self,
                 Self::PreLogin
                     | Self::ServerPreConnect
+                    | Self::PlayerChooseInitialServer
                     | Self::ChatMessage
                     | Self::Login
+                    | Self::GameProfileRequest
                     | Self::CommandExecute
                     | Self::ConnectionHandshake
                     | Self::PreTransfer
