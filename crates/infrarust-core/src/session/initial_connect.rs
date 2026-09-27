@@ -132,6 +132,10 @@ pub(crate) async fn resolve_initial_mode(
             ));
             initial_server.clone()
         }
+        infrarust_api::events::connection::PlayerChooseInitialServerResult::Denied { reason } => {
+            client.disconnect(reason, ctx.registry()).await.ok();
+            return Ok(kicked(reason.clone()));
+        }
         _ => initial_server.clone(),
     };
 
@@ -505,6 +509,60 @@ mod tests {
                 .active_connections_for_address(&target_address),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn a_denied_initial_server_choice_kicks_the_player_before_any_backend() {
+        let origin_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin_listener.local_addr().unwrap();
+        let services = test_proxy_services();
+        services.domain_router.add(
+            crate::provider::ProviderId::file("origin"),
+            config("origin", &origin_addr.to_string()),
+        );
+        let bus: &dyn EventBus = services.event_bus.as_ref();
+        bus.subscribe::<PlayerChooseInitialServerEvent, _>(
+            EventPriority::NORMAL,
+            |event: &mut PlayerChooseInitialServerEvent| {
+                event.deny(Component::text("not today"));
+            },
+        );
+
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = test_context(&services, &connector, player);
+        let (client, _client_stream) = test_client_bridge(ctx.version()).await;
+        let mut io = test_io(&ctx, client);
+        let (origin_config, load_balancer) = services
+            .domain_router
+            .find_route_by_server_id("origin")
+            .unwrap();
+        let mut progress = LoginProgress {
+            completed: false,
+            rewritten: false,
+        };
+        let mode = resolve_initial_mode(
+            &ctx,
+            &mut io,
+            &RoutingData {
+                server_config: origin_config,
+                config_id: "origin".to_string(),
+                load_balancer,
+            },
+            None,
+            &mut None,
+            &mut progress,
+        )
+        .await
+        .unwrap();
+
+        let InitialMode::Denied(DisconnectCause::Kicked {
+            reason: Some(reason),
+        }) = mode
+        else {
+            panic!("a denied choice must kick the player");
+        };
+        assert_eq!(reason.to_plain(), "not today");
     }
 
     #[test]

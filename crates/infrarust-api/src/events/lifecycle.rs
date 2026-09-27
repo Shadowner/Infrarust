@@ -74,6 +74,7 @@ pub struct GameProfileRequestEvent {
     pub virtual_host: Option<String>,
     pub protocol_version: ProtocolVersion,
     original: GameProfile,
+    denied: Option<Component>,
 }
 
 impl GameProfileRequestEvent {
@@ -91,11 +92,24 @@ impl GameProfileRequestEvent {
             remote_addr,
             virtual_host,
             protocol_version,
+            denied: None,
         }
     }
 
     pub const fn original(&self) -> &GameProfile {
         &self.original
+    }
+
+    pub fn deny(&mut self, reason: Component) {
+        self.denied = Some(reason);
+    }
+
+    pub fn allow(&mut self) {
+        self.denied = None;
+    }
+
+    pub const fn denied(&self) -> Option<&Component> {
+        self.denied.as_ref()
     }
 
     pub fn is_modified(&self) -> bool {
@@ -353,6 +367,26 @@ mod tests {
         assert!(event.is_modified());
         assert_eq!(event.original().username, "Steve");
         assert_eq!(event.profile.username, "Alex");
+    }
+
+    #[test]
+    fn game_profile_request_can_be_denied_and_allowed_again() {
+        let mut event = GameProfileRequestEvent::new(
+            GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: "Steve".into(),
+                properties: vec![],
+            },
+            true,
+            "127.0.0.1:25565".parse().unwrap(),
+            None,
+            ProtocolVersion::MINECRAFT_1_21,
+        );
+        assert_eq!(event.denied(), None);
+        event.deny(Component::text("closed"));
+        assert_eq!(event.denied(), Some(&Component::text("closed")));
+        event.allow();
+        assert_eq!(event.denied(), None);
     }
 
     #[test]

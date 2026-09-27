@@ -83,6 +83,10 @@ pub(crate) async fn admit(
             arrival.protocol_version,
         ))
         .await;
+    if let Some(reason) = request.denied() {
+        tracing::info!(username = %request.profile.username, "login denied by a plugin at the game profile request");
+        return Admission::Refused(reason.clone());
+    }
     let rewritten = request.is_modified();
     let profile = request.profile;
 
@@ -216,6 +220,34 @@ mod tests {
             panic!("a banned player must be refused");
         };
         assert!(reason.to_plain().contains("nope"), "{reason:?}");
+        assert!(logins.lock().unwrap().is_empty());
+        assert_eq!(services.connection_registry.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_denied_game_profile_request_refuses_the_player_before_any_login_event() {
+        let services = test_proxy_services();
+        let bus: &dyn EventBus = services.event_bus.as_ref();
+        bus.subscribe::<GameProfileRequestEvent, _>(
+            EventPriority::NORMAL,
+            |event: &mut GameProfileRequestEvent| event.deny(Component::text("not today")),
+        );
+        let logins = record_logins(&services);
+        let (ctx, _peer) = connection().await;
+
+        let admission = admit(
+            &services,
+            &ctx,
+            &CancellationToken::new(),
+            arrival(),
+            SessionKind::Intercepted { online_mode: true },
+        )
+        .await;
+
+        let Admission::Refused(reason) = admission else {
+            panic!("a denied profile request must refuse the player");
+        };
+        assert_eq!(reason.to_plain(), "not today");
         assert!(logins.lock().unwrap().is_empty());
         assert_eq!(services.connection_registry.count(), 0);
     }

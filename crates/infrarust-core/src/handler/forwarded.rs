@@ -192,6 +192,17 @@ impl ForwardedLogin<'_> {
                     .await;
                 return Ok(None);
             }
+            PlayerChooseInitialServerResult::Denied { reason } => {
+                let reason = reason.clone();
+                self.kick(ctx, &reason).await;
+                admitted
+                    .lifecycle
+                    .end(DisconnectCause::Kicked {
+                        reason: Some(reason),
+                    })
+                    .await;
+                return Ok(None);
+            }
             _ => choose.initial_server.clone(),
         };
 

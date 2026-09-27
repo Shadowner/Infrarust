@@ -89,7 +89,7 @@ PreLoginEvent ─────────────── Denied ──▶ dis
 - `GameProfileRequestEvent` fires with `online_mode: false` and the offline profile (see [`[auth] offline_uuid`](../../configuration/global#authentication)). The profile left in the event is the player's identity on the proxy: the UUID ban check, the player registry and every later event use it, and BungeeCord or BungeeGuard forwarding sends its UUID and properties (skin textures, for example) to the backend. The backend still runs its own login with the name the client sent, and the client receives the backend's `LoginSuccess`, so a changed name or UUID only exists on the proxy unless forwarding carries it.
 - `PermissionsSetupEvent` and `LoginEvent` fire with `online_mode: false`.
 - The player is not active: `is_active()` is `false`, and `send_message`, `send_title`, `send_action_bar`, `send_packet`, `send_plugin_message`, `send_plugin_message_to_backend` and `switch_server` return `PlayerError::NotActive`. No plugin message or client state event fires, and `client_brand()`, `settings()` and `ping()` return `None`. `disconnect` works: until the proxy has connected to the backend, the client gets the reason in a login disconnect; after that, the proxy closes the connection without a message.
-- `PlayerChooseInitialServerEvent`: `Redirect` is honored. `ServerPreConnectEvent`: `Allowed`, `Redirect` and `Denied` are honored.
+- `PlayerChooseInitialServerEvent`: `Redirect` and `Denied` are honored. `ServerPreConnectEvent`: `Allowed`, `Redirect` and `Denied` are honored.
 - `SendToLimbo`, from either event, disconnects the player with "Limbo is not available on this server" and logs a warning: limbo needs the proxy to run the login, which only `offline` and `client_only` do. The `DisconnectEvent` cause is `Kicked` with that reason.
 - A redirect (`Redirect` from any of the three events) must target a server in a forwarding mode. Forwarding the login to an `offline` or `client_only` server would skip the login the proxy runs for it, so the player is disconnected with "This server cannot be joined from here" and a warning is logged. An unknown server disconnects the player with "Unknown server".
 - `KickedFromServerEvent` fires only when the backend cannot be reached or the [server manager](#server-wake) cannot start it (`cause` is `Unreachable`), or the connection drops while the login packets are sent (`ConnectionLost`). `during_connect` is `true` and `previous_server` is `None`. `reason` is `None`, except for a server the server manager could not start, where it is the proxy's message. Nothing reached the client yet, so `Redirect` works: it goes through `ServerPreConnectEvent` with the cause `KickRedirect`, and after three redirects in a row that failed, the next one is handled as `DisconnectPlayer { reason: None }`. The default result is `DisconnectPlayer { reason: None }`, which shows the event's `reason`, or the server's `disconnect_message` when it is `None`. `Notify` has no server to keep the player on and disconnects with its message. `SendToLimbo` is handled as `DisconnectPlayer { reason: None }` and logs a warning. When the player ends up disconnected, the `DisconnectEvent` cause is `Error` for an unreachable server and `BackendClosed` for a lost connection.
@@ -361,7 +361,7 @@ Fired when online-mode authentication fails, for example a cracked client that c
 
 Fired right after authentication, before the proxy checks bans against the player's UUID and before the player exists. Change `profile` to give the player another UUID, name or properties, for example skin textures in offline mode. The profile left in the event when the last listener returns is the one the proxy uses from then on: for the UUID ban check, in the player registry and every later event, in the `LoginSuccess` the client receives, and in what forwarding sends to the backend.
 
-**Type:** Informational, with a mutable `profile`
+**Type:** Mutable `profile`, can be denied
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -371,7 +371,7 @@ Fired right after authentication, before the proxy checks bans against the playe
 | `virtual_host` | `Option<String>` | The domain from the handshake |
 | `protocol_version` | `ProtocolVersion` | The client's protocol version |
 
-`original()` returns the profile as authentication produced it, and `is_modified()` tells whether a listener changed it.
+`original()` returns the profile as authentication produced it, and `is_modified()` tells whether a listener changed it. `deny(reason)` refuses the player: the proxy disconnects them with the reason once the last listener returns, before the ban check. `allow()` clears an earlier denial and `denied()` returns the reason, if any.
 
 ```rust
 use infrarust_api::events::lifecycle::GameProfileRequestEvent;
@@ -535,6 +535,7 @@ Fired after `PostLoginEvent`, before `ServerPreConnectEvent`. Allows you to over
 | `Allowed` (default) | Use the domain router's choice |
 | `Redirect(ServerId)` | Send to a different server |
 | `SendToLimbo { limbo_handlers }` | Route through limbo handlers. No `ServerPreConnectEvent` fires before the gate; it fires after `LimboExitEvent` instead |
+| `Denied { reason }` | Disconnect the player with the reason. `deny(reason)` is the shortcut |
 
 ```rust
 ctx.event_bus().subscribe::<PlayerChooseInitialServerEvent, _>(

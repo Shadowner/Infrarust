@@ -241,6 +241,9 @@ pub enum PlayerChooseInitialServerResult {
     SendToLimbo {
         limbo_handlers: Vec<String>,
     },
+    Denied {
+        reason: Component,
+    },
 }
 
 impl PlayerChooseInitialServerEvent {
@@ -260,6 +263,10 @@ impl PlayerChooseInitialServerEvent {
     /// Shortcut: send the player to the limbo handler chain.
     pub fn send_to_limbo(&mut self, limbo_handlers: Vec<String>) {
         self.result = PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers };
+    }
+
+    pub fn deny(&mut self, reason: Component) {
+        self.result = PlayerChooseInitialServerResult::Denied { reason };
     }
 }
 
