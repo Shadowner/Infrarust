@@ -41,7 +41,7 @@ plugins/
 tools/
 ├── mc-bench/                   # Play-state load generator and mock backend for benchmarks
 ├── stress-test/                # Connection-flood stress tester
-└── registry-extractor/         # Dumps configuration-phase registry data from a live server
+└── registry-extractor/         # Dumps configuration-phase registry data into crates/infrarust-core/registry
 templates/
 └── plugin-template/            # `cargo generate` template for a new plugin
 docs/
@@ -94,3 +94,19 @@ We follow [Semantic Versioning](https://semver.org/):
 - MAJOR version for incompatible API changes
 - MINOR version for new functionality in a backwards compatible manner
 - PATCH version for backwards compatible bug fixes
+
+## Publishing to crates.io
+
+Every crate must build from its own packaged tarball, so build scripts only write to `OUT_DIR` and no crate reads files outside its directory:
+
+- the registry snapshots embedded by `infrarust-core` live in `crates/infrarust-core/registry/`;
+- `infrarust-loader-wasm/wit` and `infrarust-plugin-sdk/wit` are symlinks to `crates/infrarust-plugin-wit/wit`, which `cargo package` copies as regular files (on Windows, enable `core.symlinks` before cloning);
+- `infrarust-plugin-admin-api` embeds `frontend/.output/public/` when it exists and a placeholder page otherwise, so build the frontend before publishing it.
+
+```bash
+cd plugins/infrarust-plugin-admin-api/frontend && npm install && npx nuxt generate && cd -
+cargo package --workspace
+cargo publish --workspace
+```
+
+`cargo package --workspace` verifies every crate against the others in dependency order; `cargo publish --workspace` uploads them in that same order and skips the `publish = false` tools and test harness.

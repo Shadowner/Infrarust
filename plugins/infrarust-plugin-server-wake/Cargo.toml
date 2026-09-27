@@ -6,6 +6,8 @@ rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 description = "On-demand backend wake-up plugin for the Infrarust Minecraft proxy"
+keywords = ["minecraft", "proxy", "plugin", "wake-on-demand"]
+categories = ["game-development"]
 
 [package.metadata.docs.rs]
 all-features = true
