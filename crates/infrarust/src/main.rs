@@ -2,6 +2,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use std::future::Future;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
@@ -241,12 +242,11 @@ async fn run(
     let shutdown = CancellationToken::new();
 
     // Signal handler in background
-    let shutdown_signal = shutdown.clone();
-    tokio::spawn(async move {
-        signal_handler().await;
-        tracing::info!("shutdown signal received");
-        shutdown_signal.cancel();
-    });
+    tokio::spawn(watch_signals(
+        OsSignals::install(),
+        shutdown.clone(),
+        |code| std::process::exit(code),
+    ));
 
     let mut web_config = config.web.clone();
 
@@ -316,31 +316,94 @@ async fn run(
     Ok(())
 }
 
-async fn signal_handler() {
-    use tokio::signal;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopSignal {
+    Interrupt,
+    Terminate,
+}
 
-    let ctrl_c = signal::ctrl_c();
-
-    #[cfg(unix)]
-    {
-        let mut sigterm = match signal::unix::signal(signal::unix::SignalKind::terminate()) {
-            Ok(sigterm) => sigterm,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to install SIGTERM handler; only Ctrl-C will stop the proxy");
-                ctrl_c.await.ok();
-                return;
-            }
-        };
-        tokio::select! {
-            biased;
-            _ = sigterm.recv() => {}
-            _ = ctrl_c => {}
+impl StopSignal {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
         }
     }
 
-    #[cfg(not(unix))]
-    {
-        ctrl_c.await.ok();
+    const fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            Self::Terminate => 143,
+        }
+    }
+}
+
+trait StopSignals: Send {
+    fn next(&mut self) -> impl Future<Output = Option<StopSignal>> + Send;
+}
+
+struct OsSignals {
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
+}
+
+impl OsSignals {
+    fn install() -> Self {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let terminate = match signal(SignalKind::terminate()) {
+                Ok(terminate) => Some(terminate),
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to install SIGTERM handler; only Ctrl-C will stop the proxy");
+                    None
+                }
+            };
+            Self { terminate }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {}
+        }
+    }
+}
+
+impl StopSignals for OsSignals {
+    async fn next(&mut self) -> Option<StopSignal> {
+        #[cfg(unix)]
+        if let Some(terminate) = self.terminate.as_mut() {
+            return tokio::select! {
+                biased;
+                received = terminate.recv() => received.map(|()| StopSignal::Terminate),
+                received = tokio::signal::ctrl_c() => received.ok().map(|()| StopSignal::Interrupt),
+            };
+        }
+        tokio::signal::ctrl_c()
+            .await
+            .ok()
+            .map(|()| StopSignal::Interrupt)
+    }
+}
+
+async fn watch_signals(
+    mut signals: impl StopSignals,
+    shutdown: CancellationToken,
+    exit: impl FnOnce(i32) + Send,
+) {
+    while let Some(signal) = signals.next().await {
+        if shutdown.is_cancelled() {
+            tracing::warn!(
+                signal = signal.name(),
+                "shutdown signal received while the proxy is already stopping; exiting now without finishing the shutdown"
+            );
+            exit(signal.exit_code());
+            return;
+        }
+        tracing::info!(
+            signal = signal.name(),
+            "shutdown signal received; send it again to exit at once"
+        );
+        shutdown.cancel();
     }
 }
 
@@ -382,6 +445,52 @@ mod tests {
             servers_dir.display().to_string()
         );
         toml::from_str(&toml_str).unwrap()
+    }
+
+    struct Scripted(std::collections::VecDeque<StopSignal>);
+
+    impl StopSignals for Scripted {
+        fn next(&mut self) -> impl Future<Output = Option<StopSignal>> + Send {
+            std::future::ready(self.0.pop_front())
+        }
+    }
+
+    async fn watch(signals: &[StopSignal], shutdown: &CancellationToken) -> Option<i32> {
+        let exited = Arc::new(std::sync::Mutex::new(None));
+        let seen = Arc::clone(&exited);
+        watch_signals(
+            Scripted(signals.iter().copied().collect()),
+            shutdown.clone(),
+            move |code| *seen.lock().unwrap() = Some(code),
+        )
+        .await;
+        *exited.lock().unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_first_signal_starts_the_shutdown_and_the_second_exits_at_once() {
+        let shutdown = CancellationToken::new();
+        let code = watch(&[StopSignal::Terminate, StopSignal::Interrupt], &shutdown).await;
+        assert!(shutdown.is_cancelled());
+        assert_eq!(code, Some(130));
+    }
+
+    #[tokio::test]
+    async fn one_signal_only_starts_the_shutdown() {
+        let shutdown = CancellationToken::new();
+        assert_eq!(watch(&[StopSignal::Terminate], &shutdown).await, None);
+        assert!(shutdown.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn a_signal_while_the_proxy_is_already_stopping_exits_at_once() {
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        assert_eq!(
+            watch(&[StopSignal::Terminate], &shutdown).await,
+            Some(143),
+            "a stop from the console counts as the first request"
+        );
     }
 
     #[test]
