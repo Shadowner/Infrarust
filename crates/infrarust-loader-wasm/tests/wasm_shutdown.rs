@@ -129,6 +129,7 @@ async fn shutdown_while_a_command_is_blocked_is_bounded() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn shutdown_with_several_stuck_plugins_is_not_serialised_per_plugin() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();

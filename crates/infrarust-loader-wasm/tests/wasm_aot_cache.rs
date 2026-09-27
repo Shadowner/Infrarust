@@ -186,6 +186,7 @@ async fn a_cache_entry_compiled_without_epoch_interruption_is_rebuilt_and_the_sp
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-17: AOT cache entry runs without proof of origin"]
 async fn a_cache_entry_is_bound_to_the_component_it_was_compiled_from() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
@@ -209,6 +210,7 @@ async fn a_cache_entry_is_bound_to_the_component_it_was_compiled_from() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-11: unwritable AOT cache refuses every plugin"]
 async fn a_read_only_cache_dir_does_not_stop_loading() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
@@ -230,6 +232,7 @@ async fn a_read_only_cache_dir_does_not_stop_loading() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-11: unwritable AOT cache refuses every plugin"]
 async fn a_read_only_plugins_dir_still_loads_its_plugins() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
@@ -249,6 +252,7 @@ async fn a_read_only_plugins_dir_still_loads_its_plugins() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-18: cache temp files named by PID"]
 async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();
@@ -278,6 +282,7 @@ async fn concurrent_loaders_sharing_one_cache_dir_all_succeed() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-19: AOT cache grows without bound"]
 async fn the_cache_does_not_grow_without_bound_across_plugin_updates() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_path_buf();

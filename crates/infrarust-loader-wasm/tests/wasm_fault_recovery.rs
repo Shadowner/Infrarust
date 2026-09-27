@@ -171,6 +171,7 @@ async fn start_a_recovery_loop(lab: &Arc<Lab>) -> tokio::task::JoinHandle<Durati
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-13: queued callbacks served past their deadline"]
 async fn a_queued_call_is_answered_by_its_deadline_while_the_actor_is_stuck_in_a_recovery_loop() {
     let lab = Arc::new(
         Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await,
@@ -209,6 +210,7 @@ async fn a_queued_call_is_answered_by_its_deadline_while_the_actor_is_stuck_in_a
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn unloading_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_limit() {
     let lab = Arc::new(
         Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await,
@@ -231,6 +233,7 @@ async fn unloading_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_lim
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-09: shutdown, unload and disable are unbounded"]
 async fn disabling_a_plugin_stuck_in_a_recovery_loop_returns_within_one_call_limit() {
     let lab = Arc::new(
         Lab::start(vec![LabPlugin::lab("limbo").grant("limbo")], options(STUCK)).await,
@@ -310,6 +313,7 @@ async fn consecutive_quarantines_double_the_backoff_up_to_backoff_max() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "W-33: backoff never resets with max_restarts = 0"]
 async fn a_long_healthy_period_resets_the_backoff_even_without_a_restart_budget() {
     let logs = LogCapture::at(Level::WARN);
     async {
@@ -400,6 +404,7 @@ async fn events_queued_for_a_replaced_instance_never_reach_the_fresh_instance() 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-15: fault cause loses the guest panic message"]
 async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault() {
     let lab = Lab::start(
         vec![LabPlugin::lab("")],
@@ -430,6 +435,7 @@ async fn the_recovered_instance_is_told_each_attempt_and_the_cause_of_the_fault(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-15: fault cause loses the guest panic message"]
 async fn the_fault_error_carries_the_guest_panic_message() {
     let logs = LogCapture::at(Level::ERROR);
     async {

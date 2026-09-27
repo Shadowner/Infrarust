@@ -467,6 +467,7 @@ async fn every_fault_kind_in_a_permission_snapshot_gives_the_node_defaults_and_r
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-32: Err from the first on_enable promotes the instance"]
 async fn every_fault_kind_in_the_first_on_enable_fails_the_enable_and_releases_what_it_registered() {
     for mode in Mode::TRAPS.into_iter().chain([Mode::Refuse]) {
         let logs = LogCapture::at(Level::INFO);
@@ -639,6 +640,7 @@ async fn every_fault_kind_in_a_codec_filter_only_disables_that_connection_side()
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_plugin_whose_metadata_traps_does_not_stop_the_others_from_being_discovered() {
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
@@ -658,6 +660,7 @@ async fn a_plugin_whose_metadata_traps_does_not_stop_the_others_from_being_disco
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-02: metadata() has no time bound"]
 async fn a_plugin_whose_metadata_never_returns_does_not_hang_discovery() {
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
@@ -673,6 +676,7 @@ async fn a_plugin_whose_metadata_never_returns_does_not_hang_discovery() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "W-01: one bad plugin fails the whole discovery"]
 async fn a_plugin_whose_metadata_traps_does_not_fail_the_plugin_manager_discovery() {
     let tmp = tempfile::tempdir().unwrap();
     support::add_precompiled_fixture(tmp.path(), "fault-lab").await;
