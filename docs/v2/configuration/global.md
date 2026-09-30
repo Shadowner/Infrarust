@@ -123,6 +123,8 @@ What happens when a player connects with a domain that doesn't match any server 
 | `default_motd` | Respond with the MOTD defined in `[default_motd]` (default) |
 | `drop` | Close the connection silently |
 
+The setting also covers legacy clients (Beta to 1.6). A Beta or 1.4 ping carries no hostname and counts as an unknown domain.
+
 ## Rate limiting
 
 ```toml

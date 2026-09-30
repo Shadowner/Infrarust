@@ -139,6 +139,8 @@ unknown_domain_behavior = "default_motd"
 - `default_motd` (default): responds with the global default MOTD for status pings, and rejects login attempts.
 - `drop`: silently closes the connection.
 
+Legacy clients (Beta to 1.6) follow the same setting. A Beta or 1.4 ping carries no hostname, so the proxy treats it as an unknown domain.
+
 ## Servers without domains
 
 A server config with an empty `domains` list is not reachable through domain routing. It can only be reached through server switching (transferring a player from one backend to another within the same network).

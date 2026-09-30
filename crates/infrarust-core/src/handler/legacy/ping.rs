@@ -1,6 +1,6 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent};
+use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent, RejectReason};
 use infrarust_api::events::proxy::{PingResponse, ProxyPingEvent};
 use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, LEGACY_SECTION, ServerId};
@@ -50,6 +50,16 @@ impl LegacyHandler {
         let route = virtual_host
             .as_deref()
             .and_then(|host| self.services.domain_router.resolve_route(host));
+        if route.is_none() && self.drops_unknown_domains() {
+            tracing::debug!(hostname = ?request.hostname, "legacy ping: unknown domain, dropping");
+            admission::reject(
+                &self.services.event_bus,
+                ctx.client_addr(),
+                virtual_host,
+                RejectReason::UnknownDomain,
+            );
+            return Ok(());
+        }
 
         let screened = admission::screen(&self.services.event_bus, || {
             ConnectionHandshakeEvent::new(

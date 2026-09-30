@@ -10,8 +10,8 @@ use infrarust_api::types::{Component, NamedColor};
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_test_harness::legacy::LEGACY_PROTOCOL;
 use infrarust_test_harness::{
-    DEFAULT_TIMEOUT, EventKind, FakeLegacyBackend, LegacyPing, Recorded, Recorder, ScriptedPlugin,
-    ServerSpec, TestProxy,
+    DEFAULT_TIMEOUT, EventKind, FakeLegacyBackend, HarnessError, LegacyClient, LegacyPing,
+    Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
 };
 use serde_json::json;
 
@@ -224,6 +224,86 @@ async fn a_legacy_ping_is_relayed_from_the_backend() {
         .unwrap();
 
     assert_eq!(ping, backend_ping());
+    proxy.shutdown().await.unwrap();
+}
+
+fn closed_without_answer<T: std::fmt::Debug>(result: Result<T, HarnessError>) {
+    match result {
+        Err(HarnessError::Closed(_) | HarnessError::Io(_)) => {}
+        other => panic!("expected the proxy to close the connection silently, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unknown_domain_drops_legacy_clients_when_asked() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("old").backend(backend.addr()))
+        .plugin(recorder.plugin())
+        .patch_config(|table| {
+            table.insert("unknown_domain_behavior".into(), "drop".into());
+        })
+        .start()
+        .await
+        .unwrap();
+    let stranger = LegacyClient::new(proxy.addr()).hostname("nowhere.test");
+
+    closed_without_answer(stranger.ping().await);
+    closed_without_answer(stranger.ping_beta().await);
+    closed_without_answer(stranger.login(NOTCH).await);
+    let known = proxy
+        .legacy_client_for("old")
+        .unwrap()
+        .ping()
+        .await
+        .unwrap();
+    assert_eq!(known, backend_ping());
+
+    tokio::time::timeout(T, proxy.bus().flush())
+        .await
+        .expect("the event queue never drained");
+    let rejected: Vec<(Option<String>, String)> = recorder
+        .of(EventKind::ConnectionRejected)
+        .iter()
+        .map(|e| {
+            (
+                e.virtual_host().map(str::to_string),
+                e.detail_str("reason").to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rejected,
+        [
+            (Some("nowhere.test".into()), "unknown_domain".into()),
+            (None, "unknown_domain".into()),
+            (Some("nowhere.test".into()), "unknown_domain".into()),
+        ]
+    );
+    assert_eq!(recorder.count(EventKind::ConnectionHandshake), 1);
+    assert_eq!(recorder.count(EventKind::ProxyPing), 1);
+    assert_eq!(recorder.count(EventKind::PreLogin), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unknown_domain_answers_legacy_clients_by_default() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let proxy = legacy_proxy(&backend, Vec::new()).await;
+    let stranger = LegacyClient::new(proxy.addr()).hostname("nowhere.test");
+
+    assert_eq!(stranger.ping().await.unwrap().motd, "An Infrarust Proxy");
+    assert_eq!(
+        stranger.ping_beta().await.unwrap().motd,
+        "An Infrarust Proxy"
+    );
+    assert_eq!(
+        stranger.login(NOTCH).await.unwrap().kicked().unwrap(),
+        "Unknown server"
+    );
+
     proxy.shutdown().await.unwrap();
 }
 

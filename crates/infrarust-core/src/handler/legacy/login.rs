@@ -45,9 +45,11 @@ impl LegacyHandler {
                 Some(domain),
                 RejectReason::UnknownDomain,
             );
-            send_legacy_kick(ctx.stream_mut(), &Component::text(UNKNOWN_SERVER))
-                .await
-                .ok();
+            if !self.drops_unknown_domains() {
+                send_legacy_kick(ctx.stream_mut(), &Component::text(UNKNOWN_SERVER))
+                    .await
+                    .ok();
+            }
             return Ok(());
         };
 

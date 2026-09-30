@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
+use infrarust_config::UnknownDomainBehavior;
 use infrarust_transport::BackendConnector;
 
 use crate::error::CoreError;
@@ -28,6 +29,10 @@ impl LegacyHandler {
             backend_connector,
             shutdown,
         }
+    }
+
+    fn drops_unknown_domains(&self) -> bool {
+        self.services.config.unknown_domain_behavior == UnknownDomainBehavior::Drop
     }
 
     pub async fn handle(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
