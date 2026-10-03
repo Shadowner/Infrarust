@@ -66,6 +66,13 @@ fn validate_impl(item_impl: &ItemImpl) -> syn::Result<()> {
             "#[plugin] must be applied to an `impl Plugin for MyPlugin` block",
         ));
     }
+    if let Some(native) = native_plugin_marker(item_impl) {
+        return Err(syn::Error::new_spanned(
+            native,
+            "#[plugin] builds WASM plugins with `infrarust_plugin_sdk::Plugin`; this impl is for \
+             the native `infrarust_api::Plugin`, which the proxy loads without this macro",
+        ));
+    }
     if !item_impl.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &item_impl.generics,
@@ -73,6 +80,22 @@ fn validate_impl(item_impl: &ItemImpl) -> syn::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn native_plugin_marker(item_impl: &ItemImpl) -> Option<TokenStream2> {
+    if let Some((path, _)) = &item_impl.trait_
+        && path.segments.iter().any(|s| s.ident == "infrarust_api")
+    {
+        return Some(quote!(#path));
+    }
+    item_impl.items.iter().find_map(|item| match item {
+        ImplItem::Fn(f) if f.sig.ident == "on_enable" => {
+            let sig = &f.sig;
+            let tokens = quote!(#sig).to_string();
+            (tokens.contains("PluginContext") || tokens.contains("BoxFuture")).then(|| quote!(#sig))
+        }
+        _ => None,
+    })
 }
 
 #[derive(Default)]
@@ -170,26 +193,26 @@ fn generate_metadata_fn(o: &Overrides) -> syn::Result<TokenStream2> {
                     )
                 })?;
             }
-            quote!(env!("CARGO_PKG_NAME"))
+            quote!(::core::env!("CARGO_PKG_NAME"))
         }
     };
     let name = o
         .name
         .as_ref()
-        .map_or_else(|| quote!(env!("CARGO_PKG_NAME")), |s| quote!(#s));
+        .map_or_else(|| quote!(::core::env!("CARGO_PKG_NAME")), |s| quote!(#s));
     let version = o
         .version
         .as_ref()
-        .map_or_else(|| quote!(env!("CARGO_PKG_VERSION")), |s| quote!(#s));
+        .map_or_else(|| quote!(::core::env!("CARGO_PKG_VERSION")), |s| quote!(#s));
     let authors = o
         .authors
         .as_ref()
-        .map_or_else(|| quote!(env!("CARGO_PKG_AUTHORS")), |s| quote!(#s));
+        .map_or_else(|| quote!(::core::env!("CARGO_PKG_AUTHORS")), |s| quote!(#s));
     let description = match &o.description {
-        Some(d) => quote!(::core::option::Option::Some((#d).to_string())),
-        None => quote!(match option_env!("CARGO_PKG_DESCRIPTION") {
+        Some(d) => quote!(::core::option::Option::Some(::std::string::String::from(#d))),
+        None => quote!(match ::core::option_env!("CARGO_PKG_DESCRIPTION") {
             ::core::option::Option::Some(d) if !d.is_empty() => {
-                ::core::option::Option::Some(d.to_string())
+                ::core::option::Option::Some(::std::string::String::from(d))
             }
             _ => ::core::option::Option::None,
         }),
@@ -200,9 +223,9 @@ fn generate_metadata_fn(o: &Overrides) -> syn::Result<TokenStream2> {
     Ok(quote! {
         fn metadata(&self) -> ::infrarust_plugin_sdk::PluginMetadata {
             ::infrarust_plugin_sdk::PluginMetadata {
-                id: (#id).to_string(),
-                name: (#name).to_string(),
-                version: (#version).to_string(),
+                id: ::std::string::String::from(#id),
+                name: ::std::string::String::from(#name),
+                version: ::std::string::String::from(#version),
                 authors: (#authors)
                     .split(':')
                     .filter(|s| !s.is_empty())
@@ -211,11 +234,11 @@ fn generate_metadata_fn(o: &Overrides) -> syn::Result<TokenStream2> {
                 description: #description,
                 dependencies: ::std::vec![
                     #(::infrarust_plugin_sdk::PluginDependency {
-                        id: (#hard).to_string(),
+                        id: ::std::string::String::from(#hard),
                         optional: false,
                     },)*
                     #(::infrarust_plugin_sdk::PluginDependency {
-                        id: (#soft).to_string(),
+                        id: ::std::string::String::from(#soft),
                         optional: true,
                     },)*
                 ],
@@ -409,6 +432,49 @@ mod tests {
         assert!(err.contains("impl Plugin for"), "{err}");
         let err = expand_err(quote!(), quote!(impl Display for Foo {}));
         assert!(err.contains("impl Plugin for"), "{err}");
+    }
+
+    #[test]
+    fn a_native_plugin_impl_is_named_as_such() {
+        let err = expand_err(quote!(), quote!(impl infrarust_api::Plugin for Foo {}));
+        assert!(err.contains("native `infrarust_api::Plugin`"), "{err}");
+        let err = expand_err(
+            quote!(),
+            quote! {
+                impl Plugin for Foo {
+                    fn on_enable<'a>(
+                        &'a self,
+                        ctx: &'a dyn PluginContext,
+                    ) -> BoxFuture<'a, Result<(), PluginError>> {
+                        unimplemented!()
+                    }
+                }
+            },
+        );
+        assert!(err.contains("native `infrarust_api::Plugin`"), "{err}");
+        assert!(
+            expand(
+                quote!(),
+                quote! {
+                    impl Plugin for Foo {
+                        fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+                            Ok(())
+                        }
+                    }
+                }
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_metadata_reads_cargo_through_absolute_paths() {
+        let expanded = expand(quote!(), quote!(impl Plugin for Foo {}))
+            .unwrap()
+            .to_string();
+        assert!(expanded.contains(":: core :: env !"), "{expanded}");
+        assert!(expanded.contains(":: core :: option_env !"), "{expanded}");
+        assert!(!expanded.contains("to_string"), "{expanded}");
     }
 
     #[test]
