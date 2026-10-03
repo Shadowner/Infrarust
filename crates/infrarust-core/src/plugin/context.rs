@@ -189,38 +189,60 @@ impl PluginContextImpl {
     }
 
     pub fn cleanup(&self) {
-        // Unsubscribe all event listeners
-        self.event_bus.unsubscribe_all();
+        let Self {
+            event_bus,
+            player_registry: _,
+            server_manager: _,
+            ban_service: _,
+            ban_manager,
+            registered_ban_provider,
+            permissions,
+            registered_permission_provider,
+            config_service: _,
+            load_balancer_service: _,
+            plugin_registry: _,
+            command_manager,
+            scheduler,
+            limbo_handlers,
+            services,
+            provider_activator,
+            queued_config_providers,
+            codec_filters,
+            transport_filters,
+            proxy_shutdown: _,
+            proxy_info: _,
+            plugin_id,
+            plugins_dir: _,
+            capabilities: _,
+            channels,
+        } = self;
 
-        // Unregister all commands
-        self.command_manager.unregister_all();
+        event_bus.unsubscribe_all();
+        command_manager.unregister_all();
+        codec_filters.unregister_all();
+        transport_filters.unregister_all();
+        scheduler.cancel_all();
+        limbo_handlers.unregister_owner(plugin_id);
+        services.withdraw_all();
 
-        self.codec_filters.unregister_all();
-        self.transport_filters.unregister_all();
-        self.scheduler.cancel_all();
-        self.limbo_handlers.unregister_owner(&self.plugin_id);
-        self.services.withdraw_all();
+        lock(queued_config_providers).clear();
+        provider_activator.deactivate(plugin_id);
 
-        lock(&self.queued_config_providers).clear();
-        self.provider_activator.deactivate(&self.plugin_id);
-
-        if self.registered_ban_provider.swap(false, Ordering::SeqCst)
-            && let Some(bans) = &self.ban_manager
+        if registered_ban_provider.swap(false, Ordering::SeqCst)
+            && let Some(bans) = ban_manager
         {
-            bans.unregister_provider(&self.plugin_id);
+            bans.unregister_provider(plugin_id);
         }
 
-        if self
-            .registered_permission_provider
-            .swap(false, Ordering::SeqCst)
-            && self.permissions.unregister_provider(&self.plugin_id)
+        if registered_permission_provider.swap(false, Ordering::SeqCst)
+            && permissions.unregister_provider(plugin_id)
         {
             self.refresh_online_players();
         }
-        self.permissions.unregister_nodes(&self.plugin_id);
-        self.channels.cleanup();
+        permissions.unregister_nodes(plugin_id);
+        channels.cleanup();
 
-        tracing::debug!(plugin = %self.plugin_id, "Plugin resources cleaned up");
+        tracing::debug!(plugin = %plugin_id, "Plugin resources cleaned up");
     }
 }
 
