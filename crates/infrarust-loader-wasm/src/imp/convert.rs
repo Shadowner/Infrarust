@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infrarust_api::event::ConnectionState;
 use infrarust_api::events::packet::PacketDirection;
-use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
+use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboOutcome, SessionEndReason};
 use infrarust_api::messaging::ChannelId;
 use infrarust_api::permissions::PermissionSubject;
 use infrarust_api::player::{
@@ -438,42 +438,41 @@ pub(crate) fn handler_result_with(
         wl::HandlerResult::Hold => HandlerResult::Hold,
         wl::HandlerResult::HoldWithTimeout(t) => HandlerResult::HoldWithTimeout {
             after: Duration::from_millis(t.after_ms),
-            on_timeout: Box::new(timeout_outcome_with(&t.on_timeout, text)?),
+            on_timeout: timeout_outcome_with(&t.on_timeout, text)?,
         },
         wl::HandlerResult::Redirect(s) => HandlerResult::Redirect(ServerId::from(s.as_str())),
         wl::HandlerResult::SendToLimbo(v) => HandlerResult::SendToLimbo(v.clone()),
     })
 }
 
-pub(crate) fn handler_result_from_wit(r: &wl::HandlerResult) -> Result<HandlerResult, ArenaError> {
-    handler_result_with(r, &mut component::from_wit)
-}
-
 pub(crate) fn timeout_outcome_with(
     t: &wl::TimeoutOutcome,
     text: TextConverter<'_>,
-) -> Result<HandlerResult, ArenaError> {
+) -> Result<LimboOutcome, ArenaError> {
     Ok(match t {
-        wl::TimeoutOutcome::Accept => HandlerResult::Accept,
-        wl::TimeoutOutcome::Deny(c) => HandlerResult::Deny(text(c)?),
-        wl::TimeoutOutcome::Redirect(s) => HandlerResult::Redirect(ServerId::from(s.as_str())),
-        wl::TimeoutOutcome::SendToLimbo(v) => HandlerResult::SendToLimbo(v.clone()),
+        wl::TimeoutOutcome::Accept => LimboOutcome::Accept,
+        wl::TimeoutOutcome::Deny(c) => LimboOutcome::Deny(text(c)?),
+        wl::TimeoutOutcome::Redirect(s) => LimboOutcome::Redirect(ServerId::from(s.as_str())),
+        wl::TimeoutOutcome::SendToLimbo(v) => LimboOutcome::SendToLimbo(v.clone()),
     })
 }
 
 const HOLD_NOT_A_COMPLETION: &str = "complete ends a hold and cannot start another: pass accept, deny, redirect or send-to-limbo; the current hold and its deadline stay in place";
 
-pub(crate) fn complete_result_from_wit(r: &wl::HandlerResult) -> HostResult<HandlerResult> {
-    if matches!(
-        r,
-        wl::HandlerResult::Hold | wl::HandlerResult::HoldWithTimeout(_)
-    ) {
-        return Err(host_error(
-            wt::ErrorKind::InvalidArgument,
-            HOLD_NOT_A_COMPLETION,
-        ));
-    }
-    handler_result_from_wit(r).map_err(|e| invalid_component(&e))
+pub(crate) fn complete_result_from_wit(r: &wl::HandlerResult) -> HostResult<LimboOutcome> {
+    let text = |c| component::from_wit(c).map_err(|e| invalid_component(&e));
+    Ok(match r {
+        wl::HandlerResult::Hold | wl::HandlerResult::HoldWithTimeout(_) => {
+            return Err(host_error(
+                wt::ErrorKind::InvalidArgument,
+                HOLD_NOT_A_COMPLETION,
+            ));
+        }
+        wl::HandlerResult::Accept => LimboOutcome::Accept,
+        wl::HandlerResult::Deny(c) => LimboOutcome::Deny(text(c)?),
+        wl::HandlerResult::Redirect(s) => LimboOutcome::Redirect(ServerId::from(s.as_str())),
+        wl::HandlerResult::SendToLimbo(v) => LimboOutcome::SendToLimbo(v.clone()),
+    })
 }
 
 pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntryContext {
@@ -499,8 +498,12 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-    fn timeout_outcome_from_wit(t: &wl::TimeoutOutcome) -> Result<HandlerResult, ArenaError> {
+    fn timeout_outcome_from_wit(t: &wl::TimeoutOutcome) -> Result<LimboOutcome, ArenaError> {
         timeout_outcome_with(t, &mut component::from_wit)
+    }
+
+    fn handler_result_from_wit(r: &wl::HandlerResult) -> Result<HandlerResult, ArenaError> {
+        handler_result_with(r, &mut component::from_wit)
     }
 
     fn text(message: &str) -> wt::Component {
@@ -685,21 +688,21 @@ mod tests {
         match handler_result_from_wit(&wit).unwrap() {
             HandlerResult::HoldWithTimeout { after, on_timeout } => {
                 assert_eq!(after, Duration::from_millis(1500));
-                assert!(matches!(*on_timeout, HandlerResult::Deny(_)));
+                assert!(matches!(on_timeout, LimboOutcome::Deny(_)));
             }
             other => panic!("expected HoldWithTimeout, got {other:?}"),
         }
     }
 
     #[test]
-    fn timeout_outcome_never_yields_a_hold() {
+    fn timeout_outcome_maps_to_the_native_outcome() {
         assert!(matches!(
             timeout_outcome_from_wit(&wl::TimeoutOutcome::Accept),
-            Ok(HandlerResult::Accept)
+            Ok(LimboOutcome::Accept)
         ));
         assert!(matches!(
             timeout_outcome_from_wit(&wl::TimeoutOutcome::SendToLimbo(vec!["a".to_owned()])),
-            Ok(HandlerResult::SendToLimbo(_))
+            Ok(LimboOutcome::SendToLimbo(_))
         ));
     }
 
@@ -716,11 +719,11 @@ mod tests {
         }
         assert!(matches!(
             complete_result_from_wit(&wl::HandlerResult::Redirect("lobby".to_owned())),
-            Ok(HandlerResult::Redirect(_))
+            Ok(LimboOutcome::Redirect(_))
         ));
         assert!(matches!(
             complete_result_from_wit(&wl::HandlerResult::Accept),
-            Ok(HandlerResult::Accept)
+            Ok(LimboOutcome::Accept)
         ));
     }
 

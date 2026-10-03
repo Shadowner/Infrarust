@@ -61,7 +61,7 @@ pub use crate::permissions::{
 // Limbo
 pub use crate::limbo::{
     HandlerResult, LimboEntryContext, LimboHandler, LimboHandlerError, LimboHandlerRegistration,
-    LimboSession, SessionEndReason, SessionHandle,
+    LimboOutcome, LimboSession, SessionEndReason, SessionHandle,
 };
 
 // Virtual backend

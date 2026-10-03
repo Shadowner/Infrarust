@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use infrarust_api::error::PlayerError;
-use infrarust_api::limbo::{HandlerResult, LimboSession, SessionHandle};
+use infrarust_api::limbo::{LimboOutcome, LimboSession, SessionHandle};
 use infrarust_api::types::{Component, PlayerId, TitleData};
 use wasmtime::component::Resource;
 
@@ -63,7 +63,7 @@ trait LimboTarget {
     fn send_message(&self, message: Component) -> Result<(), PlayerError>;
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError>;
     fn send_action_bar(&self, message: Component) -> Result<(), PlayerError>;
-    fn complete(&self, outcome: HandlerResult);
+    fn complete(&self, outcome: LimboOutcome);
 }
 
 impl LimboTarget for Arc<dyn LimboSession> {
@@ -83,7 +83,7 @@ impl LimboTarget for Arc<dyn LimboSession> {
         LimboSession::send_action_bar(&**self, message)
     }
 
-    fn complete(&self, outcome: HandlerResult) {
+    fn complete(&self, outcome: LimboOutcome) {
         LimboSession::complete(&**self, outcome);
     }
 }
@@ -105,7 +105,7 @@ impl LimboTarget for SessionHandle {
         Self::send_action_bar(self, message)
     }
 
-    fn complete(&self, outcome: HandlerResult) {
+    fn complete(&self, outcome: LimboOutcome) {
         Self::complete(self, outcome);
     }
 }

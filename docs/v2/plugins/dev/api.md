@@ -486,7 +486,7 @@ registration.unregister();
 
 Dropping the `LimboHandlerRegistration` keeps the handler registered. `unregister()` removes it and returns `false` if it was already gone. Disabling the plugin removes all of its handlers.
 
-A removed handler fails closed. Every player it holds (its `on_player_enter` returned `Hold` or `HoldWithTimeout` and has not completed) is released with `HandlerResult::unavailable()`, a denial with the text "Limbo handler unavailable". A player who reaches the handler afterwards through a chain resolved before the removal is denied the same way. Players who arrive later skip the missing name, as they do for any name no plugin registered.
+A removed handler fails closed. Every player it holds (its `on_player_enter` returned `Hold` or `HoldWithTimeout` and has not completed) is released with `LimboOutcome::unavailable()`, a denial with the text "Limbo handler unavailable". A player who reaches the handler afterwards through a chain resolved before the removal is denied the same way. Players who arrive later skip the missing name, as they do for any name no plugin registered.
 
 ## ServerManager
 

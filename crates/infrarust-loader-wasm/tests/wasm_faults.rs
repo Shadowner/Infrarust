@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use infrarust_api::event::{Event, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
 use infrarust_api::events::lifecycle::{PostLoginEvent, PreLoginEvent, PreLoginResult};
-use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
+use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler, LimboOutcome};
 use infrarust_api::loader::{PluginContextFactory, PluginLoader};
 use infrarust_api::plugin::Plugin;
 use infrarust_api::services::ban_service::BanService;
@@ -462,7 +462,7 @@ async fn a_hold_owned_by_the_trapped_instance_is_released_with_the_fallback() {
     ));
     let completions = held.completions();
     assert!(
-        matches!(completions.as_slice(), [HandlerResult::Deny(reason)] if reason.to_plain() == "Limbo handler unavailable"),
+        matches!(completions.as_slice(), [LimboOutcome::Deny(reason)] if reason.to_plain() == "Limbo handler unavailable"),
         "the player held by the trapped instance is released, got {completions:?}"
     );
 

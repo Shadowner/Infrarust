@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_api::error::PlayerError;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::limbo::session::{LimboSession, private};
 use infrarust_api::types::{Component, GameProfile, PlayerId, TitleData};
 use infrarust_protocol::io::PacketFrame;
@@ -33,7 +33,7 @@ pub(crate) struct LimboSessionImpl {
     protocol_version: ProtocolVersion,
     entry_context: LimboEntryContext,
     client_sender: mpsc::Sender<PacketFrame>,
-    complete_slot: Mutex<Option<oneshot::Sender<HandlerResult>>>,
+    complete_slot: Mutex<Option<oneshot::Sender<LimboOutcome>>>,
     limbo_token: CancellationToken,
     hold_seq: AtomicU64,
     packet_registry: Arc<PacketRegistry>,
@@ -64,7 +64,7 @@ impl LimboSessionImpl {
         })
     }
 
-    pub(crate) fn begin_handler(&self) -> oneshot::Receiver<HandlerResult> {
+    pub(crate) fn begin_handler(&self) -> oneshot::Receiver<LimboOutcome> {
         let (tx, rx) = oneshot::channel();
         let mut slot = self.lock_slot();
         self.hold_seq.fetch_add(1, Ordering::SeqCst);
@@ -76,7 +76,7 @@ impl LimboSessionImpl {
         self.hold_seq.load(Ordering::SeqCst)
     }
 
-    fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<HandlerResult>>> {
+    fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<LimboOutcome>>> {
         lock(&self.complete_slot)
     }
 
@@ -133,26 +133,16 @@ impl LimboSession for LimboSessionImpl {
         self.push(frame)
     }
 
-    fn complete(&self, result: HandlerResult) {
-        self.complete_scoped(self.current_hold_id(), result);
+    fn complete(&self, outcome: LimboOutcome) {
+        self.complete_scoped(self.current_hold_id(), outcome);
     }
 
-    fn complete_scoped(&self, hold_id: u64, result: HandlerResult) {
-        if matches!(
-            result,
-            HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. }
-        ) {
-            tracing::warn!(
-                player = %self.profile.username,
-                "limbo complete() was passed a hold; it ends a hold and cannot start another, so the player stays held and the current hold keeps its deadline"
-            );
-            return;
-        }
+    fn complete_scoped(&self, hold_id: u64, outcome: LimboOutcome) {
         let mut slot = self.lock_slot();
         if hold_id == self.current_hold_id()
             && let Some(tx) = slot.take()
         {
-            let _ = tx.send(result);
+            let _ = tx.send(outcome);
         }
     }
 
@@ -176,7 +166,6 @@ mod tests {
 
     use super::super::test_helpers::test_profile;
     use super::*;
-    use infrarust_api::limbo::handler::HandlerResult;
     use infrarust_api::types::PlayerId;
     use infrarust_protocol::version::ProtocolVersion;
 
@@ -242,10 +231,10 @@ mod tests {
         let (session, _rx) = make_session();
         let mut complete_rx = session.begin_handler();
 
-        session.complete(HandlerResult::Accept);
+        session.complete(LimboOutcome::Accept);
 
         match complete_rx.try_recv() {
-            Ok(HandlerResult::Accept) => {}
+            Ok(LimboOutcome::Accept) => {}
             other => panic!("expected latched Accept, got {other:?}"),
         }
     }
@@ -255,11 +244,11 @@ mod tests {
         let (session, _rx) = make_session();
         let mut complete_rx = session.begin_handler();
 
-        session.complete(HandlerResult::Accept);
-        session.complete(HandlerResult::Deny(Component::text("late")));
+        session.complete(LimboOutcome::Accept);
+        session.complete(LimboOutcome::Deny(Component::text("late")));
 
         match complete_rx.try_recv() {
-            Ok(HandlerResult::Accept) => {}
+            Ok(LimboOutcome::Accept) => {}
             other => panic!("expected first Accept to win, got {other:?}"),
         }
     }
@@ -268,7 +257,7 @@ mod tests {
     fn unconsumed_completion_is_dropped_when_next_handler_begins() {
         let (session, _rx) = make_session();
         let _rx1 = session.begin_handler();
-        session.complete(HandlerResult::Accept); // latched, never consumed
+        session.complete(LimboOutcome::Accept); // latched, never consumed
 
         let mut rx2 = session.begin_handler();
         assert!(
@@ -285,11 +274,11 @@ mod tests {
         let stale = session.handle(); // captures generation 1
         let mut rx2 = session.begin_handler(); // advance to generation 2 (a later handler)
 
-        stale.complete(HandlerResult::Accept);
+        stale.complete(LimboOutcome::Accept);
         assert!(rx2.try_recv().is_err(), "stale handle should be a no-op");
 
         let current = session.handle(); // captures generation 2
-        current.complete(HandlerResult::Accept);
+        current.complete(LimboOutcome::Accept);
         assert!(
             rx2.try_recv().is_ok(),
             "current-generation handle should complete the Hold"
@@ -352,28 +341,5 @@ mod tests {
             matches!(result, Err(PlayerError::SendFailed(_))),
             "{result:?}"
         );
-    }
-
-    #[test]
-    fn a_hold_passed_to_complete_is_refused_and_the_hold_stays_open() {
-        let (session, _rx) = make_session();
-        let mut complete_rx = session.begin_handler();
-        let handle = session.handle();
-
-        session.complete(HandlerResult::Hold);
-        handle.complete(HandlerResult::HoldWithTimeout {
-            after: std::time::Duration::from_secs(30),
-            on_timeout: Box::new(HandlerResult::Accept),
-        });
-        assert!(
-            complete_rx.try_recv().is_err(),
-            "a hold is not a completion and must not release the player"
-        );
-
-        handle.complete(HandlerResult::Deny(Component::text("bye")));
-        match complete_rx.try_recv() {
-            Ok(HandlerResult::Deny(reason)) => assert_eq!(reason, Component::text("bye")),
-            other => panic!("the later completion still ends the hold, got {other:?}"),
-        }
     }
 }

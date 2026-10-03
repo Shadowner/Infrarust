@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, LimboOutcome, SessionEndReason};
 use infrarust_api::limbo::registration::LimboHandlerError;
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::types::PlayerId;
@@ -46,7 +46,7 @@ impl ManagedHandler {
         };
         let live: Vec<&SessionHandle> = held.values().filter(|h| !ended(h)).collect();
         for handle in &live {
-            handle.complete(HandlerResult::unavailable());
+            handle.complete(LimboOutcome::unavailable());
         }
         live.len()
     }
@@ -327,8 +327,8 @@ mod tests {
         )
     }
 
-    fn is_unavailable(results: &[HandlerResult]) -> bool {
-        matches!(results, [HandlerResult::Deny(reason)] if reason.to_plain() == infrarust_api::limbo::HANDLER_UNAVAILABLE)
+    fn is_unavailable(results: &[LimboOutcome]) -> bool {
+        matches!(results, [LimboOutcome::Deny(reason)] if reason.to_plain() == infrarust_api::limbo::HANDLER_UNAVAILABLE)
     }
 
     #[test]
@@ -407,7 +407,10 @@ mod tests {
         assert!(is_unavailable(&held.completions()));
         assert!(left.completions().is_empty());
         let late = session(3);
-        assert!(is_unavailable(&[gate.on_player_enter(late.as_ref()).await]));
+        assert!(matches!(
+            gate.on_player_enter(late.as_ref()).await,
+            HandlerResult::Deny(reason) if reason.to_plain() == infrarust_api::limbo::HANDLER_UNAVAILABLE
+        ));
         gate.on_session_end(PlayerId::new(1), SessionEndReason::Kicked)
             .await;
         assert_eq!(session_ends.load(Ordering::SeqCst), 1);

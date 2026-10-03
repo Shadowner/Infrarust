@@ -210,7 +210,7 @@ impl LimboHandler for TestGateHandler {
             tracing::info!("[TestGate] Player {player_id:?} typed /success, releasing from limbo");
             let _ =
                 session.send_message(Component::text("Redirecting to server...").color("green"));
-            session.complete(HandlerResult::Accept);
+            session.complete(LimboOutcome::Accept);
         } else {
             let _ = session
                 .send_message(Component::text(format!("Unknown command: /{command}")).color("red"));

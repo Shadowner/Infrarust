@@ -9,7 +9,7 @@ use infrarust_api::events::connection::{
     PlayerChooseInitialServerEvent, ServerConnectedEvent, ServerPostConnectEvent,
     ServerPreConnectEvent,
 };
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ServerId};
@@ -540,7 +540,7 @@ async fn a_limbo_gate_on_the_initial_server_connects_once(version: ProtocolVersi
     assert_eq!(proxy.services().player_registry.online_count_on(&lobby), 1);
     assert_eq!(backend.accepted_connections(), 0);
 
-    handle.complete(HandlerResult::Accept);
+    handle.complete(LimboOutcome::Accept);
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     session.sync_with(player.as_ref(), T).await.unwrap();
@@ -596,7 +596,7 @@ async fn leaving_an_initial_gate_for_another_server_is_a_limbo_exit(version: Pro
     let handle = next_hold(&mut holds, T).await.unwrap().handle;
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
 
-    handle.complete(HandlerResult::Redirect(ServerId::new("game")));
+    handle.complete(LimboOutcome::Redirect(ServerId::new("game")));
     let _conn = game.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     session.sync_with(player.as_ref(), T).await.unwrap();

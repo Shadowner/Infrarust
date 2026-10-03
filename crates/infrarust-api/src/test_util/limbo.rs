@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::PlayerError;
 use crate::limbo::context::LimboEntryContext;
 use crate::limbo::handle::SessionHandle;
-use crate::limbo::handler::HandlerResult;
+use crate::limbo::handler::LimboOutcome;
 use crate::limbo::session::LimboSession;
 use crate::limbo::session::private::Sealed;
 use crate::types::{Component, GameProfile, PlayerId, TitleData};
@@ -17,7 +17,7 @@ struct Recorded {
     messages: Mutex<Vec<Component>>,
     titles: Mutex<Vec<TitleData>>,
     action_bars: Mutex<Vec<Component>>,
-    completions: Mutex<Vec<HandlerResult>>,
+    completions: Mutex<Vec<LimboOutcome>>,
 }
 
 pub struct RecordingLimboSession {
@@ -60,7 +60,7 @@ impl RecordingLimboSession {
     }
 
     #[must_use]
-    pub fn completions(&self) -> Vec<HandlerResult> {
+    pub fn completions(&self) -> Vec<LimboOutcome> {
         lock(&self.recorded.completions).clone()
     }
 }
@@ -95,12 +95,12 @@ impl LimboSession for RecordingLimboSession {
         Ok(())
     }
 
-    fn complete(&self, result: HandlerResult) {
-        lock(&self.recorded.completions).push(result);
+    fn complete(&self, outcome: LimboOutcome) {
+        lock(&self.recorded.completions).push(outcome);
     }
 
-    fn complete_scoped(&self, _hold_id: u64, result: HandlerResult) {
-        lock(&self.recorded.completions).push(result);
+    fn complete_scoped(&self, _hold_id: u64, outcome: LimboOutcome) {
+        lock(&self.recorded.completions).push(outcome);
     }
 
     fn handle(&self) -> SessionHandle {
@@ -139,11 +139,11 @@ mod tests {
         );
         let handle = session.handle();
         handle.send_message(Component::text("hi")).unwrap();
-        handle.complete(HandlerResult::Accept);
+        handle.complete(LimboOutcome::Accept);
         assert_eq!(session.messages(), vec![Component::text("hi")]);
         assert!(matches!(
             session.completions().as_slice(),
-            [HandlerResult::Accept]
+            [LimboOutcome::Accept]
         ));
         assert_eq!(handle.player_id(), PlayerId::new(1));
     }

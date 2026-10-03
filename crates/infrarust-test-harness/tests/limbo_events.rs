@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use infrarust_api::event::{EventPriority, ResultedEvent};
 use infrarust_api::events::connection::{KickedFromServerEvent, KickedFromServerResult};
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_test_harness::{
     DEFAULT_TIMEOUT, EventKind, FakeBackend, ProtocolVersion, Recorded, Recorder, ScriptedPlugin,
@@ -58,7 +58,7 @@ async fn an_initial_gate_enters_and_leaves_limbo_before_the_server(version: Prot
     assert_eq!(recorder.count(EventKind::LimboEnter), 1);
     assert_eq!(recorder.count(EventKind::LimboExit), 0);
 
-    handle.complete(HandlerResult::Accept);
+    handle.complete(LimboOutcome::Accept);
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     session.sync_with(player.as_ref(), T).await.unwrap();
@@ -143,7 +143,7 @@ async fn a_limbo_redirect_names_the_next_server(version: ProtocolVersion) {
     let handle = next_hold(&mut holds, T).await.unwrap().handle;
     let player = proxy.wait_for_player(STEVE, T).await.unwrap();
 
-    handle.complete(HandlerResult::Redirect(ServerId::new("game")));
+    handle.complete(LimboOutcome::Redirect(ServerId::new("game")));
     let _conn = game.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     session.sync_with(player.as_ref(), T).await.unwrap();

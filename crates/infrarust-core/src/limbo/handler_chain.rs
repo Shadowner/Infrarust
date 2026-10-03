@@ -6,6 +6,7 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
+use std::ops::ControlFlow;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +17,9 @@ use tokio::sync::oneshot::error::TryRecvError;
 
 use infrarust_api::event::{BoxFuture, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
-use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, HandlerResult, LimboHandler};
+use infrarust_api::limbo::handler::{
+    HANDLER_UNAVAILABLE, HandlerResult, LimboHandler, LimboOutcome,
+};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
@@ -63,7 +66,7 @@ pub(crate) struct Limbo {
 
 pub(crate) struct Hold {
     timeout: Option<HoldTimeout>,
-    complete: oneshot::Receiver<HandlerResult>,
+    complete: oneshot::Receiver<LimboOutcome>,
 }
 
 pub(crate) async fn run_handler_chain(
@@ -107,12 +110,8 @@ pub(crate) async fn run_handler_chain(
                 }
                 let hold = Hold { timeout, complete };
                 match wait_for_hold(ctx, io, limbo, handler.as_ref(), hold).await {
-                    HandlerAction::Continue => continue,
-                    HandlerAction::Exit(chain_result) => return chain_result,
-                    HandlerAction::Hold(_) => {
-                        tracing::warn!("limbo complete() delivered a Hold result; denying");
-                        return unavailable();
-                    }
+                    ControlFlow::Continue(()) => continue,
+                    ControlFlow::Break(chain_result) => return chain_result,
                 }
             }
         }
@@ -131,7 +130,7 @@ enum HandlerAction {
 #[derive(Debug)]
 struct HoldTimeout {
     after: Duration,
-    on_timeout: HandlerResult,
+    on_timeout: LimboOutcome,
 }
 
 fn unavailable() -> LimboChainResult {
@@ -148,17 +147,26 @@ fn process_handler_result(result: HandlerResult) -> HandlerAction {
         }
         HandlerResult::Hold => HandlerAction::Hold(None),
         HandlerResult::HoldWithTimeout { after, on_timeout } => {
-            let on_timeout = match *on_timeout {
-                HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. } => {
-                    HandlerResult::Accept
-                }
-                other => other,
-            };
             HandlerAction::Hold(Some(HoldTimeout { after, on_timeout }))
         }
         unknown => {
             tracing::warn!(result = ?unknown, "unknown limbo handler result; denying");
             HandlerAction::Exit(unavailable())
+        }
+    }
+}
+
+fn process_outcome(outcome: LimboOutcome) -> ControlFlow<LimboChainResult> {
+    match outcome {
+        LimboOutcome::Accept => ControlFlow::Continue(()),
+        LimboOutcome::Deny(reason) => ControlFlow::Break(LimboChainResult::Kick(reason)),
+        LimboOutcome::Redirect(server) => ControlFlow::Break(LimboChainResult::Switch(server)),
+        LimboOutcome::SendToLimbo(handlers) => {
+            ControlFlow::Break(LimboChainResult::SendToLimbo(handlers))
+        }
+        unknown => {
+            tracing::warn!(outcome = ?unknown, "unknown limbo outcome; denying");
+            ControlFlow::Break(unavailable())
         }
     }
 }
@@ -209,7 +217,7 @@ async fn wait_for_hold(
     limbo: &mut Limbo,
     handler: &dyn LimboHandler,
     hold: Hold,
-) -> HandlerAction {
+) -> ControlFlow<LimboChainResult> {
     let SessionIo {
         client, commands, ..
     } = io;
@@ -244,14 +252,14 @@ async fn wait_for_hold(
     let mut in_flight: Option<BoxFuture<'_, Option<()>>> = None;
 
     let released = commands.drain(client, &core.packet_registry, true);
-    if let Some(action) = settle_commands(client, commands, &core.packet_registry, released).await {
-        return action;
+    if let Some(exit) = settle_commands(client, commands, &core.packet_registry, released).await {
+        return ControlFlow::Break(exit);
     }
 
     loop {
         if in_flight.is_none() {
             match complete.try_recv() {
-                Ok(result) => return process_handler_result(result),
+                Ok(outcome) => return process_outcome(outcome),
                 Err(TryRecvError::Closed) => return completion_lost(),
                 Err(TryRecvError::Empty) => {}
             }
@@ -265,19 +273,19 @@ async fn wait_for_hold(
 
             Some(command) = commands.recv() => {
                 let outcome = commands.apply(command, client, &core.packet_registry, true);
-                if let Some(action) = settle_commands(client, commands, &core.packet_registry, outcome).await {
-                    return action;
+                if let Some(exit) = settle_commands(client, commands, &core.packet_registry, outcome).await {
+                    return ControlFlow::Break(exit);
                 }
             }
 
             () = ctx.token.cancelled() => {
-                return HandlerAction::Exit(cancelled(client, commands, &core.packet_registry));
+                return ControlFlow::Break(cancelled(client, commands, &core.packet_registry));
             }
 
             handled = run_in_flight(&mut in_flight), if in_flight.is_some() => {
                 in_flight = None;
                 if handled.is_none() {
-                    return HandlerAction::Exit(unavailable());
+                    return ControlFlow::Break(unavailable());
                 }
             }
 
@@ -300,18 +308,18 @@ async fn wait_for_hold(
                             }
                         }
                     }
-                    Ok(None) => return HandlerAction::Exit(LimboChainResult::ClientDisconnected),
+                    Ok(None) => return ControlFlow::Break(LimboChainResult::ClientDisconnected),
                     Err(e) if e.is_expected_disconnect() => {
-                        return HandlerAction::Exit(LimboChainResult::ClientDisconnected);
+                        return ControlFlow::Break(LimboChainResult::ClientDisconnected);
                     }
-                    Err(e) => return HandlerAction::Exit(LimboChainResult::Error(e)),
+                    Err(e) => return ControlFlow::Break(LimboChainResult::Error(e)),
                 }
             }
 
             frame = core.outgoing_rx.recv() => {
                 if let Some(frame) = frame
                     && client.write_frame(&frame).await.is_err() {
-                        return HandlerAction::Exit(LimboChainResult::ClientDisconnected);
+                        return ControlFlow::Break(LimboChainResult::ClientDisconnected);
                     }
             }
 
@@ -319,35 +327,35 @@ async fn wait_for_hold(
                 match keepalive.tick(core.protocol_version, &core.packet_registry) {
                     Ok(KeepAliveTick::Send(frame)) => {
                         if client.write_frame(&frame).await.is_err() {
-                            return HandlerAction::Exit(LimboChainResult::ClientDisconnected);
+                            return ControlFlow::Break(LimboChainResult::ClientDisconnected);
                         }
                     }
                     Ok(KeepAliveTick::Idle) => {}
                     Ok(KeepAliveTick::Timeout) | Err(_) => {
-                        return HandlerAction::Exit(LimboChainResult::Timeout);
+                        return ControlFlow::Break(LimboChainResult::Timeout);
                     }
                 }
             }
 
             result = &mut complete, if in_flight.is_none() => {
                 return match result {
-                    Ok(result) => process_handler_result(result),
+                    Ok(outcome) => process_outcome(outcome),
                     Err(_) => completion_lost(),
                 };
             }
 
             () = &mut hold_timeout, if in_flight.is_none() => {
-                if let Some(result) = on_timeout.clone() {
-                    return process_handler_result(result);
+                if let Some(outcome) = on_timeout.clone() {
+                    return process_outcome(outcome);
                 }
             }
         }
     }
 }
 
-fn completion_lost() -> HandlerAction {
+fn completion_lost() -> ControlFlow<LimboChainResult> {
     tracing::warn!("limbo hold completion sender dropped without a result; denying");
-    HandlerAction::Exit(unavailable())
+    ControlFlow::Break(unavailable())
 }
 
 async fn run_in_flight(in_flight: &mut Option<BoxFuture<'_, Option<()>>>) -> Option<()> {
@@ -425,7 +433,7 @@ async fn settle_commands(
     commands: &mut CommandInbox,
     registry: &PacketRegistry,
     mut outcome: CommandOutcome,
-) -> Option<HandlerAction> {
+) -> Option<LimboChainResult> {
     let exit = loop {
         match outcome {
             CommandOutcome::Switch(target, _) if target.as_str() == LIMBO_SWITCH_TARGET => {
@@ -439,9 +447,9 @@ async fn settle_commands(
     };
     commands.deliver_messages(client, None, registry, true);
     if client.flush().await.is_err() {
-        return Some(HandlerAction::Exit(LimboChainResult::ClientDisconnected));
+        return Some(LimboChainResult::ClientDisconnected);
     }
-    exit.map(HandlerAction::Exit)
+    exit
 }
 
 #[cfg(test)]
@@ -456,7 +464,7 @@ mod tests {
 
     use infrarust_api::event::BoxFuture;
     use infrarust_api::limbo::context::LimboEntryContext;
-    use infrarust_api::limbo::handler::HandlerResult;
+    use infrarust_api::limbo::handler::{HandlerResult, LimboOutcome};
     use infrarust_api::limbo::session::LimboSession;
     use infrarust_api::types::{Component, PlayerId, ServerId};
     use infrarust_protocol::version::ProtocolVersion;
@@ -570,11 +578,11 @@ mod tests {
         }
     }
 
-    fn complete_later(session: &Arc<LimboSessionImpl>, delay_ms: u64, result: HandlerResult) {
+    fn complete_later(session: &Arc<LimboSessionImpl>, delay_ms: u64, outcome: LimboOutcome) {
         let session = Arc::clone(session);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            session.complete(result);
+            session.complete(outcome);
         });
     }
 
@@ -656,7 +664,7 @@ mod tests {
         let mut p = plumbing(&services, &connector).await;
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
 
-        complete_later(&p.limbo.session, 50, HandlerResult::Accept);
+        complete_later(&p.limbo.session, 50, LimboOutcome::Accept);
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::Completed));
@@ -672,7 +680,7 @@ mod tests {
         complete_later(
             &p.limbo.session,
             50,
-            HandlerResult::Redirect(ServerId::new("survival")),
+            LimboOutcome::Redirect(ServerId::new("survival")),
         );
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
@@ -732,7 +740,7 @@ mod tests {
             name: "hold_timeout",
             result: HandlerResult::HoldWithTimeout {
                 after: Duration::from_millis(50),
-                on_timeout: Box::new(HandlerResult::Deny(Component::text("timed out"))),
+                on_timeout: LimboOutcome::Deny(Component::text("timed out")),
             },
         })];
 
@@ -749,11 +757,11 @@ mod tests {
             name: "hold_timeout",
             result: HandlerResult::HoldWithTimeout {
                 after: Duration::from_secs(30),
-                on_timeout: Box::new(HandlerResult::Deny(Component::text("should not fire"))),
+                on_timeout: LimboOutcome::Deny(Component::text("should not fire")),
             },
         })];
 
-        complete_later(&p.limbo.session, 50, HandlerResult::Accept);
+        complete_later(&p.limbo.session, 50, LimboOutcome::Accept);
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(matches!(result, LimboChainResult::Completed));
@@ -762,7 +770,7 @@ mod tests {
     /// Completes the session with `completion` during `on_player_enter`, then
     /// returns `result` -- leaving the completion latched but unconsumed.
     struct CompleteThenReturn {
-        completion: HandlerResult,
+        completion: LimboOutcome,
         result: HandlerResult,
     }
 
@@ -791,13 +799,13 @@ mod tests {
         // handler B's Hold must not be released by it.
         let handlers: Vec<Arc<dyn LimboHandler>> = vec![
             Arc::new(CompleteThenReturn {
-                completion: HandlerResult::Redirect(ServerId::new("survival")),
+                completion: LimboOutcome::Redirect(ServerId::new("survival")),
                 result: HandlerResult::Accept,
             }),
             Arc::new(HoldHandler { name: "hold" }),
         ];
 
-        complete_later(&p.limbo.session, 150, HandlerResult::Accept);
+        complete_later(&p.limbo.session, 150, LimboOutcome::Accept);
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(
@@ -813,12 +821,11 @@ mod tests {
         let mut p = plumbing(&services, &connector).await;
 
         // Handler A held with a timeout; a complete() landed at the deadline
-        // but the timeout arm won with a non-terminal result, so the
-        // completion was never consumed.
+        // but the timeout arm won, so the completion was never consumed.
         let _rx_a = p.limbo.session.begin_handler();
         p.limbo
             .session
-            .complete(HandlerResult::Redirect(ServerId::new("survival")));
+            .complete(LimboOutcome::Redirect(ServerId::new("survival")));
 
         // Handler B's hold must not see A's stale completion.
         let rx_b = p.limbo.session.begin_handler();
@@ -841,70 +848,6 @@ mod tests {
             held.is_err(),
             "handler B was released by handler A's stale completion: {held:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn a_hold_passed_to_complete_keeps_the_player_held_until_a_real_completion() {
-        let services = test_proxy_services();
-        let connector = test_connector();
-        let mut p = plumbing(&services, &connector).await;
-        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HoldHandler { name: "hold" })];
-
-        complete_later(&p.limbo.session, 20, HandlerResult::Hold);
-        complete_later(
-            &p.limbo.session,
-            150,
-            HandlerResult::Deny(Component::text("done")),
-        );
-
-        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
-        match result {
-            LimboChainResult::Kick(reason) => assert_eq!(reason, Component::text("done")),
-            other => panic!("the refused hold released the player: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_hold_passed_to_complete_leaves_the_current_deadline_in_place() {
-        let services = test_proxy_services();
-        let connector = test_connector();
-        let mut p = plumbing(&services, &connector).await;
-        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
-            name: "timed",
-            result: HandlerResult::HoldWithTimeout {
-                after: Duration::from_millis(150),
-                on_timeout: Box::new(HandlerResult::Deny(Component::text("timed out"))),
-            },
-        })];
-
-        complete_later(
-            &p.limbo.session,
-            20,
-            HandlerResult::HoldWithTimeout {
-                after: Duration::from_secs(30),
-                on_timeout: Box::new(HandlerResult::Accept),
-            },
-        );
-
-        let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
-        match result {
-            LimboChainResult::Kick(reason) => assert_eq!(reason, Component::text("timed out")),
-            other => panic!("the refused hold changed the deadline: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_hold_with_timeout_nested_hold_coerced_to_accept() {
-        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(FixedHandler {
-            name: "nested",
-            result: HandlerResult::HoldWithTimeout {
-                after: Duration::from_millis(50),
-                on_timeout: Box::new(HandlerResult::Hold),
-            },
-        })];
-
-        let result = run(handlers).await;
-        assert!(matches!(result, LimboChainResult::Completed));
     }
 
     fn is_unavailable(result: &LimboChainResult) -> bool {
@@ -990,7 +933,7 @@ mod tests {
             _args: &'a [&'a str],
         ) -> BoxFuture<'a, ()> {
             self.seen.lock().unwrap().push(command.to_string());
-            session.complete(HandlerResult::Accept);
+            session.complete(LimboOutcome::Accept);
             Box::pin(async {})
         }
 

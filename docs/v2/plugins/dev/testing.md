@@ -212,7 +212,7 @@ let session = RecordingLimboSession::new(
 
 assert!(matches!(handler.on_player_enter(session.as_ref()).await, HandlerResult::Hold));
 handler.on_command(session.as_ref(), "login", &["hunter2"]).await;
-assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
 ```
 
 The auth plugin's tests (`plugins/infrarust-plugin-auth/src/test_support.rs`) are built on these mocks.

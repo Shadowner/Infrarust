@@ -87,7 +87,7 @@ async fn an_outcome_for_another_event_is_ignored_with_a_warning_and_a_matching_o
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_limbo_entry_outcome_reaches_the_engine_as_the_guest_chose_it() {
-    use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
+    use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler, LimboOutcome};
     use infrarust_api::test_util::RecordingLimboSession;
     use infrarust_api::types::PlayerId;
 
@@ -140,6 +140,6 @@ async fn every_limbo_entry_outcome_reaches_the_engine_as_the_guest_chose_it() {
     };
     assert_eq!(after, std::time::Duration::from_millis(1500));
     assert!(
-        matches!(*on_timeout, HandlerResult::Redirect(ref server) if server.as_str() == "fallback")
+        matches!(on_timeout, LimboOutcome::Redirect(ref server) if server.as_str() == "fallback")
     );
 }

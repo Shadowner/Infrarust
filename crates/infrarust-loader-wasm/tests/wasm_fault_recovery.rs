@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::chat::ChatMessageResult;
-use infrarust_api::limbo::{HandlerResult, LimboSession};
+use infrarust_api::limbo::{HandlerResult, LimboOutcome, LimboSession};
 use infrarust_api::loader::PluginLoader;
 use tracing::Level;
 use tracing::instrument::WithSubscriber;
@@ -72,7 +72,7 @@ async fn recover_once(lab: &Lab, round: u64) {
     lab.set_faults(LAB, EVERYTHING);
     let completions = held.completions();
     assert!(
-        matches!(completions.as_slice(), [HandlerResult::Deny(reason)] if reason.to_plain() == "Limbo handler unavailable"),
+        matches!(completions.as_slice(), [LimboOutcome::Deny(reason)] if reason.to_plain() == "Limbo handler unavailable"),
         "round {round}: the held player is released exactly once: {completions:?}"
     );
 }
@@ -665,7 +665,7 @@ async fn a_hold_whose_session_went_on_to_another_limbo_is_forgotten() {
         moved.completions()
     );
     assert!(
-        matches!(held.completions().as_slice(), [HandlerResult::Deny(_)]),
+        matches!(held.completions().as_slice(), [LimboOutcome::Deny(_)]),
         "the player still held is released with a deny: {:?}",
         held.completions()
     );

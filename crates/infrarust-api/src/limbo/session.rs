@@ -7,7 +7,7 @@ use crate::types::{Component, GameProfile, PlayerId, TitleData};
 
 use super::context::LimboEntryContext;
 use super::handle::SessionHandle;
-use super::handler::HandlerResult;
+use super::handler::LimboOutcome;
 
 pub mod private {
     /// Sealed — only the proxy implements [`LimboSession`](super::LimboSession).
@@ -50,15 +50,16 @@ pub trait LimboSession: Send + Sync + private::Sealed {
 
     /// Signals that this handler is done processing the player.
     ///
-    /// Call this when the handler returned [`HandlerResult::Hold`] and
-    /// is now ready to release the player.
-    fn complete(&self, result: HandlerResult);
+    /// Call this when the handler returned
+    /// [`HandlerResult::Hold`](super::handler::HandlerResult::Hold) and is now
+    /// ready to release the player.
+    fn complete(&self, outcome: LimboOutcome);
 
     /// Like [`complete`](Self::complete) but scoped to the Hold generation captured
     /// when a [`SessionHandle`] was minted. No-ops if the session has since advanced
     /// to a later handler/Hold so a retained handle can never release the wrong
     /// Hold (e.g. a backend state-change firing after the player already moved on).
-    fn complete_scoped(&self, hold_id: u64, result: HandlerResult);
+    fn complete_scoped(&self, hold_id: u64, outcome: LimboOutcome);
 
     /// Returns a cloneable, `'static` handle to this session.
     ///

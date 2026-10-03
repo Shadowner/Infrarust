@@ -7,6 +7,7 @@
 //! - [`LimboHandler`] — plugin-implemented trait for handling players in limbo.
 //! - [`LimboSession`] — proxy-provided session handle (sealed).
 //! - [`HandlerResult`] — the outcome of a limbo handler action.
+//! - [`LimboOutcome`] — the terminal outcome that ends a hold.
 
 pub mod context;
 pub mod handle;
@@ -16,6 +17,8 @@ pub mod session;
 
 pub use context::LimboEntryContext;
 pub use handle::SessionHandle;
-pub use handler::{HANDLER_UNAVAILABLE, HandlerResult, LimboHandler, SessionEndReason};
+pub use handler::{
+    HANDLER_UNAVAILABLE, HandlerResult, LimboHandler, LimboOutcome, SessionEndReason,
+};
 pub use registration::{LimboHandlerError, LimboHandlerRegistration};
 pub use session::LimboSession;

@@ -24,23 +24,50 @@ pub enum HandlerResult {
     SendToLimbo(Vec<String>),
     /// Hold, but auto-complete with `on_timeout` if [`LimboSession::complete`] is
     /// not called within `after`. The engine owns the timer, so the deadline holds
-    /// even if the handler's own tasks die. `on_timeout` must be terminal
-    /// (`Accept`/`Deny`/`Redirect`/`SendToLimbo`); a nested hold is treated as
-    /// `Accept` to avoid re-arming forever.
+    /// even if the handler's own tasks die.
     HoldWithTimeout {
         /// How long to wait before auto-completing.
         after: Duration,
-        /// The result to apply when the deadline elapses.
-        on_timeout: Box<HandlerResult>,
+        /// The outcome to apply when the deadline elapses.
+        on_timeout: LimboOutcome,
     },
+}
+
+/// A terminal outcome that ends a hold, passed to [`LimboSession::complete`] or
+/// applied when a [`HandlerResult::HoldWithTimeout`] deadline elapses.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum LimboOutcome {
+    Accept,
+    Deny(Component),
+    Redirect(ServerId),
+    SendToLimbo(Vec<String>),
+}
+
+impl From<LimboOutcome> for HandlerResult {
+    fn from(outcome: LimboOutcome) -> Self {
+        match outcome {
+            LimboOutcome::Accept => Self::Accept,
+            LimboOutcome::Deny(reason) => Self::Deny(reason),
+            LimboOutcome::Redirect(server) => Self::Redirect(server),
+            LimboOutcome::SendToLimbo(handlers) => Self::SendToLimbo(handlers),
+        }
+    }
 }
 
 pub const HANDLER_UNAVAILABLE: &str = "Limbo handler unavailable";
 
-impl HandlerResult {
+impl LimboOutcome {
     #[must_use]
     pub fn unavailable() -> Self {
         Self::Deny(Component::text(HANDLER_UNAVAILABLE))
+    }
+}
+
+impl HandlerResult {
+    #[must_use]
+    pub fn unavailable() -> Self {
+        LimboOutcome::unavailable().into()
     }
 }
 

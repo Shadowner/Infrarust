@@ -6,7 +6,7 @@ mod support;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler};
+use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboHandler, LimboOutcome};
 use infrarust_api::loader::PluginLoader;
 use infrarust_api::test_util::RecordingLimboSession;
 use infrarust_api::types::{PlayerId, ServerId};
@@ -94,7 +94,7 @@ async fn command_completes_the_hold_with_accept() {
     let completions = session.completions();
     assert_eq!(completions.len(), 1, "`/continue` completed the hold once");
     assert!(
-        matches!(completions[0], HandlerResult::Accept),
+        matches!(completions[0], LimboOutcome::Accept),
         "`/continue` accepts the player"
     );
 }
@@ -114,7 +114,7 @@ async fn command_can_redirect() {
 
     let completions = session.completions();
     assert!(
-        matches!(completions.last(), Some(HandlerResult::Redirect(server)) if server.as_str() == "hub"),
+        matches!(completions.last(), Some(LimboOutcome::Redirect(server)) if server.as_str() == "hub"),
         "`/redirect` redirects to the named server, got {completions:?}"
     );
 }
@@ -211,7 +211,7 @@ async fn timed_gate_holds_with_timeout_then_command_accepts() {
                 "the guest's 5s deadline survives the round-trip"
             );
             assert!(
-                matches!(*on_timeout, HandlerResult::Deny(_)),
+                matches!(on_timeout, LimboOutcome::Deny(_)),
                 "the timeout outcome is a terminal Deny, got {on_timeout:?}"
             );
         }
@@ -221,7 +221,7 @@ async fn timed_gate_holds_with_timeout_then_command_accepts() {
     gate.on_command(session.as_ref(), "continue", &[]).await;
     let completions = session.completions();
     assert!(
-        matches!(completions.last(), Some(HandlerResult::Accept)),
+        matches!(completions.last(), Some(LimboOutcome::Accept)),
         "`/continue` releases the timed hold, got {completions:?}"
     );
 }
@@ -248,7 +248,7 @@ async fn delayed_gate_completes_from_scheduled_task() {
 
     let mut released = false;
     for _ in 0..200 {
-        if matches!(session.completions().last(), Some(HandlerResult::Accept)) {
+        if matches!(session.completions().last(), Some(LimboOutcome::Accept)) {
             released = true;
             break;
         }

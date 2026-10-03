@@ -2,10 +2,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use infrarust_api::command::CommandRegistration;
-use infrarust_api::limbo::{LimboHandlerRegistration, SessionHandle};
+use infrarust_api::limbo::{LimboHandlerRegistration, LimboOutcome, SessionHandle};
 use infrarust_api::types::PlayerId;
 
-use crate::limbo::deny_unavailable;
 use crate::providers::{WasmBanProvider, WasmPermissionProvider};
 use crate::snapshots::PermissionSnapshots;
 use crate::sync::lock;
@@ -236,7 +235,7 @@ impl Registrations {
             !owned
         });
         for handle in &failed {
-            handle.complete(deny_unavailable());
+            handle.complete(LimboOutcome::unavailable());
         }
         failed.len()
     }
@@ -272,7 +271,7 @@ fn bind(
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboSession};
+    use infrarust_api::limbo::{LimboEntryContext, LimboOutcome, LimboSession};
     use infrarust_api::test_util::RecordingLimboSession;
     use infrarust_api::types::{GameProfile, ServerId};
 
@@ -452,7 +451,7 @@ mod tests {
 
         assert_eq!(registrations.fail_holds(Some(1)), 1);
         assert!(
-            matches!(old.completions().as_slice(), [HandlerResult::Deny(reason)] if reason.to_plain() == "Limbo handler unavailable")
+            matches!(old.completions().as_slice(), [LimboOutcome::Deny(reason)] if reason.to_plain() == "Limbo handler unavailable")
         );
         assert!(new.completions().is_empty());
         assert!(released.completions().is_empty());

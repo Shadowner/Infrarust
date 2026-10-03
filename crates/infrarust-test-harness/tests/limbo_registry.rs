@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::limbo::{HANDLER_UNAVAILABLE, LimboHandlerError, LimboHandlerRegistration};
 use infrarust_test_harness::{
     ClientSession, DEFAULT_TIMEOUT, FakeBackend, ProtocolVersion, ScriptedPlugin, ServerSpec,
@@ -53,7 +53,7 @@ async fn a_handler_registered_after_startup_holds_the_player() {
     let mut session = join(&proxy, "Steve").await;
     let handle = next_hold(&mut holds, T).await.unwrap().handle;
 
-    handle.complete(HandlerResult::Accept);
+    handle.complete(LimboOutcome::Accept);
     let _conn = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     proxy.shutdown().await.unwrap();

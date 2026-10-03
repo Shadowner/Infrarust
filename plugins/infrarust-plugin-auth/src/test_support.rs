@@ -151,14 +151,14 @@ impl TestEnv {
     }
 
     pub async fn log_in(&self, id: u64, username: &str, password: &str) {
-        use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+        use infrarust_api::limbo::handler::{LimboHandler, LimboOutcome};
 
         let session = limbo_session(id, username);
         self.handler.on_player_enter(&*session).await;
         self.handler
             .on_command(&*session, "login", &[password])
             .await;
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
     }
 
     pub async fn set_premium_info(&self, username: &str, force_cracked: bool) {

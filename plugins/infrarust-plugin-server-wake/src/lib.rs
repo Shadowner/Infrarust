@@ -8,7 +8,7 @@ use infrarust_api::error::PluginError;
 use infrarust_api::event::bus::EventBusExt;
 use infrarust_api::event::{BoxFuture, EventPriority};
 use infrarust_api::events::proxy::ServerStateChangeEvent;
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::Component;
@@ -125,7 +125,7 @@ fn handle_state_change(
                     .fade_in(0)
                     .stay(40);
                     let _ = entry.session_handle.send_title(title);
-                    entry.session_handle.complete(HandlerResult::Accept);
+                    entry.session_handle.complete(LimboOutcome::Accept);
                 }
             }
         }
@@ -143,7 +143,7 @@ fn handle_state_change(
                 if let Some((_, entry)) = state.waiting.remove(&player_id) {
                     entry
                         .session_handle
-                        .complete(HandlerResult::Deny(Component::from_legacy(
+                        .complete(LimboOutcome::Deny(Component::from_legacy(
                             &state.config.messages.failed_kick,
                         )));
                 }

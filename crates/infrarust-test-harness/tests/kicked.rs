@@ -5,7 +5,7 @@ use std::time::Duration;
 use infrarust_api::event::{EventPriority, ResultedEvent};
 use infrarust_api::events::connection::{KickedFromServerEvent, KickedFromServerResult};
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::types::{Component, NamedColor, ServerId};
 use infrarust_protocol::packets::play::chat::SChatMessage;
 use infrarust_protocol::packets::play::start_configuration::SAcknowledgeConfiguration;
@@ -258,7 +258,7 @@ async fn a_play_kick_can_park_the_player_in_limbo(version: ProtocolVersion) {
     }
     session.sync_with(player.as_ref(), T).await.unwrap();
 
-    handle.complete(HandlerResult::Accept);
+    handle.complete(LimboOutcome::Accept);
     let _second = backend.next_connection(T).await.unwrap();
     session.expect_join(T).await.unwrap();
     session.sync_with(player.as_ref(), T).await.unwrap();
@@ -508,7 +508,7 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
         "{context:?}"
     );
 
-    gate.complete(HandlerResult::Accept);
+    gate.complete(LimboOutcome::Accept);
 
     let Hold {
         handle: parked,
@@ -532,7 +532,7 @@ async fn an_unreachable_initial_server_falls_back_to_its_limbo(version: Protocol
         "{kick:?}"
     );
 
-    parked.complete(HandlerResult::Deny(Component::text("Try later")));
+    parked.complete(LimboOutcome::Deny(Component::text("Try later")));
     let info = session.expect_disconnect(T).await.unwrap();
     assert_eq!(info.text, "Try later", "{info:?}");
 

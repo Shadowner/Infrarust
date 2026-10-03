@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use infrarust_api::command::{CommandContext, CommandHandler, CommandSource};
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::limbo::handler::{LimboHandler, LimboOutcome};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::PlayerId;
 
@@ -105,7 +105,7 @@ async fn forcelogin_force_completes_target_in_limbo() {
     cmd.execute(ctx(&env, 1, &["Steve"])).await;
 
     env.handler.on_chat(&*session, "ok").await;
-    assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+    assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
 }
 
 #[tokio::test]

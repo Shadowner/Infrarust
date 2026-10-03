@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, LimboOutcome, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, TitleData};
@@ -162,7 +162,7 @@ impl AuthHandler {
         Self::clear_title(session);
         self.cleanup_session(session.player_id());
         self.mark_authenticated(session.player_id());
-        session.complete(HandlerResult::Accept);
+        session.complete(LimboOutcome::Accept);
     }
 
     fn spawn_reminder_task(&self, player_id: PlayerId, cancel_token: CancellationToken) {
@@ -360,12 +360,11 @@ impl LimboHandler for AuthHandler {
         if timeout_secs == 0 {
             Box::pin(async { HandlerResult::Hold })
         } else {
-            let on_timeout =
-                HandlerResult::Deny(parse_colored(&self.config.messages.login_timeout));
+            let on_timeout = LimboOutcome::Deny(parse_colored(&self.config.messages.login_timeout));
             Box::pin(async move {
                 HandlerResult::HoldWithTimeout {
                     after: Duration::from_secs(timeout_secs),
-                    on_timeout: Box::new(on_timeout),
+                    on_timeout,
                 }
             })
         }
@@ -460,7 +459,7 @@ impl LimboHandler for AuthHandler {
                             Attempt::Exhausted => {
                                 let msg = self.msg(&self.config.messages.login_max_attempts, &[]);
                                 self.cleanup_session(player_id);
-                                session.complete(HandlerResult::Deny(msg));
+                                session.complete(LimboOutcome::Deny(msg));
                             }
                             Attempt::Retry { attempts_left } => {
                                 let _ = session.send_message(self.msg(
@@ -629,7 +628,7 @@ mod tests {
             .on_command(&*session, "register", &["hunter2hunter2", "hunter2hunter2"])
             .await;
 
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
         assert!(env.storage.has_account(&Username::new("Steve")));
     }
 
@@ -663,7 +662,7 @@ mod tests {
             .on_command(&*session, "login", &["hunter2hunter2"])
             .await;
 
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
     }
 
     #[tokio::test]
@@ -683,10 +682,7 @@ mod tests {
         env.handler
             .on_command(&*session, "login", &["wrong-password"])
             .await;
-        assert!(matches!(
-            session.completions()[..],
-            [HandlerResult::Deny(_)]
-        ));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Deny(_)]));
     }
 
     #[tokio::test]
@@ -699,7 +695,7 @@ mod tests {
         assert!(env.handler.force_complete_session(PlayerId::new(1)));
 
         env.handler.on_chat(&*session, "hello").await;
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
     }
 
     #[tokio::test]
