@@ -432,7 +432,8 @@ pub fn parse_document(stem: &str, text: &str) -> Result<ServerConfig, String> {
         config.id = Some(stem.to_string());
     }
 
-    infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
+    // The proxy reports the warnings when it applies the document.
+    let _ = infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
     Ok(config)
 }
 

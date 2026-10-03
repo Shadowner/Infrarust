@@ -321,12 +321,15 @@ fn verify_server_config(path: &Path) -> anyhow::Result<()> {
             path.display()
         )
     })?;
-    validate_server_config(&config).with_context(|| {
+    let warnings = validate_server_config(&config).with_context(|| {
         format!(
             "generated server config failed validation: {}",
             path.display()
         )
     })?;
+    for warning in warnings {
+        println!("  {} {warning}", console::style("!").yellow().bold());
+    }
     Ok(())
 }
 
@@ -446,7 +449,7 @@ mod tests {
         assert_eq!(config.domains, ["mc.example.com"]);
         assert_eq!(config.addresses[0].address.to_string(), "127.0.0.1:25565");
         assert_eq!(config.proxy_mode, ProxyMode::Passthrough);
-        validate_server_config(&config).unwrap();
+        assert!(validate_server_config(&config).unwrap().is_empty());
     }
 
     #[test]

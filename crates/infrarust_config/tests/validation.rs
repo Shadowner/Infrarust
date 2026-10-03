@@ -1002,7 +1002,7 @@ fn test_server_validation_returns_its_warnings() {
     "#,
     );
     let warnings = validate_server_config(&config).unwrap();
-    assert_eq!(warnings, infrarust_config::balance_warnings(&config));
+    assert_eq!(*warnings, infrarust_config::balance_warnings(&config));
     assert_eq!(warnings.len(), 2, "{warnings:?}");
 
     let quiet = from_toml(

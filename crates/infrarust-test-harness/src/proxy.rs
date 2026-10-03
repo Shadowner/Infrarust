@@ -586,7 +586,7 @@ fn write_servers(
         let mut parsed: ServerConfig =
             toml::from_str(&text).map_err(|e| HarnessError::setup(format!("server {id}: {e}")))?;
         parsed.id.get_or_insert_with(|| id.clone());
-        infrarust_config::validate_server_config(&parsed)
+        let _ = infrarust_config::validate_server_config(&parsed)
             .map_err(|e| HarnessError::setup(format!("server {id}: {e}")))?;
         std::fs::write(dir.join(format!("{id}.toml")), text)?;
         let domain = parsed.domains.first().cloned().unwrap_or_default();

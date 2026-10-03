@@ -257,7 +257,7 @@ fn settle_id(config: &mut ServerConfig, expected: &str) -> Result<DocumentId, Ap
              [a-z0-9._-], must not start with '.' and must not contain '..'"
         ))
     })?;
-    infrarust_config::validate_server_config(config)
+    let _ = infrarust_config::validate_server_config(config)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     Ok(document)
@@ -474,7 +474,7 @@ pub async fn validate(headers: HeaderMap, body: String) -> Json<ApiResponse<Vali
             Ok(warnings) => ValidationResponse {
                 valid: true,
                 errors: vec![],
-                warnings,
+                warnings: warnings.into_vec(),
             },
             Err(e) => ValidationResponse {
                 valid: false,

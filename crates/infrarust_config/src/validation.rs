@@ -13,6 +13,43 @@ use crate::types::{
     WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
 };
 
+/// Non-fatal findings of a validation that passed.
+#[must_use = "validation warnings must be reported"]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigWarnings(Vec<String>);
+
+impl ConfigWarnings {
+    pub fn into_vec(self) -> Vec<String> {
+        self.0
+    }
+}
+
+impl std::ops::Deref for ConfigWarnings {
+    type Target = [String];
+
+    fn deref(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl IntoIterator for ConfigWarnings {
+    type Item = String;
+    type IntoIter = std::vec::IntoIter<String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ConfigWarnings {
+    type Item = &'a String;
+    type IntoIter = std::slice::Iter<'a, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
 fn server_error(id: &str, reason: ServerValidationError) -> ConfigError {
     ConfigError::Server {
         id: id.to_string(),
@@ -20,7 +57,7 @@ fn server_error(id: &str, reason: ServerValidationError) -> ConfigError {
     }
 }
 
-pub fn validate_server_config(config: &ServerConfig) -> Result<Vec<String>, ConfigError> {
+pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, ConfigError> {
     let id = config.effective_id();
     validate_effective_id(&id)?;
 
@@ -88,7 +125,7 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<Vec<String>, Conf
         warnings.push("proxy_mode = zero_copy is only supported on Linux".to_string());
     }
 
-    Ok(warnings)
+    Ok(ConfigWarnings(warnings))
 }
 
 pub fn validate_server_forwarding(
