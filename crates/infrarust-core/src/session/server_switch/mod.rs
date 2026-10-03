@@ -121,7 +121,7 @@ pub(crate) async fn perform_switch(
                     };
                     let handlers = services
                         .limbo_handler_registry
-                        .resolve_handlers_lenient(&handler_names);
+                        .resolve_handlers(&handler_names)?;
                     let ctx = LimboEntryContext::PluginRedirect {
                         from_server: Some(current_server.clone()),
                     };

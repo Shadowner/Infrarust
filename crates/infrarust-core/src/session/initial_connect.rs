@@ -6,7 +6,7 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::LimboHandler;
+use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, LimboHandler};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::version::ProtocolVersion;
 
@@ -55,34 +55,29 @@ fn kicked(reason: Component) -> InitialMode {
     })
 }
 
-fn resolve_limbo_strict(
+fn resolve_limbo(
     registry: &LimboHandlerRegistry,
     names: &[String],
-) -> Option<Vec<Arc<dyn LimboHandler>>> {
+) -> Result<Vec<Arc<dyn LimboHandler>>, &'static str> {
     match registry.resolve_handlers(names) {
-        Ok(h) if !h.is_empty() => Some(h),
-        _ => None,
+        Ok(handlers) if !handlers.is_empty() => Ok(handlers),
+        Ok(_) => {
+            tracing::warn!("limbo requested at initial connect but no handlers are configured");
+            Err("No limbo handlers configured")
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "refusing the player: a limbo handler is not loaded");
+            Err(HANDLER_UNAVAILABLE)
+        }
     }
 }
 
-fn resolve_limbo_lenient(
-    registry: &LimboHandlerRegistry,
-    names: &[String],
-) -> Option<Vec<Arc<dyn LimboHandler>>> {
-    let handlers = registry.resolve_handlers_lenient(names);
-    if handlers.is_empty() {
-        None
-    } else {
-        Some(handlers)
-    }
-}
-
-async fn deny_no_limbo_handlers(
+async fn deny_limbo(
     ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
+    reason: &str,
 ) -> Result<InitialMode, CoreError> {
-    tracing::warn!("SendToLimbo at initial connect but no handlers resolved");
-    let reason = Component::text("No limbo handlers configured");
+    let reason = Component::text(reason);
     client.disconnect(&reason, ctx.registry()).await.ok();
     Ok(kicked(reason))
 }
@@ -119,10 +114,9 @@ pub(crate) async fn resolve_initial_mode(
             limbo_handlers,
         } => {
             prepare_client_for_limbo(ctx, client, progress, &initial_server).await?;
-            let Some(handlers) =
-                resolve_limbo_strict(&services.limbo_handler_registry, limbo_handlers)
-            else {
-                return deny_no_limbo_handlers(ctx, client).await;
+            let handlers = match resolve_limbo(&services.limbo_handler_registry, limbo_handlers) {
+                Ok(handlers) => handlers,
+                Err(reason) => return deny_limbo(ctx, client, reason).await,
             };
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
@@ -163,10 +157,10 @@ pub(crate) async fn resolve_initial_mode(
                 } else {
                     limbo_handlers.clone()
                 };
-                let Some(handlers) =
-                    resolve_limbo_lenient(&services.limbo_handler_registry, &handler_names)
-                else {
-                    return deny_no_limbo_handlers(ctx, client).await;
+                let handlers = match resolve_limbo(&services.limbo_handler_registry, &handler_names)
+                {
+                    Ok(handlers) => handlers,
+                    Err(reason) => return deny_limbo(ctx, client, reason).await,
                 };
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
@@ -213,13 +207,14 @@ pub(crate) async fn resolve_initial_mode(
         .map(|r| fresh_targets(r, ctx, pending_ticket));
     let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
-    if initial_mode.is_none()
-        && !server_config.limbo_handlers.is_empty()
-        && let Some(handlers) = resolve_limbo_lenient(
+    if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
+        let handlers = match resolve_limbo(
             &services.limbo_handler_registry,
             &server_config.limbo_handlers,
-        )
-    {
+        ) {
+            Ok(handlers) => handlers,
+            Err(reason) => return deny_limbo(ctx, client, reason).await,
+        };
         prepare_client_for_limbo(ctx, client, progress, &target_server_id).await?;
         initial_mode = Some(ConnectionMode::Limbo(
             handlers,
@@ -563,6 +558,63 @@ mod tests {
             panic!("a denied choice must kick the player");
         };
         assert_eq!(reason.to_plain(), "not today");
+    }
+
+    #[tokio::test]
+    async fn a_configured_limbo_handler_that_is_not_loaded_kicks_the_player() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let mut server = config("origin", &backend.local_addr().unwrap().to_string());
+        server.limbo_handlers = vec!["auth".to_string(), "lobby".to_string()];
+        services
+            .domain_router
+            .add(crate::provider::ProviderId::file("origin"), server);
+        services
+            .limbo_handler_registry
+            .register(
+                "p",
+                Box::new(crate::limbo::test_helpers::FixedHandler {
+                    name: "lobby",
+                    result: infrarust_api::limbo::handler::HandlerResult::Accept,
+                }),
+            )
+            .unwrap();
+
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = test_context(&services, &connector, player);
+        let (client, _client_stream) = test_client_bridge(ctx.version()).await;
+        let mut io = test_io(&ctx, client);
+        let (server_config, load_balancer) = services
+            .domain_router
+            .find_route_by_server_id("origin")
+            .unwrap();
+        let mut progress = LoginProgress {
+            completed: false,
+            rewritten: false,
+        };
+        let mode = resolve_initial_mode(
+            &ctx,
+            &mut io,
+            &RoutingData {
+                server_config,
+                config_id: "origin".to_string(),
+                load_balancer,
+            },
+            None,
+            &mut None,
+            &mut progress,
+        )
+        .await
+        .unwrap();
+
+        let InitialMode::Denied(DisconnectCause::Kicked {
+            reason: Some(reason),
+        }) = mode
+        else {
+            panic!("a missing configured limbo handler must kick the player");
+        };
+        assert_eq!(reason.to_plain(), HANDLER_UNAVAILABLE);
     }
 
     #[test]

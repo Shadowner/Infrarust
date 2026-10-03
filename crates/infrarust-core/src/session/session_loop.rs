@@ -8,7 +8,7 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::LimboHandler;
+use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, LimboHandler};
 use infrarust_api::player::ConnectionResult;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::version::ConnectionState;
@@ -75,10 +75,21 @@ pub(crate) async fn run_session_loop(
                                 );
                                 continue;
                             }
-                            _ => {
-                                tracing::warn!("no limbo handlers configured, disconnecting");
-                                let reason =
-                                    Component::text("No limbo handlers configured for this server");
+                            resolved => {
+                                let reason = match resolved {
+                                    Ok(_) => {
+                                        tracing::warn!(
+                                            "no limbo handlers configured, disconnecting"
+                                        );
+                                        Component::text(
+                                            "No limbo handlers configured for this server",
+                                        )
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "limbo handler not loaded, disconnecting");
+                                        Component::text(HANDLER_UNAVAILABLE)
+                                    }
+                                };
                                 io.client
                                     .disconnect(&reason, &services.packet_registry)
                                     .await
@@ -283,9 +294,16 @@ pub(crate) async fn run_session_loop(
                         }
                     }
                     LimboExitResult::SendToLimbo(handler_names) => {
-                        let handlers = services
+                        let handlers = match services
                             .limbo_handler_registry
-                            .resolve_handlers_lenient(&handler_names);
+                            .resolve_handlers(&handler_names)
+                        {
+                            Ok(handlers) => handlers,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "limbo-to-limbo move refused");
+                                break ProxyLoopOutcome::Error(e);
+                            }
+                        };
                         if handlers.is_empty() {
                             tracing::warn!(
                                 "limbo-to-limbo but no valid handlers resolved, disconnecting"
@@ -545,11 +563,11 @@ fn default_result(ctx: &SessionContext<'_>, kick: &Kick, can_stay: bool) -> Kick
     }
     let limbo_handlers = server_limbo_handlers(ctx, &kick.server);
     let resolvable = !limbo_handlers.is_empty()
-        && !ctx
+        && ctx
             .services
             .limbo_handler_registry
-            .resolve_handlers_lenient(&limbo_handlers)
-            .is_empty();
+            .resolve_handlers(&limbo_handlers)
+            .is_ok();
     if resolvable {
         KickedFromServerResult::SendToLimbo { limbo_handlers }
     } else {
@@ -593,14 +611,17 @@ async fn to_limbo(
     } else {
         limbo_handlers
     };
-    let handlers = ctx
-        .services
-        .limbo_handler_registry
-        .resolve_handlers_lenient(&names);
-    if handlers.is_empty() {
-        tracing::warn!(server = %kick.server, "SendToLimbo after a kick but no limbo handlers resolved");
-        return fall_back(ctx, client, kick, can_stay).await;
-    }
+    let handlers = match ctx.services.limbo_handler_registry.resolve_handlers(&names) {
+        Ok(handlers) if !handlers.is_empty() => handlers,
+        Ok(_) => {
+            tracing::warn!(server = %kick.server, "SendToLimbo after a kick but no limbo handlers configured");
+            return fall_back(ctx, client, kick, can_stay).await;
+        }
+        Err(e) => {
+            tracing::warn!(server = %kick.server, error = %e, "SendToLimbo after a kick refused");
+            return fall_back(ctx, client, kick, can_stay).await;
+        }
+    };
     let entry = LimboEntryContext::KickedFromServer {
         server: kick.server.clone(),
         reason: shown_reason(ctx, kick),

@@ -236,19 +236,6 @@ impl LimboHandlerRegistry {
             })
             .collect()
     }
-
-    pub fn resolve_handlers_lenient(&self, names: &[String]) -> Vec<Arc<dyn LimboHandler>> {
-        names
-            .iter()
-            .filter_map(|name| match self.get(name) {
-                Some(h) => Some(h),
-                None => {
-                    tracing::warn!(handler = %name, "limbo handler not found, skipping");
-                    None
-                }
-            })
-            .collect()
-    }
 }
 
 fn release(entry: &Entry) {
@@ -461,8 +448,10 @@ mod tests {
 
         let names = vec!["auth".to_string(), "missing".to_string()];
         let err = registry.resolve_handlers(&names).err().unwrap();
-        assert!(err.to_string().contains("missing"), "{err}");
-        assert_eq!(registry.resolve_handlers_lenient(&names).len(), 1);
+        assert!(
+            matches!(&err, CoreError::UnknownLimboHandler(name) if name == "missing"),
+            "{err}"
+        );
     }
 
     #[test]
