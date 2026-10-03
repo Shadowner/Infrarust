@@ -1,5 +1,7 @@
 //! Error types for the Infrarust plugin API.
 
+pub use infrarust_plugin_common::ErrorKind;
+
 /// Errors that can occur when interacting with a player.
 ///
 /// Returned by [`Player`](crate::player::Player) methods when an operation
@@ -48,6 +50,21 @@ pub enum PlayerError {
     WouldDeadlock,
 }
 
+impl PlayerError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Disconnected => ErrorKind::PlayerGone,
+            Self::NotActive | Self::NoBackend | Self::WouldDeadlock => ErrorKind::InvalidState,
+            Self::ServerNotFound(_) => ErrorKind::NotFound,
+            Self::MessageTooLarge { .. } | Self::InvalidArgument(_) => ErrorKind::InvalidArgument,
+            Self::SendFailed(_) | Self::SwitchFailed(_) => ErrorKind::Unavailable,
+            Self::Unsupported(_) => ErrorKind::Unsupported,
+            Self::Denied(_) => ErrorKind::PermissionDenied,
+        }
+    }
+}
+
 /// Errors that can occur when interacting with proxy services.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -69,6 +86,18 @@ pub enum ServiceError {
 
     #[error("service `{service}` is already provided by `{by}`")]
     AlreadyProvided { service: &'static str, by: String },
+}
+
+impl ServiceError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::NotFound(_) => ErrorKind::NotFound,
+            Self::Unavailable(_) => ErrorKind::Unavailable,
+            Self::AlreadyProvided { .. } => ErrorKind::Conflict,
+            Self::OperationFailed(_) | Self::Internal(_) => ErrorKind::Internal,
+        }
+    }
 }
 
 /// Errors that can occur during plugin lifecycle.

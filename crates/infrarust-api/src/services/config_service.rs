@@ -1,5 +1,6 @@
 //! Configuration service.
 
+use crate::error::ErrorKind;
 use crate::types::ServerId;
 
 pub mod private {
@@ -138,6 +139,17 @@ pub enum ConfigWriteError {
     /// The document is fine but could not be persisted.
     #[error("cannot write the configuration file: {0}")]
     Io(String),
+}
+
+impl ConfigWriteError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::PermissionDenied => ErrorKind::PermissionDenied,
+            Self::Parse(_) | Self::Validation(_) => ErrorKind::InvalidArgument,
+            Self::Io(_) => ErrorKind::Unavailable,
+        }
+    }
 }
 
 /// Access to proxy configuration.

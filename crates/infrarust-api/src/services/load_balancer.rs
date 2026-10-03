@@ -1,5 +1,6 @@
 //! Load balancer service.
 
+use crate::error::ErrorKind;
 use crate::types::{ServerAddress, ServerId};
 
 pub mod private {
@@ -38,6 +39,15 @@ pub enum LbError {
         server: ServerId,
         address: ServerAddress,
     },
+}
+
+impl LbError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::UnknownServer(_) | Self::UnknownAddress { .. } => ErrorKind::NotFound,
+        }
+    }
 }
 
 /// Inspection and maintenance of a server's backend addresses.

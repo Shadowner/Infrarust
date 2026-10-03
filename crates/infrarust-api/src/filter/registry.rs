@@ -3,6 +3,8 @@
 //! Only the proxy core implements these traits. Plugins use them
 //! via [`PluginContext::codec_filters()`] and [`PluginContext::transport_filters()`].
 
+use crate::error::ErrorKind;
+
 use super::codec::CodecFilterFactory;
 use super::transport::TransportFilter;
 
@@ -20,6 +22,16 @@ pub enum FilterRegistryError {
     OwnedBy { id: String, owner: String },
     #[error("no filter '{0}' is registered")]
     NotFound(String),
+}
+
+impl FilterRegistryError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::OwnedBy { .. } => ErrorKind::Conflict,
+            Self::NotFound(_) => ErrorKind::NotFound,
+        }
+    }
 }
 
 /// Registry for [`CodecFilterFactory`] instances.

@@ -8,8 +8,17 @@ use infrarust_api::services::config_service::ConfigWriteError;
 use infrarust_api::services::load_balancer::LbError;
 use infrarust_plugin_wit::arena::ArenaError;
 
+use infrarust_plugin_common::ErrorKind as Kind;
+
+use crate::bindings::infrarust::plugin::types as wt;
 use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
+use crate::convert::wit_enum_map;
 use crate::deadline::HostCallTimeout;
+
+wit_enum_map!(kind_to_wit: Kind => wt::ErrorKind {
+    InvalidArgument, NotFound, PermissionDenied, Unavailable, Timeout, PlayerGone, Conflict,
+    InvalidState, Unsupported, Internal, LimitExceeded,
+});
 
 pub(crate) type HostResult<T> = Result<T, HostError>;
 
@@ -57,30 +66,11 @@ pub(crate) fn timed_out(expired: HostCallTimeout) -> HostError {
 }
 
 pub(crate) fn player_error(error: PlayerError) -> HostError {
-    let kind = match &error {
-        PlayerError::Disconnected => ErrorKind::PlayerGone,
-        PlayerError::NotActive | PlayerError::NoBackend | PlayerError::WouldDeadlock => {
-            ErrorKind::InvalidState
-        }
-        PlayerError::ServerNotFound(_) => ErrorKind::NotFound,
-        PlayerError::MessageTooLarge { .. } => ErrorKind::InvalidArgument,
-        PlayerError::SendFailed(_) | PlayerError::SwitchFailed(_) => ErrorKind::Unavailable,
-        PlayerError::Unsupported(_) => ErrorKind::Unsupported,
-        PlayerError::InvalidArgument(_) => ErrorKind::InvalidArgument,
-        PlayerError::Denied(_) => ErrorKind::PermissionDenied,
-        _ => ErrorKind::Internal,
-    };
-    host_error(kind, error.to_string())
+    host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
 pub(crate) fn service_error(error: ServiceError) -> HostError {
-    let kind = match &error {
-        ServiceError::NotFound(_) => ErrorKind::NotFound,
-        ServiceError::Unavailable(_) => ErrorKind::Unavailable,
-        ServiceError::AlreadyProvided { .. } => ErrorKind::Conflict,
-        ServiceError::OperationFailed(_) => ErrorKind::Internal,
-        _ => ErrorKind::Internal,
-    };
+    let kind = kind_to_wit(error.kind());
     let message = match error {
         ServiceError::NotFound(message)
         | ServiceError::Unavailable(message)
@@ -91,49 +81,23 @@ pub(crate) fn service_error(error: ServiceError) -> HostError {
 }
 
 pub(crate) fn command_error(error: &CommandError) -> HostError {
-    let kind = match error {
-        CommandError::Reserved(_) | CommandError::OwnedBy { .. } => ErrorKind::Conflict,
-        CommandError::InvalidName(_) => ErrorKind::InvalidArgument,
-        CommandError::NotOwned(_) => ErrorKind::NotFound,
-        _ => ErrorKind::Internal,
-    };
-    host_error(kind, error.to_string())
+    host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
 pub(crate) fn filter_error(error: &FilterRegistryError) -> HostError {
-    let kind = match error {
-        FilterRegistryError::OwnedBy { .. } => ErrorKind::Conflict,
-        FilterRegistryError::NotFound(_) => ErrorKind::NotFound,
-        _ => ErrorKind::Internal,
-    };
-    host_error(kind, error.to_string())
+    host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
 pub(crate) fn messaging_error(error: &MessagingError) -> HostError {
-    let kind = match error {
-        MessagingError::NoCarrier => ErrorKind::Unavailable,
-        MessagingError::TooLarge { .. } => ErrorKind::InvalidArgument,
-        _ => ErrorKind::Internal,
-    };
-    host_error(kind, error.to_string())
+    host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
 pub(crate) fn balancer_error(error: &LbError) -> HostError {
-    let kind = match error {
-        LbError::UnknownServer(_) | LbError::UnknownAddress { .. } => ErrorKind::NotFound,
-        _ => ErrorKind::Internal,
-    };
-    host_error(kind, error.to_string())
+    host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
 pub(crate) fn config_write_error(error: &ConfigWriteError) -> HostError {
-    let kind = match error {
-        ConfigWriteError::PermissionDenied => ErrorKind::PermissionDenied,
-        ConfigWriteError::Parse(_) | ConfigWriteError::Validation(_) => ErrorKind::InvalidArgument,
-        ConfigWriteError::Io(_) => ErrorKind::Unavailable,
-        _ => ErrorKind::Internal,
-    };
-    host_error(kind, error.to_string())
+    host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
 pub(crate) fn limbo_error(error: &LimboHandlerError) -> HostError {

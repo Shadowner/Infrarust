@@ -2,60 +2,21 @@ use std::fmt;
 
 use crate::bindings::types as wt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ErrorKind {
-    InvalidArgument,
-    NotFound,
-    PermissionDenied,
-    Unavailable,
-    Timeout,
-    PlayerGone,
-    Conflict,
-    InvalidState,
-    Unsupported,
-    Internal,
-    LimitExceeded,
-}
+pub use infrarust_plugin_common::ErrorKind;
 
-impl ErrorKind {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidArgument => "invalid-argument",
-            Self::NotFound => "not-found",
-            Self::PermissionDenied => "permission-denied",
-            Self::Unavailable => "unavailable",
-            Self::Timeout => "timeout",
-            Self::PlayerGone => "player-gone",
-            Self::Conflict => "conflict",
-            Self::InvalidState => "invalid-state",
-            Self::Unsupported => "unsupported",
-            Self::Internal => "internal",
-            Self::LimitExceeded => "limit-exceeded",
-        }
-    }
-
-    pub(crate) const fn from_wit(kind: wt::ErrorKind) -> Self {
-        match kind {
-            wt::ErrorKind::InvalidArgument => Self::InvalidArgument,
-            wt::ErrorKind::NotFound => Self::NotFound,
-            wt::ErrorKind::PermissionDenied => Self::PermissionDenied,
-            wt::ErrorKind::Unavailable => Self::Unavailable,
-            wt::ErrorKind::Timeout => Self::Timeout,
-            wt::ErrorKind::PlayerGone => Self::PlayerGone,
-            wt::ErrorKind::Conflict => Self::Conflict,
-            wt::ErrorKind::InvalidState => Self::InvalidState,
-            wt::ErrorKind::Unsupported => Self::Unsupported,
-            wt::ErrorKind::Internal => Self::Internal,
-            wt::ErrorKind::LimitExceeded => Self::LimitExceeded,
-        }
-    }
-}
-
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+const fn kind_from_wit(kind: wt::ErrorKind) -> ErrorKind {
+    match kind {
+        wt::ErrorKind::InvalidArgument => ErrorKind::InvalidArgument,
+        wt::ErrorKind::NotFound => ErrorKind::NotFound,
+        wt::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+        wt::ErrorKind::Unavailable => ErrorKind::Unavailable,
+        wt::ErrorKind::Timeout => ErrorKind::Timeout,
+        wt::ErrorKind::PlayerGone => ErrorKind::PlayerGone,
+        wt::ErrorKind::Conflict => ErrorKind::Conflict,
+        wt::ErrorKind::InvalidState => ErrorKind::InvalidState,
+        wt::ErrorKind::Unsupported => ErrorKind::Unsupported,
+        wt::ErrorKind::Internal => ErrorKind::Internal,
+        wt::ErrorKind::LimitExceeded => ErrorKind::LimitExceeded,
     }
 }
 
@@ -97,7 +58,7 @@ impl std::error::Error for Error {}
 impl From<wt::HostError> for Error {
     fn from(error: wt::HostError) -> Self {
         Self {
-            kind: ErrorKind::from_wit(error.kind),
+            kind: kind_from_wit(error.kind),
             message: error.message,
         }
     }

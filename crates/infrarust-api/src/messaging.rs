@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
+use crate::error::ErrorKind;
 use crate::types::{ProtocolVersion, ServerId, namespaced_key};
 
 pub const MAX_CHANNEL_LENGTH: usize = 128;
@@ -175,6 +176,16 @@ pub enum MessagingError {
     NoCarrier,
     #[error("plugin message of {size} bytes is over the {max} bytes a backend accepts")]
     TooLarge { size: usize, max: usize },
+}
+
+impl MessagingError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::NoCarrier => ErrorKind::Unavailable,
+            Self::TooLarge { .. } => ErrorKind::InvalidArgument,
+        }
+    }
 }
 
 pub mod private {

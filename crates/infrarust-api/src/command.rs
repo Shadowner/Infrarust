@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::error::ErrorKind;
 use crate::event::BoxFuture;
 use crate::permissions::PermissionChecker;
 use crate::player::Player;
@@ -324,6 +325,17 @@ pub enum CommandError {
     InvalidName(String),
     #[error("'{0}' is not a command registered by this plugin")]
     NotOwned(String),
+}
+
+impl CommandError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Reserved(_) | Self::OwnedBy { .. } => ErrorKind::Conflict,
+            Self::InvalidName(_) => ErrorKind::InvalidArgument,
+            Self::NotOwned(_) => ErrorKind::NotFound,
+        }
+    }
 }
 
 pub mod private {
