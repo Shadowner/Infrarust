@@ -21,6 +21,37 @@ pub struct CCommands {
     pub root_index: i32,
 }
 
+impl CCommands {
+    pub fn root_position(&self) -> Option<usize> {
+        node_position(self.root_index, self.nodes.len())
+    }
+
+    fn check_indices(&self) -> ProtocolResult<()> {
+        let len = self.nodes.len();
+        let in_tree = |index: i32, what: &str| {
+            node_position(index, len).ok_or_else(|| {
+                ProtocolError::invalid(format!(
+                    "command {what} index {index} outside a tree of {len} nodes"
+                ))
+            })
+        };
+        in_tree(self.root_index, "root")?;
+        for node in &self.nodes {
+            for &child in &node.children {
+                in_tree(child, "child")?;
+            }
+            if let Some(redirect) = node.redirect_node {
+                in_tree(redirect, "redirect")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn node_position(index: i32, len: usize) -> Option<usize> {
+    usize::try_from(index).ok().filter(|&i| i < len)
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandNode {
     pub flags: u8,
@@ -334,7 +365,9 @@ impl Packet for CCommands {
             nodes.push(decode_node(r, version)?);
         }
         let root_index = r.read_var_int()?.0;
-        Ok(Self { nodes, root_index })
+        let commands = Self { nodes, root_index };
+        commands.check_indices()?;
+        Ok(commands)
     }
 
     fn encode(
@@ -342,6 +375,7 @@ impl Packet for CCommands {
         w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
+        self.check_indices()?;
         w.write_var_int(&VarInt(self.nodes.len() as i32))?;
         for node in &self.nodes {
             encode_node(node, w, version)?;
@@ -662,6 +696,36 @@ mod tests {
         buf.write_var_int(&VarInt(10)).unwrap();
         buf.extend_from_slice(b"ab");
         assert!(decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).is_err());
+    }
+
+    fn encoded_tree(nodes: &[CommandNode], root_index: i32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.write_var_int(&VarInt(nodes.len() as i32)).unwrap();
+        for node in nodes {
+            encode_node(node, &mut buf, ProtocolVersion::V1_21).unwrap();
+        }
+        buf.write_var_int(&VarInt(root_index)).unwrap();
+        buf
+    }
+
+    #[test]
+    fn out_of_tree_indices_are_rejected() {
+        let mut dangling_child = CommandNode::literal("a");
+        dangling_child.children.push(7);
+        let cases = [
+            (vec![CommandNode::literal("a")], -1),
+            (vec![CommandNode::literal("a")], 1),
+            (vec![], 0),
+            (vec![dangling_child], 0),
+            (vec![CommandNode::redirect("a", -3)], 0),
+        ];
+        for (nodes, root_index) in cases {
+            let buf = encoded_tree(&nodes, root_index);
+            let err = CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
+            assert!(matches!(err, ProtocolError::Invalid { .. }), "{err}");
+            let pkt = CCommands { nodes, root_index };
+            assert!(pkt.encode(&mut Vec::new(), ProtocolVersion::V1_21).is_err());
+        }
     }
 
     #[test]

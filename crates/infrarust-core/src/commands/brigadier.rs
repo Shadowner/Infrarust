@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use infrarust_protocol::error::ProtocolResult;
+use infrarust_protocol::error::{ProtocolError, ProtocolResult};
 use infrarust_protocol::packets::play::commands::{CCommands, CommandNode, string_parser};
 use infrarust_protocol::version::ProtocolVersion;
 
@@ -40,14 +40,7 @@ impl SubTree {
 
 const LITERAL: u8 = 0x01;
 
-fn drop_shadowed_roots(commands: &mut CCommands, shadowed: &HashSet<String>) {
-    let CCommands { nodes, root_index } = commands;
-    let Some(root) = usize::try_from(*root_index)
-        .ok()
-        .filter(|&i| i < nodes.len())
-    else {
-        return;
-    };
+fn drop_shadowed_roots(nodes: &mut [CommandNode], root: usize, shadowed: &HashSet<String>) {
     let children = std::mem::take(&mut nodes[root].children);
     nodes[root].children = children
         .into_iter()
@@ -70,8 +63,10 @@ pub fn inject_proxy_commands(
     tree: &ProxyTree,
     visible_subcommands: Option<&HashSet<String>>,
 ) -> ProtocolResult<()> {
-    drop_shadowed_roots(commands, &tree.shadowed);
-    let root = commands.root_index;
+    let root = commands
+        .root_position()
+        .ok_or_else(|| ProtocolError::invalid("command tree root index out of range"))?;
+    drop_shadowed_roots(&mut commands.nodes, root, &tree.shadowed);
 
     let is_visible = |name: &str| -> bool {
         match &visible_subcommands {
@@ -211,8 +206,8 @@ pub fn inject_proxy_commands(
 
         let (infrarust, ir) = (sub.absolute(infrarust_idx), sub.absolute(ir_idx));
         commands.nodes.extend(sub.nodes);
-        commands.nodes[root as usize].children.push(infrarust);
-        commands.nodes[root as usize].children.push(ir);
+        commands.nodes[root].children.push(infrarust);
+        commands.nodes[root].children.push(ir);
     }
 
     for labels in &tree.commands {
@@ -227,7 +222,7 @@ pub fn inject_proxy_commands(
             let mut node = CommandNode::literal_executable(label);
             node.children.push(args_idx);
             commands.nodes.push(node);
-            commands.nodes[root as usize].children.push(cmd_idx);
+            commands.nodes[root].children.push(cmd_idx);
         }
     }
     Ok(())
@@ -589,6 +584,16 @@ mod tests {
             })
             .collect();
         assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn an_out_of_range_root_is_an_error_not_a_panic() {
+        for root_index in [-1, 1, i32::MAX] {
+            let mut cmds = make_empty_tree();
+            cmds.root_index = root_index;
+            let tree = tree(&[&["hello"]]);
+            assert!(inject_proxy_commands(&mut cmds, ProtocolVersion::V1_21, &tree, None).is_err());
+        }
     }
 
     #[test]
