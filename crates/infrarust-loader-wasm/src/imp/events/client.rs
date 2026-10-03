@@ -121,15 +121,13 @@ impl WasmEvent for PreTransferEvent {
         texts.applied()
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = self.result().clone();
-        self.set_result(PreTransferResult::Denied {
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = event.result().clone();
+        event.set_result(PreTransferResult::Denied {
             reason: unavailable(),
         });
-        Some(Restore::new(move |event: &mut Self| {
-            event.set_result(previous);
-        }))
-    }
+        Restore::new(move |event: &mut Self| event.set_result(previous))
+    });
 }
 
 #[cfg(test)]

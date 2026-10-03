@@ -3,28 +3,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{Event, EventPriority, ListenerHandle};
-use infrarust_api::events::connection::{PlayerChooseInitialServerEvent, ServerPreConnectEvent};
-use infrarust_api::events::lifecycle::{
-    GameProfileRequestEvent, LoginEvent, PermissionsSetupEvent, PreLoginEvent,
-};
-use infrarust_api::events::transfer::PreTransferEvent;
 
-use super::{WasmEvent, kind_name};
+use super::{EventVisitor, WasmEvent, kind_name, visit_kind};
 use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
-
-pub(crate) const fn is_access(kind: EventKind) -> bool {
-    matches!(
-        kind,
-        EventKind::PreLogin
-            | EventKind::Login
-            | EventKind::GameProfileRequest
-            | EventKind::PermissionsSetup
-            | EventKind::ServerPreConnect
-            | EventKind::PlayerChooseInitialServer
-            | EventKind::PreTransfer
-    )
-}
 
 struct Subscribed {
     kind: EventKind,
@@ -109,45 +91,49 @@ impl Drop for Tracked {
     }
 }
 
+struct Guard<'b> {
+    bus: &'b dyn EventBus,
+    instance: InstanceRef,
+    priority: EventPriority,
+}
+
+impl EventVisitor for Guard<'_> {
+    type Output = Option<ListenerHandle>;
+
+    fn visit<E: WasmEvent + Event>(self) -> Option<ListenerHandle> {
+        let deny = E::DENY_UNANSWERED?;
+        let instance = self.instance;
+        Some(
+            self.bus
+                .subscribe::<E, _>(self.priority, move |event: &mut E| {
+                    if instance.access().serving() {
+                        return;
+                    }
+                    deny(event);
+                    if let Some(suppressed) = instance.admit_warning() {
+                        tracing::warn!(
+                            plugin = instance.plugin_id(),
+                            event = kind_name(E::KIND),
+                            suppressed,
+                            "access event denied: the wasm plugin listening to it has no live instance \
+                             while it recovers from a fault or is quarantined"
+                        );
+                    }
+                }),
+        )
+    }
+}
+
 pub(crate) fn guard(
     bus: &dyn EventBus,
     instance: InstanceRef,
     kind: EventKind,
     priority: EventPriority,
 ) -> Option<ListenerHandle> {
-    Some(match kind {
-        EventKind::PreLogin => guard_with::<PreLoginEvent>(bus, instance, priority),
-        EventKind::Login => guard_with::<LoginEvent>(bus, instance, priority),
-        EventKind::GameProfileRequest => {
-            guard_with::<GameProfileRequestEvent>(bus, instance, priority)
-        }
-        EventKind::PermissionsSetup => guard_with::<PermissionsSetupEvent>(bus, instance, priority),
-        EventKind::ServerPreConnect => guard_with::<ServerPreConnectEvent>(bus, instance, priority),
-        EventKind::PlayerChooseInitialServer => {
-            guard_with::<PlayerChooseInitialServerEvent>(bus, instance, priority)
-        }
-        EventKind::PreTransfer => guard_with::<PreTransferEvent>(bus, instance, priority),
-        _ => return None,
-    })
-}
-
-fn guard_with<E: WasmEvent + Event>(
-    bus: &dyn EventBus,
-    instance: InstanceRef,
-    priority: EventPriority,
-) -> ListenerHandle {
-    bus.subscribe::<E, _>(priority, move |event: &mut E| {
-        if instance.access().serving() || event.deny_unanswered().is_none() {
-            return;
-        }
-        if let Some(suppressed) = instance.admit_warning() {
-            tracing::warn!(
-                plugin = instance.plugin_id(),
-                event = kind_name(E::KIND),
-                suppressed,
-                "access event denied: the wasm plugin listening to it has no live instance \
-                 while it recovers from a fault or is quarantined"
-            );
-        }
-    })
+    let guard = Guard {
+        bus,
+        instance,
+        priority,
+    };
+    visit_kind(kind, guard).flatten()
 }

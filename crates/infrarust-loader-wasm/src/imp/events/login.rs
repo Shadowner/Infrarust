@@ -52,13 +52,11 @@ impl WasmEvent for PreLoginEvent {
         texts.applied()
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = self.result().clone();
-        self.deny(unavailable());
-        Some(Restore::new(move |event: &mut Self| {
-            event.set_result(previous);
-        }))
-    }
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = event.result().clone();
+        event.deny(unavailable());
+        Restore::new(move |event: &mut Self| event.set_result(previous))
+    });
 }
 
 impl WasmEvent for PostLoginEvent {
@@ -146,20 +144,18 @@ impl WasmEvent for PermissionsSetupEvent {
         applied
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = match self.result() {
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = match event.result() {
             PermissionsSetupResult::Custom(checker) => {
                 Some(PermissionsSetupResult::Custom(Arc::clone(checker)))
             }
             _ => None,
         };
-        self.set_result(PermissionsSetupResult::Custom(Arc::new(
+        event.set_result(PermissionsSetupResult::Custom(Arc::new(
             PermissionSnapshot::new(),
         )));
-        Some(Restore::new(move |event: &mut Self| {
-            event.set_result(previous.unwrap_or_default());
-        }))
-    }
+        Restore::new(move |event: &mut Self| event.set_result(previous.unwrap_or_default()))
+    });
 }
 
 impl WasmEvent for LoginEvent {
@@ -192,13 +188,11 @@ impl WasmEvent for LoginEvent {
         texts.applied()
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = self.result().clone();
-        self.deny(unavailable());
-        Some(Restore::new(move |event: &mut Self| {
-            event.set_result(previous);
-        }))
-    }
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = event.result().clone();
+        event.deny(unavailable());
+        Restore::new(move |event: &mut Self| event.set_result(previous))
+    });
 }
 
 impl WasmEvent for GameProfileRequestEvent {
@@ -235,14 +229,14 @@ impl WasmEvent for GameProfileRequestEvent {
         texts.applied()
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = self.denied().cloned();
-        self.deny(unavailable());
-        Some(Restore::new(move |event: &mut Self| match previous {
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = event.denied().cloned();
+        event.deny(unavailable());
+        Restore::new(move |event: &mut Self| match previous {
             Some(reason) => event.deny(reason),
             None => event.allow(),
-        }))
-    }
+        })
+    });
 }
 
 #[cfg(test)]

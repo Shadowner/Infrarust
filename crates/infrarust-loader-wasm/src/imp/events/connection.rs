@@ -65,13 +65,11 @@ impl WasmEvent for PlayerChooseInitialServerEvent {
         texts.applied()
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = self.result().clone();
-        self.deny(unavailable());
-        Some(Restore::new(move |event: &mut Self| {
-            event.set_result(previous);
-        }))
-    }
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = event.result().clone();
+        event.deny(unavailable());
+        Restore::new(move |event: &mut Self| event.set_result(previous))
+    });
 }
 
 fn connect_cause(cause: ConnectCause) -> we::ConnectCause {
@@ -128,13 +126,11 @@ impl WasmEvent for ServerPreConnectEvent {
         texts.applied()
     }
 
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>> {
-        let previous = self.result().clone();
-        self.deny(unavailable());
-        Some(Restore::new(move |event: &mut Self| {
-            event.set_result(previous);
-        }))
-    }
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
+        let previous = event.result().clone();
+        event.deny(unavailable());
+        Restore::new(move |event: &mut Self| event.set_result(previous))
+    });
 }
 
 impl WasmEvent for ServerConnectedEvent {

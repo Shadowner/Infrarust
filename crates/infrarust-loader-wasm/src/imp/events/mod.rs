@@ -10,7 +10,7 @@ mod messaging;
 mod packet;
 mod proxy;
 
-pub(crate) use guard::{AccessListeners, guard, is_access};
+pub(crate) use guard::{AccessListeners, guard};
 pub(crate) use messaging::named_result;
 pub(crate) use proxy::PingDetails;
 
@@ -124,8 +124,10 @@ pub(crate) enum Applied {
     Mismatched,
 }
 
-pub(crate) trait WasmEvent: Send + 'static {
+pub(crate) trait WasmEvent: Sized + Send + 'static {
     const KIND: EventKind;
+
+    const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = None;
 
     fn to_wit(&self) -> we::Event;
 
@@ -135,13 +137,6 @@ pub(crate) trait WasmEvent: Send + 'static {
 
     fn apply_for(&mut self, outcome: we::EventOutcome, _instance: &InstanceRef) -> Applied {
         self.apply(outcome)
-    }
-
-    fn deny_unanswered(&mut self) -> Option<Restore<Self>>
-    where
-        Self: Sized,
-    {
-        None
     }
 
     fn lend(&mut self) -> Option<EventDetails> {
@@ -182,6 +177,68 @@ pub(crate) enum Registration {
     Registered(ListenerHandle),
 }
 
+pub(crate) trait EventVisitor {
+    type Output;
+
+    fn visit<E: WasmEvent + Event>(self) -> Self::Output;
+}
+
+pub(crate) fn visit_kind<V: EventVisitor>(kind: EventKind, visitor: V) -> Option<V::Output> {
+    Some(match kind {
+        EventKind::PreLogin => visitor.visit::<PreLoginEvent>(),
+        EventKind::PostLogin => visitor.visit::<PostLoginEvent>(),
+        EventKind::Disconnect => visitor.visit::<DisconnectEvent>(),
+        EventKind::OnlineAuthFailed => visitor.visit::<OnlineAuthFailedEvent>(),
+        EventKind::PermissionsSetup => visitor.visit::<PermissionsSetupEvent>(),
+        EventKind::PlayerChooseInitialServer => visitor.visit::<PlayerChooseInitialServerEvent>(),
+        EventKind::ServerPreConnect => visitor.visit::<ServerPreConnectEvent>(),
+        EventKind::ServerConnected => visitor.visit::<ServerConnectedEvent>(),
+        EventKind::ServerPostConnect => visitor.visit::<ServerPostConnectEvent>(),
+        EventKind::KickedFromServer => visitor.visit::<KickedFromServerEvent>(),
+        EventKind::ChatMessage => visitor.visit::<ChatMessageEvent>(),
+        EventKind::ProxyPing => visitor.visit::<ProxyPingEvent>(),
+        EventKind::ProxyInitialize => visitor.visit::<ProxyInitializeEvent>(),
+        EventKind::ProxyShutdown => visitor.visit::<ProxyShutdownEvent>(),
+        EventKind::ConfigReload => visitor.visit::<ConfigReloadEvent>(),
+        EventKind::ServerStateChange => visitor.visit::<ServerStateChangeEvent>(),
+        EventKind::BackendHealth => visitor.visit::<BackendHealthEvent>(),
+        EventKind::Login => visitor.visit::<LoginEvent>(),
+        EventKind::GameProfileRequest => visitor.visit::<GameProfileRequestEvent>(),
+        EventKind::CommandExecute => visitor.visit::<CommandExecuteEvent>(),
+        EventKind::ConnectionHandshake => visitor.visit::<ConnectionHandshakeEvent>(),
+        EventKind::ConnectionRejected => visitor.visit::<ConnectionRejectedEvent>(),
+        EventKind::LimboEnter => visitor.visit::<LimboEnterEvent>(),
+        EventKind::LimboExit => visitor.visit::<LimboExitEvent>(),
+        EventKind::PlayerClientBrand => visitor.visit::<PlayerClientBrandEvent>(),
+        EventKind::PlayerSettingsChanged => visitor.visit::<PlayerSettingsChangedEvent>(),
+        EventKind::PlayerChannelRegister => visitor.visit::<PlayerChannelRegisterEvent>(),
+        EventKind::PluginMessage => visitor.visit::<PluginMessageEvent>(),
+        EventKind::BanIssued => visitor.visit::<BanIssuedEvent>(),
+        EventKind::BanRevoked => visitor.visit::<BanRevokedEvent>(),
+        EventKind::PluginEnabled => visitor.visit::<PluginEnabledEvent>(),
+        EventKind::PluginDisabled => visitor.visit::<PluginDisabledEvent>(),
+        EventKind::PreTransfer => visitor.visit::<PreTransferEvent>(),
+        EventKind::PlayerResourcePackStatus => visitor.visit::<PlayerResourcePackStatusEvent>(),
+        EventKind::NamedEvent => visitor.visit::<NamedEvent>(),
+        EventKind::RawPacket => return None,
+    })
+}
+
+struct Subscribe<'b> {
+    bus: &'b dyn EventBus,
+    instance: InstanceRef,
+    priority: EventPriority,
+    listener: u64,
+}
+
+impl EventVisitor for Subscribe<'_> {
+    type Output = ListenerHandle;
+
+    fn visit<E: WasmEvent + Event>(self) -> ListenerHandle {
+        subscribe::<E>(self.bus, self.instance, self.priority, self.listener)
+    }
+}
+
 pub(crate) fn register(
     bus: &dyn EventBus,
     instance: InstanceRef,
@@ -189,82 +246,18 @@ pub(crate) fn register(
     priority: EventPriority,
     listener: u64,
 ) -> Registration {
-    let at = priority;
-    let handle = match kind {
-        EventKind::PreLogin => subscribe::<PreLoginEvent>(bus, instance, at, listener),
-        EventKind::PostLogin => subscribe::<PostLoginEvent>(bus, instance, at, listener),
-        EventKind::Disconnect => subscribe::<DisconnectEvent>(bus, instance, at, listener),
-        EventKind::OnlineAuthFailed => {
-            subscribe::<OnlineAuthFailedEvent>(bus, instance, at, listener)
-        }
-        EventKind::PermissionsSetup => {
-            subscribe::<PermissionsSetupEvent>(bus, instance, at, listener)
-        }
-        EventKind::PlayerChooseInitialServer => {
-            subscribe::<PlayerChooseInitialServerEvent>(bus, instance, at, listener)
-        }
-        EventKind::ServerPreConnect => {
-            subscribe::<ServerPreConnectEvent>(bus, instance, at, listener)
-        }
-        EventKind::ServerConnected => {
-            subscribe::<ServerConnectedEvent>(bus, instance, at, listener)
-        }
-        EventKind::ServerPostConnect => {
-            subscribe::<ServerPostConnectEvent>(bus, instance, at, listener)
-        }
-        EventKind::KickedFromServer => {
-            subscribe::<KickedFromServerEvent>(bus, instance, at, listener)
-        }
-        EventKind::ChatMessage => subscribe::<ChatMessageEvent>(bus, instance, at, listener),
-        EventKind::ProxyPing => subscribe::<ProxyPingEvent>(bus, instance, at, listener),
-        EventKind::ProxyInitialize => {
-            subscribe::<ProxyInitializeEvent>(bus, instance, at, listener)
-        }
-        EventKind::ProxyShutdown => subscribe::<ProxyShutdownEvent>(bus, instance, at, listener),
-        EventKind::ConfigReload => subscribe::<ConfigReloadEvent>(bus, instance, at, listener),
-        EventKind::ServerStateChange => {
-            subscribe::<ServerStateChangeEvent>(bus, instance, at, listener)
-        }
-        EventKind::BackendHealth => subscribe::<BackendHealthEvent>(bus, instance, at, listener),
-        EventKind::Login => subscribe::<LoginEvent>(bus, instance, at, listener),
-        EventKind::GameProfileRequest => {
-            subscribe::<GameProfileRequestEvent>(bus, instance, at, listener)
-        }
-        EventKind::CommandExecute => subscribe::<CommandExecuteEvent>(bus, instance, at, listener),
-        EventKind::ConnectionHandshake => {
-            subscribe::<ConnectionHandshakeEvent>(bus, instance, at, listener)
-        }
-        EventKind::ConnectionRejected => {
-            subscribe::<ConnectionRejectedEvent>(bus, instance, at, listener)
-        }
-        EventKind::LimboEnter => subscribe::<LimboEnterEvent>(bus, instance, at, listener),
-        EventKind::LimboExit => subscribe::<LimboExitEvent>(bus, instance, at, listener),
-        EventKind::PlayerClientBrand => {
-            subscribe::<PlayerClientBrandEvent>(bus, instance, at, listener)
-        }
-        EventKind::PlayerSettingsChanged => {
-            subscribe::<PlayerSettingsChangedEvent>(bus, instance, at, listener)
-        }
-        EventKind::PlayerChannelRegister => {
-            subscribe::<PlayerChannelRegisterEvent>(bus, instance, at, listener)
-        }
-        EventKind::PluginMessage => subscribe::<PluginMessageEvent>(bus, instance, at, listener),
-        EventKind::BanIssued => subscribe::<BanIssuedEvent>(bus, instance, at, listener),
-        EventKind::BanRevoked => subscribe::<BanRevokedEvent>(bus, instance, at, listener),
-        EventKind::PluginEnabled => subscribe::<PluginEnabledEvent>(bus, instance, at, listener),
-        EventKind::PluginDisabled => subscribe::<PluginDisabledEvent>(bus, instance, at, listener),
-        EventKind::PreTransfer => subscribe::<PreTransferEvent>(bus, instance, at, listener),
-        EventKind::PlayerResourcePackStatus => {
-            subscribe::<PlayerResourcePackStatusEvent>(bus, instance, at, listener)
-        }
-        EventKind::NamedEvent => subscribe::<NamedEvent>(bus, instance, at, listener),
-        EventKind::RawPacket => {
-            return Registration::Refused(
-                "raw packets are subscribed with event-bus.subscribe-packets and a packet filter",
-            );
-        }
+    let subscribe = Subscribe {
+        bus,
+        instance,
+        priority,
+        listener,
     };
-    Registration::Registered(handle)
+    match visit_kind(kind, subscribe) {
+        Some(handle) => Registration::Registered(handle),
+        None => Registration::Refused(
+            "raw packets are subscribed with event-bus.subscribe-packets and a packet filter",
+        ),
+    }
 }
 
 pub(crate) fn register_named(
@@ -312,7 +305,9 @@ fn subscribe<E: WasmEvent + Event>(
     priority: EventPriority,
     listener: u64,
 ) -> ListenerHandle {
-    let tracked = is_access(E::KIND).then(|| instance.access().track(E::KIND, priority));
+    let tracked = E::DENY_UNANSWERED
+        .is_some()
+        .then(|| instance.access().track(E::KIND, priority));
     bus.subscribe_async::<E, _>(priority, move |event: &mut E| {
         let _ = &tracked;
         deliver(event, instance.clone(), listener)
@@ -326,7 +321,7 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
         post(&instance, E::KIND, listener, wit, details);
         return Box::pin(async {});
     }
-    let denied = event.deny_unanswered();
+    let denied = E::DENY_UNANSWERED.map(|deny| deny(event));
     Box::pin(async move {
         let mut lent = Lent::new(event);
         let details = lent.shared();
