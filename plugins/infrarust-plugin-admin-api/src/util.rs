@@ -101,26 +101,41 @@ fn expected<T: fmt::Display>(names: &[T]) -> String {
         .join(", ")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BanTargetKind {
-    Ip,
-    IpRange,
-    Username,
-    Uuid,
+/// Declares a unit enum whose `ALL` and `as_str` are generated from the same
+/// variant list, so neither can miss a variant.
+macro_rules! named_enum {
+    ($name:ident { $($variant:ident => $text:literal),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum $name {
+            $($variant),+
+        }
+
+        impl $name {
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $text),+
+                }
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+    };
 }
 
+named_enum!(BanTargetKind {
+    Ip => "ip",
+    IpRange => "ip_range",
+    Username => "username",
+    Uuid => "uuid",
+});
+
 impl BanTargetKind {
-    pub const ALL: [Self; 4] = [Self::Ip, Self::IpRange, Self::Username, Self::Uuid];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ip => "ip",
-            Self::IpRange => "ip_range",
-            Self::Username => "username",
-            Self::Uuid => "uuid",
-        }
-    }
-
     pub fn parse_target(self, value: &str) -> Result<BanTarget, ApiError> {
         match self {
             Self::Ip => value
@@ -141,23 +156,18 @@ impl BanTargetKind {
     }
 }
 
-impl fmt::Display for BanTargetKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 impl FromStr for BanTargetKind {
     type Err = ApiError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .find(|kind| kind.as_str() == s)
             .ok_or_else(|| {
                 ApiError::BadRequest(format!(
                     "Invalid target type '{s}'. Expected: {}",
-                    expected(&Self::ALL)
+                    expected(Self::ALL)
                 ))
             })
     }
@@ -193,41 +203,16 @@ pub fn parse_ban_target(target_type: &str, value: &str) -> Result<BanTarget, Api
     target_type.parse::<BanTargetKind>()?.parse_target(value)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProxyModeName {
-    Passthrough,
-    ZeroCopy,
-    ClientOnly,
-    Offline,
-    ServerOnly,
-}
+named_enum!(ProxyModeName {
+    Passthrough => "passthrough",
+    ZeroCopy => "zero_copy",
+    ClientOnly => "client_only",
+    Offline => "offline",
+    ServerOnly => "server_only",
+});
 
 impl ProxyModeName {
-    pub const ALL: [Self; 5] = [
-        Self::Passthrough,
-        Self::ZeroCopy,
-        Self::ClientOnly,
-        Self::Offline,
-        Self::ServerOnly,
-    ];
-
     const ZERO_COPY_ALIAS: &str = "zerocopy";
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Passthrough => "passthrough",
-            Self::ZeroCopy => "zero_copy",
-            Self::ClientOnly => "client_only",
-            Self::Offline => "offline",
-            Self::ServerOnly => "server_only",
-        }
-    }
-}
-
-impl fmt::Display for ProxyModeName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
 }
 
 impl FromStr for ProxyModeName {
@@ -238,12 +223,13 @@ impl FromStr for ProxyModeName {
             return Ok(Self::ZeroCopy);
         }
         Self::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .find(|mode| mode.as_str() == s)
             .ok_or_else(|| {
                 ApiError::BadRequest(format!(
                     "Invalid proxy mode '{s}'. Expected: {}",
-                    expected(&Self::ALL)
+                    expected(Self::ALL)
                 ))
             })
     }
@@ -441,7 +427,7 @@ mod tests {
 
     #[test]
     fn ban_target_kinds_round_trip_through_their_names() {
-        for kind in BanTargetKind::ALL {
+        for &kind in BanTargetKind::ALL {
             assert_eq!(kind.to_string().parse::<BanTargetKind>().unwrap(), kind);
         }
     }
@@ -460,7 +446,7 @@ mod tests {
 
     #[test]
     fn proxy_mode_names_round_trip() {
-        for mode in ProxyModeName::ALL {
+        for &mode in ProxyModeName::ALL {
             assert_eq!(mode.to_string().parse::<ProxyModeName>().unwrap(), mode);
         }
         assert_eq!(ProxyModeName::Passthrough.as_str(), "passthrough");
