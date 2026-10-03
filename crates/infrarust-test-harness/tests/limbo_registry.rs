@@ -79,9 +79,15 @@ async fn disabling_the_plugin_releases_the_players_its_handler_holds() {
     let kicked = steve.expect_disconnect(T).await.unwrap();
     assert_eq!(kicked.text, HANDLER_UNAVAILABLE, "{kicked:?}");
 
-    let _alex = join(&proxy, "Alex").await;
-    let _conn = backend.next_connection(T).await.unwrap();
-    proxy.wait_for_player("Alex", T).await.unwrap();
+    let refused = proxy
+        .client(VERSION)
+        .login("Alex")
+        .await
+        .unwrap()
+        .disconnected()
+        .unwrap();
+    assert_eq!(refused.text, HANDLER_UNAVAILABLE, "{refused:?}");
+    assert_eq!(backend.accepted_connections(), 0);
     assert!(
         holds.try_recv().is_err(),
         "the removed handler saw no one else"
@@ -141,20 +147,20 @@ async fn a_second_plugin_cannot_take_a_registered_name() {
     proxy.shutdown().await.unwrap();
 }
 
-async fn a_server_listing_an_unregistered_handler_sends_the_player_on(version: ProtocolVersion) {
+async fn a_server_listing_an_unregistered_handler_refuses_the_player(version: ProtocolVersion) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let proxy = gated_proxy(&backend, vec![]).await;
 
-    let _session = proxy
+    let refused = proxy
         .client(version)
         .login("Steve")
         .await
         .unwrap()
-        .joined()
+        .disconnected()
         .unwrap();
-    let _conn = backend.next_connection(T).await.unwrap();
-    proxy.wait_for_player("Steve", T).await.unwrap();
+    assert_eq!(refused.text, HANDLER_UNAVAILABLE, "{refused:?}");
+    assert_eq!(backend.accepted_connections(), 0);
     proxy.shutdown().await.unwrap();
 }
 
-infrarust_test_harness::version_matrix!(a_server_listing_an_unregistered_handler_sends_the_player_on; p47 = 47, p763 = 763, p764 = 764, p777 = 777);
+infrarust_test_harness::version_matrix!(a_server_listing_an_unregistered_handler_refuses_the_player; p47 = 47, p763 = 763, p764 = 764, p777 = 777);
