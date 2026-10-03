@@ -56,6 +56,9 @@ pub(crate) struct ServerEntry {
     pub(crate) last_player_seen: Option<Instant>,
     /// Waiters: connections waiting for the server to become Online.
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
+    /// Set by a start request until the provider reports it starting or running:
+    /// before this deadline a `Stopped` poll means the panel has not caught up yet.
+    pub(crate) unconfirmed_start_until: Option<Instant>,
 }
 
 impl ServerEntry {
@@ -63,6 +66,17 @@ impl ServerEntry {
     pub(crate) fn set_state(&mut self, new_state: ServerState) {
         self.generation += 1;
         self.state = new_state;
+        self.unconfirmed_start_until = None;
+    }
+
+    pub(crate) fn begin_start(&mut self) {
+        self.set_state(ServerState::Starting);
+        self.unconfirmed_start_until = Some(Instant::now() + self.start_timeout);
+    }
+
+    fn is_unconfirmed_start(&self) -> bool {
+        self.unconfirmed_start_until
+            .is_some_and(|deadline| Instant::now() < deadline)
     }
 }
 
@@ -116,6 +130,7 @@ impl ServerManagerService {
                     poll_interval,
                     last_player_seen: None,
                     waiters: Vec::new(),
+                    unconfirmed_start_until: None,
                 },
             );
 
@@ -149,6 +164,7 @@ impl ServerManagerService {
                 poll_interval,
                 last_player_seen: None,
                 waiters: Vec::new(),
+                unconfirmed_start_until: None,
             },
         );
     }
@@ -284,7 +300,7 @@ impl ServerManagerService {
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
-                    entry.set_state(ServerState::Starting);
+                    entry.begin_start();
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
                     entry.waiters.push(tx);
@@ -353,7 +369,7 @@ impl ServerManagerService {
             }
 
             let old = entry.state;
-            entry.set_state(ServerState::Starting);
+            entry.begin_start();
             (Arc::clone(&entry.provider), old)
         };
 
@@ -466,6 +482,14 @@ impl ServerManagerService {
                     "dropping stale poll result: a transition intervened during the poll"
                 );
                 return None;
+            }
+
+            match new_status {
+                ProviderStatus::Starting | ProviderStatus::Running => {
+                    entry.unconfirmed_start_until = None;
+                }
+                ProviderStatus::Stopped if entry.is_unconfirmed_start() => return None,
+                _ => {}
             }
 
             let new_state = ServerState::from(new_status);
@@ -602,5 +626,46 @@ mod tests {
         let generation = service.generation("s").unwrap();
         let applied = service.update_state("s", ProviderStatus::Crashed, generation);
         assert_eq!(applied, Some((ServerState::Online, ServerState::Crashed)));
+    }
+
+    #[tokio::test]
+    async fn stopped_poll_during_unconfirmed_start_keeps_waiting() {
+        let service = service_with_online_server("s");
+        service.stop_server("s").await.unwrap();
+        service.start_server("s").await.unwrap();
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            None
+        );
+        assert_eq!(service.get_state("s"), Some(ServerState::Starting));
+
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Starting, generation),
+            None
+        );
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            Some((ServerState::Starting, ServerState::Sleeping))
+        );
+    }
+
+    #[tokio::test]
+    async fn stopped_poll_after_start_deadline_goes_to_sleep() {
+        let service = service_with_online_server("s");
+        service.stop_server("s").await.unwrap();
+        service.start_server("s").await.unwrap();
+        service
+            .entries
+            .get_mut("s")
+            .unwrap()
+            .unconfirmed_start_until = Some(Instant::now());
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            Some((ServerState::Starting, ServerState::Sleeping))
+        );
     }
 }
