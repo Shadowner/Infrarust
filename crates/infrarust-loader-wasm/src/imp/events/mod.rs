@@ -46,13 +46,16 @@ use infrarust_api::events::resource_pack::PlayerResourcePackStatusEvent;
 use infrarust_api::events::transfer::PreTransferEvent;
 use infrarust_api::types::Component;
 use infrarust_plugin_wit::arena::ArenaError;
+use wasmtime::Store;
 
 use crate::actor::{CallFailure, InstanceRef};
+use crate::bindings::Plugin as PluginBindings;
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::chain::{CallChain, MAX_ENTRIES};
 use crate::component;
 use crate::snapshots::SnapshotError;
+use crate::store_state::PluginStoreState;
 
 pub(crate) const PLUGIN_UNAVAILABLE: &str =
     "A proxy plugin is unavailable. Please try again later.";
@@ -327,20 +330,7 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
         let details = lent.shared();
         let answer = instance
             .call("handle-event", move |store, bindings| {
-                Box::pin(async move {
-                    let lent = details.is_some();
-                    if lent {
-                        store.data_mut().set_event_details(details);
-                    }
-                    let outcome = bindings
-                        .infrarust_plugin_guest()
-                        .call_handle_event(&mut *store, listener, &wit)
-                        .await;
-                    if lent {
-                        store.data_mut().set_event_details(None);
-                    }
-                    outcome
-                })
+                handle_event(store, bindings, listener, wit, details)
             })
             .await;
         let event = lent.give_back();
@@ -400,21 +390,24 @@ fn post(
         );
     }
     let _ = instance.post("handle-event", move |store, bindings| {
-        Box::pin(async move {
-            let lent = details.is_some();
-            if lent {
-                store.data_mut().set_event_details(details);
-            }
-            let outcome = bindings
-                .infrarust_plugin_guest()
-                .call_handle_event(&mut *store, listener, &wit)
-                .await;
-            if lent {
-                store.data_mut().set_event_details(None);
-            }
-            outcome
-        })
+        handle_event(store, bindings, listener, wit, details)
     });
+}
+
+fn handle_event<'a>(
+    store: &'a mut Store<PluginStoreState>,
+    bindings: &'a PluginBindings,
+    listener: u64,
+    wit: we::Event,
+    details: Option<Arc<EventDetails>>,
+) -> BoxFuture<'a, wasmtime::Result<we::EventOutcome>> {
+    Box::pin(async move {
+        store.data_mut().set_event_details(details);
+        bindings
+            .infrarust_plugin_guest()
+            .call_handle_event(&mut *store, listener, &wit)
+            .await
+    })
 }
 
 fn settle<E: WasmEvent>(event: &mut E, outcome: we::EventOutcome, instance: &InstanceRef) {
