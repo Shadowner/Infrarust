@@ -162,6 +162,7 @@ DEC handshake serverbound 735 0x00
 DEC handshake serverbound 751 0x00
 DEC handshake serverbound 754 0x00
 DEC handshake serverbound 755 0x00
+DEC handshake serverbound 756 0x00
 DEC handshake serverbound 757 0x00
 DEC handshake serverbound 758 0x00
 DEC handshake serverbound 759 0x00
@@ -252,6 +253,11 @@ DEC login clientbound 755 0x01
 DEC login clientbound 755 0x02
 DEC login clientbound 755 0x03
 DEC login clientbound 755 0x04
+DEC login clientbound 756 0x00
+DEC login clientbound 756 0x01
+DEC login clientbound 756 0x02
+DEC login clientbound 756 0x03
+DEC login clientbound 756 0x04
 DEC login clientbound 757 0x00
 DEC login clientbound 757 0x01
 DEC login clientbound 757 0x02
@@ -396,6 +402,9 @@ DEC login serverbound 754 0x02
 DEC login serverbound 755 0x00
 DEC login serverbound 755 0x01
 DEC login serverbound 755 0x02
+DEC login serverbound 756 0x00
+DEC login serverbound 756 0x01
+DEC login serverbound 756 0x02
 DEC login serverbound 757 0x00
 DEC login serverbound 757 0x01
 DEC login serverbound 757 0x02
@@ -547,6 +556,11 @@ DEC play clientbound 755 0x11
 DEC play clientbound 755 0x12
 DEC play clientbound 755 0x1A
 DEC play clientbound 755 0x21
+DEC play clientbound 756 0x0F
+DEC play clientbound 756 0x11
+DEC play clientbound 756 0x12
+DEC play clientbound 756 0x1A
+DEC play clientbound 756 0x21
 DEC play clientbound 757 0x0F
 DEC play clientbound 757 0x11
 DEC play clientbound 757 0x12
@@ -721,6 +735,11 @@ DEC play serverbound 755 0x05
 DEC play serverbound 755 0x06
 DEC play serverbound 755 0x0F
 DEC play serverbound 755 0x21
+DEC play serverbound 756 0x03
+DEC play serverbound 756 0x05
+DEC play serverbound 756 0x06
+DEC play serverbound 756 0x0F
+DEC play serverbound 756 0x21
 DEC play serverbound 757 0x03
 DEC play serverbound 757 0x05
 DEC play serverbound 757 0x06
@@ -950,6 +969,8 @@ DEC status clientbound 754 0x00
 DEC status clientbound 754 0x01
 DEC status clientbound 755 0x00
 DEC status clientbound 755 0x01
+DEC status clientbound 756 0x00
+DEC status clientbound 756 0x01
 DEC status clientbound 757 0x00
 DEC status clientbound 757 0x01
 DEC status clientbound 758 0x00
@@ -1024,6 +1045,8 @@ DEC status serverbound 754 0x00
 DEC status serverbound 754 0x01
 DEC status serverbound 755 0x00
 DEC status serverbound 755 0x01
+DEC status serverbound 756 0x00
+DEC status serverbound 756 0x01
 DEC status serverbound 757 0x00
 DEC status serverbound 757 0x01
 DEC status serverbound 758 0x00
@@ -1321,6 +1344,7 @@ ENC handshake serverbound 735 SHandshake 0x00
 ENC handshake serverbound 751 SHandshake 0x00
 ENC handshake serverbound 754 SHandshake 0x00
 ENC handshake serverbound 755 SHandshake 0x00
+ENC handshake serverbound 756 SHandshake 0x00
 ENC handshake serverbound 757 SHandshake 0x00
 ENC handshake serverbound 758 SHandshake 0x00
 ENC handshake serverbound 759 SHandshake 0x00
@@ -1411,6 +1435,11 @@ ENC login clientbound 755 CLoginDisconnect 0x00
 ENC login clientbound 755 CLoginPluginRequest 0x04
 ENC login clientbound 755 CLoginSuccess 0x02
 ENC login clientbound 755 CSetCompression 0x03
+ENC login clientbound 756 CEncryptionRequest 0x01
+ENC login clientbound 756 CLoginDisconnect 0x00
+ENC login clientbound 756 CLoginPluginRequest 0x04
+ENC login clientbound 756 CLoginSuccess 0x02
+ENC login clientbound 756 CSetCompression 0x03
 ENC login clientbound 757 CEncryptionRequest 0x01
 ENC login clientbound 757 CLoginDisconnect 0x00
 ENC login clientbound 757 CLoginPluginRequest 0x04
@@ -1567,6 +1596,9 @@ ENC login serverbound 754 SLoginStart 0x00
 ENC login serverbound 755 SEncryptionResponse 0x01
 ENC login serverbound 755 SLoginPluginResponse 0x02
 ENC login serverbound 755 SLoginStart 0x00
+ENC login serverbound 756 SEncryptionResponse 0x01
+ENC login serverbound 756 SLoginPluginResponse 0x02
+ENC login serverbound 756 SLoginStart 0x00
 ENC login serverbound 757 SEncryptionResponse 0x01
 ENC login serverbound 757 SLoginPluginResponse 0x02
 ENC login serverbound 757 SLoginStart 0x00
@@ -1907,6 +1939,27 @@ ENC play clientbound 755 CSetTitleTimes 0x5A
 ENC play clientbound 755 CSynchronizePlayerPosition 0x38
 ENC play clientbound 755 CTabCompleteResponse 0x11
 ENC play clientbound 755 CTabListHeaderFooter 0x5E
+ENC play clientbound 756 CBossBar 0x0D
+ENC play clientbound 756 CChatMessageLegacy 0x0F
+ENC play clientbound 756 CChunkData 0x22
+ENC play clientbound 756 CClearTitles 0x10
+ENC play clientbound 756 CCommands 0x12
+ENC play clientbound 756 CDisconnect 0x1A
+ENC play clientbound 756 CGameEvent 0x1E
+ENC play clientbound 756 CJoinGame 0x26
+ENC play clientbound 756 CKeepAlive 0x21
+ENC play clientbound 756 CPluginMessage 0x18
+ENC play clientbound 756 CResourcePack 0x3C
+ENC play clientbound 756 CRespawn 0x3D
+ENC play clientbound 756 CSetCenterChunk 0x49
+ENC play clientbound 756 CSetContainerContent 0x14
+ENC play clientbound 756 CSetDefaultSpawnPosition 0x4B
+ENC play clientbound 756 CSetSubtitle 0x57
+ENC play clientbound 756 CSetTitle 0x59
+ENC play clientbound 756 CSetTitleTimes 0x5A
+ENC play clientbound 756 CSynchronizePlayerPosition 0x38
+ENC play clientbound 756 CTabCompleteResponse 0x11
+ENC play clientbound 756 CTabListHeaderFooter 0x5E
 ENC play clientbound 757 CBossBar 0x0D
 ENC play clientbound 757 CChatMessageLegacy 0x0F
 ENC play clientbound 757 CChunkData 0x22
@@ -2524,6 +2577,12 @@ ENC play serverbound 755 SKeepAlive 0x0F
 ENC play serverbound 755 SPluginMessage 0x0A
 ENC play serverbound 755 SResourcePackResponse 0x21
 ENC play serverbound 755 STabCompleteRequest 0x06
+ENC play serverbound 756 SChatMessage 0x03
+ENC play serverbound 756 SClientInformation 0x05
+ENC play serverbound 756 SKeepAlive 0x0F
+ENC play serverbound 756 SPluginMessage 0x0A
+ENC play serverbound 756 SResourcePackResponse 0x21
+ENC play serverbound 756 STabCompleteRequest 0x06
 ENC play serverbound 757 SChatMessage 0x03
 ENC play serverbound 757 SClientInformation 0x05
 ENC play serverbound 757 SKeepAlive 0x0F
@@ -2774,6 +2833,8 @@ ENC status clientbound 754 CPingResponse 0x01
 ENC status clientbound 754 CStatusResponse 0x00
 ENC status clientbound 755 CPingResponse 0x01
 ENC status clientbound 755 CStatusResponse 0x00
+ENC status clientbound 756 CPingResponse 0x01
+ENC status clientbound 756 CStatusResponse 0x00
 ENC status clientbound 757 CPingResponse 0x01
 ENC status clientbound 757 CStatusResponse 0x00
 ENC status clientbound 758 CPingResponse 0x01
@@ -2848,6 +2909,8 @@ ENC status serverbound 754 SPingRequest 0x01
 ENC status serverbound 754 SStatusRequest 0x00
 ENC status serverbound 755 SPingRequest 0x01
 ENC status serverbound 755 SStatusRequest 0x00
+ENC status serverbound 756 SPingRequest 0x01
+ENC status serverbound 756 SStatusRequest 0x00
 ENC status serverbound 757 SPingRequest 0x01
 ENC status serverbound 757 SStatusRequest 0x00
 ENC status serverbound 758 SPingRequest 0x01

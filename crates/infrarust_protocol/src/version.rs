@@ -20,6 +20,7 @@ const TABLE: &[(ProtocolVersion, &str)] = &[
     (ProtocolVersion::V1_16_2, "1.16.2"),
     (ProtocolVersion::V1_16_4, "1.16.4"),
     (ProtocolVersion::V1_17, "1.17"),
+    (ProtocolVersion::V1_17_1, "1.17.1"),
     (ProtocolVersion::V1_18, "1.18"),
     (ProtocolVersion::V1_18_2, "1.18.2"),
     (ProtocolVersion::V1_19, "1.19"),
@@ -72,6 +73,7 @@ impl ProtocolVersion {
     pub const V1_16_2: Self = Self(751);
     pub const V1_16_4: Self = Self(754);
     pub const V1_17: Self = Self(755);
+    pub const V1_17_1: Self = Self(756);
     pub const V1_18: Self = Self(757);
     pub const V1_18_2: Self = Self(758);
     pub const V1_19: Self = Self(759);

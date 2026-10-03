@@ -73,7 +73,7 @@ impl Packet for CSetContainerContent {
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let window_id = r.read_u8()?;
-        let stateful = version.no_less_than(ProtocolVersion::V1_17);
+        let stateful = version.no_less_than(ProtocolVersion::V1_17_1);
         let state_id = if stateful { r.read_var_int()?.0 } else { 0 };
         let empty_slots = if stateful {
             u16::try_from(r.read_var_int()?.0)
@@ -101,7 +101,7 @@ impl Packet for CSetContainerContent {
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_u8(self.window_id)?;
-        let stateful = version.no_less_than(ProtocolVersion::V1_17);
+        let stateful = version.no_less_than(ProtocolVersion::V1_17_1);
         if stateful {
             w.write_var_int(&VarInt(self.state_id))?;
             w.write_var_int(&VarInt(i32::from(self.empty_slots)))?;
@@ -150,6 +150,16 @@ mod tests {
     }
 
     #[test]
+    fn state_id_arrives_in_1_17_1() {
+        let first = encoded(ProtocolVersion::V1_17);
+        assert_eq!(first.len(), 1 + 2 + 46);
+        assert_eq!(&first[..3], &[0, 0, 46]);
+        let stateful = encoded(ProtocolVersion::V1_17_1);
+        assert_eq!(stateful.len(), 1 + 1 + 1 + 46 + 1);
+        assert_eq!(&stateful[..3], &[0, 0, 46]);
+    }
+
+    #[test]
     fn round_trip_in_every_layout() {
         let packet = CSetContainerContent::cleared_player_inventory();
         for version in [
@@ -157,6 +167,7 @@ mod tests {
             ProtocolVersion::V1_13,
             ProtocolVersion::V1_16,
             ProtocolVersion::V1_17,
+            ProtocolVersion::V1_17_1,
             ProtocolVersion::V1_21_9,
         ] {
             let buf = encoded(version);

@@ -440,7 +440,7 @@ mod tests {
         );
     }
 
-    const GAP_PROTOCOLS: [(i32, ProtocolVersion); 15] = [
+    const GAP_PROTOCOLS: [(i32, ProtocolVersion); 14] = [
         (108, ProtocolVersion::V1_9),
         (210, ProtocolVersion::V1_9_4),
         (315, ProtocolVersion::V1_9_4),
@@ -455,7 +455,6 @@ mod tests {
         (578, ProtocolVersion::V1_15),
         (736, ProtocolVersion::V1_16),
         (753, ProtocolVersion::V1_16_2),
-        (756, ProtocolVersion::V1_17),
     ];
 
     fn assert_same_resolution(
