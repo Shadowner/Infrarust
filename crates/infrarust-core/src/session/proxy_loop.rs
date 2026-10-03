@@ -258,9 +258,8 @@ async fn reach(milestone: Milestone, join: &mut Option<ServerJoin>, services: &P
 /// - `LoginSuccess`: transitions Login → Config (1.20.2+) or Play
 /// - `FinishConfig` / `AcknowledgeFinishConfig`: transitions Config → Play
 ///
-/// Codec filters are applied to every packet BEFORE the EventBus.
-/// In Play state, only `CDisconnect` is intercepted. All other packets
-/// are forwarded opaquely for maximum performance.
+/// Codec filters and raw packet listeners only see Play packets, codec
+/// filters first. A backend `CDisconnect` is taken as a kick after them.
 pub async fn proxy_loop(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,

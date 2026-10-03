@@ -449,6 +449,15 @@ impl EventBusImpl {
         priority: EventPriority,
         kind: HandlerKind,
     ) -> ListenerHandle {
+        if filter.state != ConnectionState::Play {
+            tracing::error!(
+                plugin = %owner,
+                packet_id = filter.packet_id,
+                state = ?filter.state,
+                "packet listeners only receive Play packets; this subscription is ignored"
+            );
+            return self.next_handle();
+        }
         let key = PacketKey {
             packet_id: filter.packet_id,
             state: filter.state,
@@ -717,5 +726,18 @@ mod tests {
 
         assert!(!bus.unsubscribe(ListenerHandle::from_raw(9999)));
         assert_eq!(bus.handlers.read().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn packet_subscriptions_outside_play_are_refused() {
+        let bus = EventBusImpl::new();
+        let filter = PacketFilter {
+            state: ConnectionState::Configuration,
+            ..packet_filter()
+        };
+        let handle = bus.subscribe_packet(filter, EventPriority::NORMAL, noop_handler());
+
+        assert!(!bus.has_packet_listeners(filter.packet_id, filter.state, filter.direction));
+        assert!(!bus.unsubscribe(handle));
     }
 }
