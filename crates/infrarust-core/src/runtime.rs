@@ -423,7 +423,9 @@ impl RunningProxy {
     }
 
     pub async fn disable_plugin(&self, id: &str) -> Result<(), PluginManagerError> {
-        self.plugin_manager.write().await.disable_plugin(id).await
+        let stop = self.plugin_manager.write().await.begin_plugin_stop(id)?;
+        stop.run().await;
+        Ok(())
     }
 
     pub const fn start_time(&self) -> Instant {
