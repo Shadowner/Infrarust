@@ -335,6 +335,7 @@ pub async fn update(
     Path(id): Path<String>,
     Json(mut config): Json<ServerConfig>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let lock = state.server_dir.lock_writes().await;
     let document = ensure_editable(&state, &id)?;
     settle_id(&mut config, &id)?;
 
@@ -342,7 +343,7 @@ pub async fn update(
         &to_document_text(&config)?,
         state.server_dir.document_text(&id),
     )?;
-    let committed = state.server_dir.replace(&document, text.clone()).await?;
+    let committed = lock.replace(&document, text.clone()).await?;
     let event = document_event(&committed, text, PluginProviderEvent::Updated);
     announce(&state, committed, event).await;
 
@@ -428,6 +429,7 @@ pub async fn update_raw(
     Path(id): Path<String>,
     text: String,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let lock = state.server_dir.lock_writes().await;
     let document = ensure_editable(&state, &id)?;
     let text = restore_secrets(&text, state.server_dir.document_text(&id))?;
 
@@ -435,7 +437,7 @@ pub async fn update_raw(
         toml::from_str(&text).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     settle_id(&mut config, &id)?;
 
-    let committed = state.server_dir.replace(&document, text.clone()).await?;
+    let committed = lock.replace(&document, text.clone()).await?;
     let event = document_event(&committed, text, PluginProviderEvent::Updated);
     announce(&state, committed, event).await;
 
@@ -491,10 +493,10 @@ pub async fn delete(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let lock = state.server_dir.lock_writes().await;
     let document = ensure_editable(&state, &id)?;
 
-    let removed = state
-        .server_dir
+    let removed = lock
         .remove(&document)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;

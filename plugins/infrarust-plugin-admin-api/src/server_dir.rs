@@ -125,6 +125,57 @@ impl Committed<'_> {
     }
 }
 
+pub struct WriteLock<'a> {
+    dir: &'a ServerDir,
+    guard: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl<'a> WriteLock<'a> {
+    /// Replaces the document filed as `id`.
+    pub async fn replace(self, id: &DocumentId, text: String) -> Result<Committed<'a>, StoreError> {
+        let config = document_config(id, &text)?;
+        let path = self.dir.path_of(id);
+        self.dir.store(path, text, config).await?;
+
+        Ok(Committed {
+            id: id.clone(),
+            _guard: self.guard,
+        })
+    }
+
+    /// Deletes the document filed under `id`, or `None` when there is none.
+    pub async fn remove(self, id: &DocumentId) -> Result<Option<Committed<'a>>, StoreError> {
+        let path = self.dir.path_of(id);
+
+        if !self
+            .dir
+            .snapshot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&path)
+        {
+            return Ok(None);
+        }
+
+        if let Err(source) = tokio::fs::remove_file(&path).await
+            && source.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(StoreError::Io { path, source });
+        }
+
+        self.dir
+            .snapshot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&path);
+
+        Ok(Some(Committed {
+            id: id.clone(),
+            _guard: self.guard,
+        }))
+    }
+}
+
 /// A change detected between the directory and the last known snapshot.
 pub enum DirChange {
     Added(ServerDocument),
@@ -268,53 +319,13 @@ impl ServerDir {
         })
     }
 
-    /// Replaces the document filed as `id`.
-    pub async fn replace(
-        &self,
-        id: &DocumentId,
-        text: String,
-    ) -> Result<Committed<'_>, StoreError> {
-        let config = document_config(id, &text)?;
-        let path = self.path_of(id);
-
-        let guard = self.write_lock.lock().await;
-        self.store(path, text, config).await?;
-
-        Ok(Committed {
-            id: id.clone(),
-            _guard: guard,
-        })
-    }
-
-    /// Deletes the document filed under `id`, or `None` when there is none.
-    pub async fn remove(&self, id: &DocumentId) -> Result<Option<Committed<'_>>, StoreError> {
-        let path = self.path_of(id);
-        let guard = self.write_lock.lock().await;
-
-        if !self
-            .snapshot
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .contains_key(&path)
-        {
-            return Ok(None);
+    /// Takes the write lock, so the caller can check a document and then
+    /// write it without another writer slipping in between.
+    pub async fn lock_writes(&self) -> WriteLock<'_> {
+        WriteLock {
+            dir: self,
+            guard: self.write_lock.lock().await,
         }
-
-        if let Err(source) = tokio::fs::remove_file(&path).await
-            && source.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(StoreError::Io { path, source });
-        }
-
-        self.snapshot
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&path);
-
-        Ok(Some(Committed {
-            id: id.clone(),
-            _guard: guard,
-        }))
     }
 
     async fn store(
@@ -1003,13 +1014,25 @@ mod tests {
         let (root, dir) = open();
         store(&dir, "survival", SURVIVAL).await;
 
-        let removed = dir.remove(&id("survival")).await.unwrap();
+        let removed = dir
+            .lock_writes()
+            .await
+            .remove(&id("survival"))
+            .await
+            .unwrap();
         assert_eq!(
             removed.map(|removed| removed.id().to_string()).as_deref(),
             Some("survival")
         );
         assert!(!root.path().join("servers/survival.toml").exists());
-        assert!(dir.remove(&id("survival")).await.unwrap().is_none());
+        assert!(
+            dir.lock_writes()
+                .await
+                .remove(&id("survival"))
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(dir.diff().await.is_empty());
     }
 
