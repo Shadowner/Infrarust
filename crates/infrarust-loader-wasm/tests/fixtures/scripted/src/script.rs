@@ -170,7 +170,7 @@ impl EventName {
             Action::Forward | Action::Handled | Action::Replace(_) | Action::Reply(_) => {
                 self == Self::PluginMessage
             }
-            Action::Cancel | Action::Respond(_) => self == Self::NamedEvent,
+            Action::Cancel | Action::Respond(_) | Action::Transfer(_) => self == Self::NamedEvent,
             Action::Pass => self == Self::RawPacket,
             Action::Limbo(_) => matches!(
                 self,
@@ -216,6 +216,7 @@ pub enum Action {
     Reply(String),
     Cancel,
     Respond(String),
+    Transfer(String),
     Pass,
 }
 
@@ -251,6 +252,11 @@ pub enum Directive {
     Connect {
         command: String,
         server: String,
+    },
+    Transfer {
+        command: String,
+        host: String,
+        port: u16,
     },
 }
 
@@ -313,6 +319,22 @@ fn parse_line(line: &str) -> Result<Directive, String> {
                         server: server.to_owned(),
                     })
                 }
+                "transfer" => {
+                    let (host, rest) = word(rest);
+                    let (port, rest) = word(rest);
+                    let port = port
+                        .parse()
+                        .ok()
+                        .filter(|_| !host.is_empty() && rest.trim().is_empty());
+                    let Some(port) = port else {
+                        return Err("expected `cmd <name> transfer <host> <port>`".to_owned());
+                    };
+                    Ok(Directive::Transfer {
+                        command: name.to_owned(),
+                        host: host.to_owned(),
+                        port,
+                    })
+                }
                 _ => Err(CMD_FORMS.to_owned()),
             }
         }
@@ -360,7 +382,7 @@ fn parse_line(line: &str) -> Result<Directive, String> {
     }
 }
 
-const CMD_FORMS: &str = "expected `cmd <name> record`, `cmd <name> fire <event> \"<payload>\"` or `cmd <name> connect <server>`";
+const CMD_FORMS: &str = "expected `cmd <name> record`, `cmd <name> fire <event> \"<payload>\"`, `cmd <name> connect <server>` or `cmd <name> transfer <host> <port>`";
 
 fn word(text: &str) -> (&str, &str) {
     let text = text.trim_start();
@@ -428,6 +450,7 @@ fn parse_action(text: &str) -> Result<Action, String> {
         "replace" => Action::Replace(arg),
         "reply" => Action::Reply(arg),
         "respond" => Action::Respond(arg),
+        "transfer" => Action::Transfer(arg),
         other => return Err(format!("unknown action {other:?} {arg:?}")),
     })
 }
@@ -503,6 +526,10 @@ where
 
 pub fn connect_line(origin: &str, server: &str, outcome: &str) -> String {
     format!("{origin} connect {server} {outcome}")
+}
+
+pub fn transfer_line(origin: &str, host: &str, port: u16, outcome: &str) -> String {
+    format!("{origin} transfer {host}:{port} {outcome}")
 }
 
 pub fn command_line(name: &str, args: &[String], player: Option<u64>) -> String {

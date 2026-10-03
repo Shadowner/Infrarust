@@ -321,6 +321,12 @@ fn deliver<E: WasmEvent>(event: &mut E, instance: InstanceRef, listener: u64) ->
     let wit = event.to_wit();
     if instance.is_upstream() {
         let details = copied(event);
+        if let Some(deny) = E::DENY_UNANSWERED
+            && instance.is_reentered_by_another()
+        {
+            deny(event);
+            report_denied_upstream(&instance, E::KIND);
+        }
         post(&instance, E::KIND, listener, wit, details);
         return Box::pin(async {});
     }
@@ -355,6 +361,18 @@ fn report_denied(instance: &InstanceRef, kind: EventKind, failure: &CallFailure)
             cause = %failure,
             suppressed,
             "access event denied: the wasm plugin listening to it did not answer"
+        );
+    }
+}
+
+fn report_denied_upstream(instance: &InstanceRef, kind: EventKind) {
+    if let Some(suppressed) = instance.admit_warning() {
+        tracing::warn!(
+            plugin = instance.plugin_id(),
+            event = kind_name(kind),
+            suppressed,
+            "access event denied: another plugin caused it inside a call that is waiting on \
+             the wasm plugin listening to it, so that plugin cannot answer"
         );
     }
 }

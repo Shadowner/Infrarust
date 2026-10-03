@@ -394,6 +394,11 @@ impl InstanceRef {
         CallChain::current().contains(self.plugin_id())
     }
 
+    pub(crate) fn is_reentered_by_another(&self) -> bool {
+        let chain = CallChain::current();
+        chain.contains(self.plugin_id()) && chain.entered_last() != Some(self.plugin_id())
+    }
+
     pub(crate) fn for_calls(&self, kind: CallKind) -> Self {
         Self {
             kind,

@@ -44,18 +44,29 @@ impl CallChain {
             .map_or(0, |caller| caller.entries)
     }
 
+    pub(crate) fn entered_last(&self) -> Option<&str> {
+        self.callers.last().map(|caller| &*caller.plugin)
+    }
+
     pub(crate) fn with(&self, plugin_id: &str) -> Self {
         let mut callers: Vec<Caller> = self.callers.to_vec();
-        match callers
-            .iter_mut()
-            .find(|caller| &*caller.plugin == plugin_id)
+        let entered = match callers
+            .iter()
+            .position(|caller| &*caller.plugin == plugin_id)
         {
-            Some(caller) => caller.entries = caller.entries.saturating_add(1),
-            None => callers.push(Caller {
+            Some(index) => {
+                let caller = callers.remove(index);
+                Caller {
+                    entries: caller.entries.saturating_add(1),
+                    ..caller
+                }
+            }
+            None => Caller {
                 plugin: Arc::from(plugin_id),
                 entries: 1,
-            }),
-        }
+            },
+        };
+        callers.push(entered);
         Self {
             callers: callers.into(),
             session: self.session,
@@ -110,6 +121,9 @@ mod tests {
         assert_eq!(chain.entries("c"), 0);
         assert!(!chain.contains("c"));
         assert_eq!(chain.callers.len(), 2, "a plugin is listed once: {chain:?}");
+        assert_eq!(chain.entered_last(), Some("a"));
+        assert_eq!(chain.with("b").entered_last(), Some("b"));
+        assert_eq!(CallChain::default().entered_last(), None);
         let mut relay = CallChain::default();
         for _ in 0..MAX_ENTRIES {
             relay = relay.with("a").with("b");

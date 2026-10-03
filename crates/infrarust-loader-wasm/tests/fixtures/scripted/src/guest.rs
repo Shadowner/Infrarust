@@ -209,6 +209,26 @@ fn answer_named(e: &mut NamedEvent, action: &Action) {
     }
 }
 
+fn transfer(player: &PlayerRef, host: &str, port: u16) -> String {
+    match player.handle().transfer(host, port) {
+        Ok(()) => "success".to_owned(),
+        Err(error) => error.kind().to_string(),
+    }
+}
+
+fn transfer_named(name: &str, username: &str, target: &str) {
+    let Some((host, port)) = target
+        .rsplit_once(':')
+        .and_then(|(host, port)| Some((host, port.parse().ok()?)))
+    else {
+        return;
+    };
+    let outcome = Players::by_name(username)
+        .map_or_else(|| "offline".to_owned(), |info| transfer(&info.player, host, port));
+    let line = script::transfer_line(&format!("named {name}"), host, port, &outcome);
+    script::append(&log(), &line);
+}
+
 fn subscribe_named(ctx: &Context, name: String, priority: u8, action: Action) {
     let cancel = action == Action::Cancelled;
     let subscription = ctx.on_named(name.clone(), EventPriority::custom(priority), move |e| {
@@ -220,6 +240,9 @@ fn subscribe_named(ctx: &Context, name: String, priority: u8, action: Action) {
             &action,
         );
         answer_named(e, &action);
+        if let Action::Transfer(target) = &action {
+            transfer_named(&name, &bytes_text(&e.payload), target);
+        }
     });
     if cancel && let Ok(subscription) = subscription {
         subscription.cancel();
@@ -298,6 +321,29 @@ pub fn enable(ctx: &Context) -> Result<(), PluginError> {
                             .map_or_else(|| "console".to_owned(), |p| connect(p, &server));
                         let line =
                             script::connect_line(&format!("cmd {command}"), &server, &outcome);
+                        script::append(&log(), &line);
+                        let _ = invocation.reply(format!("{command} {outcome}"));
+                    })
+                    .register();
+            }
+            Directive::Transfer {
+                command,
+                host,
+                port,
+            } => {
+                let label = command.clone();
+                let _ = ctx
+                    .command(&label)
+                    .handler(move |invocation| {
+                        let outcome = invocation
+                            .player()
+                            .map_or_else(|| "console".to_owned(), |p| transfer(p, &host, port));
+                        let line = script::transfer_line(
+                            &format!("cmd {command}"),
+                            &host,
+                            port,
+                            &outcome,
+                        );
                         script::append(&log(), &line);
                         let _ = invocation.reply(format!("{command} {outcome}"));
                     })

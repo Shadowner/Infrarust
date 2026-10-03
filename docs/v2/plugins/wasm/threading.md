@@ -120,7 +120,8 @@ A call that waits on the proxy can cause an event the same plugin listens to. If
 The host prevents it with a **call chain**. Each call into a plugin records the plugin in a chain that follows the work the host does for that call. When an event is about to reach a plugin that is already in the chain, the host does not wait for it:
 
 - the event is queued for the plugin and delivered once its current call has returned;
-- the proxy goes on without the plugin's answer, so a result the plugin sets in that handler is ignored, and an access event is not denied for want of that answer: a plugin that transfers a player does not block its own `PreTransferEvent`;
+- the proxy goes on without the plugin's answer, so a result the plugin sets in that handler is ignored;
+- an access event the plugin caused in its own current call is not denied for want of that answer: a plugin that transfers a player does not block its own `PreTransferEvent`. When the chain entered another plugin after this one, that other plugin caused the event, so an access event is denied as if the plugin had not answered: plugin A fires a named event, plugin B handles it and transfers a player, and A's `PreTransferEvent` listener denies that transfer;
 - the host logs `wasm plugin is still running the call that led to this event; it receives the event without the proxy waiting for it, and its answer is ignored`. The plugin's guest warnings are limited to five a minute, and the next one that gets through carries the number of warnings left out.
 
 This covers:

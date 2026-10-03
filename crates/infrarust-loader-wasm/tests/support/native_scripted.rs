@@ -137,6 +137,20 @@ impl Plugin for ScriptedPlugin {
                         });
                         let _ = ctx.command_manager().register(spec, connect);
                     }
+                    Directive::Transfer {
+                        command,
+                        host,
+                        port,
+                    } => {
+                        let spec = CommandSpec::new(command.as_str());
+                        let transfer = Box::new(TransferCommand {
+                            command,
+                            host,
+                            port,
+                            log: log.clone(),
+                        });
+                        let _ = ctx.command_manager().register(spec, transfer);
+                    }
                 }
             }
             script::append(&log, "enable");
@@ -190,6 +204,34 @@ impl CommandHandler for ConnectCommand {
             script::append(
                 &self.log,
                 &script::connect_line(&origin, &self.server, &outcome),
+            );
+            ctx.source
+                .send_message(Component::text(format!("{} {outcome}", self.command)));
+        })
+    }
+}
+
+struct TransferCommand {
+    command: String,
+    host: String,
+    port: u16,
+    log: PathBuf,
+}
+
+impl CommandHandler for TransferCommand {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let outcome = match ctx.source.player() {
+                Some(player) => match player.transfer(&self.host, self.port).await {
+                    Ok(()) => "success".to_owned(),
+                    Err(error) => format!("{error:?}"),
+                },
+                None => "console".to_owned(),
+            };
+            let origin = format!("cmd {}", self.command);
+            script::append(
+                &self.log,
+                &script::transfer_line(&origin, &self.host, self.port, &outcome),
             );
             ctx.source
                 .send_message(Component::text(format!("{} {outcome}", self.command)));

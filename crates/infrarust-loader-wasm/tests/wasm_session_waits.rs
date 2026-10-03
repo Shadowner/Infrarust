@@ -9,6 +9,7 @@ use std::time::Duration;
 use infrarust_api::types::ServerId;
 use infrarust_protocol::packets::play::chat::{CChatMessageLegacy, CSystemChatMessage};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
+use infrarust_protocol::packets::play::transfer::CTransfer;
 use infrarust_test_harness::text::component_text;
 use infrarust_test_harness::{
     ClientSession, FakeBackend, PacketFrame, ProtocolVersion, ServerSpec, TestProxy, wire,
@@ -52,10 +53,18 @@ struct World {
 
 impl World {
     async fn start(script: &str) -> Self {
+        Self::start_with_peer(script, None).await
+    }
+
+    async fn start_with_peer(script: &str, peer: Option<&str>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let plugins_dir = dir.path().to_path_buf();
         add_fixture(&plugins_dir, "scripted", "scripted");
         write_script(&plugins_dir, "scripted", script);
+        if let Some(peer) = peer {
+            add_fixture(&plugins_dir, "scripted-peer", "scripted-peer");
+            write_script(&plugins_dir, "scripted-peer", peer);
+        }
         let backend_a = FakeBackend::builder().spawn().await.unwrap();
         let backend_b = FakeBackend::builder().spawn().await.unwrap();
         let proxy = TestProxy::builder()
@@ -118,6 +127,30 @@ fn logged(data: &Path, line: &str) -> bool {
     read_log(data).iter().any(|seen| seen == line)
 }
 
+async fn wait_logged(data: &Path, line: &str) {
+    let deadline = Instant::now() + T;
+    while !logged(data, line) {
+        assert!(
+            Instant::now() < deadline,
+            "{line:?} not in {:?}",
+            read_log(data)
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn transferred(session: &mut ClientSession, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        match session.recv_frame(left).await {
+            Ok(frame) if wire::is::<CTransfer>(&frame, VERSION) => return true,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_wasm_command_can_wait_for_its_own_players_switch() {
     let world = World::start("cmd hop connect b").await;
@@ -171,6 +204,47 @@ async fn a_wasm_listener_waiting_for_its_own_players_switch_fails_at_once() {
     );
     let player = world.proxy.wait_for_player("Steve", T).await.unwrap();
     assert_eq!(player.current_server(), Some(ServerId::new("a")));
+
+    world.proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wasm_plugin_may_transfer_its_own_player_while_it_listens_to_pre_transfer() {
+    let world =
+        World::start("on pre-transfer normal record\ncmd hop transfer example.com 25565").await;
+    let mut session = world.join().await;
+    let _conn = world.backend_a.next_connection(T).await.unwrap();
+
+    session.command("hop").await.unwrap();
+
+    assert!(transferred(&mut session, T).await, "the player stayed");
+    wait_logged(&world.data, "cmd hop transfer example.com:25565 success").await;
+
+    world.proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transfer_another_plugin_starts_inside_a_wasm_call_is_denied_for_that_listener() {
+    let world = World::start_with_peer(
+        "on pre-transfer normal record\ncmd hop fire relay \"Steve\"",
+        Some("named relay normal transfer example.com:25565"),
+    )
+    .await;
+    let peer = world.data.with_file_name("scripted-peer");
+    let mut session = world.join().await;
+    let _conn = world.backend_a.next_connection(T).await.unwrap();
+
+    session.command("hop").await.unwrap();
+
+    wait_logged(
+        &peer,
+        "named relay transfer example.com:25565 permission-denied",
+    )
+    .await;
+    assert!(
+        !transferred(&mut session, Duration::from_millis(500)).await,
+        "the player was transferred"
+    );
 
     world.proxy.shutdown().await.unwrap();
 }
