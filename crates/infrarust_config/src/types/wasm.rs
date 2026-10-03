@@ -162,99 +162,67 @@ impl PluginWasmConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WasmRecoveryConfig {
-    #[serde(default = "defaults::wasm_recovery_max_restarts")]
-    pub max_restarts: u32,
+macro_rules! overridable_config {
+    (
+        $global:ident / $plugin:ident {
+            $( $field:ident: $ty:ty = $default:path $(, with = $with:literal)?; )*
+        }
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(default, deny_unknown_fields)]
+        pub struct $global {
+            $(
+                $(#[serde(with = $with)])?
+                pub $field: $ty,
+            )*
+        }
 
-    #[serde(default = "defaults::wasm_recovery_window")]
-    #[serde(with = "humantime_serde")]
-    pub window: Duration,
+        impl Default for $global {
+            fn default() -> Self {
+                Self {
+                    $( $field: $default(), )*
+                }
+            }
+        }
 
-    #[serde(default = "defaults::wasm_recovery_backoff_initial")]
-    #[serde(with = "humantime_serde")]
-    pub backoff_initial: Duration,
+        #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct $plugin {
+            $(
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                $(#[serde(with = $with)])?
+                pub $field: Option<$ty>,
+            )*
+        }
 
-    #[serde(default = "defaults::wasm_recovery_backoff_max")]
-    #[serde(with = "humantime_serde")]
-    pub backoff_max: Duration,
+        impl $plugin {
+            #[must_use]
+            pub fn apply(&self, base: $global) -> $global {
+                $global {
+                    $( $field: self.$field.unwrap_or(base.$field), )*
+                }
+            }
+        }
+    };
 }
 
-impl Default for WasmRecoveryConfig {
-    fn default() -> Self {
-        Self {
-            max_restarts: defaults::wasm_recovery_max_restarts(),
-            window: defaults::wasm_recovery_window(),
-            backoff_initial: defaults::wasm_recovery_backoff_initial(),
-            backoff_max: defaults::wasm_recovery_backoff_max(),
-        }
+overridable_config! {
+    WasmRecoveryConfig / PluginWasmRecoveryConfig {
+        max_restarts: u32 = defaults::wasm_recovery_max_restarts;
+        window: Duration = defaults::wasm_recovery_window, with = "humantime_serde";
+        backoff_initial: Duration = defaults::wasm_recovery_backoff_initial, with = "humantime_serde";
+        backoff_max: Duration = defaults::wasm_recovery_backoff_max, with = "humantime_serde";
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginWasmRecoveryConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_restarts: Option<u32>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "humantime_serde::option")]
-    pub window: Option<Duration>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "humantime_serde::option")]
-    pub backoff_initial: Option<Duration>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "humantime_serde::option")]
-    pub backoff_max: Option<Duration>,
-}
-
-impl PluginWasmRecoveryConfig {
-    #[must_use]
-    pub fn apply(&self, base: WasmRecoveryConfig) -> WasmRecoveryConfig {
-        WasmRecoveryConfig {
-            max_restarts: self.max_restarts.unwrap_or(base.max_restarts),
-            window: self.window.unwrap_or(base.window),
-            backoff_initial: self.backoff_initial.unwrap_or(base.backoff_initial),
-            backoff_max: self.backoff_max.unwrap_or(base.backoff_max),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WasmQuotasConfig {
-    #[serde(default = "defaults::wasm_quota_event_listeners")]
-    pub event_listeners: usize,
-
-    #[serde(default = "defaults::wasm_quota_commands")]
-    pub commands: usize,
-
-    #[serde(default = "defaults::wasm_quota_scheduled_tasks")]
-    pub scheduled_tasks: usize,
-
-    #[serde(default = "defaults::wasm_quota_plugin_channels")]
-    pub plugin_channels: usize,
-
-    #[serde(default = "defaults::wasm_quota_codec_filters")]
-    pub codec_filters: usize,
-
-    #[serde(default = "defaults::wasm_quota_limbo_handlers")]
-    pub limbo_handlers: usize,
-}
-
-impl Default for WasmQuotasConfig {
-    fn default() -> Self {
-        Self {
-            event_listeners: defaults::wasm_quota_event_listeners(),
-            commands: defaults::wasm_quota_commands(),
-            scheduled_tasks: defaults::wasm_quota_scheduled_tasks(),
-            plugin_channels: defaults::wasm_quota_plugin_channels(),
-            codec_filters: defaults::wasm_quota_codec_filters(),
-            limbo_handlers: defaults::wasm_quota_limbo_handlers(),
-        }
+overridable_config! {
+    WasmQuotasConfig / PluginWasmQuotasConfig {
+        event_listeners: usize = defaults::wasm_quota_event_listeners;
+        commands: usize = defaults::wasm_quota_commands;
+        scheduled_tasks: usize = defaults::wasm_quota_scheduled_tasks;
+        plugin_channels: usize = defaults::wasm_quota_plugin_channels;
+        codec_filters: usize = defaults::wasm_quota_codec_filters;
+        limbo_handlers: usize = defaults::wasm_quota_limbo_handlers;
     }
 }
 
@@ -272,69 +240,12 @@ impl WasmQuotasConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginWasmQuotasConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_listeners: Option<usize>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commands: Option<usize>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scheduled_tasks: Option<usize>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plugin_channels: Option<usize>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codec_filters: Option<usize>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limbo_handlers: Option<usize>,
-}
-
-impl PluginWasmQuotasConfig {
-    #[must_use]
-    pub fn apply(&self, base: WasmQuotasConfig) -> WasmQuotasConfig {
-        WasmQuotasConfig {
-            event_listeners: self.event_listeners.unwrap_or(base.event_listeners),
-            commands: self.commands.unwrap_or(base.commands),
-            scheduled_tasks: self.scheduled_tasks.unwrap_or(base.scheduled_tasks),
-            plugin_channels: self.plugin_channels.unwrap_or(base.plugin_channels),
-            codec_filters: self.codec_filters.unwrap_or(base.codec_filters),
-            limbo_handlers: self.limbo_handlers.unwrap_or(base.limbo_handlers),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WasmCodecQuarantineConfig {
-    #[serde(default = "defaults::wasm_codec_quarantine_faults")]
-    pub faults: u32,
-
-    #[serde(default = "defaults::wasm_codec_quarantine_window")]
-    #[serde(with = "humantime_serde")]
-    pub window: Duration,
-
-    #[serde(default = "defaults::wasm_codec_quarantine_backoff_initial")]
-    #[serde(with = "humantime_serde")]
-    pub backoff_initial: Duration,
-
-    #[serde(default = "defaults::wasm_codec_quarantine_backoff_max")]
-    #[serde(with = "humantime_serde")]
-    pub backoff_max: Duration,
-}
-
-impl Default for WasmCodecQuarantineConfig {
-    fn default() -> Self {
-        Self {
-            faults: defaults::wasm_codec_quarantine_faults(),
-            window: defaults::wasm_codec_quarantine_window(),
-            backoff_initial: defaults::wasm_codec_quarantine_backoff_initial(),
-            backoff_max: defaults::wasm_codec_quarantine_backoff_max(),
-        }
+overridable_config! {
+    WasmCodecQuarantineConfig / PluginWasmCodecQuarantineConfig {
+        faults: u32 = defaults::wasm_codec_quarantine_faults;
+        window: Duration = defaults::wasm_codec_quarantine_window, with = "humantime_serde";
+        backoff_initial: Duration = defaults::wasm_codec_quarantine_backoff_initial, with = "humantime_serde";
+        backoff_max: Duration = defaults::wasm_codec_quarantine_backoff_max, with = "humantime_serde";
     }
 }
 
@@ -342,37 +253,6 @@ impl WasmCodecQuarantineConfig {
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
         self.faults > 0
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginWasmCodecQuarantineConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub faults: Option<u32>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "humantime_serde::option")]
-    pub window: Option<Duration>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "humantime_serde::option")]
-    pub backoff_initial: Option<Duration>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(with = "humantime_serde::option")]
-    pub backoff_max: Option<Duration>,
-}
-
-impl PluginWasmCodecQuarantineConfig {
-    #[must_use]
-    pub fn apply(&self, base: WasmCodecQuarantineConfig) -> WasmCodecQuarantineConfig {
-        WasmCodecQuarantineConfig {
-            faults: self.faults.unwrap_or(base.faults),
-            window: self.window.unwrap_or(base.window),
-            backoff_initial: self.backoff_initial.unwrap_or(base.backoff_initial),
-            backoff_max: self.backoff_max.unwrap_or(base.backoff_max),
-        }
     }
 }
 
