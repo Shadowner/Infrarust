@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::sync::LazyLock;
 
 use crate::codec::McBufWriteExt;
 use crate::codec::varint::VarInt;
@@ -83,10 +84,12 @@ fn encode_pre_1_14_empty_chunk(
     if version.less_than(ProtocolVersion::V1_8) {
         w.write_u16_be(0)?;
         w.write_u16_be(0)?;
-        let compressed = zlib_compress(&[0u8; 256])?;
+        let compressed = EMPTY_CHUNK_1_7
+            .as_deref()
+            .ok_or_else(|| ProtocolError::invalid("could not compress the empty 1.7 chunk"))?;
         #[allow(clippy::cast_possible_truncation)]
         w.write_i32_be(compressed.len() as i32)?;
-        w.write_all(&compressed)?;
+        w.write_all(compressed)?;
     } else if version.less_than(ProtocolVersion::V1_9) {
         w.write_u16_be(0)?;
         w.write_var_int(&VarInt(256))?;
@@ -100,6 +103,9 @@ fn encode_pre_1_14_empty_chunk(
 
     Ok(())
 }
+
+static EMPTY_CHUNK_1_7: LazyLock<Option<Vec<u8>>> =
+    LazyLock::new(|| zlib_compress(&[0u8; 256]).ok());
 
 fn zlib_compress(data: &[u8]) -> ProtocolResult<Vec<u8>> {
     use crate::io::compression::new_compressor;
