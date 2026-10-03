@@ -68,31 +68,60 @@ macro_rules! impl_arena_node {
     ($wt:ident) => {
         impl $crate::arena::ArenaNode for $wt::ComponentNode {
             fn references(&self, visit: &mut dyn FnMut(u32)) {
-                if let $wt::NodeContent::Translatable((_, args, _)) = &self.content {
-                    for arg in args {
-                        visit(*arg);
+                let $wt::ComponentNode {
+                    content,
+                    style: _,
+                    click: _,
+                    hover,
+                    children,
+                } = self;
+                match content {
+                    $wt::NodeContent::Translatable((_, args, _)) => {
+                        for arg in args {
+                            visit(*arg);
+                        }
                     }
+                    $wt::NodeContent::Text(_) | $wt::NodeContent::Keybind(_) => {}
                 }
-                if let Some($wt::HoverEvent::ShowText(tooltip)) = &self.hover {
-                    visit(*tooltip);
+                match hover {
+                    Some($wt::HoverEvent::ShowText(tooltip)) => visit(*tooltip),
+                    None => {}
                 }
-                for child in &self.children {
+                for child in children {
                     visit(*child);
                 }
             }
 
             fn text_bytes(&self) -> usize {
-                let content = match &self.content {
+                let $wt::ComponentNode {
+                    content,
+                    style,
+                    click,
+                    hover,
+                    children: _,
+                } = self;
+                let $wt::Style {
+                    color,
+                    bold: _,
+                    italic: _,
+                    underlined: _,
+                    strikethrough: _,
+                    obfuscated: _,
+                    font,
+                    insertion,
+                    shadow_color: _,
+                } = style;
+                let content = match content {
                     $wt::NodeContent::Text(text) | $wt::NodeContent::Keybind(text) => text.len(),
                     $wt::NodeContent::Translatable((key, _, fallback)) => {
                         key.len() + fallback.as_ref().map_or(0, String::len)
                     }
                 };
-                let style = [&self.style.color, &self.style.font, &self.style.insertion]
+                let style = [color, font, insertion]
                     .into_iter()
                     .map(|value| value.as_ref().map_or(0, String::len))
                     .sum::<usize>();
-                let click = match &self.click {
+                let click = match click {
                     Some(
                         $wt::ClickEvent::OpenUrl(value)
                         | $wt::ClickEvent::RunCommand(value)
@@ -101,7 +130,10 @@ macro_rules! impl_arena_node {
                     ) => value.len(),
                     Some($wt::ClickEvent::ChangePage(_)) | None => 0,
                 };
-                content + style + click
+                let hover = match hover {
+                    Some($wt::HoverEvent::ShowText(_)) | None => 0,
+                };
+                content + style + click + hover
             }
         }
     };
