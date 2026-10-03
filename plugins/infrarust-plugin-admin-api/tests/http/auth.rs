@@ -129,55 +129,63 @@ async fn test_unknown_route_returns_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+const PROTECTED_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/api/v1/proxy"),
+    ("GET", "/api/v1/players"),
+    ("GET", "/api/v1/players/count"),
+    ("GET", "/api/v1/players/Steve"),
+    ("GET", "/api/v1/bans"),
+    ("POST", "/api/v1/bans"),
+    ("GET", "/api/v1/bans/check/username/test"),
+    ("GET", "/api/v1/servers"),
+    ("POST", "/api/v1/servers"),
+    ("POST", "/api/v1/servers/validate"),
+    ("GET", "/api/v1/servers/server_0"),
+    ("PUT", "/api/v1/servers/server_0"),
+    ("DELETE", "/api/v1/servers/server_0"),
+    ("GET", "/api/v1/servers/server_0/raw"),
+    ("PUT", "/api/v1/servers/server_0/raw"),
+    ("GET", "/api/v1/servers/server_0/config"),
+    ("GET", "/api/v1/servers/server_0/backends"),
+    ("GET", "/api/v1/health/backends"),
+    ("GET", "/api/v1/plugins"),
+    ("GET", "/api/v1/plugins/test"),
+    ("GET", "/api/v1/stats"),
+    ("GET", "/api/v1/events/recent"),
+    ("GET", "/api/v1/config/providers"),
+    ("GET", "/api/v1/config/proxy"),
+    ("GET", "/api/v1/config/proxy/raw"),
+    ("PUT", "/api/v1/config/proxy/raw"),
+    ("POST", "/api/v1/config/proxy/validate"),
+    ("GET", "/api/v1/logs/history"),
+    ("POST", "/api/v1/players/broadcast"),
+    ("POST", "/api/v1/players/test/kick"),
+    ("POST", "/api/v1/players/test/send"),
+    ("POST", "/api/v1/players/test/message"),
+    ("DELETE", "/api/v1/bans/username/test"),
+    ("POST", "/api/v1/servers/test/start"),
+    ("POST", "/api/v1/servers/test/stop"),
+    ("GET", "/api/v1/servers/test/health"),
+    ("GET", "/api/v1/servers/test/health/cached"),
+    (
+        "POST",
+        "/api/v1/servers/server_0/backends/10.0.0.0:25565/drain",
+    ),
+    (
+        "POST",
+        "/api/v1/servers/server_0/backends/10.0.0.0:25565/enable",
+    ),
+    (
+        "POST",
+        "/api/v1/servers/server_0/backends/10.0.0.0:25565/reset",
+    ),
+    ("POST", "/api/v1/config/reload"),
+    ("POST", "/api/v1/proxy/shutdown"),
+];
+
 #[tokio::test]
-async fn test_new_endpoints_require_auth() {
-    let endpoints = [
-        "/api/v1/players",
-        "/api/v1/players/count",
-        "/api/v1/bans",
-        "/api/v1/servers",
-        "/api/v1/plugins",
-        "/api/v1/stats",
-        "/api/v1/config/providers",
-        "/api/v1/health/backends",
-        "/api/v1/servers/server_0/backends",
-    ];
-
-    for uri in endpoints {
-        let response = TestApi::new().send(unauthenticated(uri)).await;
-        assert_eq!(
-            response.status(),
-            StatusCode::UNAUTHORIZED,
-            "Expected 401 for {uri} without auth"
-        );
-    }
-}
-
-#[tokio::test]
-async fn test_mutation_endpoints_require_auth() {
-    let endpoints: Vec<(&str, &str)> = vec![
-        ("POST", "/api/v1/players/broadcast"),
-        ("POST", "/api/v1/players/test/kick"),
-        ("POST", "/api/v1/bans"),
-        ("DELETE", "/api/v1/bans/username/test"),
-        ("POST", "/api/v1/servers/test/start"),
-        (
-            "POST",
-            "/api/v1/servers/server_0/backends/10.0.0.0:25565/drain",
-        ),
-        (
-            "POST",
-            "/api/v1/servers/server_0/backends/10.0.0.0:25565/enable",
-        ),
-        (
-            "POST",
-            "/api/v1/servers/server_0/backends/10.0.0.0:25565/reset",
-        ),
-        ("POST", "/api/v1/config/reload"),
-        ("POST", "/api/v1/proxy/shutdown"),
-    ];
-
-    for (method, uri) in endpoints {
+async fn every_protected_route_requires_auth() {
+    for &(method, uri) in PROTECTED_ROUTES {
         let request = Request::builder()
             .method(method)
             .uri(uri)
@@ -191,6 +199,22 @@ async fn test_mutation_endpoints_require_auth() {
             "Expected 401 for {method} {uri}"
         );
     }
+}
+
+#[test]
+fn the_protected_route_list_covers_every_handler_of_the_router() {
+    let router = include_str!("../../src/router.rs");
+    let start = router.find("let protected_routes").unwrap();
+    let end = router.find("let sse_routes").unwrap();
+    let section = &router[start..end];
+
+    let handlers: usize = ["get(", "post(", "put(", "delete("]
+        .iter()
+        .flat_map(|method| ["handlers::", "sse::"].map(|module| format!("{method}{module}")))
+        .map(|registration| section.matches(&registration).count())
+        .sum();
+
+    assert_eq!(PROTECTED_ROUTES.len(), handlers);
 }
 
 #[tokio::test]
