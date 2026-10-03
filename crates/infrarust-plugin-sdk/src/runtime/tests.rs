@@ -587,7 +587,7 @@ fn reentrant_dispatch_of_a_running_event_handler_is_skipped() {
     let seen = Rc::clone(&runs);
     let listener_slot = Rc::clone(&own);
     Context::new()
-        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+        .on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| {
             bump(&seen);
             let nested = handle_event(listener_slot.get(), Event::ProxyShutdown);
             assert_eq!(nested, EventOutcome::Unchanged);
@@ -606,7 +606,7 @@ fn event_handler_unsubscribing_itself_is_dropped_after_the_call() {
     let seen = Rc::clone(&runs);
     let slot = Rc::clone(&own);
     let sub = Context::new()
-        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+        .on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| {
             let _ = &token;
             bump(&seen);
             if let Some(sub) = slot.borrow_mut().take() {
@@ -640,7 +640,7 @@ fn event_handler_can_unsubscribe_another_handler_mid_dispatch() {
 
     let seen = Rc::clone(&a_runs);
     let victim = Rc::clone(&b_sub);
-    ctx.on::<ProxyShutdownEvent>(EventPriority::First, move |_| {
+    ctx.on::<ProxyShutdownEvent>(EventPriority::FIRST, move |_| {
         bump(&seen);
         if let Some(sub) = victim.borrow_mut().take() {
             sub.cancel();
@@ -650,7 +650,7 @@ fn event_handler_can_unsubscribe_another_handler_mid_dispatch() {
     let a = last_listener();
     let seen = Rc::clone(&b_runs);
     *b_sub.borrow_mut() = Some(
-        ctx.on::<ProxyShutdownEvent>(EventPriority::Last, move |_| {
+        ctx.on::<ProxyShutdownEvent>(EventPriority::LAST, move |_| {
             let _ = &b_token;
             bump(&seen);
         })
@@ -671,10 +671,10 @@ fn event_handler_can_subscribe_while_dispatching() {
     let runs = counter();
     let seen = Rc::clone(&runs);
     Context::new()
-        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+        .on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| {
             let inner = Rc::clone(&seen);
             Context::new()
-                .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| bump(&inner))
+                .on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| bump(&inner))
                 .unwrap();
         })
         .unwrap();
@@ -691,7 +691,7 @@ fn event_of_another_kind_is_ignored() {
     let runs = counter();
     let seen = Rc::clone(&runs);
     Context::new()
-        .on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| bump(&seen))
+        .on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| bump(&seen))
         .unwrap();
     let outcome = handle_event(last_listener(), Event::ProxyInitialize);
     assert_eq!(outcome, EventOutcome::Unchanged);
@@ -702,7 +702,7 @@ fn event_of_another_kind_is_ignored() {
 fn a_refused_subscription_keeps_no_handler() {
     refuse("subscribe");
     let (token, dropped) = probe();
-    let refused = Context::new().on::<ProxyShutdownEvent>(EventPriority::Normal, move |_| {
+    let refused = Context::new().on::<ProxyShutdownEvent>(EventPriority::NORMAL, move |_| {
         let _ = &token;
     });
     assert!(refused.is_err());
@@ -880,7 +880,7 @@ fn open_result() -> crate::bindings::events::NamedEventResult {
 #[test]
 fn a_named_listener_is_subscribed_by_name_and_answers_through_its_outcome() {
     let subscription = Context::new()
-        .on_named("echo", EventPriority::Late, |event| {
+        .on_named("echo", EventPriority::LATE, |event| {
             let text = event.text().unwrap_or_default().to_owned();
             event.respond_text(text.replace("ping", "pong"));
         })
@@ -950,7 +950,7 @@ fn a_packet_listener_sends_its_filters_and_can_drop_packets() {
     let subscription = Context::new()
         .on_packets(
             &[PacketFilter::serverbound(5, ConnectionState::Play)],
-            EventPriority::Normal,
+            EventPriority::NORMAL,
             |event: &mut RawPacketEvent| {
                 if event.data.first() == Some(&0xff) {
                     event.drop_packet();
@@ -986,7 +986,7 @@ fn a_packet_listener_sends_its_filters_and_can_drop_packets() {
         Context::new()
             .on_packets(
                 &[PacketFilter::clientbound(1, ConnectionState::Play)],
-                EventPriority::Normal,
+                EventPriority::NORMAL,
                 |_: &mut RawPacketEvent| {}
             )
             .is_err()

@@ -56,13 +56,13 @@ impl Plugin for SoakWitness {
             let attempt = info.attempt;
             with_counts(|c| c.recovered_attempt = attempt);
         }
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| with_counts(|c| c.post_login += 1))?;
-        ctx.on::<DisconnectEvent>(EventPriority::Normal, |_| with_counts(|c| c.disconnect += 1))?;
-        ctx.on::<ChatMessageEvent>(EventPriority::Normal, |_| with_counts(|c| c.chat += 1))?;
-        ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |_| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| with_counts(|c| c.post_login += 1))?;
+        ctx.on::<DisconnectEvent>(EventPriority::NORMAL, |_| with_counts(|c| c.disconnect += 1))?;
+        ctx.on::<ChatMessageEvent>(EventPriority::NORMAL, |_| with_counts(|c| c.chat += 1))?;
+        ctx.on::<ServerPreConnectEvent>(EventPriority::NORMAL, |_| {
             with_counts(|c| c.pre_connect += 1);
         })?;
-        ctx.on::<ServerConnectedEvent>(EventPriority::Normal, |_| {
+        ctx.on::<ServerConnectedEvent>(EventPriority::NORMAL, |_| {
             with_counts(|c| c.connected += 1);
         })?;
         ctx.command("wping")

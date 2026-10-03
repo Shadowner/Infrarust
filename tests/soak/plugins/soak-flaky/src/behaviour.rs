@@ -150,7 +150,7 @@ pub fn install(ctx: &Context, id: &str, command: &str) -> Result<(), PluginError
     seed();
     record_enable(ctx, id);
     let owner = id.to_string();
-    ctx.on::<ChatMessageEvent>(EventPriority::Late, move |_| {
+    ctx.on::<ChatMessageEvent>(EventPriority::LATE, move |_| {
         let n = bump(|c| &mut c.chat);
         hoard(knobs.leak_kb_per_event);
         busy(knobs.chat_busy_ms);
@@ -158,7 +158,7 @@ pub fn install(ctx: &Context, id: &str, command: &str) -> Result<(), PluginError
             panic!("{owner}: chat trap at {n}");
         }
     })?;
-    ctx.on::<PostLoginEvent>(EventPriority::Normal, move |_| {
+    ctx.on::<PostLoginEvent>(EventPriority::NORMAL, move |_| {
         bump(|c| &mut c.login);
         nap(knobs.login_sleep_ms);
         if roll(knobs.login_spin_every) {
@@ -168,13 +168,13 @@ pub fn install(ctx: &Context, id: &str, command: &str) -> Result<(), PluginError
             grow_forever();
         }
     })?;
-    ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, move |_| {
+    ctx.on::<ServerPreConnectEvent>(EventPriority::NORMAL, move |_| {
         bump(|c| &mut c.preconnect);
         nap(knobs.preconnect_sleep_ms);
         busy(knobs.preconnect_busy_ms);
     })?;
     let owner = id.to_string();
-    ctx.on::<DisconnectEvent>(EventPriority::Normal, move |_| {
+    ctx.on::<DisconnectEvent>(EventPriority::NORMAL, move |_| {
         let n = bump(|c| &mut c.disconnect);
         if roll(knobs.disconnect_trap_every) {
             panic!("{owner}: disconnect trap at {n}");

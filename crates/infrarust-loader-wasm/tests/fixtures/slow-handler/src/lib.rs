@@ -17,14 +17,14 @@ struct SlowHandler;
 #[plugin(id = "slow-handler", name = "Slow Handler Fixture")]
 impl Plugin for SlowHandler {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             let answer = Bans::is_banned(&BanTarget::Username(event.profile.username.clone()));
             log(match answer {
                 Ok(_) => "post-login answered",
                 Err(_) => "post-login service-error",
             });
         })?;
-        ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |event| {
+        ctx.on::<ServerPreConnectEvent>(EventPriority::NORMAL, |event| {
             log("pre-connect");
             event.redirect_to("backend-1");
         })?;

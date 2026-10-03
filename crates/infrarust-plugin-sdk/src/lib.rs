@@ -12,7 +12,7 @@
 //! #[plugin(id = "my-plugin")]
 //! impl Plugin for MyPlugin {
 //!     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-//!         ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| {
+//!         ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |e| {
 //!             info!("{} joined", e.player.username);
 //!         })?;
 //!         Ok(())

@@ -84,7 +84,7 @@ In 0.2.3 each handler started from an empty result and `allow()` meant "no chang
 A ping handler written against `response_mut()` becomes, for example:
 
 ```rust
-ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
+ctx.on::<ProxyPingEvent>(EventPriority::NORMAL, |event| {
     event.set_max_players(event.online_players() + 1);
     event.set_description("Welcome");
 })?;

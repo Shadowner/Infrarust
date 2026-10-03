@@ -10,7 +10,7 @@ struct {{crate_name | pascal_case}};
 #[plugin]
 impl Plugin for {{crate_name | pascal_case}} {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             info!("{} joined", event.player.username);
         })?;
 

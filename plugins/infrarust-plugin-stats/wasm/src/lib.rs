@@ -12,10 +12,10 @@ struct StatsPlugin;
 #[plugin(id = "stats", name = "Stats Plugin")]
 impl Plugin for StatsPlugin {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             info!("[stats] {}", core::join_log(&event.profile.username));
         })?;
-        ctx.on::<DisconnectEvent>(EventPriority::Normal, |event| {
+        ctx.on::<DisconnectEvent>(EventPriority::NORMAL, |event| {
             info!("[stats] {}", core::leave_log(&event.player.username));
         })?;
         let registered = ctx

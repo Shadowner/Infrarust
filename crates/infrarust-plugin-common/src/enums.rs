@@ -309,6 +309,47 @@ pub enum FilterPriority {
     Last = 4,
 }
 
+/// Order in which event listeners run, from [`FIRST`](Self::FIRST) to
+/// [`LAST`](Self::LAST).
+///
+/// Each listener sees the changes made by the listeners that ran before it.
+/// Two priorities are equal when their values are equal, so
+/// `EventPriority::custom(128) == EventPriority::NORMAL`.
+///
+/// ```
+/// use infrarust_plugin_common::EventPriority;
+///
+/// assert!(EventPriority::FIRST < EventPriority::EARLY);
+/// assert_eq!(EventPriority::custom(128), EventPriority::NORMAL);
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EventPriority(u8);
+
+impl EventPriority {
+    /// Runs before every other listener.
+    pub const FIRST: Self = Self(0);
+    /// Runs before the normal listeners.
+    pub const EARLY: Self = Self(64);
+    /// The default priority.
+    pub const NORMAL: Self = Self(128);
+    /// Runs after the normal listeners.
+    pub const LATE: Self = Self(192);
+    /// Runs after every other listener.
+    pub const LAST: Self = Self(255);
+
+    /// A priority between the named levels; lower values run first.
+    #[must_use]
+    pub const fn custom(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// The raw value, `0` for [`FIRST`](Self::FIRST) up to `255` for [`LAST`](Self::LAST).
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -367,6 +408,16 @@ mod tests {
         assert!(FilterPriority::Late < FilterPriority::Last);
         assert_eq!(FilterPriority::default(), FilterPriority::Normal);
         assert_eq!(FilterPriority::Last as u8, 4);
+    }
+
+    #[test]
+    fn event_priorities_compare_by_value() {
+        assert!(EventPriority::FIRST < EventPriority::EARLY);
+        assert!(EventPriority::EARLY < EventPriority::NORMAL);
+        assert!(EventPriority::NORMAL < EventPriority::LATE);
+        assert!(EventPriority::LATE < EventPriority::LAST);
+        assert_eq!(EventPriority::custom(128), EventPriority::NORMAL);
+        assert_eq!(EventPriority::LAST.value(), 255);
     }
 
     #[test]

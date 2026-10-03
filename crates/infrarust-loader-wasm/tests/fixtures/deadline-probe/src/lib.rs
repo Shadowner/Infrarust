@@ -35,7 +35,7 @@ impl LimboHandler for BanGate {
 #[plugin(id = "deadline-probe", name = "Deadline Probe Fixture")]
 impl Plugin for DeadlineProbe {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PreLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PreLoginEvent>(EventPriority::NORMAL, |event| {
             match ban_check(&event.profile.username) {
                 Ok(false) => log("pre-login allowed"),
                 Ok(true) => event.deny(Component::text("Banned")),
@@ -45,7 +45,7 @@ impl Plugin for DeadlineProbe {
                 }
             }
         })?;
-        ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |event| {
+        ctx.on::<ServerPreConnectEvent>(EventPriority::NORMAL, |event| {
             log("pre-connect");
             event.redirect_to("backend-1");
         })?;

@@ -55,10 +55,10 @@ fn bump(count: &Cell<u32>) -> u32 {
 
 fn nest(ctx: &Context) -> Result<(), PluginError> {
     let count = counter();
-    ctx.on::<PostLoginEvent>(EventPriority::Normal, move |_| {
+    ctx.on::<PostLoginEvent>(EventPriority::NORMAL, move |_| {
         let n = bump(&count);
         log(&format!("outer {n}"));
-        let added = Context::new().on::<PostLoginEvent>(EventPriority::Late, move |_| {
+        let added = Context::new().on::<PostLoginEvent>(EventPriority::LATE, move |_| {
             log(&format!("inner {n}"));
         });
         if let Err(error) = added {
@@ -72,7 +72,7 @@ fn self_cancel(ctx: &Context) -> Result<(), PluginError> {
     let slot: Rc<RefCell<Option<EventSubscription>>> = Rc::default();
     let inside = Rc::clone(&slot);
     let count = counter();
-    let subscription = ctx.on::<PostLoginEvent>(EventPriority::Normal, move |_| {
+    let subscription = ctx.on::<PostLoginEvent>(EventPriority::NORMAL, move |_| {
         let n = bump(&count);
         log(&format!("selfcancel {n}"));
         if let Some(subscription) = inside.borrow_mut().take() {
@@ -81,7 +81,7 @@ fn self_cancel(ctx: &Context) -> Result<(), PluginError> {
     })?;
     *slot.borrow_mut() = Some(subscription);
     let after = counter();
-    ctx.on::<PostLoginEvent>(EventPriority::Last, move |_| {
+    ctx.on::<PostLoginEvent>(EventPriority::LAST, move |_| {
         log(&format!("after {}", bump(&after)));
     })?;
     Ok(())
@@ -89,11 +89,11 @@ fn self_cancel(ctx: &Context) -> Result<(), PluginError> {
 
 fn cancel_later(ctx: &Context) -> Result<(), PluginError> {
     let count = counter();
-    let later = ctx.on::<PostLoginEvent>(EventPriority::Late, move |_| {
+    let later = ctx.on::<PostLoginEvent>(EventPriority::LATE, move |_| {
         log(&format!("later {}", bump(&count)));
     })?;
     let slot = Rc::new(RefCell::new(Some(later)));
-    ctx.on::<PostLoginEvent>(EventPriority::Early, move |_| {
+    ctx.on::<PostLoginEvent>(EventPriority::EARLY, move |_| {
         log("canceller");
         if let Some(later) = slot.borrow_mut().take() {
             later.cancel();
@@ -104,7 +104,7 @@ fn cancel_later(ctx: &Context) -> Result<(), PluginError> {
 
 fn many(ctx: &Context, count: u32) -> Result<(), PluginError> {
     for index in 0..count {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, move |_| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, move |_| {
             log(&format!("many {index}"));
         })?;
     }
@@ -462,7 +462,7 @@ fn limbo_tools(ctx: &Context) -> Result<(), PluginError> {
 }
 
 fn named_uncancel(ctx: &Context, name: String) -> Result<(), PluginError> {
-    ctx.on_named(name.clone(), EventPriority::Late, move |event| {
+    ctx.on_named(name.clone(), EventPriority::LATE, move |event| {
         log(&format!(
             "named {name} saw cancelled={} response={}",
             event.is_cancelled(),
@@ -489,7 +489,7 @@ fn describe_setup(result: &PermissionsSetupResult) -> String {
 }
 
 fn permission_setup(ctx: &Context, priority: u8, action: String) -> Result<(), PluginError> {
-    ctx.on::<PermissionsSetupEvent>(EventPriority::Custom(priority), move |event| {
+    ctx.on::<PermissionsSetupEvent>(EventPriority::custom(priority), move |event| {
         log(&format!("permsetup@{priority} saw {}", describe_setup(event.result())));
         match action.as_str() {
             "provide" => event.provide(PermissionSnapshot::new().grant("probe.node")),
@@ -501,7 +501,7 @@ fn permission_setup(ctx: &Context, priority: u8, action: String) -> Result<(), P
 }
 
 fn chat_append(ctx: &Context, priority: u8, tag: String) -> Result<(), PluginError> {
-    ctx.on::<ChatMessageEvent>(EventPriority::Custom(priority), move |event| {
+    ctx.on::<ChatMessageEvent>(EventPriority::custom(priority), move |event| {
         let base = match event.result() {
             ChatMessageResult::Modify(message) => message.clone(),
             _ => event.message.clone(),
@@ -522,7 +522,7 @@ fn describe_login(result: &PreLoginResult) -> String {
 }
 
 fn pre_login(ctx: &Context, priority: u8, action: String) -> Result<(), PluginError> {
-    ctx.on::<PreLoginEvent>(EventPriority::Custom(priority), move |event| {
+    ctx.on::<PreLoginEvent>(EventPriority::custom(priority), move |event| {
         log(&format!("prelogin@{priority} saw {}", describe_login(event.result())));
         match action.as_str() {
             "allow" => event.allow(),
@@ -569,7 +569,7 @@ fn fire(ctx: &Context, command: &str, event: String) -> Result<(), PluginError> 
 macro_rules! dump_events {
     ($ctx:expr, $($event:ident),* $(,)?) => {
         $(
-            $ctx.on::<$event>(EventPriority::Normal, |event| {
+            $ctx.on::<$event>(EventPriority::NORMAL, |event| {
                 log(&format!("{} {:?}", stringify!($event), event).replace('\n', " "));
             })?;
         )*
@@ -619,16 +619,16 @@ fn dump(ctx: &Context) -> Result<(), PluginError> {
 }
 
 fn answer(ctx: &Context) -> Result<(), PluginError> {
-    ctx.on::<ChatMessageEvent>(EventPriority::Late, ChatMessageEvent::deny_silently)?;
-    ctx.on::<CommandExecuteEvent>(EventPriority::Late, CommandExecuteEvent::deny_silently)?;
+    ctx.on::<ChatMessageEvent>(EventPriority::LATE, ChatMessageEvent::deny_silently)?;
+    ctx.on::<CommandExecuteEvent>(EventPriority::LATE, CommandExecuteEvent::deny_silently)?;
     ctx.on::<ConnectionHandshakeEvent>(
-        EventPriority::Late,
+        EventPriority::LATE,
         ConnectionHandshakeEvent::deny_silently,
     )?;
-    ctx.on::<KickedFromServerEvent>(EventPriority::Late, |event| {
+    ctx.on::<KickedFromServerEvent>(EventPriority::LATE, |event| {
         event.set_result(KickedFromServerResult::DisconnectPlayer(None));
     })?;
-    ctx.on::<ProxyPingEvent>(EventPriority::Late, |event| {
+    ctx.on::<ProxyPingEvent>(EventPriority::LATE, |event| {
         event.set_max_players(-1);
         event.set_online_players(i32::MAX);
         event.set_version_protocol(5);
@@ -636,17 +636,17 @@ fn answer(ctx: &Context) -> Result<(), PluginError> {
         event.set_favicon(None);
         event.set_player_sample(vec![("Zed".to_owned(), Uuid::from_u128(9))]);
     })?;
-    ctx.on::<GameProfileRequestEvent>(EventPriority::Late, |event| {
+    ctx.on::<GameProfileRequestEvent>(EventPriority::LATE, |event| {
         let profile = event.profile_mut();
         profile.uuid = Uuid::from_u128(99);
         profile.properties.clear();
     })?;
-    ctx.on::<PermissionsSetupEvent>(EventPriority::Late, PermissionsSetupEvent::use_default)?;
+    ctx.on::<PermissionsSetupEvent>(EventPriority::LATE, PermissionsSetupEvent::use_default)?;
     Ok(())
 }
 
 fn whitelist(ctx: &Context) -> Result<(), PluginError> {
-    ctx.on::<PreLoginEvent>(EventPriority::Normal, |event| {
+    ctx.on::<PreLoginEvent>(EventPriority::NORMAL, |event| {
         let name = event.profile.username.clone();
         if let Some(pause) = sleep_for(&name) {
             std::thread::sleep(pause);

@@ -38,7 +38,7 @@ Everything you need is in the SDK prelude:
 use infrarust_plugin_sdk::prelude::*;
 ```
 
-- Subscribe to events: `ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| { ... })?`
+- Subscribe to events: `ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |e| { ... })?`
 - Register commands: `ctx.command("name").description("...").handler(|inv| { ... }).register()?`
 - Read services directly: `Players::count()`, `Config::get("key")?`
 - Talk to a player by id: `event.player.handle().send_message("hi")?`

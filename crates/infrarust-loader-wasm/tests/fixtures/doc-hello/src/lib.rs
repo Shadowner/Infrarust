@@ -8,7 +8,7 @@ struct DocHello;
 #[plugin]
 impl Plugin for DocHello {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             info!("{} joined", event.player.username);
         })?;
 

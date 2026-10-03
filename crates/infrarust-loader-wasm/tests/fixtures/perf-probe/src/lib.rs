@@ -23,7 +23,7 @@ fn on_named_loop(
     name: &str,
     mut body: impl FnMut(u32) -> u64 + 'static,
 ) -> Result<(), PluginError> {
-    ctx.on_named(name, EventPriority::Normal, move |event| {
+    ctx.on_named(name, EventPriority::NORMAL, move |event| {
         let times = repeat(event);
         let mut total = 0u64;
         for i in 0..times {
@@ -50,21 +50,21 @@ impl CodecFilter for PassFilter {
 #[plugin(id = "perf-probe", name = "Perf Probe Fixture")]
 impl Plugin for PerfProbe {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PlayerClientBrandEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PlayerClientBrandEvent>(EventPriority::NORMAL, |event| {
             black_box(&event.brand);
         })?;
-        ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
+        ctx.on::<ProxyPingEvent>(EventPriority::NORMAL, |event| {
             if event.virtual_host.as_deref() == Some(MODIFY_HOST) {
                 event.set_max_players(event.max_players() + 1);
             }
         })?;
-        ctx.on::<GameProfileRequestEvent>(EventPriority::Normal, |event| {
+        ctx.on::<GameProfileRequestEvent>(EventPriority::NORMAL, |event| {
             if event.virtual_host.as_deref() == Some(MODIFY_HOST) {
                 event.profile_mut().username.push('_');
             }
         })?;
-        ctx.on_named("perf.noop", EventPriority::Normal, |_| {})?;
-        ctx.on_named("perf.trap", EventPriority::Normal, |_| {
+        ctx.on_named("perf.noop", EventPriority::NORMAL, |_| {})?;
+        ctx.on_named("perf.trap", EventPriority::NORMAL, |_| {
             panic!("perf probe trap on demand");
         })?;
         on_named_loop(ctx, "perf.players.count", |_| u64::from(Players::count()))?;

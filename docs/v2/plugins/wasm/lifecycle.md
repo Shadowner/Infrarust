@@ -236,7 +236,7 @@ pub trait Plugin: 'static {
 
 ```rust
 fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-    ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| {
+    ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |e| {
         // observe a login
     })?;
 

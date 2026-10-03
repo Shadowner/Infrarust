@@ -146,7 +146,7 @@ So the host records that player in the call's chain, and a `connect` or `request
 Use `switch_server` in those places. It returns as soon as the session has taken the request, and the switch then runs on its own:
 
 ```rust
-ctx.on::<ChatMessageEvent>(EventPriority::Normal, |event| {
+ctx.on::<ChatMessageEvent>(EventPriority::NORMAL, |event| {
     if event.message == "!hub" {
         let _ = event.player.handle().switch_server("hub");
     }
@@ -237,12 +237,12 @@ struct Stats {
 impl Plugin for Stats {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         let joins = Rc::clone(&self.joins);
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, move |_| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, move |_| {
             joins.set(joins.get() + 1);
         })?;
 
         let last = Rc::clone(&self.last_server);
-        ctx.on::<ServerPostConnectEvent>(EventPriority::Normal, move |event| {
+        ctx.on::<ServerPostConnectEvent>(EventPriority::NORMAL, move |event| {
             last.borrow_mut()
                 .insert(event.player.id, event.server.clone());
         })?;

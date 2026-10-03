@@ -21,7 +21,7 @@ struct EventSubscriber;
 #[plugin(id = "event-subscriber", name = "Event Subscriber")]
 impl Plugin for EventSubscriber {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             info!("{} joined", event.player.username);
         })?;
         Ok(())
@@ -50,22 +50,22 @@ Subscribe in `on_enable`. The subscription stays active for the life of the plug
 `EventSubscription::cancel` removes that one handler. Other handlers on the same event keep running.
 
 ```rust
-let sub = ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| {})?;
+let sub = ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| {})?;
 sub.cancel();
 ```
 
 ## Priority
 
-`EventPriority` is an enum whose `value()` is a `u8`. Handlers run from the lowest value to the highest, so `First` (0) runs before `Last` (255). Use `Custom(u8)` for a value between the named levels.
+`EventPriority` wraps a `u8`, the same type native plugins use. Handlers run from the lowest value to the highest, so `FIRST` (0) runs before `LAST` (255). Use `EventPriority::custom(v)` for a value between the named levels. Two priorities with the same value are equal: `EventPriority::custom(128) == EventPriority::NORMAL`.
 
-| Variant | Value | Runs |
+| Priority | Value | Runs |
 | --- | --- | --- |
-| `First` | 0 | earliest |
-| `Early` | 64 | |
-| `Normal` | 128 | default choice |
-| `Late` | 192 | |
-| `Last` | 255 | latest |
-| `Custom(v)` | `v` | at exactly `v` |
+| `FIRST` | 0 | earliest |
+| `EARLY` | 64 | |
+| `NORMAL` | 128 | default choice |
+| `LATE` | 192 | |
+| `LAST` | 255 | latest |
+| `custom(v)` | `v` | at exactly `v` |
 
 Multiple handlers, native or WASM, can share one event kind. The proxy runs them in priority order over one shared native event.
 
@@ -80,7 +80,7 @@ A resulted event carries the proxy's next action. The SDK hands the handler the 
 That makes the WASM behaviour match a native handler: a later handler can undo an earlier one.
 
 ```rust
-ctx.on::<PreLoginEvent>(EventPriority::Late, |event| {
+ctx.on::<PreLoginEvent>(EventPriority::LATE, |event| {
     if let PreLoginResult::Denied(_) = event.result() {
         if event.profile.username == "Notch" {
             event.allow();
@@ -191,7 +191,7 @@ Every reason and message is anything that converts into a `Component`, so `deny(
 `ProxyPingEvent` hands out the ping response one field at a time. `max_players()`, `online_players()`, `version_name()` and `version_protocol()` arrive with the event. `description()`, `favicon()` and `player_sample()` stay on the host until the handler first reads them: each first read is one host call that copies that field into the plugin, and a handler that never reads them never pays for them. Each setter records the new value, and the SDK sends back only what the handler set: a description, favicon or sample you did not set keeps the native value exactly as it was, including parts of the description the contract cannot carry.
 
 ```rust
-ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
+ctx.on::<ProxyPingEvent>(EventPriority::NORMAL, |event| {
     event.set_max_players(1000);
     event.set_description(Component::text("Welcome").color(NamedColor::Gold));
 })?;
@@ -204,7 +204,7 @@ ctx.on::<ProxyPingEvent>(EventPriority::Normal, |event| {
 `GameProfileRequestEvent` hands you the profile the player is about to get. Edit it in place with `profile_mut()`; `original` stays the profile the proxy started from, and a handler that leaves the profile alone keeps whatever an earlier handler set. `deny(reason)` refuses the login with that text, `denied()` shows a deny an earlier handler set, and `allow()` lifts it, as for the native event.
 
 ```rust
-ctx.on::<GameProfileRequestEvent>(EventPriority::Normal, |event| {
+ctx.on::<GameProfileRequestEvent>(EventPriority::NORMAL, |event| {
     if !event.online_mode {
         event.profile_mut().username = format!("~{}", event.original.username);
     }
@@ -226,7 +226,7 @@ Subscribing needs the baseline `event-bus` capability. `ChatMessageEvent` and `C
 `PluginMessageEvent` fires for a message on a channel some plugin registered, whichever side sent it. `source` is `MessageEndpoint::Client` or `MessageEndpoint::Backend(server)`, `channel` carries both names the proxy knows for it and `raw_channel` the one on the wire. `handled()` stops the message, `replace(data)` forwards other bytes. The subscription needs `plugin-messaging`, and a message only fires for a registered channel, so register yours in `on_enable` with [`Messaging::register`](./services#plugin-messaging).
 
 ```rust
-ctx.on::<PluginMessageEvent>(EventPriority::Normal, |event| {
+ctx.on::<PluginMessageEvent>(EventPriority::NORMAL, |event| {
     if event.channel.matches("myplugin:ping") && event.from_client() {
         let _ = Messaging::send_to_player(event.player.id, &event.channel, b"pong");
         event.handled();
@@ -241,7 +241,7 @@ A named event is a custom event any plugin, native or WASM, can fire and answer.
 A relay plugin listens and answers:
 
 ```rust
-ctx.on_named("chat:relay", EventPriority::Normal, |event| {
+ctx.on_named("chat:relay", EventPriority::NORMAL, |event| {
     info!("{} relayed {:?}", event.source_plugin, event.text());
     event.respond_text("received");
 })?;
@@ -273,7 +273,7 @@ The host never enters a WASM instance that is still running the call that led to
 ```rust
 ctx.on_packets(
     &[PacketFilter::serverbound(0x06, ConnectionState::Play)],
-    EventPriority::Normal,
+    EventPriority::NORMAL,
     |event| {
         if event.data.len() > 256 {
             event.drop_packet();
@@ -307,11 +307,11 @@ struct MultiHandler;
 #[plugin(id = "multi-handler", name = "Multi Handler")]
 impl Plugin for MultiHandler {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::First, |_| append("A"))?; // 0
-        ctx.on::<PostLoginEvent>(EventPriority::Custom(32), |_| append("B"))?; // 32
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("C"))?; // 128
-        let leaked = ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("L"))?; // 128
-        ctx.on::<PostLoginEvent>(EventPriority::Last, |_| append("D"))?; // [!code focus]
+        ctx.on::<PostLoginEvent>(EventPriority::FIRST, |_| append("A"))?; // 0
+        ctx.on::<PostLoginEvent>(EventPriority::custom(32), |_| append("B"))?; // 32
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| append("C"))?; // 128
+        let leaked = ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| append("L"))?; // 128
+        ctx.on::<PostLoginEvent>(EventPriority::LAST, |_| append("D"))?; // [!code focus]
         leaked.cancel(); // [!code focus]
         Ok(())
     }

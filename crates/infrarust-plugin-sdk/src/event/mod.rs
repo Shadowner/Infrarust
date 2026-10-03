@@ -93,29 +93,7 @@ pub use proxy::{
 
 use crate::bindings::events::{Event, EventKind, EventOutcome};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EventPriority {
-    First,
-    Early,
-    Normal,
-    Late,
-    Last,
-    Custom(u8),
-}
-
-impl EventPriority {
-    #[must_use]
-    pub const fn value(self) -> u8 {
-        match self {
-            Self::First => 0,
-            Self::Early => 64,
-            Self::Normal => 128,
-            Self::Late => 192,
-            Self::Last => 255,
-            Self::Custom(v) => v,
-        }
-    }
-}
+pub use infrarust_plugin_common::EventPriority;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResultCell<R> {
@@ -196,8 +174,8 @@ mod tests {
 
     #[test]
     fn priorities_match_the_native_levels() {
-        assert_eq!(EventPriority::First.value(), 0);
-        assert_eq!(EventPriority::Normal.value(), 128);
-        assert_eq!(EventPriority::Custom(32).value(), 32);
+        assert_eq!(EventPriority::FIRST.value(), 0);
+        assert_eq!(EventPriority::NORMAL.value(), 128);
+        assert_eq!(EventPriority::custom(128), EventPriority::NORMAL);
     }
 }

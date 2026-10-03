@@ -95,7 +95,7 @@ impl Plugin for SyncPlugin {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
         Messaging::register(&ChannelId::pair(SYNC, "MyPluginSync"))?;
 
-        ctx.on::<PluginMessageEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PluginMessageEvent>(EventPriority::NORMAL, |event| {
             if event.channel.modern_id() != Some(SYNC) {
                 return;
             }
@@ -199,7 +199,7 @@ Requests and responses are Java `DataOutput` streams: a string (`writeUTF`) is a
 fn register_bungeecord(ctx: &Context) -> Result<(), PluginError> {
     Messaging::register(&ChannelId::bungeecord())?;
 
-    ctx.on::<PluginMessageEvent>(EventPriority::Normal, |event| {
+    ctx.on::<PluginMessageEvent>(EventPriority::NORMAL, |event| {
         if !event.channel.matches("BungeeCord") {
             return;
         }

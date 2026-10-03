@@ -50,7 +50,7 @@ The host keeps each snapshot it installs for a player. That copy is what later u
 `PermissionsSetupEvent` fires after the active provider built the player's checker. `provide` replaces that checker for this player only:
 
 ```rust
-ctx.on::<PermissionsSetupEvent>(EventPriority::Normal, |event| {
+ctx.on::<PermissionsSetupEvent>(EventPriority::NORMAL, |event| {
     if event.player.username == "Notch" {
         event.provide(PermissionSnapshot::admin());
     }

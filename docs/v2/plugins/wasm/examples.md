@@ -48,7 +48,7 @@ struct EventSubscriber;
 #[plugin(id = "event-subscriber", name = "Event Subscriber")]
 impl Plugin for EventSubscriber {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             info!(
                 "{} ({}) joined with protocol {}",
                 event.player.username, event.player.uuid, event.protocol
@@ -72,10 +72,10 @@ struct EventModifier;
 #[plugin(id = "event-modifier", name = "Event Modifier")]
 impl Plugin for EventModifier {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |event| {
+        ctx.on::<ServerPreConnectEvent>(EventPriority::NORMAL, |event| {
             event.redirect_to("backend-1");
         })?;
-        ctx.on::<ServerPreConnectEvent>(EventPriority::Late, |event| {
+        ctx.on::<ServerPreConnectEvent>(EventPriority::LATE, |event| {
             let staff = event.player.handle().has_permission("example.staff").unwrap_or(false);
             if staff && matches!(event.result(), ServerPreConnectResult::ConnectTo(_)) {
                 event.allow();
@@ -109,11 +109,11 @@ struct MultiHandler;
 #[plugin(id = "multi-handler", name = "Multi Handler")]
 impl Plugin for MultiHandler {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::First, |_| append("A"))?;
-        ctx.on::<PostLoginEvent>(EventPriority::Custom(32), |_| append("B"))?;
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("C"))?;
-        let cancelled = ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| append("L"))?;
-        ctx.on::<PostLoginEvent>(EventPriority::Last, |_| append("D"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::FIRST, |_| append("A"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::custom(32), |_| append("B"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| append("C"))?;
+        let cancelled = ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| append("L"))?;
+        ctx.on::<PostLoginEvent>(EventPriority::LAST, |_| append("D"))?;
         cancelled.cancel();
         Ok(())
     }

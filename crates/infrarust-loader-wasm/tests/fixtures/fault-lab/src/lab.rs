@@ -217,24 +217,24 @@ pub fn limbo_handlers(reg: &mut LimboRegistrar) {
 }
 
 fn subscribe_events(ctx: &Context) -> Result<(), PluginError> {
-    ctx.on::<PreLoginEvent>(EventPriority::Normal, |e| {
+    ctx.on::<PreLoginEvent>(EventPriority::NORMAL, |e| {
         strike_event("pre-login");
         e.deny(Component::text("fault-lab"));
     })?;
-    ctx.on::<PostLoginEvent>(EventPriority::Normal, |_| strike_event("post-login"))?;
-    ctx.on::<ChatMessageEvent>(EventPriority::Normal, |e| {
+    ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |_| strike_event("post-login"))?;
+    ctx.on::<ChatMessageEvent>(EventPriority::NORMAL, |e| {
         strike_event("chat-message");
         e.modify("fault-lab");
     })?;
-    ctx.on::<ServerPreConnectEvent>(EventPriority::Normal, |e| {
+    ctx.on::<ServerPreConnectEvent>(EventPriority::NORMAL, |e| {
         strike_event("server-pre-connect");
         e.redirect_to("fault-lab");
     })?;
-    ctx.on::<ProxyPingEvent>(EventPriority::Normal, |e| {
+    ctx.on::<ProxyPingEvent>(EventPriority::NORMAL, |e| {
         strike_event("proxy-ping");
         e.set_description(Component::text("fault-lab"));
     })?;
-    ctx.on::<DisconnectEvent>(EventPriority::Normal, |_| strike_event("disconnect"))?;
+    ctx.on::<DisconnectEvent>(EventPriority::NORMAL, |_| strike_event("disconnect"))?;
     Ok(())
 }
 
@@ -311,7 +311,7 @@ fn apply(ctx: &Context, words: &[String]) -> Result<(), PluginError> {
         "listen" => {
             let name = word(1).to_owned();
             let site = format!("named:{name}");
-            ctx.on_named(name, EventPriority::Normal, move |e| {
+            ctx.on_named(name, EventPriority::NORMAL, move |e| {
                 let _ = strike(&site);
                 e.respond_text("fault-lab");
             })?;
@@ -320,7 +320,7 @@ fn apply(ctx: &Context, words: &[String]) -> Result<(), PluginError> {
             let heard = word(1).to_owned();
             let next = word(2).to_owned();
             let site = format!("named:{heard}");
-            ctx.on_named(heard, EventPriority::Normal, move |_| {
+            ctx.on_named(heard, EventPriority::NORMAL, move |_| {
                 let _ = strike(&site);
                 fire(&next);
             })?;

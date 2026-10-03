@@ -129,7 +129,7 @@ impl Plugin for LifProbe {
                 .register()?;
         }
         if let Some(action) = setting("post-login") {
-            ctx.on::<PostLoginEvent>(EventPriority::Normal, move |_| {
+            ctx.on::<PostLoginEvent>(EventPriority::NORMAL, move |_| {
                 log("post-login start");
                 let _ = act(&action);
                 log("post-login end");

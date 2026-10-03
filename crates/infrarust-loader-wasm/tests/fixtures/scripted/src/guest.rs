@@ -211,7 +211,7 @@ fn answer_named(e: &mut NamedEvent, action: &Action) {
 
 fn subscribe_named(ctx: &Context, name: String, priority: u8, action: Action) {
     let cancel = action == Action::Cancelled;
-    let subscription = ctx.on_named(name.clone(), EventPriority::Custom(priority), move |e| {
+    let subscription = ctx.on_named(name.clone(), EventPriority::custom(priority), move |e| {
         let fields = named_fields(e);
         let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
         script::observe(
@@ -320,7 +320,7 @@ pub fn disable() -> Result<(), PluginError> {
 
 fn subscribe(ctx: &Context, event: EventName, priority: u8, action: Action) {
     let cancel = action == Action::Cancelled;
-    let at = EventPriority::Custom(priority);
+    let at = EventPriority::custom(priority);
     let subscription = match event {
         EventName::PreLogin => ctx.on::<PreLoginEvent>(at, move |e| {
             let uuid = e.profile.uuid.to_string();

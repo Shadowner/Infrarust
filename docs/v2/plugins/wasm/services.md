@@ -145,7 +145,7 @@ for player in Players::on_server(&ServerId::from("lobby")) {
 Get one with `PlayerInfo::handle()`, `PlayerRef::handle()` (every player-scoped event carries a `PlayerRef`), or `Player::new(id)`. The handle is `Copy`; it stays valid as a value after the player leaves, and calls on it then return `PlayerGone`.
 
 ```rust
-ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
     let player = event.player.handle();
     let _ = player.send_message(Component::text("Welcome").color(NamedColor::Gold));
     let _ = player.send_title(&TitleData::new("Hello", "have fun").stay(40));
@@ -286,7 +286,7 @@ On expiry the call returns an `Error` of kind `Timeout`. The message is `host ca
 Because the error arrives before the event bus gives up on the handler, whatever the handler decides is applied to the event. Choose on purpose: a ban check that denies on error keeps banned players out while the ban store is down (fail closed), one that ignores the error lets everyone in (fail open).
 
 ```rust
-ctx.on::<PreLoginEvent>(EventPriority::Early, |event| {
+ctx.on::<PreLoginEvent>(EventPriority::EARLY, |event| {
     let target = BanTarget::Username(event.profile.username.clone());
     match Bans::is_banned(&target) {
         Ok(false) => {}

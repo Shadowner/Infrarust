@@ -64,7 +64,7 @@ struct MyPlugin;
 #[plugin] // [!code focus]
 impl Plugin for MyPlugin {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> { // [!code focus]
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
             info!("{} joined", event.player.username);
         })?;
 
@@ -118,10 +118,10 @@ fn on_enable(&self, ctx: &Context) -> Result<(), PluginError>;
 
 ### Subscribing to an event
 
-`ctx.on::<E>` subscribes a handler for a typed event. `PostLoginEvent` fires after a player authenticates; its `player` field is a `PlayerRef` with the player's `id`, `uuid` and `username`. The handler is `FnMut(&mut E)`. `EventPriority` orders handlers when several listen to the same kind (`First`, `Early`, `Normal`, `Late`, `Last`, or `Custom(u8)`). `on` returns an error when the host refuses the subscription, and the `?` turns that into a failed enable.
+`ctx.on::<E>` subscribes a handler for a typed event. `PostLoginEvent` fires after a player authenticates; its `player` field is a `PlayerRef` with the player's `id`, `uuid` and `username`. The handler is `FnMut(&mut E)`. `EventPriority` orders handlers when several listen to the same kind (`FIRST`, `EARLY`, `NORMAL`, `LATE`, `LAST`, or `EventPriority::custom(u8)`). `on` returns an error when the host refuses the subscription, and the `?` turns that into a failed enable.
 
 ```rust
-ctx.on::<PostLoginEvent>(EventPriority::Normal, |event| {
+ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
     info!("{} joined", event.player.username);
 })?;
 ```

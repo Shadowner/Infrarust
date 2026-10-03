@@ -23,7 +23,7 @@ struct MyPlugin;
 #[plugin(id = "my-plugin", name = "My Plugin")]
 impl Plugin for MyPlugin {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ctx.on::<PostLoginEvent>(EventPriority::Normal, |e| {
+        ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |e| {
             info!("{} joined", e.player.username);
         })?;
         Ok(())
@@ -76,7 +76,7 @@ See [Capabilities](./capabilities) for the full table and what each one unlocks.
 Subscribe to lifecycle, connection, chat and proxy events with a priority and a closure. Observe-only events let you read what happened; the resulted events carry the current result, set by earlier handlers, and let a handler deny, redirect, rewrite or reset it.
 
 ```rust
-ctx.on::<ChatMessageEvent>(EventPriority::Normal, |e| {
+ctx.on::<ChatMessageEvent>(EventPriority::NORMAL, |e| {
     if e.message.contains("spam") {
         e.deny(Component::text("blocked").color(NamedColor::Red));
     }

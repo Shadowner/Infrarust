@@ -15,42 +15,7 @@ use std::pin::Pin;
 /// of proxy-provided async methods like [`Player::disconnect`](crate::player::Player::disconnect).
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Priority level for event listeners.
-///
-/// Listeners are invoked in order from highest priority (FIRST) to lowest
-/// (LAST). Each listener sees the modifications made by previous listeners.
-///
-/// # Example
-/// ```
-/// use infrarust_api::event::EventPriority;
-///
-/// assert!(EventPriority::FIRST < EventPriority::LAST);
-/// assert!(EventPriority::EARLY < EventPriority::NORMAL);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct EventPriority(u8);
-
-impl EventPriority {
-    /// Runs first — before all other listeners.
-    pub const FIRST: Self = Self(0);
-    /// Runs early — before normal listeners.
-    pub const EARLY: Self = Self(64);
-    /// Default priority.
-    pub const NORMAL: Self = Self(128);
-    /// Runs late — after normal listeners.
-    pub const LATE: Self = Self(192);
-    /// Runs last — after all other listeners.
-    pub const LAST: Self = Self(255);
-
-    /// Creates a custom priority value.
-    pub const fn custom(value: u8) -> Self {
-        Self(value)
-    }
-
-    pub const fn value(self) -> u8 {
-        self.0
-    }
-}
+pub use infrarust_plugin_common::EventPriority;
 
 /// An opaque handle returned when subscribing to an event.
 ///
