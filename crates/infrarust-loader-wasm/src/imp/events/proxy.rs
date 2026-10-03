@@ -263,14 +263,14 @@ mod tests {
 
     #[test]
     fn a_backend_health_change_names_its_servers() {
-        let event = BackendHealthEvent {
-            address: infrarust_api::types::ServerAddress {
+        let event = BackendHealthEvent::new(
+            infrarust_api::types::ServerAddress {
                 host: "10.0.0.2".into(),
                 port: 25565,
             },
-            servers: vec![ServerId::new("lobby")],
-            state: BackendState::Draining,
-        };
+            vec![ServerId::new("lobby")],
+            BackendState::Draining,
+        );
         let we::Event::BackendHealth(record) = event.to_wit() else {
             panic!("a backend health change is sent as backend-health");
         };

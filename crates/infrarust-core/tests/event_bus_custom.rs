@@ -130,7 +130,7 @@ async fn plugins_cannot_fire_builtin_events() {
             Vec::new(),
         ))
         .await;
-    let shutdown = forger_ref.fire(ProxyShutdownEvent).await;
+    let shutdown = forger_ref.fire(ProxyShutdownEvent::new()).await;
 
     assert_eq!(pre_login.err(), Some(FireError::Reserved));
     assert_eq!(reload.err(), Some(FireError::Reserved));

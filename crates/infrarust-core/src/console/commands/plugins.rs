@@ -363,14 +363,8 @@ mod tests {
         meta.authors = vec!["alice".into(), "bob".into()];
         meta.description = Some("Rotates the server list message".into());
         meta.dependencies = vec![
-            PluginDependency {
-                id: "auth".into(),
-                optional: false,
-            },
-            PluginDependency {
-                id: "stats".into(),
-                optional: true,
-            },
+            PluginDependency::new("auth", false),
+            PluginDependency::new("stats", true),
         ];
         let state = PluginState::Error("missing config".into());
         assert_eq!(

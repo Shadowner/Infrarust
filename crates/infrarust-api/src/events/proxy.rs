@@ -95,7 +95,15 @@ impl Event for ProxyPingEvent {}
 ///
 /// Plugins can use this to perform post-startup setup that depends on
 /// all other plugins being loaded.
+#[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ProxyInitializeEvent;
+
+impl ProxyInitializeEvent {
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Event for ProxyInitializeEvent {}
 
@@ -103,7 +111,15 @@ impl Event for ProxyInitializeEvent {}
 ///
 /// Plugins should use this (or [`Plugin::on_disable`](crate::plugin::Plugin::on_disable))
 /// to clean up resources.
+#[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ProxyShutdownEvent;
+
+impl ProxyShutdownEvent {
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Event for ProxyShutdownEvent {}
 
@@ -138,20 +154,42 @@ impl ConfigReloadEvent {
 
 impl Event for ConfigReloadEvent {}
 
+#[non_exhaustive]
 pub struct BackendHealthEvent {
     pub address: ServerAddress,
     pub servers: Vec<ServerId>,
     pub state: BackendState,
 }
 
+impl BackendHealthEvent {
+    pub const fn new(address: ServerAddress, servers: Vec<ServerId>, state: BackendState) -> Self {
+        Self {
+            address,
+            servers,
+            state,
+        }
+    }
+}
+
 impl Event for BackendHealthEvent {}
 
 /// Fired when a backend server changes state.
+#[non_exhaustive]
 pub struct ServerStateChangeEvent {
     /// The server whose state changed.
     pub server: ServerId,
     pub old_state: ServerState,
     pub new_state: ServerState,
+}
+
+impl ServerStateChangeEvent {
+    pub const fn new(server: ServerId, old_state: ServerState, new_state: ServerState) -> Self {
+        Self {
+            server,
+            old_state,
+            new_state,
+        }
+    }
 }
 
 impl Event for ServerStateChangeEvent {}

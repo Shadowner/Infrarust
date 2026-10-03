@@ -436,12 +436,8 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
         (ServerState::Sleeping, ServerState::Crashed),
         (ServerState::Stopping, ServerState::Offline),
     ] {
-        bus.fire(ServerStateChangeEvent {
-            server: ServerId::new("s"),
-            old_state: old,
-            new_state: new,
-        })
-        .await;
+        bus.fire(ServerStateChangeEvent::new(ServerId::new("s"), old, new))
+            .await;
     }
     expect_each(
         &dump.dumped("ServerStateChangeEvent"),
@@ -453,14 +449,14 @@ async fn rare_variants_of_every_family_reach_the_guest_intact() {
         BackendState::Probing,
         BackendState::Unhealthy,
     ] {
-        bus.fire(BackendHealthEvent {
-            address: ServerAddress {
+        bus.fire(BackendHealthEvent::new(
+            ServerAddress {
                 host: "::1".to_owned(),
                 port: 1,
             },
-            servers: vec![],
+            vec![],
             state,
-        })
+        ))
         .await;
     }
     expect_each(

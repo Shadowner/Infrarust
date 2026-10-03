@@ -222,7 +222,7 @@ impl ProxyRuntimeBuilder {
             }
         };
 
-        server.event_bus().fire(ProxyInitializeEvent).await;
+        server.event_bus().fire(ProxyInitializeEvent::new()).await;
 
         let serve_task = tokio::spawn(Arc::clone(&server).serve(listener));
 
@@ -448,7 +448,7 @@ impl RunningProxy {
         let deadline = tokio::time::Instant::now() + self.plugin_shutdown_timeout;
         let bus = self.server.event_bus();
         let announced = async {
-            bus.fire(ProxyShutdownEvent).await;
+            bus.fire(ProxyShutdownEvent::new()).await;
             bus.flush().await;
         };
         if tokio::time::timeout_at(deadline, announced).await.is_err() {

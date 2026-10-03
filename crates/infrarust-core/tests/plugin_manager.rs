@@ -311,7 +311,7 @@ async fn test_cleanup_on_disable() {
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(factory).await;
 
-    event_bus.fire(ProxyInitializeEvent).await;
+    event_bus.fire(ProxyInitializeEvent::new()).await;
     assert_eq!(
         call_count.load(Ordering::SeqCst),
         1,
@@ -320,7 +320,7 @@ async fn test_cleanup_on_disable() {
 
     manager.shutdown().await;
 
-    event_bus.fire(ProxyInitializeEvent).await;
+    event_bus.fire(ProxyInitializeEvent::new()).await;
     assert_eq!(
         call_count.load(Ordering::SeqCst),
         1,

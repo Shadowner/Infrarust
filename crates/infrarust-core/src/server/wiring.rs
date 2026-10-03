@@ -159,11 +159,11 @@ impl ProxyServer {
             service.add_on_state_change(Arc::new(move |server_id, old, new| {
                 let api_old = convert_server_state(old);
                 let api_new = convert_server_state(new);
-                bus.post(ServerStateChangeEvent {
-                    server: ServerId::new(server_id),
-                    old_state: api_old,
-                    new_state: api_new,
-                });
+                bus.post(ServerStateChangeEvent::new(
+                    ServerId::new(server_id),
+                    api_old,
+                    api_new,
+                ));
             }));
 
             tracing::info!(count = managed_configs.len(), "server manager initialized");

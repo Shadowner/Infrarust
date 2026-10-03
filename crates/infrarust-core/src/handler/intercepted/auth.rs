@@ -157,9 +157,7 @@ async fn online_auth(
             );
             let _ = services
                 .event_bus
-                .fire(OnlineAuthFailedEvent {
-                    username: login_data.username.clone(),
-                })
+                .fire(OnlineAuthFailedEvent::new(login_data.username.clone()))
                 .await;
             return Err(e);
         }

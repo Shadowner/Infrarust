@@ -210,9 +210,18 @@ impl DisconnectCause {
 /// Covers both forced online auth (`ForceOnline` in offline mode) and default
 /// online auth (`client_only` mode). Plugins can listen for this to remember
 /// the username and set `ForceOffline` on the next connection attempt.
+#[non_exhaustive]
 pub struct OnlineAuthFailedEvent {
     /// The username that failed online authentication.
     pub username: String,
+}
+
+impl OnlineAuthFailedEvent {
+    pub fn new(username: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+        }
+    }
 }
 
 impl Event for OnlineAuthFailedEvent {}

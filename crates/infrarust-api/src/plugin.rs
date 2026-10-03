@@ -225,11 +225,21 @@ impl PluginRuntimeStatus {
 
 /// A dependency on another plugin.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PluginDependency {
     /// The ID of the required plugin.
     pub id: String,
     /// If `true`, the plugin can function without this dependency.
     pub optional: bool,
+}
+
+impl PluginDependency {
+    pub fn new(id: impl Into<String>, optional: bool) -> Self {
+        Self {
+            id: id.into(),
+            optional,
+        }
+    }
 }
 
 /// The main trait that all Infrarust plugins implement.
@@ -306,19 +316,13 @@ impl PluginMetadata {
 
     /// Adds a required dependency.
     pub fn depends_on(mut self, id: impl Into<String>) -> Self {
-        self.dependencies.push(PluginDependency {
-            id: id.into(),
-            optional: false,
-        });
+        self.dependencies.push(PluginDependency::new(id, false));
         self
     }
 
     /// Adds an optional dependency.
     pub fn optional_dependency(mut self, id: impl Into<String>) -> Self {
-        self.dependencies.push(PluginDependency {
-            id: id.into(),
-            optional: true,
-        });
+        self.dependencies.push(PluginDependency::new(id, true));
         self
     }
 }

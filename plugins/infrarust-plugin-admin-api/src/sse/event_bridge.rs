@@ -127,11 +127,11 @@ mod tests {
 
     #[test]
     fn a_state_change_carries_the_same_state_names_as_the_rest_api() {
-        let event = ServerStateChangeEvent {
-            server: ServerId::new("hub"),
-            old_state: ServerState::Sleeping,
-            new_state: ServerState::Online,
-        };
+        let event = ServerStateChangeEvent::new(
+            ServerId::new("hub"),
+            ServerState::Sleeping,
+            ServerState::Online,
+        );
         match server_state_change(&event) {
             ApiEvent::ServerStateChange {
                 server_id,

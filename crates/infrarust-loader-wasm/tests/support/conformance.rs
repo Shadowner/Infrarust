@@ -452,10 +452,8 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::OnlineAuthFailed => {
-            bus.fire(OnlineAuthFailedEvent {
-                username: USERNAME.to_owned(),
-            })
-            .await;
+            bus.fire(OnlineAuthFailedEvent::new(USERNAME))
+                .await;
             Outcome::same("none")
         }
         EventName::PermissionsSetup => {
@@ -517,11 +515,11 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             ping(&bus.fire(event).await.response)
         }
         EventName::ProxyInitialize => {
-            bus.fire(ProxyInitializeEvent).await;
+            bus.fire(ProxyInitializeEvent::new()).await;
             Outcome::same("none")
         }
         EventName::ProxyShutdown => {
-            bus.fire(ProxyShutdownEvent).await;
+            bus.fire(ProxyShutdownEvent::new()).await;
             Outcome::same("none")
         }
         EventName::ConfigReload => {
@@ -535,11 +533,11 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::ServerStateChange => {
-            bus.fire(ServerStateChangeEvent {
-                server: ServerId::new("survival"),
-                old_state: ServerState::Starting,
-                new_state: ServerState::Online,
-            })
+            bus.fire(ServerStateChangeEvent::new(
+                ServerId::new("survival"),
+                ServerState::Starting,
+                ServerState::Online,
+            ))
             .await;
             Outcome::same("none")
         }
@@ -553,14 +551,14 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             chat(bus.fire(event).await.result())
         }
         EventName::BackendHealth => {
-            bus.fire(BackendHealthEvent {
-                address: ServerAddress {
+            bus.fire(BackendHealthEvent::new(
+                ServerAddress {
                     host: "10.0.0.2".to_owned(),
                     port: 25565,
                 },
-                servers: vec![ServerId::new("lobby"), ServerId::new("survival")],
-                state: BackendState::Draining,
-            })
+                vec![ServerId::new("lobby"), ServerId::new("survival")],
+                BackendState::Draining,
+            ))
             .await;
             Outcome::same("none")
         }
