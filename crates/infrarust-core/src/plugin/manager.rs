@@ -56,6 +56,7 @@ type LoaderIndex = usize;
 pub const DEFAULT_SHUTDOWN_DISABLE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(1);
+const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShutdownLimits {
@@ -129,7 +130,13 @@ impl PluginManager {
     async fn announce<E: Event>(&self, event: E) {
         if let Some(bus) = &self.event_bus {
             bus.post(event);
-            bus.flush().await;
+            if tokio::time::timeout(ANNOUNCE_TIMEOUT, bus.flush())
+                .await
+                .is_err()
+            {
+                tracing::warn!(event = std::any::type_name::<E>(), limit = ?ANNOUNCE_TIMEOUT,
+                    "a plugin lifecycle event is still being delivered; going on without it");
+            }
         }
     }
 

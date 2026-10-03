@@ -70,16 +70,19 @@ impl ClientState {
         self.captured().channels.clone()
     }
 
-    pub(crate) fn add_channels(&self, channels: &[String]) {
+    pub(crate) fn add_channels(&self, channels: Vec<String>) -> Vec<String> {
         let mut captured = self.captured();
+        let mut added = Vec::new();
         for channel in channels {
             if captured.channels.len() >= MAX_KNOWN_CHANNELS {
                 break;
             }
-            if !captured.channels.contains(channel) {
+            if !captured.channels.contains(&channel) {
                 captured.channels.push(channel.clone());
+                added.push(channel);
             }
         }
+        added
     }
 
     pub(crate) fn remove_channels(&self, channels: &[String]) {
@@ -164,14 +167,18 @@ mod tests {
     #[test]
     fn channels_are_a_capped_ordered_set() {
         let state = ClientState::default();
-        state.add_channels(&["a:a".into(), "b:b".into(), "a:a".into()]);
+        assert_eq!(
+            state.add_channels(vec!["a:a".into(), "b:b".into(), "a:a".into()]),
+            ["a:a", "b:b"]
+        );
+        assert!(state.add_channels(vec!["b:b".into()]).is_empty());
         state.remove_channels(&["a:a".into()]);
-        state.add_channels(&["c:c".into()]);
+        state.add_channels(vec!["c:c".into()]);
         assert_eq!(state.channels(), vec!["b:b", "c:c"]);
         let many: Vec<String> = (0..MAX_KNOWN_CHANNELS * 2)
             .map(|i| format!("m:{i}"))
             .collect();
-        state.add_channels(&many);
+        state.add_channels(many);
         assert_eq!(state.channels().len(), MAX_KNOWN_CHANNELS);
     }
 

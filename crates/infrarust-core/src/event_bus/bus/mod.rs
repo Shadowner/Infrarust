@@ -38,6 +38,7 @@ mod queue;
 pub const CORE_OWNER: &str = "infrarust";
 
 const DIAGNOSTIC_CAPACITY: usize = 256;
+pub const POSTED_EVENT_CAPACITY: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventBusConfig {
@@ -103,8 +104,9 @@ pub struct EventBusImpl {
     config: EventBusConfig,
     diagnostics: broadcast::Sender<HandlerDiagnostic>,
     core_owner: Arc<str>,
-    queue: mpsc::UnboundedSender<Queued>,
-    undispatched: Mutex<Option<mpsc::UnboundedReceiver<Queued>>>,
+    queue: mpsc::Sender<Queued>,
+    undispatched: Mutex<Option<mpsc::Receiver<Queued>>>,
+    dropped_posts: AtomicU64,
 }
 
 impl EventBusImpl {
@@ -113,7 +115,7 @@ impl EventBusImpl {
     }
 
     pub fn with_config(config: EventBusConfig) -> Self {
-        let (queue, undispatched) = mpsc::unbounded_channel();
+        let (queue, undispatched) = mpsc::channel(POSTED_EVENT_CAPACITY);
         Self {
             handlers: RwLock::new(HashMap::new()),
             packet_handlers: RwLock::new(HashMap::new()),
@@ -124,6 +126,7 @@ impl EventBusImpl {
             core_owner: Arc::from(CORE_OWNER),
             queue,
             undispatched: Mutex::new(Some(undispatched)),
+            dropped_posts: AtomicU64::new(0),
         }
     }
 
@@ -372,7 +375,7 @@ impl EventBusImpl {
         });
         match kind {
             Some(kind) => {
-                self.report(entry, event_type, fired_by, kind, elapsed);
+                self.report(&entry.owner, event_type, fired_by, kind, elapsed);
                 Instant::now()
             }
             None => finished,
@@ -382,7 +385,7 @@ impl EventBusImpl {
     #[cold]
     fn report(
         &self,
-        entry: &HandlerEntry,
+        owner: &Arc<str>,
         event_type: &'static str,
         fired_by: &Arc<str>,
         kind: DiagnosticKind,
@@ -391,7 +394,7 @@ impl EventBusImpl {
         let event = short_type_name(event_type);
         match &kind {
             DiagnosticKind::Panicked { message } => tracing::error!(
-                plugin = %entry.owner,
+                plugin = %owner,
                 event,
                 fired_by = %fired_by,
                 elapsed = ?elapsed,
@@ -399,23 +402,28 @@ impl EventBusImpl {
                 "event handler panicked; the event continues to the next handler"
             ),
             DiagnosticKind::TimedOut => tracing::error!(
-                plugin = %entry.owner,
+                plugin = %owner,
                 event,
                 fired_by = %fired_by,
                 elapsed = ?elapsed,
                 "event handler timed out and was cancelled; the event continues to the next handler"
             ),
             DiagnosticKind::Slow => tracing::warn!(
-                plugin = %entry.owner,
+                plugin = %owner,
                 event,
                 fired_by = %fired_by,
                 elapsed = ?elapsed,
                 threshold = ?self.config.slow_handler_threshold,
                 "event handler is slow"
             ),
+            DiagnosticKind::QueueFull => tracing::warn!(
+                event,
+                capacity = POSTED_EVENT_CAPACITY,
+                "the posted event queue is full; posted events are dropped until it drains"
+            ),
         }
         let _ = self.diagnostics.send(HandlerDiagnostic {
-            owner: Arc::clone(&entry.owner),
+            owner: Arc::clone(owner),
             fired_by: Arc::clone(fired_by),
             event,
             kind,

@@ -79,12 +79,13 @@ pub(crate) fn observe_client_message(
             bus.post(PlayerClientBrandEvent::new(player(session), brand));
         }
     } else if is_register(raw) {
-        let registered = channels::parse_channels(&peeked.data);
-        if !registered.is_empty() {
-            session.client_state().add_channels(&registered);
+        let added = session
+            .client_state()
+            .add_channels(channels::parse_channels(&peeked.data));
+        if !added.is_empty() && bus.has_listeners::<PlayerChannelRegisterEvent>() {
             bus.post(PlayerChannelRegisterEvent::new(
                 player(session),
-                registered,
+                added,
                 PacketDirection::Serverbound,
             ));
         }
@@ -96,7 +97,7 @@ pub(crate) fn observe_client_message(
 }
 
 fn observe_backend_message(session: &Arc<PlayerSession>, bus: &EventBusImpl, peeked: &Peeked) {
-    if is_register(&peeked.channel) {
+    if is_register(&peeked.channel) && bus.has_listeners::<PlayerChannelRegisterEvent>() {
         let registered = channels::parse_channels(&peeked.data);
         if !registered.is_empty() {
             bus.post(PlayerChannelRegisterEvent::new(

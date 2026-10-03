@@ -16,6 +16,7 @@ pub enum DiagnosticKind {
     Panicked { message: String },
     TimedOut,
     Slow,
+    QueueFull,
 }
 
 pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> String {
