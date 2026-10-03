@@ -664,9 +664,7 @@ const OTHER_BLOCK: &str = "[plugins.secret-plugin]\napi_token = \"TOP-SECRET-TOK
 const SEC_DENIED: &str = "err ErrorKind::PermissionDenied";
 
 fn proxy_document() -> String {
-    format!(
-        "bind = \"0.0.0.0:25565\"\n\n{OTHER_BLOCK}\n[plugins.sec-probe]\ngreeting = \"hello\"\n"
-    )
+    format!("bind = \"0.0.0.0:25565\"\n\n{OTHER_BLOCK}\n[plugins.sec-probe]\nenabled = true\n")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -791,7 +789,7 @@ async fn writing_the_config_back_keeps_the_blocks_the_plugin_cannot_see() {
 
     assert_eq!(
         probe
-            .run("config-write bind=\"0.0.0.0:1\"\\n[plugins.sec-probe]\\ngreeting=\"bye\"")
+            .run("config-write bind=\"0.0.0.0:1\"\\n[plugins.sec-probe]\\nenabled=false")
             .await,
         "ok written"
     );
@@ -799,8 +797,8 @@ async fn writing_the_config_back_keeps_the_blocks_the_plugin_cannot_see() {
     let stored: toml::Table = toml::from_str(&config.stored_proxy_document()).unwrap();
     assert_eq!(stored["bind"].as_str(), Some("0.0.0.0:1"));
     assert_eq!(
-        stored["plugins"]["sec-probe"]["greeting"].as_str(),
-        Some("bye")
+        stored["plugins"]["sec-probe"]["enabled"].as_bool(),
+        Some(false)
     );
     assert_eq!(
         stored["plugins"]["secret-plugin"]["api_token"].as_str(),
