@@ -311,3 +311,61 @@ async fn a_filter_that_fails_mid_session_closes_that_connection_only() {
 
     proxy.shutdown().await.unwrap();
 }
+
+const KICK_TEXT: &str = "Hidden reason";
+
+struct DropKick;
+
+impl CodecFilterFactory for DropKick {
+    fn metadata(&self) -> FilterMetadata {
+        FilterMetadata::new("drop_kick")
+    }
+
+    fn create(&self, _init: &CodecSessionInit) -> Box<dyn CodecFilterInstance> {
+        Box::new(DroppingKick)
+    }
+}
+
+struct DroppingKick;
+
+impl CodecFilterInstance for DroppingKick {
+    fn filter(&mut self, packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
+        let kick = packet
+            .data
+            .windows(KICK_TEXT.len())
+            .any(|window| window == KICK_TEXT.as_bytes());
+        if kick {
+            CodecVerdict::Drop
+        } else {
+            CodecVerdict::Pass
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_backend_kick_reaches_the_player_past_a_filter_that_drops_it() {
+    let owner = ScriptedPlugin::new(OWNER).on_enable(|ctx| {
+        ctx.codec_filters()
+            .expect("trusted plugins hold the codec-filter capability")
+            .register(Box::new(DropKick))
+            .expect("the filter id is free");
+    });
+    let (proxy, backend) = start(owner).await;
+
+    let mut session = proxy
+        .client(VERSION)
+        .login("Alex")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let mut conn = backend.next_connection(T).await.unwrap();
+    conn.kick_json(&format!(r#"{{"text":"{KICK_TEXT}"}}"#))
+        .await
+        .unwrap();
+
+    let info = session.expect_disconnect(T).await.unwrap();
+    assert_eq!(info.text, KICK_TEXT, "{info:?}");
+
+    proxy.shutdown().await.unwrap();
+}

@@ -259,7 +259,7 @@ async fn reach(milestone: Milestone, join: &mut Option<ServerJoin>, services: &P
 /// - `FinishConfig` / `AcknowledgeFinishConfig`: transitions Config → Play
 ///
 /// Codec filters and raw packet listeners only see Play packets, codec
-/// filters first. A backend `CDisconnect` is taken as a kick after them.
+/// filters first. A backend `CDisconnect` is taken as a kick before either.
 pub async fn proxy_loop(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,
@@ -785,6 +785,13 @@ impl Loop<'_> {
         let state = self.state.backend_reading(self.backend);
 
         if state == ConnectionState::Play {
+            if Some(frame.id) == self.ids.c_disconnect {
+                return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                    frame,
+                    ConnectionState::Play,
+                    version,
+                ))));
+            }
             match apply_codec_filter(&mut self.io.server_codec, &mut frame, &mut self.io.client)? {
                 Filtered::Forward => {}
                 Filtered::Consumed => return Ok(BackendAction::Continue),
@@ -814,13 +821,6 @@ impl Loop<'_> {
                 None => return Ok(BackendAction::Continue),
             }
 
-            if Some(frame.id) == self.ids.c_disconnect {
-                return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
-                    frame,
-                    ConnectionState::Play,
-                    version,
-                ))));
-            }
             if Some(frame.id) == self.ids.c_start_config {
                 self.io.client.queue_frame(&frame)?;
                 self.io.client.begin_reconfiguration();
