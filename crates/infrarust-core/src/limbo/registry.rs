@@ -100,6 +100,10 @@ impl LimboHandler for ManagedHandler {
         self.inner.on_chat(session, message)
     }
 
+    fn allows_proxy_commands(&self) -> bool {
+        self.inner.allows_proxy_commands()
+    }
+
     fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
         if self.forget(player_id) {
             return Box::pin(async {});

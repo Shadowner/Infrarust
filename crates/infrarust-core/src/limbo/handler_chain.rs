@@ -366,16 +366,18 @@ fn handle_input<'a>(
     Box::pin(async move {
         match input {
             ClientMessage::Command { name, args } => {
-                let line = if args.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{name} {}", args.join(" "))
-                };
-                let outcome = ctx
-                    .session
-                    .dispatch_command(&ctx.services.command_manager, &line);
-                if outcome != DispatchOutcome::Unknown {
-                    return Some(());
+                if handler.allows_proxy_commands() {
+                    let line = if args.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{name} {}", args.join(" "))
+                    };
+                    let outcome = ctx
+                        .session
+                        .dispatch_command(&ctx.services.command_manager, &line);
+                    if outcome != DispatchOutcome::Unknown {
+                        return Some(());
+                    }
                 }
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 guarded(handler, "on_command", || {
@@ -962,6 +964,113 @@ mod tests {
             let _ = session.send_message(Component::text("still working"));
             Box::pin(std::future::pending())
         }
+    }
+
+    struct CommandGate {
+        allows_proxy_commands: bool,
+        seen: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl LimboHandler for CommandGate {
+        fn name(&self) -> &str {
+            "gate"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
+            Box::pin(async { HandlerResult::Hold })
+        }
+
+        fn on_command<'a>(
+            &'a self,
+            session: &'a dyn LimboSession,
+            command: &'a str,
+            _args: &'a [&'a str],
+        ) -> BoxFuture<'a, ()> {
+            self.seen.lock().unwrap().push(command.to_string());
+            session.complete(HandlerResult::Accept);
+            Box::pin(async {})
+        }
+
+        fn allows_proxy_commands(&self) -> bool {
+            self.allows_proxy_commands
+        }
+    }
+
+    struct NoopCommand;
+
+    impl infrarust_api::command::CommandHandler for NoopCommand {
+        fn execute<'a>(
+            &'a self,
+            _ctx: infrarust_api::command::CommandContext,
+        ) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+    }
+
+    async fn type_proxy_command_in_gate(allows_proxy_commands: bool) -> Vec<String> {
+        use infrarust_protocol::io::PacketEncoder;
+        use infrarust_protocol::packets::play::chat::SChatCommand;
+        use tokio::io::AsyncWriteExt;
+
+        let services = test_proxy_services();
+        services.command_manager.register_builtin(
+            infrarust_api::command::CommandSpec::new("forcelogin"),
+            Box::new(NoopCommand),
+        );
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        services
+            .limbo_handler_registry
+            .register(
+                "p",
+                Box::new(CommandGate {
+                    allows_proxy_commands,
+                    seen: Arc::clone(&seen),
+                }),
+            )
+            .unwrap();
+        let handlers = vec![services.limbo_handler_registry.get("gate").unwrap()];
+
+        let connector = test_connector();
+        let Plumbing {
+            ctx,
+            mut io,
+            mut limbo,
+            mut raw,
+        } = plumbing(&services, &connector).await;
+        let registry = test_registry();
+        let command = build_frame(
+            &SChatCommand {
+                command: "forcelogin Admin".to_string(),
+                ..SChatCommand::default()
+            },
+            ProtocolVersion::V1_21,
+            &registry,
+        );
+        let mut encoder = PacketEncoder::new();
+        encoder.append_frame(&command).unwrap();
+        raw.write_all(&encoder.take()).await.unwrap();
+
+        let cancel = ctx.token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            cancel.cancel();
+        });
+        run_handler_chain(&ctx, &mut io, &mut limbo, &handlers, true).await;
+        drop(raw);
+        seen.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn a_handler_refusing_proxy_commands_receives_them_instead_of_the_proxy() {
+        assert_eq!(type_proxy_command_in_gate(false).await, ["forcelogin"]);
+    }
+
+    #[tokio::test]
+    async fn proxy_commands_typed_in_limbo_reach_the_proxy_by_default() {
+        assert!(type_proxy_command_in_gate(true).await.is_empty());
     }
 
     #[tokio::test]

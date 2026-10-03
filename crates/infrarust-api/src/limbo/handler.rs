@@ -110,6 +110,16 @@ pub trait LimboHandler: Send + Sync {
         Box::pin(async {})
     }
 
+    /// Whether proxy commands typed by a player this handler holds run as usual.
+    ///
+    /// Return `false` when the player is not trusted yet (an authentication
+    /// gate, for example): every command then goes to
+    /// [`on_command`](Self::on_command) and none reaches the proxy's command
+    /// manager. The default is `true`.
+    fn allows_proxy_commands(&self) -> bool {
+        true
+    }
+
     /// Called when the player disconnects while in this limbo stage.
     ///
     /// The default implementation does nothing.
@@ -154,6 +164,10 @@ impl<T: LimboHandler + ?Sized> LimboHandler for Arc<T> {
 
     fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
         (**self).on_chat(session, message)
+    }
+
+    fn allows_proxy_commands(&self) -> bool {
+        (**self).allows_proxy_commands()
     }
 
     fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
@@ -219,6 +233,10 @@ mod tests {
             Box::pin(async {})
         }
 
+        fn allows_proxy_commands(&self) -> bool {
+            false
+        }
+
         fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
             self.record(format!("disconnect {}", player_id.as_u64()));
             Box::pin(async {})
@@ -251,6 +269,7 @@ mod tests {
         );
 
         assert_eq!(shared.name(), "recording");
+        assert!(!shared.allows_proxy_commands());
         assert!(matches!(
             shared.on_player_enter(&*session).await,
             HandlerResult::Accept
