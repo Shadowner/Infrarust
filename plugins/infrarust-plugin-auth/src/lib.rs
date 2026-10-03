@@ -175,6 +175,7 @@ impl Plugin for AuthPlugin {
                 premium_cache,
             ));
 
+            let sweep_cache = handler.premium_cache().cloned();
             ctx.register_limbo_handler(Box::new(Arc::clone(&handler)))?;
             commands::register_commands(ctx, Arc::clone(&handler));
 
@@ -201,6 +202,9 @@ impl Plugin for AuthPlugin {
                         _ = interval.tick() => {
                             if let Err(e) = save_storage.flush().await {
                                 tracing::error!("Auth auto-save failed: {e}");
+                            }
+                            if let Some(cache) = &sweep_cache {
+                                cache.sweep();
                             }
                         }
                         () = save_token.cancelled() => { break; }

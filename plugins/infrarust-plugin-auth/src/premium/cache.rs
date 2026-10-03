@@ -17,6 +17,10 @@ pub enum FailedAuth {
     OtherName,
 }
 
+/// How long a status outlives its TTL, so that an online auth failing right
+/// after the status expired still knows whether the name was premium.
+const EXPIRED_STATUS_GRACE: Duration = Duration::from_secs(60);
+
 struct CacheEntry {
     status: PremiumStatus,
     cached_at: Instant,
@@ -93,6 +97,14 @@ impl PremiumCache {
             None
         }
     }
+
+    pub fn sweep(&self) {
+        let status_lifetime = self.ttl.saturating_add(EXPIRED_STATUS_GRACE);
+        self.entries
+            .retain(|_, entry| entry.cached_at.elapsed() < status_lifetime);
+        self.failed_auths
+            .retain(|_, entry| entry.failed_at.elapsed() < self.failed_auth_ttl);
+    }
 }
 
 #[cfg(test)]
@@ -168,7 +180,7 @@ mod tests {
 
     #[test]
     fn a_premium_name_stays_remembered_after_its_status_expires() {
-        let cache = PremiumCache::new(Duration::from_millis(500), Duration::from_secs(60));
+        let cache = PremiumCache::new(Duration::ZERO, Duration::from_secs(60));
         cache.put(
             "Hypixel",
             PremiumStatus::Premium {
@@ -176,11 +188,44 @@ mod tests {
             },
         );
         cache.mark_auth_failed("Hypixel");
-
-        std::thread::sleep(Duration::from_millis(600));
+        cache.sweep();
 
         assert!(cache.get("Hypixel").is_none());
         assert_eq!(cache.failed_auth("Hypixel"), Some(FailedAuth::PremiumName));
+    }
+
+    #[test]
+    fn a_sweep_keeps_a_just_expired_status_for_the_failed_auth() {
+        let cache = PremiumCache::new(Duration::ZERO, Duration::from_secs(60));
+        cache.put(
+            "Hypixel",
+            PremiumStatus::Premium {
+                mojang_uuid: Uuid::nil(),
+            },
+        );
+        cache.sweep();
+
+        assert_eq!(cache.mark_auth_failed("Hypixel"), FailedAuth::PremiumName);
+    }
+
+    #[test]
+    fn a_sweep_drops_stale_statuses_and_expired_failed_auths() {
+        let cache = PremiumCache::new(Duration::ZERO, Duration::ZERO);
+        cache.entries.insert(
+            "steve".to_string(),
+            CacheEntry {
+                status: PremiumStatus::Cracked,
+                cached_at: Instant::now()
+                    .checked_sub(EXPIRED_STATUS_GRACE + Duration::from_secs(1))
+                    .unwrap(),
+            },
+        );
+        cache.mark_auth_failed("Hypixel");
+
+        cache.sweep();
+
+        assert!(cache.entries.is_empty());
+        assert!(cache.failed_auths.is_empty());
     }
 
     #[test]
