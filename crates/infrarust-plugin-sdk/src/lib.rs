@@ -20,8 +20,14 @@
 //! }
 //! ```
 
+#[doc(hidden)]
+pub mod __private {
+    //! Component glue used by the `#[plugin]` expansion. Not part of the SDK API.
+
+    pub mod bindings;
+    pub use bindings::export;
+}
 pub mod ban_provider;
-pub mod bindings;
 pub mod codec;
 pub mod command;
 pub mod component;
@@ -40,11 +46,12 @@ pub mod runtime;
 pub mod services;
 pub mod types;
 
+use __private::bindings;
+
 pub use ban_provider::{
     BanFeatures, BanProvider, BanQuery, BanRecord, BanRecordPage, BanVerdict, LoginAttempt,
     LoginStage, UnbanRequest,
 };
-pub use bindings::export;
 pub use codec::{
     CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide, ConnectionState,
     FilterPriority, Injections, Packet, Verdict,

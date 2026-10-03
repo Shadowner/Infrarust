@@ -229,40 +229,40 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
         #[doc(hidden)]
         struct __InfrarustPluginComponent;
 
-        impl ::infrarust_plugin_sdk::bindings::guest::Guest for __InfrarustPluginComponent {
+        impl ::infrarust_plugin_sdk::__private::bindings::guest::Guest for __InfrarustPluginComponent {
             fn metadata() -> ::infrarust_plugin_sdk::PluginMetadata {
                 <#ty as ::infrarust_plugin_sdk::Plugin>::metadata(
                     &<#ty as ::core::default::Default>::default(),
                 )
             }
             fn on_enable(
-                reason: ::infrarust_plugin_sdk::bindings::guest::EnableReason,
+                reason: ::infrarust_plugin_sdk::__private::bindings::guest::EnableReason,
             ) -> ::core::result::Result<(), ::std::string::String> {
                 ::infrarust_plugin_sdk::runtime::on_enable::<#ty>(reason)
             }
             fn on_disable(
-                reason: ::infrarust_plugin_sdk::bindings::guest::DisableReason,
+                reason: ::infrarust_plugin_sdk::__private::bindings::guest::DisableReason,
             ) -> ::core::result::Result<(), ::std::string::String> {
                 ::infrarust_plugin_sdk::runtime::on_disable(reason)
             }
             fn handle_event(
                 listener: u64,
-                ev: ::infrarust_plugin_sdk::bindings::guest::Event,
-            ) -> ::infrarust_plugin_sdk::bindings::guest::EventOutcome {
+                ev: ::infrarust_plugin_sdk::__private::bindings::guest::Event,
+            ) -> ::infrarust_plugin_sdk::__private::bindings::guest::EventOutcome {
                 ::infrarust_plugin_sdk::runtime::handle_event(listener, ev)
             }
             fn handle_command(
                 handler: u64,
-                invocation: ::infrarust_plugin_sdk::bindings::guest::CommandInvocation,
+                invocation: ::infrarust_plugin_sdk::__private::bindings::guest::CommandInvocation,
             ) {
                 ::infrarust_plugin_sdk::runtime::handle_command(handler, invocation)
             }
             fn tab_complete(
                 handler: u64,
-                sender: ::infrarust_plugin_sdk::bindings::guest::CommandSender,
+                sender: ::infrarust_plugin_sdk::__private::bindings::guest::CommandSender,
                 args: ::std::vec::Vec<::std::string::String>,
                 cursor: u32,
-            ) -> ::std::vec::Vec<::infrarust_plugin_sdk::bindings::guest::Suggestion> {
+            ) -> ::std::vec::Vec<::infrarust_plugin_sdk::__private::bindings::guest::Suggestion> {
                 ::infrarust_plugin_sdk::runtime::tab_complete(handler, sender, args, cursor)
             }
             fn on_scheduled_task(handler: u64) {
@@ -271,13 +271,13 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
 
             fn limbo_on_player_enter(
                 handler: u64,
-                session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
-            ) -> ::infrarust_plugin_sdk::bindings::guest::HandlerResult {
+                session: &::infrarust_plugin_sdk::__private::bindings::guest::LimboSession,
+            ) -> ::infrarust_plugin_sdk::__private::bindings::guest::HandlerResult {
                 ::infrarust_plugin_sdk::runtime::limbo_on_player_enter(handler, session)
             }
             fn limbo_on_command(
                 handler: u64,
-                session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                session: &::infrarust_plugin_sdk::__private::bindings::guest::LimboSession,
                 command: ::std::string::String,
                 args: ::std::vec::Vec<::std::string::String>,
             ) {
@@ -285,7 +285,7 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
             }
             fn limbo_on_chat(
                 handler: u64,
-                session: &::infrarust_plugin_sdk::bindings::guest::LimboSession,
+                session: &::infrarust_plugin_sdk::__private::bindings::guest::LimboSession,
                 message: ::std::string::String,
             ) {
                 ::infrarust_plugin_sdk::runtime::limbo_on_chat(handler, session, message)
@@ -296,72 +296,72 @@ fn generate_guest_glue(ty: &syn::Type) -> TokenStream2 {
             fn limbo_on_session_end(
                 handler: u64,
                 player: u64,
-                reason: ::infrarust_plugin_sdk::bindings::guest::SessionEndReason,
+                reason: ::infrarust_plugin_sdk::__private::bindings::guest::SessionEndReason,
             ) {
                 ::infrarust_plugin_sdk::runtime::limbo_on_session_end(handler, player, reason)
             }
 
             fn ban_provider_check(
-                attempt: ::infrarust_plugin_sdk::bindings::ban_service::LoginAttempt,
+                attempt: ::infrarust_plugin_sdk::__private::bindings::ban_service::LoginAttempt,
             ) -> ::core::result::Result<
-                ::core::option::Option<::infrarust_plugin_sdk::bindings::ban_service::BanVerdict>,
+                ::core::option::Option<::infrarust_plugin_sdk::__private::bindings::ban_service::BanVerdict>,
                 ::std::string::String,
             > {
                 ::infrarust_plugin_sdk::runtime::ban_provider_check(attempt)
             }
             fn ban_provider_ban(
-                request: ::infrarust_plugin_sdk::bindings::ban_service::BanRequest,
-                source: ::infrarust_plugin_sdk::bindings::ban_service::BanSource,
+                request: ::infrarust_plugin_sdk::__private::bindings::ban_service::BanRequest,
+                source: ::infrarust_plugin_sdk::__private::bindings::ban_service::BanSource,
             ) -> ::core::result::Result<
-                ::infrarust_plugin_sdk::bindings::ban_service::BanRecord,
+                ::infrarust_plugin_sdk::__private::bindings::ban_service::BanRecord,
                 ::std::string::String,
             > {
                 ::infrarust_plugin_sdk::runtime::ban_provider_ban(request, source)
             }
             fn ban_provider_unban(
-                request: ::infrarust_plugin_sdk::bindings::ban_service::UnbanRequest,
+                request: ::infrarust_plugin_sdk::__private::bindings::ban_service::UnbanRequest,
             ) -> ::core::result::Result<
-                ::core::option::Option<::infrarust_plugin_sdk::bindings::ban_service::BanRecord>,
+                ::core::option::Option<::infrarust_plugin_sdk::__private::bindings::ban_service::BanRecord>,
                 ::std::string::String,
             > {
                 ::infrarust_plugin_sdk::runtime::ban_provider_unban(request)
             }
             fn ban_provider_get(
-                target: ::infrarust_plugin_sdk::bindings::ban_service::BanTarget,
+                target: ::infrarust_plugin_sdk::__private::bindings::ban_service::BanTarget,
             ) -> ::core::result::Result<
-                ::core::option::Option<::infrarust_plugin_sdk::bindings::ban_service::BanRecord>,
+                ::core::option::Option<::infrarust_plugin_sdk::__private::bindings::ban_service::BanRecord>,
                 ::std::string::String,
             > {
                 ::infrarust_plugin_sdk::runtime::ban_provider_get(target)
             }
             fn ban_provider_list(
-                query: ::infrarust_plugin_sdk::bindings::ban_service::BanQuery,
+                query: ::infrarust_plugin_sdk::__private::bindings::ban_service::BanQuery,
             ) -> ::core::result::Result<
-                ::infrarust_plugin_sdk::bindings::ban_service::BanRecordPage,
+                ::infrarust_plugin_sdk::__private::bindings::ban_service::BanRecordPage,
                 ::std::string::String,
             > {
                 ::infrarust_plugin_sdk::runtime::ban_provider_list(query)
             }
             fn permission_snapshot_for(
-                subject: ::infrarust_plugin_sdk::bindings::permissions::PermissionSubject,
-            ) -> ::infrarust_plugin_sdk::bindings::permissions::PermissionSnapshot {
+                subject: ::infrarust_plugin_sdk::__private::bindings::permissions::PermissionSubject,
+            ) -> ::infrarust_plugin_sdk::__private::bindings::permissions::PermissionSnapshot {
                 ::infrarust_plugin_sdk::runtime::permission_snapshot_for(subject)
             }
         }
 
-        impl ::infrarust_plugin_sdk::bindings::codec_filter::Guest for __InfrarustPluginComponent {
+        impl ::infrarust_plugin_sdk::__private::bindings::codec_filter::Guest for __InfrarustPluginComponent {
             type FilterInstance = ::infrarust_plugin_sdk::runtime::FilterInstanceProxy;
             fn create(
                 factory: u64,
-                init: ::infrarust_plugin_sdk::bindings::codec_filter::CodecSessionInit,
-            ) -> ::infrarust_plugin_sdk::bindings::codec_filter::FilterInstance {
-                ::infrarust_plugin_sdk::bindings::codec_filter::FilterInstance::new(
+                init: ::infrarust_plugin_sdk::__private::bindings::codec_filter::CodecSessionInit,
+            ) -> ::infrarust_plugin_sdk::__private::bindings::codec_filter::FilterInstance {
+                ::infrarust_plugin_sdk::__private::bindings::codec_filter::FilterInstance::new(
                     ::infrarust_plugin_sdk::runtime::create_codec_filter::<#ty>(factory, init),
                 )
             }
         }
 
-        ::infrarust_plugin_sdk::export!(__InfrarustPluginComponent);
+        ::infrarust_plugin_sdk::__private::export!(__InfrarustPluginComponent);
     }
 }
 

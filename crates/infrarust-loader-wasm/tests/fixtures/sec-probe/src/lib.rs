@@ -2,9 +2,9 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::Duration;
 
-use infrarust_plugin_sdk::bindings::events::EventKind;
-use infrarust_plugin_sdk::bindings::types::{ChannelId as WitChannelId, HostError};
-use infrarust_plugin_sdk::bindings::{
+use infrarust_plugin_sdk::__private::bindings::events::EventKind;
+use infrarust_plugin_sdk::__private::bindings::types::{ChannelId as WitChannelId, HostError};
+use infrarust_plugin_sdk::__private::bindings::{
     codec_registry, command_manager, config_service, event_bus, limbo, messaging, scheduler,
 };
 use infrarust_plugin_sdk::prelude::*;

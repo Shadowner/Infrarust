@@ -315,7 +315,7 @@ impl Component {
     }
 
     #[must_use]
-    pub fn to_arena(&self) -> wt::Component {
+    pub(crate) fn to_arena(&self) -> wt::Component {
         let mut nodes: Vec<wt::ComponentNode> = Vec::new();
         let mut pending: Vec<(&Self, Option<(usize, Slot)>)> = vec![(self, None)];
         while let Some((component, parent)) = pending.pop() {
@@ -349,7 +349,7 @@ impl Component {
         wt::Component { nodes }
     }
 
-    pub fn from_arena(arena: wt::Component) -> Result<Self, ArenaError> {
+    pub(crate) fn from_arena(arena: wt::Component) -> Result<Self, ArenaError> {
         arena::validate(&arena.nodes)?;
         build(&arena.nodes, 0)
     }

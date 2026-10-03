@@ -6,7 +6,7 @@ wit_bindgen::generate!({
     generate_all,
     pub_export_macro: true,
     export_macro_name: "export",
-    default_bindings_module: "infrarust_plugin_sdk::bindings",
+    default_bindings_module: "infrarust_plugin_sdk::__private::bindings",
     additional_derives: [PartialEq],
 });
 
