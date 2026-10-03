@@ -35,6 +35,7 @@ use infrarust_core::filter::FilterOwner;
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
+use infrarust_plugin_common::capability::gates::{GATES, SUBSCRIBE_GATES};
 
 use wasmtime::component::{Resource, ResourceTableError};
 
@@ -43,8 +44,8 @@ use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::{
     ban_service, codec_registry, command_manager, config_service, event_bus, events, limbo,
-    load_balancer, log, messaging, players, plugin_registry, proxy_info, scheduler, server_manager,
-    text, types as wt,
+    load_balancer, log, messaging, permissions, players, plugin_registry, providers, proxy_info,
+    scheduler, server_manager, text, types as wt,
 };
 use crate::component;
 use crate::config::SandboxLimits;
@@ -662,30 +663,52 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
                 limbo::Host::register_limbo_handler(s, "gate".into(), 1).await
             );
         }
-        other => failures.push(format!("{other:?}: no gated host call to probe")),
+        Capability::BanProvider => {
+            let features = ban_service::BanFeatures {
+                ip_ranges: false,
+                pagination: false,
+            };
+            denied!(
+                "register-ban-provider",
+                providers::Host::register_ban_provider(s, features).await
+            );
+        }
+        Capability::PermissionProvider => {
+            denied!(
+                "register-permission-provider",
+                providers::Host::register_permission_provider(s).await
+            );
+            let snapshot = permissions::PermissionSnapshot {
+                rules: vec![],
+                admin: false,
+            };
+            denied!(
+                "set-snapshot",
+                permissions::Host::set_snapshot(s, 1, snapshot).await
+            );
+            denied!("release", permissions::Host::release(s, 1).await);
+        }
+        other if gates_something(other) => {
+            failures.push(format!("{other:?}: no gated host call to probe"));
+        }
+        _ => {}
     }
     failures
+}
+
+fn gates_something(capability: Capability) -> bool {
+    GATES
+        .iter()
+        .any(|(_, _, required)| required.contains(&capability))
+        || SUBSCRIBE_GATES
+            .iter()
+            .any(|(_, required)| *required == capability)
 }
 
 #[tokio::test]
 async fn every_gated_host_call_is_refused_without_its_capability() {
     let mut failures = Vec::new();
-    for capability in [
-        Capability::Ban,
-        Capability::ServerManage,
-        Capability::ConfigRead,
-        Capability::PlayerRead,
-        Capability::PlayerWrite,
-        Capability::RawPacket,
-        Capability::ChatIntercept,
-        Capability::EventBus,
-        Capability::Command,
-        Capability::Scheduler,
-        Capability::CodecFilter,
-        Capability::Limbo,
-        Capability::ConfigWrite,
-        Capability::PluginMessaging,
-    ] {
+    for &capability in Capability::ALL {
         failures.extend(unrefused_calls(capability).await);
     }
     assert!(
