@@ -2,6 +2,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use infrarust_api::error::ServiceError;
@@ -9,6 +10,7 @@ use infrarust_api::services::ban_service::{BanService, BanTarget};
 use infrarust_api::services::config_service::ProxyMode;
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::ServerAddress;
+use tokio::io::AsyncWriteExt;
 
 use crate::error::ApiError;
 
@@ -319,23 +321,34 @@ pub struct WriteError {
 }
 
 pub async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), WriteError> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
     let mut name = path.as_os_str().to_os_string();
-    name.push(".tmp");
+    name.push(format!(".{}.tmp", SEQUENCE.fetch_add(1, Ordering::Relaxed)));
     let tmp = PathBuf::from(name);
 
-    tokio::fs::write(&tmp, bytes)
-        .await
-        .map_err(|source| WriteError {
+    let written = match write_synced(&tmp, bytes).await {
+        Ok(()) => tokio::fs::rename(&tmp, path)
+            .await
+            .map_err(|source| WriteError {
+                path: path.to_path_buf(),
+                source,
+            }),
+        Err(source) => Err(WriteError {
             path: tmp.clone(),
             source,
-        })?;
+        }),
+    };
+    if written.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+    }
+    written
+}
 
-    tokio::fs::rename(&tmp, path)
-        .await
-        .map_err(|source| WriteError {
-            path: path.to_path_buf(),
-            source,
-        })
+async fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = tokio::fs::File::create(path).await?;
+    file.write_all(bytes).await?;
+    file.sync_all().await
 }
 
 #[cfg(test)]
