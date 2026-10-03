@@ -63,6 +63,40 @@ pub const GATES: &[(&str, &str, &[Capability])] = &[
     ("providers", "*", &[Capability::PermissionProvider]),
 ];
 
+pub const UNGATED: &[(&str, &str)] = &[
+    ("limbo", "[method]limbo-session.player-id"),
+    ("limbo", "[method]limbo-session.profile"),
+    ("limbo", "[method]limbo-session.entry-context"),
+    ("limbo", "[method]limbo-session.send-message"),
+    ("limbo", "[method]limbo-session.send-title"),
+    ("limbo", "[method]limbo-session.send-action-bar"),
+    ("limbo", "[method]limbo-session.complete"),
+    ("limbo", "[method]limbo-session.acquire-handle"),
+    ("limbo", "[method]limbo-session-handle.player-id"),
+    ("limbo", "[method]limbo-session-handle.send-message"),
+    ("limbo", "[method]limbo-session-handle.send-title"),
+    ("limbo", "[method]limbo-session-handle.send-action-bar"),
+    ("limbo", "[method]limbo-session-handle.complete"),
+    ("limbo", "[method]limbo-session-handle.cancelled"),
+    ("events", "ping-description"),
+    ("events", "ping-favicon"),
+    ("events", "ping-player-sample"),
+    ("log", "max-level"),
+    ("log", "trace"),
+    ("log", "debug"),
+    ("log", "info"),
+    ("log", "warn"),
+    ("log", "error"),
+    ("text", "parse-json"),
+    ("text", "parse-legacy"),
+    ("text", "to-json"),
+    ("text", "to-plain"),
+    ("proxy-info", "details"),
+    ("proxy-info", "granted-capabilities"),
+    ("plugin-registry", "list"),
+    ("plugin-registry", "get"),
+];
+
 pub const SUBSCRIBE_GATES: &[(&str, Capability)] = &[
     ("chat-message", Capability::ChatIntercept),
     ("command-execute", Capability::ChatIntercept),
@@ -95,6 +129,25 @@ const fn entry(interface: &str, function: &str) -> Option<&'static [Capability]>
         at += 1;
     }
     None
+}
+
+const fn ungated(interface: &str, function: &str) -> bool {
+    let mut at = 0;
+    while at < UNGATED.len() {
+        let (open, name) = UNGATED[at];
+        if same(open, interface) && same(name, function) {
+            return true;
+        }
+        at += 1;
+    }
+    false
+}
+
+#[must_use]
+pub const fn is_known(interface: &str, function: &str) -> bool {
+    entry(interface, function).is_some()
+        || entry(interface, "*").is_some()
+        || ungated(interface, function)
 }
 
 #[must_use]
@@ -181,6 +234,22 @@ mod tests {
         assert!(required("text", "parse-json").is_empty());
         assert!(required("proxy-info", "granted-capabilities").is_empty());
         assert!(required("plugin-registry", "list").is_empty());
+        for (interface, function) in UNGATED {
+            assert!(required(interface, function).is_empty());
+        }
+    }
+
+    #[test]
+    fn only_gated_or_listed_functions_are_known() {
+        assert!(is_known("players", "send-message"));
+        assert!(is_known("players", "get"));
+        assert!(is_known("limbo", "register-limbo-handler"));
+        assert!(is_known("limbo", "[method]limbo-session.send-message"));
+        assert!(is_known("log", "info"));
+        assert!(!is_known("player", "send-message"));
+        assert!(!is_known("log", "inf"));
+        assert!(!is_known("limbo", "register-limbo-handlers"));
+        assert!(!is_known("new-privileged-interface", "do-it"));
     }
 
     #[test]

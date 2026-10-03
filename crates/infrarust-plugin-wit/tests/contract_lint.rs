@@ -2,7 +2,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use infrarust_plugin_common::capability::gates::{GATES, gated_interfaces};
+use infrarust_plugin_common::capability::gates::{GATES, UNGATED, gated_interfaces, is_known};
 use wit_parser::{Function, Interface, InterfaceId, PackageId, Resolve, Type, TypeDefKind, TypeId};
 
 const INFALLIBLE_READS: &[(&str, &str)] = &[
@@ -224,6 +224,57 @@ fn every_gated_function_exists_in_the_contract() {
         assert!(
             functions.contains_key(*function),
             "gated function `{interface}.{function}` is not in the contract"
+        );
+    }
+}
+
+#[test]
+fn every_imported_host_function_is_gated_or_listed_as_ungated() {
+    let contract = Contract::load();
+    let world_id = contract.resolve.packages[contract.package].worlds["plugin"];
+    let world = &contract.resolve.worlds[world_id];
+    let mut undecided = Vec::new();
+    for item in world.imports.values() {
+        let wit_parser::WorldItem::Interface { id, .. } = item else {
+            continue;
+        };
+        let interface = &contract.resolve.interfaces[*id];
+        if interface.package != Some(contract.package) {
+            continue;
+        }
+        let name = interface
+            .name
+            .as_deref()
+            .expect("an imported interface is named");
+        for function in interface.functions.keys() {
+            if !is_known(name, function) {
+                undecided.push(format!("(\"{name}\", \"{function}\")"));
+            }
+        }
+    }
+    assert!(
+        undecided.is_empty(),
+        "host functions with no GATES row and no UNGATED entry:\n{}",
+        undecided.join(",\n")
+    );
+}
+
+#[test]
+fn every_ungated_function_exists_and_is_not_also_gated() {
+    let contract = Contract::load();
+    for (interface, function) in UNGATED {
+        assert!(
+            contract
+                .interface(interface)
+                .functions
+                .contains_key(*function),
+            "ungated function `{interface}.{function}` is not in the contract"
+        );
+        assert!(
+            !GATES
+                .iter()
+                .any(|(gated, name, _)| gated == interface && (name == function || *name == "*")),
+            "`{interface}.{function}` is both gated and ungated"
         );
     }
 }

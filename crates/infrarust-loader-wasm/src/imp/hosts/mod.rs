@@ -37,7 +37,7 @@ use infrarust_api::permissions::Capability;
 use infrarust_api::player::Player;
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::{Component, PlayerId};
-use infrarust_plugin_common::capability::gates::required;
+use infrarust_plugin_common::capability::gates::{is_known, required};
 
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
@@ -72,6 +72,10 @@ pub(crate) struct Gate {
 
 impl Gate {
     pub(crate) const fn new(interface: &'static str, function: &'static str) -> Self {
+        assert!(
+            is_known(interface, function),
+            "the host function is neither in GATES nor in UNGATED"
+        );
         Self {
             interface,
             function,
