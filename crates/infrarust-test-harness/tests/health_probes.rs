@@ -40,19 +40,18 @@ async fn status_probes_send_the_proxy_protocol_header_the_backend_requires() {
     let address: ServerAddress = backend.addr().to_string().parse().unwrap();
 
     tokio::time::timeout(THREE_PROBES, async {
-        while backend.accepted_connections() < 3 {
+        while backend.status_requests() < 3 {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     })
     .await
-    .expect("three probes reach the backend");
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    assert!(
-        backend.status_requests() >= 3,
-        "every probe must complete a status exchange, got {}",
-        backend.status_requests()
-    );
+    .unwrap_or_else(|_| {
+        panic!(
+            "every probe must complete a status exchange, got {} out of {} connections",
+            backend.status_requests(),
+            backend.accepted_connections()
+        )
+    });
     assert_eq!(
         proxy.services().backend_health.snapshot(&address).state,
         BackendState::Healthy,
