@@ -4,14 +4,20 @@
 //! Each handler can accept, deny, redirect, or hold. The hold loop processes
 //! keepalive, chat, commands, and outgoing frames while waiting for completion.
 
+use std::collections::VecDeque;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::FutureExt;
 use tokio::sync::oneshot;
+use tokio::sync::oneshot::error::TryRecvError;
 
-use infrarust_api::event::ResultedEvent;
+use infrarust_api::event::{BoxFuture, ResultedEvent};
 use infrarust_api::events::chat::{ChatMessageEvent, ChatMessageResult};
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, HandlerResult, LimboHandler};
+use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ConnectionState;
@@ -25,8 +31,8 @@ use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::error::CoreError;
+use crate::event_bus::diagnostic::panic_message;
 use crate::player::commands::{CommandInbox, CommandOutcome};
-use crate::player::packets::build_system_chat_message;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
@@ -45,6 +51,8 @@ pub(crate) enum LimboChainResult {
 }
 
 const KEEPALIVE_INTERVAL_SECS: u64 = 10;
+const HANDLER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_QUEUED_INPUTS: usize = 16;
 
 pub(crate) struct Limbo {
     pub(crate) session: Arc<LimboSessionImpl>,
@@ -69,7 +77,15 @@ pub(crate) async fn run_handler_chain(
 
     for handler in handlers {
         let complete = limbo.session.begin_handler();
-        let result = handler.on_player_enter(limbo.session.as_ref()).await;
+        let entered = tokio::select! {
+            () = ctx.token.cancelled() => {
+                return cancelled(&mut io.client, &mut io.commands, &limbo.core.packet_registry);
+            }
+            entered = guarded(handler.as_ref(), "on_player_enter", || {
+                handler.on_player_enter(limbo.session.as_ref())
+            }) => entered,
+        };
+        let result = entered.unwrap_or_else(HandlerResult::unavailable);
 
         match process_handler_result(result) {
             HandlerAction::Continue => continue,
@@ -94,10 +110,8 @@ pub(crate) async fn run_handler_chain(
                     HandlerAction::Continue => continue,
                     HandlerAction::Exit(chain_result) => return chain_result,
                     HandlerAction::Hold(_) => {
-                        tracing::warn!(
-                            "limbo complete() delivered a Hold result; treating as Accept"
-                        );
-                        continue;
+                        tracing::warn!("limbo complete() delivered a Hold result; denying");
+                        return unavailable();
                     }
                 }
             }
@@ -120,6 +134,10 @@ struct HoldTimeout {
     on_timeout: HandlerResult,
 }
 
+fn unavailable() -> LimboChainResult {
+    LimboChainResult::Kick(Component::text(HANDLER_UNAVAILABLE))
+}
+
 fn process_handler_result(result: HandlerResult) -> HandlerAction {
     match result {
         HandlerResult::Accept => HandlerAction::Continue,
@@ -138,8 +156,50 @@ fn process_handler_result(result: HandlerResult) -> HandlerAction {
             };
             HandlerAction::Hold(Some(HoldTimeout { after, on_timeout }))
         }
-        // HandlerResult is #[non_exhaustive]; treat unknown variants as Accept.
-        _ => HandlerAction::Continue,
+        unknown => {
+            tracing::warn!(result = ?unknown, "unknown limbo handler result; denying");
+            HandlerAction::Exit(unavailable())
+        }
+    }
+}
+
+async fn guarded<F: Future>(
+    handler: &dyn LimboHandler,
+    call: &'static str,
+    start: impl FnOnce() -> F,
+) -> Option<F::Output> {
+    let run = AssertUnwindSafe(async move { start().await }).catch_unwind();
+    match tokio::time::timeout(HANDLER_CALL_TIMEOUT, run).await {
+        Ok(Ok(value)) => Some(value),
+        Ok(Err(payload)) => {
+            tracing::error!(
+                handler = handler.name(),
+                call,
+                panic = %panic_message(payload.as_ref()),
+                "limbo handler panicked"
+            );
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                handler = handler.name(),
+                call,
+                timeout = ?HANDLER_CALL_TIMEOUT,
+                "limbo handler did not answer in time"
+            );
+            None
+        }
+    }
+}
+
+fn cancelled(
+    client: &mut ClientBridge,
+    commands: &mut CommandInbox,
+    registry: &PacketRegistry,
+) -> LimboChainResult {
+    match commands.take_kick(client, registry, true) {
+        Some(reason) => LimboChainResult::Kick(reason),
+        None => LimboChainResult::Shutdown,
     }
 }
 
@@ -159,11 +219,11 @@ async fn wait_for_hold(
         keepalive,
         server,
     } = limbo;
+    let session: &LimboSessionImpl = session;
     let Hold {
         timeout,
         mut complete,
     } = hold;
-    let services = ctx.services;
     let mut keepalive_interval =
         tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
 
@@ -179,8 +239,9 @@ async fn wait_for_hold(
     };
     tokio::pin!(hold_timeout);
 
-    let player = &ctx.session;
     let observer = FrameChain::new(ctx, server);
+    let mut queued: VecDeque<ClientMessage> = VecDeque::new();
+    let mut in_flight: Option<BoxFuture<'_, Option<()>>> = None;
 
     let released = commands.drain(client, &core.packet_registry, true);
     if let Some(action) = settle_commands(client, commands, &core.packet_registry, released).await {
@@ -188,6 +249,17 @@ async fn wait_for_hold(
     }
 
     loop {
+        if in_flight.is_none() {
+            match complete.try_recv() {
+                Ok(result) => return process_handler_result(result),
+                Err(TryRecvError::Closed) => return completion_lost(),
+                Err(TryRecvError::Empty) => {}
+            }
+            in_flight = queued
+                .pop_front()
+                .map(|input| handle_input(ctx, handler, session, input));
+        }
+
         tokio::select! {
             biased;
 
@@ -199,10 +271,14 @@ async fn wait_for_hold(
             }
 
             () = ctx.token.cancelled() => {
-                if let Some(reason) = commands.take_kick(client, &core.packet_registry, true) {
-                    return HandlerAction::Exit(LimboChainResult::Kick(reason));
+                return HandlerAction::Exit(cancelled(client, commands, &core.packet_registry));
+            }
+
+            handled = run_in_flight(&mut in_flight), if in_flight.is_some() => {
+                in_flight = None;
+                if handled.is_none() {
+                    return HandlerAction::Exit(unavailable());
                 }
-                return HandlerAction::Exit(LimboChainResult::Shutdown);
             }
 
             frame = client.read_frame() => {
@@ -212,29 +288,15 @@ async fn wait_for_hold(
                         if is_keepalive_response(&frame, &core.packet_registry, core.protocol_version) {
                             if let Some(id) = extract_keepalive_id(&frame, core.protocol_version) {
                                 match keepalive.on_response(id) {
-                                    Some(rtt) => player.client_state().record_ping(rtt),
+                                    Some(rtt) => ctx.session.client_state().record_ping(rtt),
                                     None => tracing::debug!(id, "limbo keepalive response ID mismatch"),
                                 }
                             }
-                        } else if let Some(msg) = parse_client_message(&frame, &core.packet_registry, core.protocol_version) {
-                            match msg {
-                                ClientMessage::Command { name, args } => {
-                                    let input = if args.is_empty() {
-                                        name.clone()
-                                    } else {
-                                        format!("{name} {}", args.join(" "))
-                                    };
-                                    let outcome = player.dispatch_command(&services.command_manager, &input);
-                                    if outcome == DispatchOutcome::Unknown {
-                                        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                                        handler.on_command(session.as_ref(), &name, &args_refs).await;
-                                    }
-                                }
-                                ClientMessage::Chat { message, signed } => {
-                                    if let Some(message) = limbo_chat(ctx, client, message, signed).await {
-                                        handler.on_chat(session.as_ref(), &message).await;
-                                    }
-                                }
+                        } else if let Some(input) = parse_client_message(&frame, &core.packet_registry, core.protocol_version) {
+                            if queued.len() < MAX_QUEUED_INPUTS {
+                                queued.push_back(input);
+                            } else {
+                                tracing::debug!("dropping limbo input: too many inputs waiting for the handler");
                             }
                         }
                     }
@@ -267,18 +329,14 @@ async fn wait_for_hold(
                 }
             }
 
-            result = &mut complete => {
-                debug_assert!(
-                    result.is_ok(),
-                    "limbo hold completion sender dropped without sending a result"
-                );
+            result = &mut complete, if in_flight.is_none() => {
                 return match result {
                     Ok(result) => process_handler_result(result),
-                    Err(_) => HandlerAction::Continue,
+                    Err(_) => completion_lost(),
                 };
             }
 
-            () = &mut hold_timeout => {
+            () = &mut hold_timeout, if in_flight.is_none() => {
                 if let Some(result) = on_timeout.clone() {
                     return process_handler_result(result);
                 }
@@ -287,9 +345,57 @@ async fn wait_for_hold(
     }
 }
 
+fn completion_lost() -> HandlerAction {
+    tracing::warn!("limbo hold completion sender dropped without a result; denying");
+    HandlerAction::Exit(unavailable())
+}
+
+async fn run_in_flight(in_flight: &mut Option<BoxFuture<'_, Option<()>>>) -> Option<()> {
+    match in_flight {
+        Some(future) => future.await,
+        None => std::future::pending().await,
+    }
+}
+
+fn handle_input<'a>(
+    ctx: &'a SessionContext<'_>,
+    handler: &'a dyn LimboHandler,
+    session: &'a LimboSessionImpl,
+    input: ClientMessage,
+) -> BoxFuture<'a, Option<()>> {
+    Box::pin(async move {
+        match input {
+            ClientMessage::Command { name, args } => {
+                let line = if args.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} {}", args.join(" "))
+                };
+                let outcome = ctx
+                    .session
+                    .dispatch_command(&ctx.services.command_manager, &line);
+                if outcome != DispatchOutcome::Unknown {
+                    return Some(());
+                }
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                guarded(handler, "on_command", || {
+                    handler.on_command(session, &name, &args)
+                })
+                .await
+            }
+            ClientMessage::Chat { message, signed } => {
+                let Some(message) = limbo_chat(ctx, session, message, signed).await else {
+                    return Some(());
+                };
+                guarded(handler, "on_chat", || handler.on_chat(session, &message)).await
+            }
+        }
+    })
+}
+
 async fn limbo_chat(
     ctx: &SessionContext<'_>,
-    client: &mut ClientBridge,
+    session: &LimboSessionImpl,
     message: String,
     signed: bool,
 ) -> Option<String> {
@@ -300,15 +406,10 @@ async fn limbo_chat(
         .await;
     match event.result().clone() {
         ChatMessageResult::Deny { reason } => {
-            if let Some(reason) = reason {
-                match build_system_chat_message(&reason, ctx.version(), ctx.registry()) {
-                    Ok(frame) => {
-                        if let Err(e) = client.write_frame(&frame).await {
-                            tracing::debug!("failed to send a chat denial reason in limbo: {e}");
-                        }
-                    }
-                    Err(e) => tracing::warn!("failed to encode a chat denial reason: {e}"),
-                }
+            if let Some(reason) = reason
+                && let Err(e) = session.send_message(reason)
+            {
+                tracing::debug!("failed to send a chat denial reason in limbo: {e}");
             }
             None
         }
@@ -802,5 +903,173 @@ mod tests {
 
         let result = run(handlers).await;
         assert!(matches!(result, LimboChainResult::Completed));
+    }
+
+    fn is_unavailable(result: &LimboChainResult) -> bool {
+        matches!(result, LimboChainResult::Kick(reason) if reason.to_plain() == HANDLER_UNAVAILABLE)
+    }
+
+    struct PanickingEnter;
+
+    impl LimboHandler for PanickingEnter {
+        fn name(&self) -> &str {
+            "panicking"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
+            panic!("on_player_enter exploded");
+        }
+    }
+
+    struct HungEnter;
+
+    impl LimboHandler for HungEnter {
+        fn name(&self) -> &str {
+            "hung"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    struct BusyCommand;
+
+    impl LimboHandler for BusyCommand {
+        fn name(&self) -> &str {
+            "busy"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
+            Box::pin(async { HandlerResult::Hold })
+        }
+
+        fn on_command<'a>(
+            &'a self,
+            session: &'a dyn LimboSession,
+            _command: &'a str,
+            _args: &'a [&'a str],
+        ) -> BoxFuture<'a, ()> {
+            let _ = session.send_message(Component::text("still working"));
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_panicking_handler_denies_the_player() {
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![
+            Arc::new(PanickingEnter),
+            Arc::new(FixedHandler {
+                name: "after",
+                result: HandlerResult::Accept,
+            }),
+        ];
+        let result = run(handlers).await;
+        assert!(is_unavailable(&result), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_hung_on_player_enter_yields_to_the_session_token() {
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let mut p = plumbing(&services, &connector).await;
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(HungEnter)];
+
+        let cancel = p.ctx.token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true),
+        )
+        .await
+        .expect("the chain must not wait on a hung handler once the session ends");
+        assert!(
+            matches!(result, LimboChainResult::Shutdown),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_handler_call_that_never_answers_times_out() {
+        let answered = guarded(&HungEnter, "on_player_enter", std::future::pending::<()>).await;
+        assert!(answered.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_hold_keeps_writing_to_the_client_while_a_command_handler_is_busy() {
+        use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
+        use infrarust_protocol::packets::play::chat::SChatCommand;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let Plumbing {
+            ctx,
+            mut io,
+            mut limbo,
+            mut raw,
+        } = plumbing(&services, &connector).await;
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![Arc::new(BusyCommand)];
+        let registry = test_registry();
+        let version = ProtocolVersion::V1_21;
+        let expected = crate::player::packets::build_system_chat_message(
+            &Component::text("still working"),
+            version,
+            &registry,
+        )
+        .unwrap();
+
+        let command = build_frame(
+            &SChatCommand {
+                command: "anything".to_string(),
+                ..SChatCommand::default()
+            },
+            version,
+            &registry,
+        );
+        let mut encoder = PacketEncoder::new();
+        encoder.append_frame(&command).unwrap();
+        raw.write_all(&encoder.take()).await.unwrap();
+
+        let cancel = ctx.token.clone();
+        let client = tokio::spawn(async move {
+            let mut decoder = PacketDecoder::new();
+            loop {
+                while let Some(frame) = decoder.try_next_frame().unwrap() {
+                    if frame.id == expected.id && frame.payload == expected.payload {
+                        cancel.cancel();
+                        return true;
+                    }
+                }
+                if raw.read_buf(decoder.read_buf_mut()).await.unwrap() == 0 {
+                    return false;
+                }
+            }
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_handler_chain(&ctx, &mut io, &mut limbo, &handlers, true),
+        )
+        .await
+        .expect("the busy command handler must not stall the hold loop");
+        assert!(
+            matches!(result, LimboChainResult::Shutdown),
+            "got {result:?}"
+        );
+        assert!(client.await.unwrap());
     }
 }
