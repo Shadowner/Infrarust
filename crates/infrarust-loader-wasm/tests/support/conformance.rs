@@ -452,8 +452,7 @@ pub async fn fire(bus: &EventBusImpl, event: EventName) -> Outcome {
             Outcome::same("none")
         }
         EventName::OnlineAuthFailed => {
-            bus.fire(OnlineAuthFailedEvent::new(USERNAME))
-                .await;
+            bus.fire(OnlineAuthFailedEvent::new(USERNAME)).await;
             Outcome::same("none")
         }
         EventName::PermissionsSetup => {
