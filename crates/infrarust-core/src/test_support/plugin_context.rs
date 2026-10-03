@@ -5,6 +5,7 @@ use infrarust_api::command::CommandManager;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use infrarust_api::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
+use infrarust_api::messaging::{ChannelRegistrar, ServerMessenger};
 use infrarust_api::permissions::{
     CapabilitySet, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
 };
@@ -123,6 +124,12 @@ impl PluginContext for MockPluginContext {
     }
     fn capabilities(&self) -> &CapabilitySet {
         &self.capabilities
+    }
+    fn channel_registrar(&self) -> &dyn ChannelRegistrar {
+        unimplemented!("mock")
+    }
+    fn server_messenger(&self) -> Arc<dyn ServerMessenger> {
+        unimplemented!("mock")
     }
 }
 

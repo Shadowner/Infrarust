@@ -209,33 +209,6 @@ pub trait ServerMessenger: Send + Sync + private::Sealed {
     ) -> Result<usize, MessagingError>;
 }
 
-pub(crate) struct Inert;
-
-impl private::Sealed for Inert {}
-
-impl ChannelRegistrar for Inert {
-    fn register(&self, _channel: ChannelId) {}
-
-    fn unregister(&self, _channel: &ChannelId) -> bool {
-        false
-    }
-
-    fn channels(&self) -> Vec<ChannelId> {
-        Vec::new()
-    }
-}
-
-impl ServerMessenger for Inert {
-    fn send_to_server(
-        &self,
-        _server: &ServerId,
-        _channel: &ChannelId,
-        _data: Bytes,
-    ) -> Result<usize, MessagingError> {
-        Err(MessagingError::NoCarrier)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
