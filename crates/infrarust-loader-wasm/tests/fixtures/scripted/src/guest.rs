@@ -41,7 +41,7 @@ fn connect(player: &PlayerRef, server: &str) -> String {
         Ok(ConnectionResult::Denied(_)) => "denied".to_owned(),
         Ok(ConnectionResult::Failed(_)) => "failed".to_owned(),
         Ok(_) => "cancelled".to_owned(),
-        Err(error) => error.kind.to_string(),
+        Err(error) => error.kind().to_string(),
     }
 }
 

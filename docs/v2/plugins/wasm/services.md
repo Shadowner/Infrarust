@@ -62,12 +62,12 @@ permissions = ["server-manage", "ban", "raw-packet"]
 
 ## Errors
 
-Every host call that can fail returns `Result<T, Error>`. An `Error` has a `kind` to branch on and a `message` for logs:
+Every host call that can fail returns `Result<T, Error>`. An `Error` has a `kind()` to branch on and a `message()` for logs:
 
 ```rust
-pub struct Error {
-    pub kind: ErrorKind,
-    pub message: String,
+impl Error {
+    pub fn kind(&self) -> ErrorKind;
+    pub fn message(&self) -> &str;
 }
 
 pub enum ErrorKind {
@@ -85,7 +85,7 @@ pub enum ErrorKind {
 }
 ```
 
-`Error` implements `std::error::Error`, and `?` turns it into the `PluginError` that `on_enable` and `on_disable` return. A call the plugin lacks the capability for returns `PermissionDenied` with a message that names it, for example `missing capability: ban`. The host also logs that refusal, at most once a minute per capability. A registration (event subscription, command, scheduled task, plugin channel, codec filter, limbo handler) past the plugin's [quota](./capabilities#registration-quotas) returns `LimitExceeded`. `ErrorKind` is `#[non_exhaustive]`, so a `match` on it needs a wildcard arm. See [the WIT error kinds](./api-reference#errors) for when each kind is raised.
+`Error` implements `std::error::Error`, and `?` turns it into the `PluginError` that `on_enable` and `on_disable` return. A call the plugin lacks the capability for returns `PermissionDenied` with a message that names it, for example `missing capability: ban`. The host also logs that refusal, at most once a minute per capability. A registration (event subscription, command, scheduled task, plugin channel, codec filter, limbo handler) past the plugin's [quota](./capabilities#registration-quotas) returns `LimitExceeded`. `ErrorKind` mirrors the WIT `error-kind` enum of the contract version the SDK targets, so a `match` can list every kind. See [the WIT error kinds](./api-reference#errors) for when each kind is raised.
 
 ```rust
 match Bans::is_banned(&BanTarget::Username("Griefer".into())) {

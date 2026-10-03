@@ -147,7 +147,7 @@ if let Some(player) = Players::by_name("Notch") {
 
 match Messaging::send_to_server(&ServerId::new("lobby"), &channel, b"refresh") {
     Ok(copies) => debug!("sent through {copies} player(s)"),
-    Err(e) if e.kind == ErrorKind::Unavailable => debug!("nobody on lobby to carry it"),
+    Err(e) if e.kind() == ErrorKind::Unavailable => debug!("nobody on lobby to carry it"),
     Err(e) => warn!("sync failed: {e}"),
 }
 ```

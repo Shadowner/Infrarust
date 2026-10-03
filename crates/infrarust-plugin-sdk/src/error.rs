@@ -20,11 +20,11 @@ const fn kind_from_wit(kind: wt::ErrorKind) -> ErrorKind {
     }
 }
 
+/// A host call that failed: its [`ErrorKind`] and the host's message.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct Error {
-    pub kind: ErrorKind,
-    pub message: String,
+    kind: ErrorKind,
+    message: String,
 }
 
 impl Error {

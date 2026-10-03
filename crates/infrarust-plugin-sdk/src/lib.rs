@@ -48,53 +48,62 @@ pub mod types;
 
 use __private::bindings;
 
-pub use ban_provider::{
-    BanFeatures, BanProvider, BanQuery, BanRecord, BanRecordPage, BanVerdict, LoginAttempt,
-    LoginStage, UnbanRequest,
-};
-pub use codec::{
-    CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide, ConnectionState,
-    FilterPriority, Injections, Packet, Verdict,
-};
-pub use command::{
-    CommandBuilder, CommandInvocation, CommandRegistration, CommandSender, Completion, Suggestion,
-};
-pub use component::{
-    ClickEvent, Component, Content, Decoration, HoverEvent, IntoTextColor, NamedColor, Style,
-    TextColor,
-};
-pub use context::{
-    Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
-};
-pub use error::{Error, ErrorKind, PluginError};
-pub use event::{
-    EventPriority, GuestEvent, NamedEvent, NamedOutcome, NamedResponse, PacketFilter, ResultCell,
-};
-pub use infrarust_plugin_macros::plugin;
+macro_rules! reexports {
+    () => {
+        pub use crate::ban_provider::{
+            BanFeatures, BanProvider, BanQuery, BanRecord, BanRecordPage, BanVerdict, LoginAttempt,
+            LoginStage, UnbanRequest,
+        };
+        pub use crate::codec::{
+            CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide,
+            ConnectionState, FilterPriority, Injections, Packet, Verdict,
+        };
+        pub use crate::command::{
+            CommandBuilder, CommandInvocation, CommandRegistration, CommandSender, Completion,
+            Suggestion,
+        };
+        pub use crate::component::{
+            ClickEvent, Component, Content, Decoration, HoverEvent, IntoTextColor, NamedColor,
+            Style, TextColor,
+        };
+        pub use crate::context::{
+            Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
+        };
+        pub use crate::error::{Error, ErrorKind, PluginError};
+        pub use crate::event::{
+            EventPriority, GuestEvent, NamedEvent, NamedOutcome, NamedResponse, PacketFilter,
+            ResultCell,
+        };
+        pub use crate::limbo::{
+            EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession,
+            SessionEndReason, SessionHandle, TimeoutOutcome,
+        };
+        pub use crate::permissions::{
+            PermissionProvider, PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
+        };
+        pub use crate::player::{
+            BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult,
+            Player, PlayerInfo, PlayerSummary, Players, ResourcePackRequest, TitleData,
+        };
+        pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
+        pub use crate::services::{
+            BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
+            LoadBalancer, Messaging, PluginHealth, PluginInfo, Plugins, Proxy, ProxyDetails,
+            RateLimitInfo, ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo,
+            UnknownDomainBehavior,
+        };
+        pub use crate::types::{
+            Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand,
+            PacketDirection, ParticleStatus, PlayerId, PlayerRef, ProfileProperty, ProxyMode,
+            ServerAddress, ServerId, ServerState, SkinParts,
+        };
+        pub use infrarust_plugin_macros::plugin;
+        pub use uuid::Uuid;
+    };
+}
+
+reexports!();
 pub use infrarust_plugin_wit::WORLD_VERSION;
-pub use limbo::{
-    EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
-    SessionHandle, TimeoutOutcome,
-};
-pub use permissions::{
-    PermissionProvider, PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
-};
-pub use player::{
-    BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult, Player,
-    PlayerInfo, PlayerSummary, Players, ResourcePackRequest, TitleData,
-};
-pub use plugin::{Plugin, PluginDependency, PluginMetadata};
-pub use services::{
-    BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
-    LoadBalancer, Messaging, PluginHealth, PluginInfo, Plugins, Proxy, ProxyDetails, RateLimitInfo,
-    ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo, UnknownDomainBehavior,
-};
-pub use types::{
-    Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
-    ParticleStatus, PlayerId, PlayerRef, ProfileProperty, ProxyMode, ServerAddress, ServerId,
-    ServerState, SkinParts,
-};
-pub use uuid::Uuid;
 
 #[macro_export]
 macro_rules! trace {
@@ -138,49 +147,7 @@ macro_rules! error {
 }
 
 pub mod prelude {
-    pub use crate::ban_provider::{
-        BanFeatures, BanProvider, BanQuery, BanRecord, BanRecordPage, BanVerdict, LoginAttempt,
-        LoginStage, UnbanRequest,
-    };
-    pub use crate::codec::{
-        CodecContext, CodecFilter, CodecRegistrar, CodecSessionInit, ConnectionSide,
-        ConnectionState, FilterPriority, Injections, Packet, Verdict,
-    };
-    pub use crate::command::{
-        CommandBuilder, CommandInvocation, CommandRegistration, CommandSender, Completion,
-        Suggestion,
-    };
-    pub use crate::component::{
-        ClickEvent, Component, Content, Decoration, HoverEvent, IntoTextColor, NamedColor, Style,
-        TextColor,
-    };
-    pub use crate::context::{
-        Context, DisableReason, EnableReason, EventSubscription, RecoveryInfo, TaskHandle,
-    };
-    pub use crate::error::{Error, ErrorKind, PluginError};
+    reexports!();
     pub use crate::event::*;
-    pub use crate::limbo::{
-        EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason,
-        SessionHandle, TimeoutOutcome,
-    };
-    pub use crate::permissions::{
-        PermissionProvider, PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
-    };
-    pub use crate::player::{
-        BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult,
-        Player, PlayerInfo, PlayerSummary, Players, ResourcePackRequest, TitleData,
-    };
-    pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
-    pub use crate::services::{
-        BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
-        LoadBalancer, Messaging, PluginHealth, PluginInfo, Plugins, Proxy, ProxyDetails,
-        RateLimitInfo, ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo,
-        UnknownDomainBehavior,
-    };
-    pub use crate::types::{
-        Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand, PacketDirection,
-        ParticleStatus, PlayerId, PlayerRef, ProfileProperty, ProxyMode, ServerAddress, ServerId,
-        ServerState, SkinParts,
-    };
-    pub use crate::{Uuid, debug, error, info, plugin, trace, warn};
+    pub use crate::{debug, error, info, trace, warn};
 }
