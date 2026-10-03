@@ -214,7 +214,7 @@ unused_qualifications = "warn"
 [workspace.package]
 version = "2.0.0-beta.3"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99"
 license-file = "LICENSE"
 repository = "https://github.com/Shadowner/Infrarust"
 

@@ -62,7 +62,7 @@ docker build -t infrarust .
 
 ### Requirements
 
-- Rust 1.94 or later (edition 2024)
+- Rust 1.99 or later (edition 2024)
 - A C compiler and linker (`gcc` or `clang`). The default build compiles `libdeflate` for
   packet compression. For a pure-Rust build with no C toolchain, see
   [Optional features](#optional-features).

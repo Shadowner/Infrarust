@@ -32,7 +32,7 @@ impl BackendLoad {
     pub(crate) fn release(&self, addr: &ServerAddress) {
         self.counts.remove_if(addr, |_, count| {
             count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
                 .is_ok_and(|previous| previous == 1)
         });
     }

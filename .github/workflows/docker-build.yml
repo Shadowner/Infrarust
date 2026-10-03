@@ -76,7 +76,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           build-args: |
-            RUST_VERSION=1.98.1
+            RUST_VERSION=1.99.0
             ALPINE_VERSION=3.24
           outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=build-${{ matrix.arch }}
