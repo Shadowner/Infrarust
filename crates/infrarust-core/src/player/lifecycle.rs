@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use infrarust_api::__private::session_task;
 use infrarust_api::events::lifecycle::{DisconnectCause, DisconnectEvent, PostLoginEvent};
-use infrarust_api::player::{Player, session_task};
+use infrarust_api::player::Player;
 use infrarust_api::types::Component;
 
 use super::PlayerSession;

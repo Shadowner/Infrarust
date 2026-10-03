@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use infrarust_api::player::session_task;
+use infrarust_api::__private::session_task;
 use infrarust_api::types::PlayerId;
 
 pub(crate) const MAX_ENTRIES: u32 = 8;

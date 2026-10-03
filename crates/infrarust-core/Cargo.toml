@@ -32,7 +32,7 @@ telemetry = [
 test-support = ["infrarust-api/test-util"]
 
 [dependencies]
-infrarust-api = { workspace = true, features = ["serde"] }
+infrarust-api = { workspace = true, features = ["serde", "host"] }
 infrarust-plugin-common = { workspace = true }
 infrarust_config = { workspace = true }
 infrarust_protocol = { workspace = true }

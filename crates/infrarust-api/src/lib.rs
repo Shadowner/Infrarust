@@ -65,6 +65,15 @@
 //! - [`error`] — Error types
 //! - [`prelude`] — Convenience re-exports
 
+#[doc(hidden)]
+#[cfg(any(test, feature = "host"))]
+pub mod __private {
+    //! Proxy-side plumbing shared by `infrarust-core` and `infrarust-loader-wasm`.
+    //! Not part of the plugin API: plugins must not depend on the `host` feature.
+
+    pub mod caller_deadline;
+    pub mod session_task;
+}
 pub mod branding;
 pub mod command;
 pub mod error;

@@ -36,5 +36,7 @@ default = []
 serde = ["dep:serde"]
 # Tier 3 virtual backends: the proxy does not dispatch to them yet.
 unstable = []
+# Proxy-only plumbing (`__private`) for infrarust-core and the WASM loader. Plugins must not enable it.
+host = []
 # Test-only helpers (e.g. a constructible LimboSession) for downstream crates.
 test-util = []

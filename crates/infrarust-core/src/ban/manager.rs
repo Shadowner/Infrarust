@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::__private::caller_deadline;
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
@@ -12,7 +13,6 @@ use infrarust_api::services::ban_service::{
     BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanVerdict, LoginAttempt,
     LoginStage, UnbanRequest,
 };
-use infrarust_api::services::caller_deadline;
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::Component;
 use infrarust_config::{BanConfig, BanProviderSelection};

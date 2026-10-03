@@ -17,8 +17,6 @@ use crate::types::{
 mod boss_bar;
 mod connection;
 mod resource_pack;
-#[doc(hidden)]
-pub mod session_task;
 
 pub use boss_bar::{
     BossBar, BossBarColor, BossBarControl, BossBarFlags, BossBarHandle, BossBarOverlay,

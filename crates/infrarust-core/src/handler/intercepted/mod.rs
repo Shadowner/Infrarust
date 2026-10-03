@@ -4,8 +4,9 @@ pub(crate) mod auth;
 
 use std::sync::Arc;
 
+use infrarust_api::__private::session_task;
 use infrarust_api::events::lifecycle::DisconnectCause;
-use infrarust_api::player::{Player, session_task};
+use infrarust_api::player::Player;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;

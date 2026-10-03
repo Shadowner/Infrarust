@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use infrarust_api::__private::session_task;
 use infrarust_api::error::PlayerError;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::ConnectCause;
@@ -30,7 +31,7 @@ use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupRe
 use infrarust_api::messaging::ChannelId;
 use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionSubject};
 use infrarust_api::player::{
-    BossBar, BossBarUpdate, ConnectionResult, Player, ResourcePackRequest, session_task,
+    BossBar, BossBarUpdate, ConnectionResult, Player, ResourcePackRequest,
 };
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,

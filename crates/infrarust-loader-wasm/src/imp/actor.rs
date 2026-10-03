@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use infrarust_api::__private::caller_deadline;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::PluginRuntimeStatus;
-use infrarust_api::services::caller_deadline;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
