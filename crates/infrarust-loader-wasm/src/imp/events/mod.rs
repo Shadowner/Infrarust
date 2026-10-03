@@ -449,45 +449,56 @@ fn settle<E: WasmEvent>(event: &mut E, outcome: we::EventOutcome, instance: &Ins
     }
 }
 
-pub(crate) const fn kind_name(kind: EventKind) -> &'static str {
-    match kind {
-        EventKind::PreLogin => "pre-login",
-        EventKind::PostLogin => "post-login",
-        EventKind::Disconnect => "disconnect",
-        EventKind::OnlineAuthFailed => "online-auth-failed",
-        EventKind::PermissionsSetup => "permissions-setup",
-        EventKind::PlayerChooseInitialServer => "player-choose-initial-server",
-        EventKind::ServerPreConnect => "server-pre-connect",
-        EventKind::ServerConnected => "server-connected",
-        EventKind::ServerPostConnect => "server-post-connect",
-        EventKind::KickedFromServer => "kicked-from-server",
-        EventKind::ChatMessage => "chat-message",
-        EventKind::ProxyPing => "proxy-ping",
-        EventKind::ProxyInitialize => "proxy-initialize",
-        EventKind::ProxyShutdown => "proxy-shutdown",
-        EventKind::ConfigReload => "config-reload",
-        EventKind::ServerStateChange => "server-state-change",
-        EventKind::BackendHealth => "backend-health",
-        EventKind::Login => "login",
-        EventKind::GameProfileRequest => "game-profile-request",
-        EventKind::CommandExecute => "command-execute",
-        EventKind::ConnectionHandshake => "connection-handshake",
-        EventKind::ConnectionRejected => "connection-rejected",
-        EventKind::LimboEnter => "limbo-enter",
-        EventKind::LimboExit => "limbo-exit",
-        EventKind::PlayerClientBrand => "player-client-brand",
-        EventKind::PlayerSettingsChanged => "player-settings-changed",
-        EventKind::PlayerChannelRegister => "player-channel-register",
-        EventKind::PluginMessage => "plugin-message",
-        EventKind::BanIssued => "ban-issued",
-        EventKind::BanRevoked => "ban-revoked",
-        EventKind::PluginEnabled => "plugin-enabled",
-        EventKind::PluginDisabled => "plugin-disabled",
-        EventKind::PreTransfer => "pre-transfer",
-        EventKind::PlayerResourcePackStatus => "player-resource-pack-status",
-        EventKind::NamedEvent => "named-event",
-        EventKind::RawPacket => "raw-packet",
-    }
+macro_rules! event_kinds {
+    ($($kind:ident => $name:literal,)*) => {
+        pub(crate) const fn kind_name(kind: EventKind) -> &'static str {
+            match kind {
+                $(EventKind::$kind => $name,)*
+            }
+        }
+
+        #[cfg(test)]
+        const ALL_KINDS: &[EventKind] = &[$(EventKind::$kind,)*];
+    };
+}
+
+event_kinds! {
+    PreLogin => "pre-login",
+    PostLogin => "post-login",
+    Disconnect => "disconnect",
+    OnlineAuthFailed => "online-auth-failed",
+    PermissionsSetup => "permissions-setup",
+    PlayerChooseInitialServer => "player-choose-initial-server",
+    ServerPreConnect => "server-pre-connect",
+    ServerConnected => "server-connected",
+    ServerPostConnect => "server-post-connect",
+    KickedFromServer => "kicked-from-server",
+    ChatMessage => "chat-message",
+    ProxyPing => "proxy-ping",
+    ProxyInitialize => "proxy-initialize",
+    ProxyShutdown => "proxy-shutdown",
+    ConfigReload => "config-reload",
+    ServerStateChange => "server-state-change",
+    BackendHealth => "backend-health",
+    Login => "login",
+    GameProfileRequest => "game-profile-request",
+    CommandExecute => "command-execute",
+    ConnectionHandshake => "connection-handshake",
+    ConnectionRejected => "connection-rejected",
+    LimboEnter => "limbo-enter",
+    LimboExit => "limbo-exit",
+    PlayerClientBrand => "player-client-brand",
+    PlayerSettingsChanged => "player-settings-changed",
+    PlayerChannelRegister => "player-channel-register",
+    PluginMessage => "plugin-message",
+    BanIssued => "ban-issued",
+    BanRevoked => "ban-revoked",
+    PluginEnabled => "plugin-enabled",
+    PluginDisabled => "plugin-disabled",
+    PreTransfer => "pre-transfer",
+    PlayerResourcePackStatus => "player-resource-pack-status",
+    NamedEvent => "named-event",
+    RawPacket => "raw-packet",
 }
 
 const fn outcome_name(outcome: &we::EventOutcome) -> &'static str {
@@ -526,48 +537,14 @@ mod tests {
 
     use super::*;
 
-    const ALL_KINDS: [EventKind; 35] = [
-        EventKind::PreLogin,
-        EventKind::PostLogin,
-        EventKind::Disconnect,
-        EventKind::OnlineAuthFailed,
-        EventKind::PermissionsSetup,
-        EventKind::PlayerChooseInitialServer,
-        EventKind::ServerPreConnect,
-        EventKind::ServerConnected,
-        EventKind::ServerPostConnect,
-        EventKind::KickedFromServer,
-        EventKind::ChatMessage,
-        EventKind::ProxyPing,
-        EventKind::ProxyInitialize,
-        EventKind::ProxyShutdown,
-        EventKind::ConfigReload,
-        EventKind::ServerStateChange,
-        EventKind::BackendHealth,
-        EventKind::Login,
-        EventKind::GameProfileRequest,
-        EventKind::CommandExecute,
-        EventKind::ConnectionHandshake,
-        EventKind::ConnectionRejected,
-        EventKind::LimboEnter,
-        EventKind::LimboExit,
-        EventKind::PlayerClientBrand,
-        EventKind::PlayerSettingsChanged,
-        EventKind::PlayerChannelRegister,
-        EventKind::PluginMessage,
-        EventKind::BanIssued,
-        EventKind::BanRevoked,
-        EventKind::PluginEnabled,
-        EventKind::PluginDisabled,
-        EventKind::PreTransfer,
-        EventKind::PlayerResourcePackStatus,
-        EventKind::NamedEvent,
-    ];
-
     #[test]
     fn every_event_kind_registers_one_listener() {
         let bus = TrackingEventBus::new(Arc::new(EventBusImpl::new()), "guest");
-        for (at, kind) in ALL_KINDS.into_iter().enumerate() {
+        let kinds = ALL_KINDS
+            .iter()
+            .copied()
+            .filter(|kind| *kind != EventKind::RawPacket);
+        for (at, kind) in kinds.enumerate() {
             let registration = register(
                 &bus,
                 InstanceRef::detached(),
