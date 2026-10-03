@@ -43,6 +43,7 @@ pub trait Scheduler: Send + Sync + private::Sealed {
 
     fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle;
 
+    /// Cancelling or unloading the plugin stops the task only before it starts; a running task finishes.
     fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle;
 
     /// Cancels a scheduled task.
