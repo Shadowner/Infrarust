@@ -13,6 +13,7 @@ use infrarust_api::filter::{
     CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, FilterMetadata,
     FrameOutput,
 };
+use infrarust_api::limbo::LimboEntryContext;
 use infrarust_api::loader::PluginContextFactory;
 use infrarust_api::messaging::ChannelId;
 use infrarust_api::permissions::{Capability, CapabilitySet};
@@ -23,6 +24,7 @@ use infrarust_api::player::{
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::test_util::{
     MockConfigService, MockLoadBalancerService, MockPlayer, MockPlayerRegistry,
+    RecordingLimboSession,
 };
 use infrarust_api::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerAddress, ServerId,
@@ -34,6 +36,8 @@ use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
 
+use wasmtime::component::{Resource, ResourceTableError};
+
 use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::limbo as wl;
@@ -44,6 +48,7 @@ use crate::bindings::infrarust::plugin::{
 };
 use crate::component;
 use crate::config::SandboxLimits;
+use crate::consts::MAX_HOST_HANDLES;
 use crate::deadline::Deadline;
 use crate::store_state::{PluginStoreState, build_probe_state};
 
@@ -1542,5 +1547,54 @@ async fn the_ping_fields_are_read_only_while_a_ping_is_handled() {
     assert_eq!(
         events::Host::ping_description(&mut state).await.unwrap(),
         None
+    );
+}
+
+#[tokio::test]
+async fn acquiring_handles_in_a_loop_is_refused_at_the_host_handle_cap() {
+    let mut state = state_with(CapabilitySet::default(), vec![]);
+    let session = RecordingLimboSession::new(
+        PlayerId::new(1),
+        GameProfile {
+            uuid: uuid::Uuid::nil(),
+            username: "tester".to_owned(),
+            properties: vec![],
+        },
+        LimboEntryContext::InitialConnection {
+            target_server: ServerId::from("hub"),
+        },
+    );
+    let session = state.push_limbo_session(session).unwrap();
+
+    let mut held = Vec::new();
+    let refused = loop {
+        let borrowed = Resource::new_borrow(session.rep());
+        match wl::HostLimboSession::acquire_handle(&mut state, borrowed).await {
+            Ok(handle) => held.push(handle),
+            Err(error) => break error,
+        }
+        assert!(
+            held.len() < MAX_HOST_HANDLES,
+            "the handle cap was never reached"
+        );
+    };
+    assert_eq!(held.len(), MAX_HOST_HANDLES - 1);
+    assert!(
+        matches!(
+            refused.downcast_ref::<ResourceTableError>(),
+            Some(ResourceTableError::Full)
+        ),
+        "{refused:?}"
+    );
+
+    let released = held.pop().unwrap();
+    wl::HostLimboSessionHandle::drop(&mut state, released)
+        .await
+        .unwrap();
+    let borrowed = Resource::new_borrow(session.rep());
+    assert!(
+        wl::HostLimboSession::acquire_handle(&mut state, borrowed)
+            .await
+            .is_ok()
     );
 }

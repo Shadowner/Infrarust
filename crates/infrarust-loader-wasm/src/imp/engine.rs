@@ -1,12 +1,17 @@
 use infrarust_config::ProxyConfig;
-use wasmtime::{Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig};
+use wasmtime::{
+    Config, Engine, InstanceAllocationStrategy, PoolingAllocationConfig, StoreLimits,
+    StoreLimitsBuilder,
+};
 
 use crate::error::WasmLoaderError;
 
 const CORE_INSTANCES_PER_SLOT: u32 = 4;
+const MEMORIES_PER_SLOT: u32 = 1;
 const TABLES_PER_SLOT: u32 = 2;
 const POOLED_TABLE_BYTES: usize = 4096;
 const POOLED_TABLE_ELEMENTS: usize = POOLED_TABLE_BYTES / size_of::<usize>();
+const MAX_TABLE_ELEMENTS: usize = 20_000;
 
 pub fn build_engine(cfg: &ProxyConfig) -> Result<Engine, WasmLoaderError> {
     infrarust_config::validate_wasm_config(cfg)
@@ -41,7 +46,7 @@ fn engine_config(pool: Option<u32>) -> Config {
 fn pooling(slots: u32) -> PoolingAllocationConfig {
     let mut pool = PoolingAllocationConfig::new();
     pool.total_component_instances(slots);
-    pool.total_memories(slots);
+    pool.total_memories(slots.saturating_mul(MEMORIES_PER_SLOT));
     pool.total_stacks(slots);
     pool.total_core_instances(slots.saturating_mul(CORE_INSTANCES_PER_SLOT));
     pool.total_tables(slots.saturating_mul(TABLES_PER_SLOT));
@@ -49,10 +54,23 @@ fn pooling(slots: u32) -> PoolingAllocationConfig {
     pool
 }
 
+pub(crate) fn store_limits(memory_bytes: usize) -> StoreLimits {
+    StoreLimitsBuilder::new()
+        .memory_size(memory_bytes)
+        .memories(MEMORIES_PER_SLOT as usize)
+        .instances(CORE_INSTANCES_PER_SLOT as usize)
+        .tables(TABLES_PER_SLOT as usize)
+        .table_elements(MAX_TABLE_ELEMENTS)
+        .trap_on_grow_failure(true)
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    use wasmtime::{Instance, Module, Store};
 
     #[test]
     fn an_invalid_wasm_section_refuses_to_build_an_engine() {
@@ -126,11 +144,79 @@ mod tests {
         );
     }
 
+    fn on_demand_engine() -> Engine {
+        Engine::new(&engine_config(None)).unwrap()
+    }
+
+    fn limited_store(engine: &Engine) -> Store<StoreLimits> {
+        let mut store = Store::new(engine, store_limits(1 << 20));
+        store.limiter(|limits| limits);
+        store.set_epoch_deadline(1);
+        store
+    }
+
+    fn instantiate(store: &mut Store<StoreLimits>, wat: &str) -> wasmtime::Result<Instance> {
+        let module = Module::new(store.engine(), wat)?;
+        Instance::new(&mut *store, &module, &[])
+    }
+
     #[test]
-    fn an_on_demand_engine_loads_a_component_with_a_large_table() {
-        let config: ProxyConfig = toml::from_str("").unwrap();
-        let bytes = component_with_a_table_of(20_000);
-        wasmtime::component::Component::new(&build_engine(&config).unwrap(), &bytes).unwrap();
+    fn an_on_demand_store_refuses_a_component_whose_table_outgrows_the_store_limit() {
+        let engine = on_demand_engine();
+        let bytes = component_with_a_table_of(MAX_TABLE_ELEMENTS + 1);
+        let component = wasmtime::component::Component::new(&engine, &bytes).unwrap();
+        let linker = wasmtime::component::Linker::<StoreLimits>::new(&engine);
+        assert!(
+            linker
+                .instantiate(&mut limited_store(&engine), &component)
+                .is_err()
+        );
+
+        let fits = component_with_a_table_of(MAX_TABLE_ELEMENTS);
+        let component = wasmtime::component::Component::new(&engine, &fits).unwrap();
+        linker
+            .instantiate(&mut limited_store(&engine), &component)
+            .unwrap();
+    }
+
+    #[test]
+    fn growing_a_table_past_the_store_limit_traps() {
+        let engine = on_demand_engine();
+        let mut store = limited_store(&engine);
+        let instance = instantiate(
+            &mut store,
+            r#"
+            (module
+                (table 1 funcref)
+                (func (export "grow") (param i32) (result i32)
+                    (table.grow (ref.null func) (local.get 0))))
+            "#,
+        )
+        .unwrap();
+        let grow = instance
+            .get_typed_func::<u32, i32>(&mut store, "grow")
+            .unwrap();
+        let room = u32::try_from(MAX_TABLE_ELEMENTS - 1).unwrap();
+        assert_eq!(grow.call(&mut store, room).unwrap(), 1);
+        assert!(grow.call(&mut store, 1).is_err());
+    }
+
+    #[test]
+    fn a_store_holds_the_instances_tables_and_memories_of_one_pool_slot() {
+        let engine = on_demand_engine();
+        let mut store = limited_store(&engine);
+        for _ in 0..CORE_INSTANCES_PER_SLOT {
+            instantiate(&mut store, "(module)").unwrap();
+        }
+        assert!(instantiate(&mut store, "(module)").is_err());
+
+        let mut store = limited_store(&engine);
+        instantiate(&mut store, "(module (table 1 funcref) (table 1 funcref))").unwrap();
+        assert!(instantiate(&mut store, "(module (table 1 funcref))").is_err());
+
+        let mut store = limited_store(&engine);
+        assert!(instantiate(&mut store, "(module (memory 1) (memory 1))").is_err());
+        instantiate(&mut store, "(module (memory 1))").unwrap();
     }
 
     #[test]

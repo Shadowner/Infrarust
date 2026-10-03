@@ -2,10 +2,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use infrarust_plugin_common::guest_panic::{bounded_guest_panic, is_guest_panic_line};
-use wasmtime::{StoreLimits, StoreLimitsBuilder};
+use wasmtime::StoreLimits;
 use wasmtime_wasi::Rng;
 
 use crate::consts::{CODEC_LOG_BURST, CODEC_LOG_INTERVAL};
+use crate::engine::store_limits;
 use crate::rate_limit::SharedRateLimit;
 
 const MAX_RANDOM_BYTES: u64 = 1 << 20;
@@ -91,10 +92,7 @@ pub(crate) struct CodecStoreState {
 impl CodecStoreState {
     pub(crate) fn new(memory_bytes: usize, log: Arc<CodecLog>, budget_ticks: u64) -> Self {
         Self {
-            limits: StoreLimitsBuilder::new()
-                .memory_size(memory_bytes)
-                .trap_on_grow_failure(true)
-                .build(),
+            limits: store_limits(memory_bytes),
             log,
             rng: None,
             ticks: 0,

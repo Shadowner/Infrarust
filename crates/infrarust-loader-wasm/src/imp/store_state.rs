@@ -12,7 +12,7 @@ use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_config::WasmQuotasConfig;
 use infrarust_plugin_common::guest_panic::bounded_guest_panic;
 use wasmtime::component::ResourceTable;
-use wasmtime::{Store, StoreLimits, StoreLimitsBuilder, UpdateDeadline};
+use wasmtime::{Store, StoreLimits, UpdateDeadline};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
@@ -22,8 +22,10 @@ use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
 use crate::consts::{
     CODEC_REFUSAL_BURST, COMMAND_REFUSAL_BURST, DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS,
+    MAX_HOST_HANDLES,
 };
 use crate::deadline::{Deadline, HostCallLimit};
+use crate::engine::store_limits;
 use crate::error::WasmLoaderError;
 use crate::events::EventDetails;
 use crate::host_error::{HostResult, limit_exceeded, no_services};
@@ -104,15 +106,14 @@ struct Sandbox {
 
 impl Sandbox {
     fn new(wasi: WasiCtx, network: Arc<NetworkPolicy>, limits: &SandboxLimits) -> Self {
+        let mut table = ResourceTable::new();
+        table.set_max_capacity(MAX_HOST_HANDLES);
         Self {
-            table: ResourceTable::new(),
+            table,
             wasi,
             http: WasiHttpCtx::new(),
             http_hooks: HttpHooks::new(network, limits.host_call_timeout),
-            limits: StoreLimitsBuilder::new()
-                .memory_size(limits.memory_bytes)
-                .trap_on_grow_failure(true)
-                .build(),
+            limits: store_limits(limits.memory_bytes),
             deadline: None,
             epoch_yields: 0,
             guest_panic: None,
