@@ -1,5 +1,6 @@
 //! Ban service.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
@@ -542,17 +543,18 @@ pub trait BanProvider: Send + Sync {
 }
 
 pub trait BanService: BanProvider + private::Sealed {
+    /// Follows the pages of [`list`](BanProvider::list) until the provider
+    /// returns no cursor, or a cursor it already returned.
     fn list_all(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {
         Box::pin(async move {
             let mut entries = Vec::new();
+            let mut seen = HashSet::new();
             let mut query = BanQuery::new().limit(BanQuery::MAX_LIMIT);
             loop {
                 let page = self.list(query.clone()).await?;
                 entries.extend(page.entries);
                 match page.next_cursor {
-                    Some(next) if query.cursor.as_deref() != Some(next.as_str()) => {
-                        query = query.after(next);
-                    }
+                    Some(next) if seen.insert(next.clone()) => query = query.after(next),
                     _ => return Ok(entries),
                 }
             }
@@ -712,6 +714,61 @@ mod tests {
             .to_string(),
             "player:Mod"
         );
+    }
+
+    struct CyclingBans;
+
+    impl private::Sealed for CyclingBans {}
+
+    impl BanProvider for CyclingBans {
+        fn check<'a>(
+            &'a self,
+            _attempt: &'a LoginAttempt,
+        ) -> BoxFuture<'a, Result<Option<BanVerdict>, ServiceError>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn ban(&self, _request: BanRequest) -> BoxFuture<'_, Result<BanEntry, ServiceError>> {
+            Box::pin(async { Err(ServiceError::Unavailable("read only".into())) })
+        }
+
+        fn unban(
+            &self,
+            _request: UnbanRequest,
+        ) -> BoxFuture<'_, Result<Option<BanEntry>, ServiceError>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get<'a>(
+            &'a self,
+            _target: &'a BanTarget,
+        ) -> BoxFuture<'a, Result<Option<BanEntry>, ServiceError>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn list(&self, query: BanQuery) -> BoxFuture<'_, Result<BanPage, ServiceError>> {
+            let (id, next) = match query.cursor.as_deref() {
+                None => ("start", "a"),
+                Some("a") => ("a", "b"),
+                _ => ("b", "a"),
+            };
+            let entry = BanEntry::new(id, BanTarget::Username(id.into()), BanSource::System);
+            Box::pin(async move { Ok(BanPage::new(vec![entry], Some(next.into()))) })
+        }
+    }
+
+    impl BanService for CyclingBans {}
+
+    #[tokio::test]
+    async fn a_provider_whose_cursors_cycle_ends_the_listing() {
+        let ids: Vec<String> = CyclingBans
+            .list_all()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(ids, ["start", "a", "b"]);
     }
 
     #[test]
