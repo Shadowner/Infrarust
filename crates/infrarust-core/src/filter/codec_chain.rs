@@ -1,6 +1,7 @@
 //! Per-connection codec filter chain.
 
 use std::net::{IpAddr, SocketAddr};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use infrarust_api::event::ConnectionState;
 use infrarust_api::filter::{
@@ -9,6 +10,7 @@ use infrarust_api::filter::{
 use infrarust_api::types::{ProtocolVersion, RawPacket};
 
 use super::codec_registry::CodecFilterRegistryImpl;
+use crate::event_bus::diagnostic::panic_message;
 
 pub const CODEC_FILTER_FAILED: &str = "Disconnected: a required packet filter failed.";
 
@@ -28,10 +30,64 @@ fn same_payload(before: &bytes::Bytes, after: &bytes::Bytes) -> bool {
     (before.as_ptr() == after.as_ptr() && before.len() == after.len()) || before == after
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Health {
+    Healthy,
+    Erroring,
+    Poisoned,
+}
+
+struct Link {
+    instance: Box<dyn CodecFilterInstance>,
+    health: Health,
+}
+
+impl Link {
+    fn new(instance: Box<dyn CodecFilterInstance>) -> Self {
+        Self {
+            instance,
+            health: Health::Healthy,
+        }
+    }
+
+    fn live(&mut self) -> Option<&mut dyn CodecFilterInstance> {
+        (self.health != Health::Poisoned).then_some(&mut *self.instance)
+    }
+
+    #[cold]
+    fn errored(&mut self, error: &dyn std::fmt::Display) {
+        if self.health == Health::Healthy {
+            self.health = Health::Erroring;
+            tracing::warn!(
+                error = %error,
+                "CodecFilter error, passing frame through; later errors from this filter on this connection are logged at debug"
+            );
+        } else {
+            tracing::debug!(error = %error, "CodecFilter error, passing frame through");
+        }
+    }
+
+    #[cold]
+    fn panicked(&mut self, payload: &(dyn std::any::Any + Send)) -> Option<String> {
+        self.health = Health::Poisoned;
+        let instance = &self.instance;
+        let reason = catch_unwind(AssertUnwindSafe(|| {
+            instance.close_reason().map(str::to_owned)
+        }))
+        .unwrap_or_else(|_| Some(CODEC_FILTER_FAILED.to_owned()));
+        tracing::warn!(
+            panic = %panic_message(payload),
+            closing = reason.is_some(),
+            "CodecFilter panicked; it is skipped for the rest of this connection"
+        );
+        reason
+    }
+}
+
 /// A chain of [`CodecFilterInstance`]s for one side of one connection.
 pub struct CodecFilterChain {
-    instances: Vec<Box<dyn CodecFilterInstance>>,
-    /// Resolved filter ids, parallel to `instances`, for per-filter timing
+    links: Vec<Link>,
+    /// Resolved filter ids, parallel to `links`, for per-filter timing
     /// attribution under the `bench-timing` feature.
     #[cfg(feature = "bench-timing")]
     filter_ids: Vec<std::sync::Arc<str>>,
@@ -57,7 +113,7 @@ impl CodecFilterChain {
     /// Returns the filter result indicating what happened to the packet.
     /// This is a sync operation — no `.await`.
     pub fn process(&mut self, packet: &mut RawPacket) -> FilterResult {
-        if self.instances.is_empty() {
+        if self.links.is_empty() {
             return FilterResult::Pass { modified: false };
         }
         let id_before = packet.packet_id;
@@ -71,16 +127,29 @@ impl CodecFilterChain {
         #[cfg(feature = "bench-timing")]
         let mut ids = self.filter_ids.iter();
 
-        for instance in &mut self.instances {
+        for link in &mut self.links {
+            #[cfg(feature = "bench-timing")]
+            let filter_id = ids.next();
+            let Some(instance) = link.live() else {
+                continue;
+            };
+
             #[cfg(feature = "bench-timing")]
             let filter_start = quanta::Instant::now();
 
-            let verdict = instance.filter(packet, &mut output);
+            let verdict =
+                match catch_unwind(AssertUnwindSafe(|| instance.filter(packet, &mut output))) {
+                    Ok(verdict) => verdict,
+                    Err(payload) => match link.panicked(payload.as_ref()) {
+                        Some(reason) => return FilterResult::Closed(reason),
+                        None => continue,
+                    },
+                };
 
             #[cfg(feature = "bench-timing")]
             tracing::trace!(
                 target: "infrarust::bench_timing",
-                filter = ids.next().map_or("?", |s| s.as_ref()),
+                filter = filter_id.map_or("?", |s| s.as_ref()),
                 ns = filter_start.elapsed().as_nanos() as u64,
                 "codec_filter"
             );
@@ -98,11 +167,10 @@ impl CodecFilterChain {
                     return FilterResult::Replaced(output);
                 }
                 CodecVerdict::Error(e) => {
-                    if let Some(reason) = instance.close_reason() {
+                    if let Some(reason) = link.instance.close_reason() {
                         return FilterResult::Closed(reason.to_owned());
                     }
-                    tracing::warn!(error = %e, "CodecFilter error, passing frame through");
-                    continue;
+                    link.errored(&e);
                 }
             }
         }
@@ -120,35 +188,36 @@ impl CodecFilterChain {
 
     /// Notifies all filter instances of a protocol state change.
     pub fn notify_state_change(&mut self, new_state: ConnectionState) {
-        for instance in &mut self.instances {
+        for instance in self.links.iter_mut().filter_map(Link::live) {
             instance.on_state_change(new_state);
         }
     }
 
     /// Notifies all filter instances of a compression threshold change.
     pub fn notify_compression_change(&mut self, threshold: i32) {
-        for instance in &mut self.instances {
+        for instance in self.links.iter_mut().filter_map(Link::live) {
             instance.on_compression_change(threshold);
         }
     }
 
     /// Calls `on_close()` on all filter instances.
     pub fn close(&mut self) {
-        for instance in &mut self.instances {
+        for instance in self.links.iter_mut().filter_map(Link::live) {
             instance.on_close();
         }
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.instances.is_empty()
+        self.links.is_empty()
     }
 
     #[must_use]
     pub fn close_reason(&self) -> Option<&str> {
-        self.instances
+        self.links
             .iter()
-            .find_map(|instance| instance.close_reason())
+            .filter(|link| link.health != Health::Poisoned)
+            .find_map(|link| link.instance.close_reason())
     }
 }
 
@@ -190,12 +259,12 @@ pub fn build_codec_chains(
 
     (
         CodecFilterChain {
-            instances: client_instances,
+            links: client_instances.into_iter().map(Link::new).collect(),
             #[cfg(feature = "bench-timing")]
             filter_ids: client_ids,
         },
         CodecFilterChain {
-            instances: server_instances,
+            links: server_instances.into_iter().map(Link::new).collect(),
             #[cfg(feature = "bench-timing")]
             filter_ids: server_ids,
         },
@@ -263,7 +332,7 @@ mod tests {
 
     fn empty_chain(_side: ConnectionSide) -> CodecFilterChain {
         CodecFilterChain {
-            instances: vec![],
+            links: vec![],
             #[cfg(feature = "bench-timing")]
             filter_ids: vec![],
         }
@@ -271,7 +340,7 @@ mod tests {
 
     fn chain_with_instances(instances: Vec<Box<dyn CodecFilterInstance>>) -> CodecFilterChain {
         CodecFilterChain {
-            instances,
+            links: instances.into_iter().map(Link::new).collect(),
             #[cfg(feature = "bench-timing")]
             filter_ids: vec![],
         }
