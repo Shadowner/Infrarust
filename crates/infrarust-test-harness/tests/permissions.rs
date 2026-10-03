@@ -39,14 +39,7 @@ type Seen = Arc<Mutex<Vec<String>>>;
 
 fn empty_tree() -> CCommands {
     CCommands {
-        nodes: vec![CommandNode {
-            flags: 0,
-            children: vec![],
-            redirect_node: None,
-            name: None,
-            parser: None,
-            suggestions_type: None,
-        }],
+        nodes: vec![CommandNode::root()],
         root_index: 0,
     }
 }
@@ -55,7 +48,7 @@ fn roots(tree: &CCommands) -> Vec<String> {
     let mut names: Vec<String> = tree.nodes[tree.root_index as usize]
         .children
         .iter()
-        .filter_map(|&i| tree.nodes[i as usize].name.clone())
+        .filter_map(|&i| tree.nodes[i as usize].name().map(str::to_owned))
         .collect();
     names.sort_unstable();
     names
@@ -69,14 +62,14 @@ fn ir_children(tree: &CCommands) -> Vec<String> {
     let Some(ir) = tree
         .nodes
         .iter()
-        .find(|node| node.name.as_deref() == Some("infrarust"))
+        .find(|node| node.name() == Some("infrarust"))
     else {
         return Vec::new();
     };
     let mut names: Vec<String> = ir
         .children
         .iter()
-        .filter_map(|&i| tree.nodes[i as usize].name.clone())
+        .filter_map(|&i| tree.nodes[i as usize].name().map(str::to_owned))
         .collect();
     names.sort_unstable();
     names

@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 
 use infrarust_protocol::error::{ProtocolError, ProtocolResult};
-use infrarust_protocol::packets::play::commands::{CCommands, CommandNode, string_parser};
+use infrarust_protocol::packets::play::commands::{
+    CCommands, CommandNode, NodeKind, string_parser,
+};
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::services::command_manager::ProxyTree;
@@ -38,8 +40,6 @@ impl SubTree {
     }
 }
 
-const LITERAL: u8 = 0x01;
-
 fn drop_shadowed_roots(nodes: &mut [CommandNode], root: usize, shadowed: &HashSet<String>) {
     let children = std::mem::take(&mut nodes[root].children);
     nodes[root].children = children
@@ -47,11 +47,10 @@ fn drop_shadowed_roots(nodes: &mut [CommandNode], root: usize, shadowed: &HashSe
         .filter(|&child| {
             let node = usize::try_from(child).ok().and_then(|i| nodes.get(i));
             !node.is_some_and(|node| {
-                node.node_type() == LITERAL
-                    && node
-                        .name
-                        .as_deref()
-                        .is_some_and(|name| shadowed.contains(&name.to_lowercase()))
+                matches!(
+                    &node.kind,
+                    NodeKind::Literal { name } if shadowed.contains(&name.to_lowercase())
+                )
             })
         })
         .collect();
@@ -232,7 +231,6 @@ pub fn inject_proxy_commands(
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use infrarust_protocol::packets::play::commands::CommandNode;
 
     fn tree(commands: &[&[&str]]) -> ProxyTree {
         let commands: Vec<Vec<String>> = commands
@@ -248,20 +246,13 @@ mod tests {
         cmds.nodes[cmds.root_index as usize]
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect()
     }
 
     fn make_empty_tree() -> CCommands {
         CCommands {
-            nodes: vec![CommandNode {
-                flags: 0x00, // root
-                children: vec![],
-                redirect_node: None,
-                name: None,
-                parser: None,
-                suggestions_type: None,
-            }],
+            nodes: vec![CommandNode::root()],
             root_index: 0,
         }
     }
@@ -280,7 +271,7 @@ mod tests {
         let names: Vec<&str> = root
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
         assert!(names.contains(&"infrarust"));
         assert!(names.contains(&"ir"));
@@ -296,15 +287,11 @@ mod tests {
             None,
         )
         .unwrap();
-        let ir = cmds
-            .nodes
-            .iter()
-            .find(|n| n.name.as_deref() == Some("ir"))
-            .unwrap();
+        let ir = cmds.nodes.iter().find(|n| n.name() == Some("ir")).unwrap();
         let infrarust_idx = cmds
             .nodes
             .iter()
-            .position(|n| n.name.as_deref() == Some("infrarust"))
+            .position(|n| n.name() == Some("infrarust"))
             .unwrap();
         assert_eq!(ir.redirect_node, Some(infrarust_idx as i32));
     }
@@ -322,12 +309,12 @@ mod tests {
         let infrarust = cmds
             .nodes
             .iter()
-            .find(|n| n.name.as_deref() == Some("infrarust"))
+            .find(|n| n.name() == Some("infrarust"))
             .unwrap();
         let child_names: Vec<&str> = infrarust
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
         for expected in [
             "help",
@@ -362,14 +349,17 @@ mod tests {
         let server_node = cmds
             .nodes
             .iter()
-            .find(|n| n.name.as_deref() == Some("server") && n.is_executable())
+            .find(|n| n.name() == Some("server") && n.executable)
             .unwrap();
         let name_arg_idx = server_node.children[0] as usize;
         let name_arg = &cmds.nodes[name_arg_idx];
-        assert_eq!(
-            name_arg.suggestions_type.as_deref(),
-            Some("minecraft:ask_server")
-        );
+        assert!(matches!(
+            name_arg.kind,
+            NodeKind::Argument {
+                suggestions_type: Some(ref suggestions),
+                ..
+            } if suggestions == "minecraft:ask_server"
+        ));
     }
 
     #[test]
@@ -381,7 +371,7 @@ mod tests {
         let names: Vec<&str> = root
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
         assert!(names.contains(&"hello"), "missing plugin command: hello");
         assert!(
@@ -392,7 +382,7 @@ mod tests {
         let hello_idx = root
             .children
             .iter()
-            .find(|&&i| cmds.nodes[i as usize].name.as_deref() == Some("hello"))
+            .find(|&&i| cmds.nodes[i as usize].name() == Some("hello"))
             .unwrap();
         let hello_node = &cmds.nodes[*hello_idx as usize];
         assert!(
@@ -414,12 +404,12 @@ mod tests {
         let infrarust = cmds
             .nodes
             .iter()
-            .find(|n| n.name.as_deref() == Some("infrarust"))
+            .find(|n| n.name() == Some("infrarust"))
             .unwrap();
         let child_names: Vec<&str> = infrarust
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
         assert!(
             child_names.contains(&"plugin"),
@@ -429,15 +419,15 @@ mod tests {
         let plugin_idx = infrarust
             .children
             .iter()
-            .find(|&&i| cmds.nodes[i as usize].name.as_deref() == Some("plugin"))
+            .find(|&&i| cmds.nodes[i as usize].name() == Some("plugin"))
             .unwrap();
         let plugin_node = &cmds.nodes[*plugin_idx as usize];
         assert_eq!(plugin_node.children.len(), 1);
         let plugin_id_node = &cmds.nodes[plugin_node.children[0] as usize];
-        assert_eq!(plugin_id_node.name.as_deref(), Some("plugin_id"));
+        assert_eq!(plugin_id_node.name(), Some("plugin_id"));
         assert_eq!(plugin_id_node.children.len(), 1);
         let cmd_node = &cmds.nodes[plugin_id_node.children[0] as usize];
-        assert_eq!(cmd_node.name.as_deref(), Some("command"));
+        assert_eq!(cmd_node.name(), Some("command"));
     }
 
     #[test]
@@ -476,12 +466,12 @@ mod tests {
         let infrarust = cmds
             .nodes
             .iter()
-            .find(|n| n.name.as_deref() == Some("infrarust"))
+            .find(|n| n.name() == Some("infrarust"))
             .unwrap();
         let child_names: Vec<&str> = infrarust
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
 
         assert!(child_names.contains(&"help"));
@@ -508,7 +498,7 @@ mod tests {
         let names: Vec<&str> = root
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
         assert!(!names.contains(&"infrarust"));
         assert!(!names.contains(&"ir"));
@@ -532,7 +522,7 @@ mod tests {
         let names: Vec<&str> = root
             .children
             .iter()
-            .filter_map(|&i| cmds.nodes[i as usize].name.as_deref())
+            .filter_map(|&i| cmds.nodes[i as usize].name())
             .collect();
         assert!(!names.contains(&"infrarust"));
         assert!(names.contains(&"hello"));
@@ -577,7 +567,7 @@ mod tests {
             .map(|label| {
                 cmds.nodes
                     .iter()
-                    .find(|n| n.name.as_deref() == Some(*label))
+                    .find(|n| n.name() == Some(*label))
                     .unwrap()
                     .children
                     .clone()

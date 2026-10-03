@@ -14,6 +14,7 @@ const NODE_TYPE_ARGUMENT: u8 = 0x02;
 const FLAG_EXECUTABLE: u8 = 0x04;
 const FLAG_REDIRECT: u8 = 0x08;
 const FLAG_SUGGESTIONS: u8 = 0x10;
+const FLAG_RESTRICTED: u8 = 0x20;
 
 #[derive(Debug, Clone)]
 pub struct CCommands {
@@ -54,12 +55,24 @@ fn node_position(index: i32, len: usize) -> Option<usize> {
 
 #[derive(Debug, Clone)]
 pub struct CommandNode {
-    pub flags: u8,
+    pub kind: NodeKind,
+    pub executable: bool,
+    pub restricted: bool,
     pub children: Vec<i32>,
     pub redirect_node: Option<i32>,
-    pub name: Option<String>,
-    pub parser: Option<Parser>,
-    pub suggestions_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeKind {
+    Root,
+    Literal {
+        name: String,
+    },
+    Argument {
+        name: String,
+        parser: Parser,
+        suggestions_type: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -75,75 +88,90 @@ pub enum Parser {
 }
 
 impl CommandNode {
-    pub fn node_type(&self) -> u8 {
-        self.flags & NODE_TYPE_MASK
+    fn new(kind: NodeKind, executable: bool) -> Self {
+        Self {
+            kind,
+            executable,
+            restricted: false,
+            children: vec![],
+            redirect_node: None,
+        }
     }
 
-    pub fn is_executable(&self) -> bool {
-        self.flags & FLAG_EXECUTABLE != 0
+    pub fn root() -> Self {
+        Self::new(NodeKind::Root, false)
     }
 
     pub fn literal(name: &str) -> Self {
-        Self {
-            flags: NODE_TYPE_LITERAL,
-            children: vec![],
-            redirect_node: None,
-            name: Some(name.to_string()),
-            parser: None,
-            suggestions_type: None,
-        }
+        Self::new(
+            NodeKind::Literal {
+                name: name.to_string(),
+            },
+            false,
+        )
     }
 
     pub fn literal_executable(name: &str) -> Self {
         Self {
-            flags: NODE_TYPE_LITERAL | FLAG_EXECUTABLE,
-            children: vec![],
-            redirect_node: None,
-            name: Some(name.to_string()),
-            parser: None,
-            suggestions_type: None,
+            executable: true,
+            ..Self::literal(name)
         }
     }
 
     pub fn redirect(name: &str, target: i32) -> Self {
         Self {
-            flags: NODE_TYPE_LITERAL | FLAG_REDIRECT,
-            children: vec![],
             redirect_node: Some(target),
-            name: Some(name.to_string()),
-            parser: None,
-            suggestions_type: None,
+            ..Self::literal(name)
         }
     }
 
     pub fn argument(name: &str, parser: Parser, suggestions: Option<&str>) -> Self {
-        let mut flags = NODE_TYPE_ARGUMENT | FLAG_EXECUTABLE;
-        if suggestions.is_some() {
-            flags |= FLAG_SUGGESTIONS;
-        }
         Self {
-            flags,
-            children: vec![],
-            redirect_node: None,
-            name: Some(name.to_string()),
-            parser: Some(parser),
-            suggestions_type: suggestions.map(String::from),
+            executable: true,
+            ..Self::argument_non_executable(name, parser, suggestions)
         }
     }
 
     pub fn argument_non_executable(name: &str, parser: Parser, suggestions: Option<&str>) -> Self {
-        let mut flags = NODE_TYPE_ARGUMENT;
-        if suggestions.is_some() {
+        Self::new(
+            NodeKind::Argument {
+                name: name.to_string(),
+                parser,
+                suggestions_type: suggestions.map(String::from),
+            },
+            false,
+        )
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match &self.kind {
+            NodeKind::Root => None,
+            NodeKind::Literal { name } | NodeKind::Argument { name, .. } => Some(name),
+        }
+    }
+
+    fn flags(&self) -> u8 {
+        let (node_type, suggestions) = match &self.kind {
+            NodeKind::Root => (NODE_TYPE_ROOT, false),
+            NodeKind::Literal { .. } => (NODE_TYPE_LITERAL, false),
+            NodeKind::Argument {
+                suggestions_type, ..
+            } => (NODE_TYPE_ARGUMENT, suggestions_type.is_some()),
+        };
+        let mut flags = node_type;
+        if self.executable {
+            flags |= FLAG_EXECUTABLE;
+        }
+        if self.redirect_node.is_some() {
+            flags |= FLAG_REDIRECT;
+        }
+        if suggestions {
             flags |= FLAG_SUGGESTIONS;
         }
-        Self {
-            flags,
-            children: vec![],
-            redirect_node: None,
-            name: Some(name.to_string()),
-            parser: Some(parser),
-            suggestions_type: suggestions.map(String::from),
+        if self.restricted {
+            flags |= FLAG_RESTRICTED;
         }
+        flags
     }
 }
 
@@ -161,25 +189,21 @@ fn decode_node(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Comman
         None
     };
 
-    let node_type = flags & NODE_TYPE_MASK;
-
-    let (name, parser, suggestions_type) = match node_type {
-        NODE_TYPE_ROOT => (None, None, None),
-        NODE_TYPE_LITERAL => {
-            let name = r.read_string()?;
-            (Some(name), None, None)
-        }
-        NODE_TYPE_ARGUMENT => {
-            let name = r.read_string()?;
-            let parser = decode_parser(r, version)?;
-            let suggestions = if flags & FLAG_SUGGESTIONS != 0 {
+    let kind = match flags & NODE_TYPE_MASK {
+        NODE_TYPE_ROOT => NodeKind::Root,
+        NODE_TYPE_LITERAL => NodeKind::Literal {
+            name: r.read_string()?,
+        },
+        NODE_TYPE_ARGUMENT => NodeKind::Argument {
+            name: r.read_string()?,
+            parser: decode_parser(r, version)?,
+            suggestions_type: if flags & FLAG_SUGGESTIONS != 0 {
                 Some(r.read_string()?)
             } else {
                 None
-            };
-            (Some(name), Some(parser), suggestions)
-        }
-        _ => {
+            },
+        },
+        node_type => {
             return Err(ProtocolError::invalid(format!(
                 "unknown command node type: {node_type}"
             )));
@@ -187,12 +211,11 @@ fn decode_node(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Comman
     };
 
     Ok(CommandNode {
-        flags,
+        kind,
+        executable: flags & FLAG_EXECUTABLE != 0,
+        restricted: flags & FLAG_RESTRICTED != 0,
         children,
         redirect_node,
-        name,
-        parser,
-        suggestions_type,
     })
 }
 
@@ -201,7 +224,7 @@ fn encode_node(
     w: &mut (impl Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
-    w.write_u8(node.flags)?;
+    w.write_u8(node.flags())?;
     w.write_var_int(&VarInt(node.children.len() as i32))?;
     for &child in &node.children {
         w.write_var_int(&VarInt(child))?;
@@ -210,26 +233,20 @@ fn encode_node(
         w.write_var_int(&VarInt(redirect))?;
     }
 
-    let node_type = node.flags & NODE_TYPE_MASK;
-    match node_type {
-        NODE_TYPE_ROOT => {}
-        NODE_TYPE_LITERAL => {
-            if let Some(ref name) = node.name {
-                w.write_string(name)?;
-            }
-        }
-        NODE_TYPE_ARGUMENT => {
-            if let Some(ref name) = node.name {
-                w.write_string(name)?;
-            }
-            if let Some(ref parser) = node.parser {
-                encode_parser(parser, w, version)?;
-            }
-            if let Some(ref suggestions) = node.suggestions_type {
+    match &node.kind {
+        NodeKind::Root => {}
+        NodeKind::Literal { name } => w.write_string(name)?,
+        NodeKind::Argument {
+            name,
+            parser,
+            suggestions_type,
+        } => {
+            w.write_string(name)?;
+            encode_parser(parser, w, version)?;
+            if let Some(suggestions) = suggestions_type {
                 w.write_string(suggestions)?;
             }
         }
-        _ => {}
     }
     Ok(())
 }
@@ -493,12 +510,8 @@ mod tests {
             let pkt = CCommands {
                 nodes: vec![
                     CommandNode {
-                        flags: NODE_TYPE_ROOT,
                         children: vec![1],
-                        redirect_node: None,
-                        name: None,
-                        parser: None,
-                        suggestions_type: None,
+                        ..CommandNode::root()
                     },
                     CommandNode::argument(
                         "arg",
@@ -514,9 +527,11 @@ mod tests {
             let decoded = round_trip(&pkt, version);
             assert!(
                 matches!(
-                    decoded.nodes[1].parser,
-                    Some(Parser::Indexed { id: got, properties: ref got_props })
-                        if got == id && got_props.as_slice() == properties
+                    decoded.nodes[1].kind,
+                    NodeKind::Argument {
+                        parser: Parser::Indexed { id: got, properties: ref got_props },
+                        ..
+                    } if got == id && got_props.as_slice() == properties
                 ),
                 "{name} at {version}"
             );
@@ -543,14 +558,7 @@ mod tests {
 
     #[test]
     fn empty_tree_round_trip() {
-        let root = CommandNode {
-            flags: NODE_TYPE_ROOT,
-            children: vec![],
-            redirect_node: None,
-            name: None,
-            parser: None,
-            suggestions_type: None,
-        };
+        let root = CommandNode::root();
         let pkt = CCommands {
             nodes: vec![root],
             root_index: 0,
@@ -558,7 +566,7 @@ mod tests {
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.nodes.len(), 1);
         assert_eq!(decoded.root_index, 0);
-        assert_eq!(decoded.nodes[0].node_type(), NODE_TYPE_ROOT);
+        assert!(matches!(decoded.nodes[0].kind, NodeKind::Root));
     }
 
     #[test]
@@ -566,12 +574,8 @@ mod tests {
         let pkt = CCommands {
             nodes: vec![
                 CommandNode {
-                    flags: NODE_TYPE_ROOT,
                     children: vec![1],
-                    redirect_node: None,
-                    name: None,
-                    parser: None,
-                    suggestions_type: None,
+                    ..CommandNode::root()
                 },
                 CommandNode::literal_executable("test"),
             ],
@@ -579,8 +583,8 @@ mod tests {
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.nodes.len(), 2);
-        assert_eq!(decoded.nodes[1].name.as_deref(), Some("test"));
-        assert!(decoded.nodes[1].is_executable());
+        assert_eq!(decoded.nodes[1].name(), Some("test"));
+        assert!(decoded.nodes[1].executable);
     }
 
     #[test]
@@ -589,27 +593,23 @@ mod tests {
         let pkt = CCommands {
             nodes: vec![
                 CommandNode {
-                    flags: NODE_TYPE_ROOT,
                     children: vec![1],
-                    redirect_node: None,
-                    name: None,
-                    parser: None,
-                    suggestions_type: None,
+                    ..CommandNode::root()
                 },
                 CommandNode::argument("name", parser, Some("minecraft:ask_server")),
             ],
             root_index: 0,
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
-        assert_eq!(decoded.nodes[1].name.as_deref(), Some("name"));
+        assert_eq!(decoded.nodes[1].name(), Some("name"));
         assert!(matches!(
-            decoded.nodes[1].parser,
-            Some(Parser::Indexed { id: 5, .. })
+            decoded.nodes[1].kind,
+            NodeKind::Argument {
+                parser: Parser::Indexed { id: 5, .. },
+                suggestions_type: Some(ref suggestions),
+                ..
+            } if suggestions == "minecraft:ask_server"
         ));
-        assert_eq!(
-            decoded.nodes[1].suggestions_type.as_deref(),
-            Some("minecraft:ask_server")
-        );
     }
 
     #[test]
@@ -618,12 +618,8 @@ mod tests {
         let pkt = CCommands {
             nodes: vec![
                 CommandNode {
-                    flags: NODE_TYPE_ROOT,
                     children: vec![1],
-                    redirect_node: None,
-                    name: None,
-                    parser: None,
-                    suggestions_type: None,
+                    ..CommandNode::root()
                 },
                 CommandNode::argument("msg", parser, None),
             ],
@@ -631,8 +627,11 @@ mod tests {
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_16);
         assert!(matches!(
-            decoded.nodes[1].parser,
-            Some(Parser::Named { ref identifier, .. }) if identifier == "brigadier:string"
+            decoded.nodes[1].kind,
+            NodeKind::Argument {
+                parser: Parser::Named { ref identifier, .. },
+                ..
+            } if identifier == "brigadier:string"
         ));
     }
 
@@ -729,16 +728,38 @@ mod tests {
     }
 
     #[test]
+    fn flags_follow_the_node_data() {
+        let mut restricted = CommandNode::redirect("a", 0);
+        restricted.restricted = true;
+        let cases = [
+            (CommandNode::root(), NODE_TYPE_ROOT),
+            (CommandNode::literal_executable("a"), 0x05),
+            (restricted, 0x29),
+            (
+                CommandNode::argument_non_executable(
+                    "a",
+                    string_parser(0, ProtocolVersion::V1_21).unwrap(),
+                    Some("minecraft:ask_server"),
+                ),
+                0x12,
+            ),
+        ];
+        for (node, flags) in cases {
+            let mut buf = Vec::new();
+            encode_node(&node, &mut buf, ProtocolVersion::V1_21).unwrap();
+            assert_eq!(buf[0], flags, "{node:?}");
+            let decoded = decode_node(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
+            assert_eq!(decoded.flags(), flags, "{node:?}");
+        }
+    }
+
+    #[test]
     fn redirect_node_round_trip() {
         let pkt = CCommands {
             nodes: vec![
                 CommandNode {
-                    flags: NODE_TYPE_ROOT,
                     children: vec![1, 2],
-                    redirect_node: None,
-                    name: None,
-                    parser: None,
-                    suggestions_type: None,
+                    ..CommandNode::root()
                 },
                 CommandNode::literal_executable("original"),
                 CommandNode::redirect("alias", 1),
@@ -747,6 +768,6 @@ mod tests {
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.nodes[2].redirect_node, Some(1));
-        assert_eq!(decoded.nodes[2].name.as_deref(), Some("alias"));
+        assert_eq!(decoded.nodes[2].name(), Some("alias"));
     }
 }

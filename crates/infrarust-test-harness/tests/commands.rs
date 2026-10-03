@@ -142,14 +142,7 @@ impl World {
 }
 
 fn tree(roots: &[&str]) -> CCommands {
-    let mut nodes = vec![CommandNode {
-        flags: 0,
-        children: vec![],
-        redirect_node: None,
-        name: None,
-        parser: None,
-        suggestions_type: None,
-    }];
+    let mut nodes = vec![CommandNode::root()];
     for (i, name) in roots.iter().enumerate() {
         nodes.push(CommandNode::literal_executable(name));
         nodes[0].children.push(i32::try_from(i + 1).unwrap());
@@ -164,7 +157,7 @@ fn roots(tree: &CCommands) -> Vec<String> {
     let mut names: Vec<String> = tree.nodes[tree.root_index as usize]
         .children
         .iter()
-        .filter_map(|&i| tree.nodes[i as usize].name.clone())
+        .filter_map(|&i| tree.nodes[i as usize].name().map(str::to_owned))
         .collect();
     names.sort_unstable();
     names
