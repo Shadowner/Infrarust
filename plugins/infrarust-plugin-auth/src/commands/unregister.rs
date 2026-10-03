@@ -4,7 +4,7 @@ use infrarust_api::command::{CommandContext, CommandHandler};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::types::Component;
 
-use super::{INTERNAL_ERROR, verify_current_password};
+use super::{INTERNAL_ERROR, authenticated_player, verify_current_password};
 use crate::handler::AuthHandler;
 use crate::util::parse_colored;
 
@@ -15,9 +15,7 @@ pub struct UnregisterCommand {
 impl CommandHandler for UnregisterCommand {
     fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player) = ctx.source.player() else {
-                ctx.source
-                    .send_message(Component::error("Only players can use this command."));
+            let Some(player) = authenticated_player(&self.handler, &ctx.source) else {
                 return;
             };
 
@@ -32,7 +30,7 @@ impl CommandHandler for UnregisterCommand {
             let storage = self.handler.storage();
             let config = self.handler.config();
 
-            let Some((username, _)) = verify_current_password(
+            let Some(username) = verify_current_password(
                 &self.handler,
                 player.as_ref(),
                 password,

@@ -178,6 +178,12 @@ impl Plugin for AuthPlugin {
             let sweep_cache = handler.premium_cache().cloned();
             ctx.register_limbo_handler(Box::new(Arc::clone(&handler)))?;
             commands::register_commands(ctx, Arc::clone(&handler));
+            let disconnects = Arc::clone(&handler);
+            ctx.event_bus()
+                .subscribe::<infrarust_api::events::lifecycle::DisconnectEvent, _>(
+                    infrarust_api::event::EventPriority::NORMAL,
+                    move |event| disconnects.forget_player(event.player.id()),
+                );
 
             let save_cancel = CancellationToken::new();
             let save_storage = Arc::clone(&storage);

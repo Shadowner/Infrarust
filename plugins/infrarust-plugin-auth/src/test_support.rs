@@ -150,6 +150,17 @@ impl TestEnv {
             .expect("create account");
     }
 
+    pub async fn log_in(&self, id: u64, username: &str, password: &str) {
+        use infrarust_api::limbo::handler::{HandlerResult, LimboHandler};
+
+        let session = limbo_session(id, username);
+        self.handler.on_player_enter(&*session).await;
+        self.handler
+            .on_command(&*session, "login", &[password])
+            .await;
+        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+    }
+
     pub async fn set_premium_info(&self, username: &str, force_cracked: bool) {
         let info = PremiumInfo {
             mojang_uuid: uuid::Uuid::from_u128(0xfeed),

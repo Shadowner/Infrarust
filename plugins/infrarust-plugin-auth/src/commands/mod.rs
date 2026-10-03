@@ -15,40 +15,63 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::Component;
 
 use crate::account::{AuthAccount, Username};
-use crate::config::AuthConfig;
-use crate::handler::AuthHandler;
+use crate::handler::{Attempt, AuthHandler};
 use crate::password;
 use crate::util::parse_colored;
 
 pub(crate) const INTERNAL_ERROR: &str = "Internal error.";
+const ADMIN_PERMISSION: &str = "infrarust.admin";
+pub(crate) const NOT_LOGGED_IN: &str = "You must be logged in to use this command.";
+
+pub(crate) fn authenticated_player<'a>(
+    handler: &AuthHandler,
+    source: &'a CommandSource,
+) -> Option<&'a Arc<dyn Player>> {
+    let Some(player) = source.player() else {
+        source.send_message(Component::error("Only players can use this command."));
+        return None;
+    };
+    if !handler.is_authenticated(player.id()) {
+        let _ = player.send_message(Component::error(NOT_LOGGED_IN));
+        return None;
+    }
+    Some(player)
+}
 
 pub(crate) async fn verify_current_password(
     handler: &AuthHandler,
     player: &dyn Player,
     password: &str,
     wrong_password: &str,
-) -> Option<(Username, AuthAccount)> {
+) -> Option<Username> {
     let username = Username::new(&player.profile().username);
 
-    let account = match handler.storage().get_account(&username) {
-        Ok(Some(account)) => account,
-        _ => {
-            let _ = player.send_message(Component::error("No account found."));
-            return None;
+    let stored = match handler.storage().get_account(&username) {
+        Ok(Some(AuthAccount {
+            password_hash: Some(hash),
+            ..
+        })) => Some(hash),
+        _ => None,
+    };
+    let hash = stored.as_ref().unwrap_or_else(|| handler.dummy_hash());
+
+    match password::verify_password(password, hash).await {
+        Ok(true) if stored.is_some() => {
+            handler.clear_failed_attempts(player.id());
+            Some(username)
         }
-    };
-
-    let Some(ref password_hash) = account.password_hash else {
-        let _ = player.send_message(Component::error(
-            "This is a premium account with no password set.",
-        ));
-        return None;
-    };
-
-    match password::verify_password(password, password_hash).await {
-        Ok(true) => Some((username, account)),
-        Ok(false) => {
-            let _ = player.send_message(parse_colored(wrong_password));
+        Ok(_) => {
+            match handler.record_failed_attempt(player.id()) {
+                Attempt::Exhausted => {
+                    let config = handler.config();
+                    player
+                        .disconnect(parse_colored(&config.messages.login_max_attempts))
+                        .await;
+                }
+                Attempt::Retry { .. } => {
+                    let _ = player.send_message(parse_colored(wrong_password));
+                }
+            }
             None
         }
         Err(e) => {
@@ -136,11 +159,17 @@ pub fn register_commands(ctx: &dyn PluginContext, handler: Arc<AuthHandler>) {
     }
 }
 
-fn is_admin(source: &CommandSource, config: &AuthConfig) -> bool {
-    source.has_permission("infrarust.admin")
-        || source.player().is_some_and(|player| {
-            config
+fn is_admin(source: &CommandSource, handler: &AuthHandler) -> bool {
+    let Some(player) = source.player() else {
+        return source.has_permission(ADMIN_PERMISSION);
+    };
+    if handler.is_in_auth_limbo(player.id()) {
+        return false;
+    }
+    player.has_permission(ADMIN_PERMISSION)
+        || (handler.is_authenticated(player.id())
+            && handler
+                .config()
                 .admin_set()
-                .contains(&player.profile().username.to_lowercase())
-        })
+                .contains(&player.profile().username.to_lowercase()))
 }

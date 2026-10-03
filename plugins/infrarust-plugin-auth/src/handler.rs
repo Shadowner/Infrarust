@@ -20,14 +20,25 @@ use crate::storage::AuthStorage;
 use crate::util::parse_colored;
 
 struct AuthSessionState {
-    failed_attempts: u32,
     needs_register: bool,
     username: Username,
     force_completed: bool,
 }
 
+#[derive(Default)]
+struct ConnectionAuth {
+    authenticated: bool,
+    failed_attempts: u32,
+}
+
+pub(crate) enum Attempt {
+    Retry { attempts_left: u32 },
+    Exhausted,
+}
+
 pub struct AuthHandler {
     sessions: DashMap<PlayerId, AuthSessionState>,
+    connections: DashMap<PlayerId, ConnectionAuth>,
     storage: Arc<dyn AuthStorage>,
     config: Arc<AuthConfig>,
     player_registry: Arc<dyn PlayerRegistry>,
@@ -47,6 +58,7 @@ impl AuthHandler {
     ) -> Self {
         Self {
             sessions: DashMap::new(),
+            connections: DashMap::new(),
             storage,
             config,
             player_registry,
@@ -81,9 +93,50 @@ impl AuthHandler {
         }
     }
 
-    #[cfg(test)]
+    pub(crate) fn dummy_hash(&self) -> &crate::account::PasswordHash {
+        &self.dummy_hash
+    }
+
     pub(crate) fn is_in_auth_limbo(&self, player_id: PlayerId) -> bool {
         self.sessions.contains_key(&player_id)
+    }
+
+    pub(crate) fn is_authenticated(&self, player_id: PlayerId) -> bool {
+        !self.is_in_auth_limbo(player_id)
+            && self
+                .connections
+                .get(&player_id)
+                .is_some_and(|c| c.authenticated)
+    }
+
+    fn mark_authenticated(&self, player_id: PlayerId) {
+        let mut connection = self.connections.entry(player_id).or_default();
+        connection.authenticated = true;
+        connection.failed_attempts = 0;
+    }
+
+    pub(crate) fn record_failed_attempt(&self, player_id: PlayerId) -> Attempt {
+        let mut connection = self.connections.entry(player_id).or_default();
+        connection.failed_attempts += 1;
+        let max = self.config.security.max_login_attempts;
+        if connection.failed_attempts >= max {
+            Attempt::Exhausted
+        } else {
+            Attempt::Retry {
+                attempts_left: max - connection.failed_attempts,
+            }
+        }
+    }
+
+    pub(crate) fn clear_failed_attempts(&self, player_id: PlayerId) {
+        if let Some(mut connection) = self.connections.get_mut(&player_id) {
+            connection.failed_attempts = 0;
+        }
+    }
+
+    pub fn forget_player(&self, player_id: PlayerId) {
+        self.sessions.remove(&player_id);
+        self.connections.remove(&player_id);
     }
 
     fn cleanup_session(&self, player_id: PlayerId) {
@@ -108,6 +161,7 @@ impl AuthHandler {
         let _ = session.send_message(message);
         Self::clear_title(session);
         self.cleanup_session(session.player_id());
+        self.mark_authenticated(session.player_id());
         session.complete(HandlerResult::Accept);
     }
 
@@ -255,6 +309,7 @@ impl LimboHandler for AuthHandler {
                 .replace("{username}", &display_name);
             let _ = session.send_message(parse_colored(&msg));
             tracing::info!(%display_name, "Premium auto-login");
+            self.mark_authenticated(player_id);
             return Box::pin(async { HandlerResult::Accept });
         }
 
@@ -291,7 +346,6 @@ impl LimboHandler for AuthHandler {
         self.sessions.insert(
             player_id,
             AuthSessionState {
-                failed_attempts: 0,
                 needs_register,
                 username,
                 force_completed: false,
@@ -402,29 +456,13 @@ impl LimboHandler for AuthHandler {
                                 self.msg(&self.config.messages.login_success, &[]),
                             );
                         }
-                        Ok((false, _)) => {
-                            let (should_kick, attempts_left) =
-                                if let Some(mut entry) = self.sessions.get_mut(&player_id) {
-                                    entry.failed_attempts += 1;
-                                    let left = self
-                                        .config
-                                        .security
-                                        .max_login_attempts
-                                        .saturating_sub(entry.failed_attempts);
-                                    (
-                                        entry.failed_attempts
-                                            >= self.config.security.max_login_attempts,
-                                        left,
-                                    )
-                                } else {
-                                    (false, 0)
-                                };
-
-                            if should_kick {
+                        Ok((false, _)) => match self.record_failed_attempt(player_id) {
+                            Attempt::Exhausted => {
                                 let msg = self.msg(&self.config.messages.login_max_attempts, &[]);
                                 self.cleanup_session(player_id);
                                 session.complete(HandlerResult::Deny(msg));
-                            } else {
+                            }
+                            Attempt::Retry { attempts_left } => {
                                 let _ = session.send_message(self.msg(
                                     &self.config.messages.login_fail,
                                     &[
@@ -436,7 +474,7 @@ impl LimboHandler for AuthHandler {
                                     ],
                                 ));
                             }
-                        }
+                        },
                         Err(e) => {
                             tracing::error!("Password verification error: {e}");
                             let _ = session.send_message(Component::error(
@@ -557,6 +595,10 @@ impl LimboHandler for AuthHandler {
 
         let _ = session.send_message(self.msg(&self.config.messages.unknown_command, &[]));
         Box::pin(async {})
+    }
+
+    fn allows_proxy_commands(&self) -> bool {
+        false
     }
 
     fn on_session_end(&self, player_id: PlayerId, _reason: SessionEndReason) -> BoxFuture<'_, ()> {
@@ -705,6 +747,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_login_lasts_until_the_player_disconnects() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        env.log_in(1, "Steve", "hunter2hunter2").await;
+        assert!(env.handler.is_authenticated(PlayerId::new(1)));
+
+        env.handler.forget_player(PlayerId::new(1));
+        assert!(!env.handler.is_authenticated(PlayerId::new(1)));
+    }
+
+    #[tokio::test]
     async fn session_end_cleans_up_state() {
         let env = TestEnv::new().await;
         env.create_account("Steve", Some("hunter2hunter2")).await;
@@ -726,6 +779,7 @@ mod tests {
         let session = limbo_session(1, "Steve");
 
         assert_eq!(registered.name(), "auth");
+        assert!(!registered.allows_proxy_commands());
         registered.on_player_enter(&*session).await;
         assert!(env.handler.is_in_auth_limbo(PlayerId::new(1)));
 

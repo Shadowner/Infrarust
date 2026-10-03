@@ -16,7 +16,7 @@ pub struct ForceUnregisterCommand {
 impl CommandHandler for ForceUnregisterCommand {
     fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if !super::is_admin(&ctx.source, self.handler.config()) {
+            if !super::is_admin(&ctx.source, &self.handler) {
                 ctx.source.send_message(parse_colored(
                     &self.handler.config().messages.admin_no_permission,
                 ));
