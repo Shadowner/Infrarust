@@ -6,6 +6,8 @@
 //! a required field — and a client that saves an untouched document restores
 //! the live secret through [`reinject`] instead of overwriting it.
 
+use std::collections::BTreeSet;
+
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 /// Stands in for a secret in a document that leaves the proxy. Never a
@@ -79,6 +81,12 @@ pub fn still_redacted(doc: &DocumentMut, paths: &[&[&str]]) -> Vec<String> {
 
 pub const PLUGINS: &str = "plugins";
 
+const WASM: &str = "wasm";
+
+/// The only keys of its own `[plugins.<id>]` block a plugin may change: every
+/// other one grants it a capability or sizes its sandbox.
+const SELF_EDITABLE: &[&str] = &["enabled"];
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PluginScopeError {
     #[error("the document is not valid TOML: {0}")]
@@ -87,6 +95,8 @@ pub enum PluginScopeError {
     Unreadable(String),
     #[error("a plugin cannot write another plugin's block: {}", dotted(.0))]
     OtherPlugins(Vec<String>),
+    #[error("a plugin cannot change its own grant or sandbox: {}", .0.join(", "))]
+    OwnGrant(Vec<String>),
 }
 
 pub fn names_another_plugin(key: &str, plugin_id: &str) -> bool {
@@ -126,11 +136,55 @@ pub fn plugin_write(
     if !others.is_empty() {
         return Err(PluginScopeError::OtherPlugins(others));
     }
+    let changed = grant_changes(submitted, current, plugin_id)?;
+    if !changed.is_empty() {
+        return Err(PluginScopeError::OwnGrant(changed));
+    }
     let current = current
         .parse::<DocumentMut>()
         .map_err(|e| PluginScopeError::Unreadable(e.to_string()))?;
     restore_other_plugins(&mut doc, &current, plugin_id);
     Ok(doc.to_string())
+}
+
+fn grant_changes(
+    submitted: &str,
+    current: &str,
+    plugin_id: &str,
+) -> Result<Vec<String>, PluginScopeError> {
+    let submitted: toml::Table =
+        toml::from_str(submitted).map_err(|e| PluginScopeError::Invalid(e.to_string()))?;
+    let current: toml::Table =
+        toml::from_str(current).map_err(|e| PluginScopeError::Unreadable(e.to_string()))?;
+
+    let mut changed = Vec::new();
+    if table_or_empty(submitted.get(WASM)) != table_or_empty(current.get(WASM)) {
+        changed.push(WASM.to_owned());
+    }
+    let own_grant = |document: &toml::Table| {
+        let mut block = table_or_empty(
+            document
+                .get(PLUGINS)
+                .and_then(|plugins| plugins.get(plugin_id)),
+        );
+        block.retain(|key, _| !SELF_EDITABLE.contains(&key));
+        block
+    };
+    let (submitted, current) = (own_grant(&submitted), own_grant(&current));
+    let keys: BTreeSet<&String> = submitted.keys().chain(current.keys()).collect();
+    changed.extend(
+        keys.into_iter()
+            .filter(|key| submitted.get(*key) != current.get(*key))
+            .map(|key| format!("{PLUGINS}.{plugin_id}.{key}")),
+    );
+    Ok(changed)
+}
+
+fn table_or_empty(value: Option<&toml::Value>) -> toml::Table {
+    value
+        .and_then(toml::Value::as_table)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn hide_other_plugins(doc: &mut DocumentMut, plugin_id: &str) {
@@ -457,16 +511,68 @@ bind = \"127.0.0.1:8080\"
 
     #[test]
     fn a_plugin_write_that_drops_its_own_block_keeps_the_others() {
+        let current = PLUGIN_BLOCKS.replace("permissions = [\"limbo\"]", "enabled = true");
         let written = plugin_write(
             "bind = \"0.0.0.0:25565\"\n[web]\nbind = \"127.0.0.1:8080\"\n",
-            PLUGIN_BLOCKS,
+            &current,
             "mine",
         )
         .unwrap();
 
-        let mut expected = plugins_of(PLUGIN_BLOCKS);
+        let mut expected = plugins_of(&current);
         expected.remove("mine");
         assert_eq!(plugins_of(&written), expected, "{written}");
+    }
+
+    #[test]
+    fn a_plugin_write_cannot_change_its_own_grant() {
+        for (submitted, field) in [
+            (
+                "[plugins.mine]\npermissions = [\"limbo\", \"ban\"]\n",
+                "plugins.mine.permissions",
+            ),
+            ("[plugins.mine]\n", "plugins.mine.permissions"),
+            ("bind = \"0.0.0.0:25565\"\n", "plugins.mine.permissions"),
+            (
+                "[plugins.mine]\npermissions = [\"limbo\"]\ndeny = [\"ban\"]\n",
+                "plugins.mine.deny",
+            ),
+            (
+                "[plugins.mine]\npermissions = [\"limbo\"]\nstrict_capabilities = true\n",
+                "plugins.mine.strict_capabilities",
+            ),
+            (
+                "[plugins.mine]\npermissions = [\"limbo\"]\n[plugins.mine.wasm]\nmemory_limit_mb = 4096\n",
+                "plugins.mine.wasm",
+            ),
+            (
+                "[plugins.mine]\npermissions = [\"limbo\"]\npath = \"/tmp/evil.wasm\"\n",
+                "plugins.mine.path",
+            ),
+            (
+                "[plugins.mine]\npermissions = [\"limbo\"]\n[wasm]\nmemory_limit_mb = 4096\n",
+                "wasm",
+            ),
+        ] {
+            assert_eq!(
+                plugin_write(submitted, PLUGIN_BLOCKS, "mine"),
+                Err(PluginScopeError::OwnGrant(vec![field.to_owned()])),
+                "{submitted}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plugin_write_may_toggle_itself_and_relayout_its_grant() {
+        let current = "[wasm]\nmemory_limit_mb = 64\n[plugins.mine]\npermissions = [\"limbo\"]\n";
+        let submitted = "wasm = { memory_limit_mb = 64 }\nplugins.mine = { permissions = [\"limbo\"], enabled = false }\n";
+
+        let written = plugin_write(submitted, current, "mine").unwrap();
+
+        assert_eq!(
+            plugins_of(&written)["mine"].get("enabled"),
+            Some(&toml::Value::Boolean(false))
+        );
     }
 
     #[test]
@@ -474,7 +580,7 @@ bind = \"127.0.0.1:8080\"
         let stored = [
             "plugins.other.path = \"/srv/other.wasm\"\nplugins.mine.enabled = true\n",
             "plugins = { other = { path = \"/srv/other.wasm\" }, mine = { enabled = true } }\n",
-            PLUGIN_BLOCKS,
+            "[plugins.other]\npath = \"/srv/other.wasm\"\n\n[plugins.mine]\nenabled = true\n",
         ];
         let submitted = [
             "bind = \"0.0.0.0:1\"\n",

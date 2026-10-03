@@ -152,7 +152,9 @@ impl PluginStoreState {
 fn scope_error(error: &PluginScopeError) -> HostError {
     let kind = match error {
         PluginScopeError::Invalid(_) => ErrorKind::InvalidArgument,
-        PluginScopeError::OtherPlugins(_) => ErrorKind::PermissionDenied,
+        PluginScopeError::OtherPlugins(_) | PluginScopeError::OwnGrant(_) => {
+            ErrorKind::PermissionDenied
+        }
         PluginScopeError::Unreadable(_) => ErrorKind::Internal,
     };
     host_error(kind, error.to_string())
