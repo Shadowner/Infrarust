@@ -7,11 +7,9 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::ops::ControlFlow;
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::FutureExt;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
 
@@ -34,12 +32,12 @@ use super::session::LimboSessionImpl;
 use super::spawn::send_spawn_sequence;
 use super::virtual_session::VirtualSessionCore;
 use crate::error::CoreError;
-use crate::event_bus::diagnostic::panic_message;
 use crate::player::commands::{CommandInbox, CommandOutcome};
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
+use crate::util::guard::{self, Unanswered};
 
 #[derive(Debug)]
 pub(crate) enum LimboChainResult {
@@ -176,23 +174,22 @@ async fn guarded<F: Future>(
     call: &'static str,
     start: impl FnOnce() -> F,
 ) -> Option<F::Output> {
-    let run = AssertUnwindSafe(async move { start().await }).catch_unwind();
-    match tokio::time::timeout(HANDLER_CALL_TIMEOUT, run).await {
-        Ok(Ok(value)) => Some(value),
-        Ok(Err(payload)) => {
+    match guard::guarded(HANDLER_CALL_TIMEOUT, start).await {
+        Ok(value) => Some(value),
+        Err(Unanswered::Panicked(panic)) => {
             tracing::error!(
                 handler = handler.name(),
                 call,
-                panic = %panic_message(payload.as_ref()),
+                %panic,
                 "limbo handler panicked"
             );
             None
         }
-        Err(_) => {
+        Err(Unanswered::TimedOut(timeout)) => {
             tracing::warn!(
                 handler = handler.name(),
                 call,
-                timeout = ?HANDLER_CALL_TIMEOUT,
+                ?timeout,
                 "limbo handler did not answer in time"
             );
             None

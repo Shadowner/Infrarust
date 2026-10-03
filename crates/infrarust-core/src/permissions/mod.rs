@@ -3,9 +3,12 @@ mod nodes;
 
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
+use tokio::time::Instant;
 use uuid::Uuid;
 
+use infrarust_api::__private::caller_deadline;
 use infrarust_api::command::CommandSource;
 use infrarust_api::permissions::{
     ADMIN_PERMISSION, AllPermissionsChecker, DefaultPermissionChecker, PermissionChecker,
@@ -15,6 +18,7 @@ use infrarust_api::permissions::{
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_config::{PermissionProviderSelection, PermissionsConfig};
 
+use crate::util::guard::guarded;
 use crate::util::provider_slot::PluginProviderSlot;
 use crate::util::sync::{read, write};
 
@@ -22,6 +26,8 @@ pub use builtin::{ConfigPermissionChecker, ConfigPermissionProvider, resolve_use
 pub use nodes::command_node;
 
 use nodes::NodeRegistry;
+
+const PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct PermissionService {
     selection: PermissionProviderSelection,
@@ -113,18 +119,32 @@ impl PermissionService {
     }
 
     pub async fn create_checker(&self, subject: &PermissionSubject) -> Arc<dyn PermissionChecker> {
-        if let Some(provider) = self.active() {
-            return provider.create_checker(subject).await;
+        let Some(provider) = self.active() else {
+            if !subject.is_console() {
+                tracing::debug!(
+                    provider = %self.selection,
+                    player = subject_name(subject),
+                    "no permission provider is registered, the player only gets the node defaults"
+                );
+            }
+            return without_provider(subject);
+        };
+        let deadline = Instant::now() + PROVIDER_TIMEOUT;
+        let asked = guarded(PROVIDER_TIMEOUT, || {
+            caller_deadline::scope(deadline, provider.create_checker(subject))
+        });
+        match asked.await {
+            Ok(checker) => checker,
+            Err(failure) => {
+                tracing::warn!(
+                    provider = %self.selection,
+                    subject = subject_name(subject),
+                    %failure,
+                    "the permission provider gave no checker, falling back to the node defaults"
+                );
+                without_provider(subject)
+            }
         }
-        if subject.is_console() {
-            return Arc::new(AllPermissionsChecker);
-        }
-        tracing::debug!(
-            provider = %self.selection,
-            player = subject.profile().map_or("-", |profile| profile.username.as_str()),
-            "no permission provider is registered, the player only gets the node defaults"
-        );
-        Arc::new(DefaultPermissionChecker)
     }
 
     pub async fn console_checker(&self) -> Arc<dyn PermissionChecker> {
@@ -242,6 +262,20 @@ impl PermissionChecker for Resolved {
     }
 }
 
+fn without_provider(subject: &PermissionSubject) -> Arc<dyn PermissionChecker> {
+    if subject.is_console() {
+        Arc::new(AllPermissionsChecker)
+    } else {
+        Arc::new(DefaultPermissionChecker)
+    }
+}
+
+fn subject_name(subject: &PermissionSubject) -> &str {
+    subject
+        .profile()
+        .map_or("console", |profile| profile.username.as_str())
+}
+
 pub fn default_checker() -> Arc<dyn PermissionChecker> {
     Arc::new(DefaultPermissionChecker)
 }
@@ -310,6 +344,69 @@ mod tests {
             let checker: Arc<dyn PermissionChecker> = Arc::new(self.0.clone());
             Box::pin(async move { checker })
         }
+    }
+
+    struct Hung;
+
+    impl PermissionProvider for Hung {
+        fn create_checker<'a>(
+            &'a self,
+            _subject: &'a PermissionSubject,
+        ) -> BoxFuture<'a, Arc<dyn PermissionChecker>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    struct Panicking;
+
+    impl PermissionProvider for Panicking {
+        fn create_checker<'a>(
+            &'a self,
+            _subject: &'a PermissionSubject,
+        ) -> BoxFuture<'a, Arc<dyn PermissionChecker>> {
+            Box::pin(async { panic!("the provider exploded") })
+        }
+    }
+
+    fn with_open_node(provider: Arc<dyn PermissionProvider>) -> PermissionService {
+        let svc = service(&plugin_selected("perms"));
+        svc.register_node(
+            Some("demo"),
+            PermissionNode::new("demo.open", PermissionDefault::True),
+        )
+        .unwrap();
+        svc.register_provider("perms", provider).unwrap();
+        svc
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_provider_falls_back_to_the_node_defaults_at_the_deadline() {
+        let svc = with_open_node(Arc::new(Hung));
+        let started = Instant::now();
+
+        let checker = svc.create_checker(&steve(true)).await;
+
+        assert_eq!(started.elapsed(), PROVIDER_TIMEOUT);
+        assert_eq!(svc.value(checker.as_ref(), "demo.open"), Tristate::True);
+        assert_eq!(
+            svc.value(checker.as_ref(), "infrarust.command.kick"),
+            Tristate::False
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panicking_provider_falls_back_like_a_missing_one() {
+        let svc = with_open_node(Arc::new(Panicking));
+
+        let checker = svc.create_checker(&steve(true)).await;
+        assert_eq!(svc.value(checker.as_ref(), "demo.open"), Tristate::True);
+        assert_eq!(
+            svc.value(checker.as_ref(), ADMIN_PERMISSION),
+            Tristate::False
+        );
+
+        let console = svc.console_checker().await;
+        assert!(console.has_permission("infrarust.command.kick"));
     }
 
     #[test]
