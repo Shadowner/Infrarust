@@ -81,7 +81,8 @@ impl wi::Host for PluginStoreState {
 
     async fn granted_capabilities(&mut self) -> wasmtime::Result<Vec<wt::Capability>> {
         Ok(Capability::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|capability| self.capabilities().has(*capability))
             .filter_map(capability_to_wit)
             .collect())

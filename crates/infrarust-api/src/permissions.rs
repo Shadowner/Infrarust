@@ -498,7 +498,7 @@ impl CapabilitySet {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Capability> + '_ {
-        Capability::ALL.into_iter().filter(|cap| self.has(*cap))
+        Capability::ALL.iter().copied().filter(|cap| self.has(*cap))
     }
 
     #[must_use]
@@ -515,7 +515,7 @@ impl CapabilitySet {
     #[must_use]
     pub fn native_trusted() -> Self {
         let mut set = Self::default();
-        for cap in Capability::ALL {
+        for &cap in Capability::ALL {
             set.insert(cap);
         }
         set
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn native_trusted_contains_every_capability() {
         let t = CapabilitySet::native_trusted();
-        for cap in Capability::ALL {
+        for &cap in Capability::ALL {
             assert!(t.has(cap), "native_trusted missing {cap:?}");
         }
         assert!(t.has(Capability::TransportFilter));
