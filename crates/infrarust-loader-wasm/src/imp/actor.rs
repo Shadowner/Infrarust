@@ -166,6 +166,26 @@ pub(crate) trait GuestCall: Send {
 
 type Reply<T> = Option<oneshot::Sender<Result<T, CallFailure>>>;
 
+pub(crate) trait GuestFn<T>:
+    for<'a> FnOnce(
+        &'a mut Store<PluginStoreState>,
+        &'a PluginBindings,
+    ) -> BoxFuture<'a, wasmtime::Result<T>>
+    + Send
+    + 'static
+{
+}
+
+impl<T, F> GuestFn<T> for F where
+    F: for<'a> FnOnce(
+            &'a mut Store<PluginStoreState>,
+            &'a PluginBindings,
+        ) -> BoxFuture<'a, wasmtime::Result<T>>
+        + Send
+        + 'static
+{
+}
+
 struct TypedCall<T, F> {
     reply: Reply<T>,
     call: Option<F>,
@@ -175,12 +195,7 @@ struct TypedCall<T, F> {
 impl<T, F> GuestCall for TypedCall<T, F>
 where
     T: Send + 'static,
-    F: for<'a> FnOnce(
-            &'a mut Store<PluginStoreState>,
-            &'a PluginBindings,
-        ) -> BoxFuture<'a, wasmtime::Result<T>>
-        + Send
-        + 'static,
+    F: GuestFn<T>,
 {
     fn caller_gone(&self) -> bool {
         self.reply.as_ref().is_some_and(oneshot::Sender::is_closed)
@@ -237,12 +252,7 @@ impl Job {
     ) -> Self
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         Self {
             op,
@@ -408,12 +418,7 @@ impl InstanceRef {
     pub(crate) fn post<T, F>(&self, op: &'static str, call: F) -> Result<(), CallFailure>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         self.enqueue(op, CallChain::current().unawaited(), None, call)
             .map(drop)
@@ -426,12 +431,7 @@ impl InstanceRef {
     ) -> Result<(oneshot::Receiver<Result<T, CallFailure>>, Deadline), CallFailure>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         let (reply, answer) = oneshot::channel();
         let deadline = self.enqueue(op, CallChain::current(), Some(reply), call)?;
@@ -447,12 +447,7 @@ impl InstanceRef {
     ) -> Result<Deadline, CallFailure>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         let Some(jobs) = self.jobs.upgrade() else {
             return Err(CallFailure::Stopped);
@@ -480,12 +475,7 @@ impl InstanceRef {
     pub(crate) async fn call<T, F>(&self, op: &'static str, call: F) -> Result<T, CallFailure>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         let (answer, deadline) = self.awaited(op, call)?;
         match tokio::time::timeout_at(deadline.expires(), answer).await {
@@ -497,12 +487,7 @@ impl InstanceRef {
     pub(crate) async fn call_or_none<T, F>(&self, op: &'static str, call: F) -> Option<T>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         self.call(op, call).await.ok()
     }
@@ -566,12 +551,7 @@ impl PluginActor {
     ) -> Result<T, CallFailure>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<T>>
-            + Send
-            + 'static,
+        F: GuestFn<T>,
     {
         let jobs = self
             .jobs

@@ -6,14 +6,11 @@ use infrarust_api::services::ban_service::{
     BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanSource, BanTarget,
     BanVerdict, LoginAttempt, UnbanRequest,
 };
-use wasmtime::Store;
 
-use crate::actor::InstanceRef;
-use crate::bindings::Plugin as PluginBindings;
+use crate::actor::{GuestFn, InstanceRef};
 use crate::bindings::infrarust::plugin::ban_service as wb;
 use crate::component;
 use crate::convert;
-use crate::store_state::PluginStoreState;
 
 pub(crate) struct WasmBanProvider {
     instance: InstanceRef,
@@ -39,12 +36,7 @@ impl WasmBanProvider {
     async fn ask<T, F>(&self, op: &'static str, call: F) -> Result<T, ServiceError>
     where
         T: Send + 'static,
-        F: for<'a> FnOnce(
-                &'a mut Store<PluginStoreState>,
-                &'a PluginBindings,
-            ) -> BoxFuture<'a, wasmtime::Result<Result<T, String>>>
-            + Send
-            + 'static,
+        F: GuestFn<Result<T, String>>,
     {
         if self.instance.is_upstream() {
             return Err(ServiceError::Unavailable(format!(
