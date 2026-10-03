@@ -1,7 +1,10 @@
 use std::fmt;
 
+/// The longest plugin id accepted, in bytes.
 pub const MAX_PLUGIN_ID_LEN: usize = 64;
 
+/// Why [`validate_plugin_id`] refused an id. Its `Display` names the id and
+/// the rule it breaks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidPluginId {
     shown: String,
@@ -61,6 +64,17 @@ impl fmt::Display for InvalidPluginId {
 
 impl std::error::Error for InvalidPluginId {}
 
+/// Checks the plugin id rule shared by native and WASM plugins: lowercase
+/// ASCII letters, digits, `-` and `_`, starting with a letter or a digit, and
+/// at most [`MAX_PLUGIN_ID_LEN`] bytes.
+///
+/// ```
+/// use infrarust_plugin_common::validate_plugin_id;
+///
+/// assert!(validate_plugin_id("admin-api").is_ok());
+/// assert!(validate_plugin_id("0day").is_ok());
+/// assert!(validate_plugin_id("-lead").is_err());
+/// ```
 pub fn validate_plugin_id(id: &str) -> Result<(), InvalidPluginId> {
     let Some(first) = id.chars().next() else {
         return Err(InvalidPluginId::new(id, Problem::Empty));
@@ -80,6 +94,7 @@ pub fn validate_plugin_id(id: &str) -> Result<(), InvalidPluginId> {
     Ok(())
 }
 
+/// Whether `id` follows the rule of [`validate_plugin_id`].
 #[must_use]
 pub fn is_valid_plugin_id(id: &str) -> bool {
     validate_plugin_id(id).is_ok()

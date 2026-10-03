@@ -45,9 +45,9 @@ pub mod private {
 /// # Active vs Passive Mode
 ///
 /// Some methods only work when the player is on an **active** proxy path
-/// (`ClientOnly`, Offline, or Full mode). In passive modes (Passthrough,
-/// `ZeroCopy`), methods like `send_message` or `switch_server` will return
-/// `Err(PlayerError::NotActive)`.
+/// (`ClientOnly` or `Offline` mode). In passive modes (`Passthrough`,
+/// `ZeroCopy`, `ServerOnly`), methods like `send_message` or `switch_server`
+/// will return `Err(PlayerError::NotActive)`.
 ///
 /// Use [`is_active()`](Player::is_active) to check before calling these methods.
 pub trait Player: Send + Sync + private::Sealed {
@@ -65,7 +65,7 @@ pub trait Player: Send + Sync + private::Sealed {
     fn is_connected(&self) -> bool;
 
     /// Active means the proxy path supports packet injection and
-    /// message sending (ClientOnly, Offline, or Full mode).
+    /// message sending (`ClientOnly` or `Offline` mode).
     fn is_active(&self) -> bool;
 
     /// Disconnects the player from the proxy with a reason message.

@@ -36,7 +36,10 @@ use crate::services::{
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PluginMetadata {
-    /// Unique `snake_case` identifier (e.g. `"my_plugin"`).
+    /// Unique identifier (e.g. `"my_plugin"` or `"admin-api"`): lowercase ASCII
+    /// letters, digits, `-` and `_`, starting with a letter or a digit, at most
+    /// [`MAX_PLUGIN_ID_LEN`](infrarust_plugin_common::MAX_PLUGIN_ID_LEN) bytes.
+    /// See [`validate_plugin_id`](infrarust_plugin_common::validate_plugin_id).
     pub id: String,
     /// Human-readable name.
     pub name: String,
@@ -75,12 +78,20 @@ impl PluginState {
     }
 }
 
+/// Whether a plugin that runs in a supervised runtime (a WASM plugin) has a
+/// live instance, as reported by [`Plugin::runtime_status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PluginHealth {
+    /// A live instance is serving the plugin.
     Healthy,
+    /// The last instance faulted and a fresh one is being started.
+    /// `retry_in` is the time until that start when one is scheduled.
     Recovering { retry_in: Option<Duration> },
+    /// The plugin faulted too often and has no instance until `retry_in`
+    /// has passed.
     Quarantined { retry_in: Duration },
+    /// The plugin has no instance and will not be restarted.
     Stopped,
 }
 
@@ -285,6 +296,9 @@ pub trait Plugin: Send + Sync {
         Box::pin(async { Ok(()) })
     }
 
+    /// Health, queue and restart figures of a plugin that runs in a supervised
+    /// runtime. The WASM loader reports them for its plugins; native plugins
+    /// keep the default, `None`.
     fn runtime_status(&self) -> Option<PluginRuntimeStatus> {
         None
     }
