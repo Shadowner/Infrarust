@@ -64,7 +64,7 @@ world plugin {
 | `messaging` | `plugin-messaging` | Register plugin channels and send plugin messages to clients, backends and servers. |
 | `proxy-info` | none | The proxy's version, bind address and limits, and the capabilities the plugin holds. |
 | `plugin-registry` | none | Read-only list of the loaded plugins, with the health of each WASM plugin. |
-| `command-manager` | `command` | Register and unregister proxy commands. |
+| `command-manager` | `command` | Register and unregister proxy commands; look up and list every registered command. |
 | `scheduler` | `scheduler` | Schedule one-shot and repeating callbacks. |
 | `limbo` | `limbo` for `register-limbo-handler` | Register limbo handlers and act on the session resources. |
 | `codec-registry` | `codec-filter` | Register and unregister codec filters. |
@@ -1244,8 +1244,19 @@ interface command-manager {
         rejected-aliases: list<string>,
     }
 
+    record command-info {
+        spec: command-spec,
+        plugin-id: option<string>,
+    }
+
     register: func(spec: command-spec, handler: handler-id) -> result<command-registration, host-error>;
     unregister: func(name: string) -> result<_, host-error>;
+    get: func(label: string) -> result<option<command-info>, host-error>;
+    get-by-name: func(name: string) -> result<option<command-info>, host-error>;
+    get-by-alias: func(alias: string) -> result<option<command-info>, host-error>;
+    contains: func(label: string) -> result<bool, host-error>;
+    %list: func() -> result<list<command-info>, host-error>;
+    list-owned: func() -> result<list<command-info>, host-error>;
 }
 
 interface scheduler {
@@ -1415,7 +1426,7 @@ interface providers {
 ```
 
 - `ban-service.ban` records the plugin as the ban's source. `unban` answers the removed entry. `list` pages through bans with the cursor from the previous page.
-- `command-manager.register` answers what the host registered, including the aliases it rejected because they are taken. The `handler-id` routes invocations and completions back into `handle-command` and `tab-complete`. `unregister` takes any label of a command the plugin owns: its name, an accepted alias or its `<plugin-id>:<name>` form.
+- `command-manager.register` answers what the host registered, including the aliases it rejected because they are taken. The `handler-id` routes invocations and completions back into `handle-command` and `tab-complete`. `unregister` takes any label of a command the plugin owns: its name, an accepted alias or its `<plugin-id>:<name>` form. `get`, `get-by-name`, `get-by-alias`, `contains` and `list` read the whole command table, built-ins and other plugins' commands included, and ignore case: `get` and `contains` match any label, `get-by-name` only a name or a `<plugin-id>:<name>`, `get-by-alias` only an accepted alias. `list` is sorted by name; `list-owned` answers only the calling plugin's commands. A `command-info` carries the registered spec, with the name lowercased and only the accepted aliases, and a `plugin-id` that is `none` for a built-in.
 - `scheduler.interval` takes an optional initial delay; without one the first run waits one period. Each later run starts one period after the previous `on-scheduled-task` call returns, so at most one run waits in the plugin's queue. The `handler-id` routes back into `on-scheduled-task`. A `task-handle` is only meaningful to the plugin that got it; `cancel` of a handle it does not hold, or of a delay that already ran, does nothing.
 - Every registering function (`event-bus.subscribe`, `subscribe-named`, `subscribe-packets`, `command-manager.register`, `scheduler.delay`, `scheduler.interval`, `messaging.register-channel`, `codec-registry.register-codec-filter`, `limbo.register-limbo-handler`) answers `limit-exceeded` when the plugin holds its quota of that kind.
 - `codec-registry` filter priorities run from `first` to `last`; see [Codec Filters](./codec-filters).

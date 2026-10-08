@@ -178,8 +178,19 @@ interface command-manager {
         rejected-aliases: list<string>,
     }
 
+    record command-info {
+        spec: command-spec,
+        plugin-id: option<string>,
+    }
+
     register: func(spec: command-spec, handler: handler-id) -> result<command-registration, host-error>;
     unregister: func(name: string) -> result<_, host-error>;
+    get: func(label: string) -> result<option<command-info>, host-error>;
+    get-by-name: func(name: string) -> result<option<command-info>, host-error>;
+    get-by-alias: func(alias: string) -> result<option<command-info>, host-error>;
+    contains: func(label: string) -> result<bool, host-error>;
+    %list: func() -> result<list<command-info>, host-error>;
+    list-owned: func() -> result<list<command-info>, host-error>;
 }
 
 interface scheduler {

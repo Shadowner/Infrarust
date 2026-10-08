@@ -174,7 +174,7 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 | `event-bus` | `subscribe` with kind `chat-message` or `command-execute` | `event-bus` and `chat-intercept` | `permission-denied: "missing capability: chat-intercept"`: the plugin never sees a chat message or command |
 | `event-bus` | `subscribe` with kind `plugin-message` | `event-bus` and `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
 | `event-bus` | `subscribe-packets`, and `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
-| `command-manager` | `register`, `unregister` | `command` | `permission-denied: "missing capability: command"` |
+| `command-manager` | `register`, `unregister`, `get`, `get-by-name`, `get-by-alias`, `contains`, `list`, `list-owned` | `command` | `permission-denied: "missing capability: command"` |
 | `scheduler` | `delay`, `interval`, `cancel` | `scheduler` | `permission-denied: "missing capability: scheduler"` |
 | `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | `permission-denied: "missing capability: codec-filter"` |
 | `limbo` | `register-limbo-handler` | `limbo` | `permission-denied: "missing capability: limbo"` |

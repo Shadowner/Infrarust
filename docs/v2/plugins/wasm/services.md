@@ -47,7 +47,7 @@ The service functions need no handle, so you can call them from a command, a sch
 | Named events | `ctx.on_named`, `ctx.fire_named` | `event-bus` | baseline |
 | Proxy information | `Proxy::details`, `version`, `granted_capabilities`, `has_capability` | always available | always |
 | Plugin registry | `Plugins::list`, `get`, `is_loaded` | always available | always |
-| Commands | `ctx.command(name)` | `command` | baseline |
+| Commands | `ctx.command(name)`, `Commands::get`, `get_by_name`, `get_by_alias`, `contains`, `list`, `list_owned` | `command` | baseline |
 | Codec filters | `Plugin::register_codec_filters` | `codec-filter` | opt-in |
 | Scheduler | `ctx.delay` / `ctx.interval` / `ctx.interval_with_delay` | `scheduler` | baseline |
 | Text | `Component::from_json`, `from_legacy`, `to_json` | always available | always |
@@ -423,7 +423,7 @@ if Proxy::has_capability(Capability::Ban) && Plugins::is_loaded("auth") {
 
 ## Commands and codec filters
 
-Two more host services register guest callbacks rather than reading state, and each has its own page. Command registration is baseline (`command`): `ctx.command(name)` returns a builder; chain `aliases`, `description`, `usage`, `permission`, `hidden`, `handler` and `completer`, then `register()`, which answers what the host registered. Codec-filter registration is the opt-in `codec-filter` capability and goes through `Plugin::register_codec_filters(reg: &mut CodecRegistrar)`, where `reg.add(id, priority, constructor)` declares one filter. See [Commands](./commands) and [Codec filters](./codec-filters).
+Two more host services register guest callbacks rather than reading state, and each has its own page. Command registration is baseline (`command`): `ctx.command(name)` returns a builder; chain `aliases`, `description`, `usage`, `permission`, `hidden`, `handler` and `completer`, then `register()`, which answers what the host registered. `Commands::get`, `list` and the other lookups read the command table under the same capability, see [Looking up commands](./commands#looking-up-commands). Codec-filter registration is the opt-in `codec-filter` capability and goes through `Plugin::register_codec_filters(reg: &mut CodecRegistrar)`, where `reg.add(id, priority, constructor)` declares one filter. See [Commands](./commands) and [Codec filters](./codec-filters).
 
 ## Scheduler
 

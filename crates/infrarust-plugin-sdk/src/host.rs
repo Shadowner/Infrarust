@@ -4,7 +4,7 @@ pub(crate) use imp::*;
 mod imp {
     use crate::bindings::ban_service::BanFeatures;
     use crate::bindings::codec_registry::{self, CodecFilterMetadata};
-    use crate::bindings::command_manager::{self, CommandRegistration, CommandSpec};
+    use crate::bindings::command_manager::{self, CommandInfo, CommandRegistration, CommandSpec};
     use crate::bindings::event_bus::PacketFilter;
     use crate::bindings::events::{EventKind, NamedEventResult};
     use crate::bindings::permissions::PermissionSnapshot;
@@ -47,6 +47,30 @@ mod imp {
 
     pub(crate) fn unregister_command(name: &str) -> Result<(), HostError> {
         command_manager::unregister(name)
+    }
+
+    pub(crate) fn get_command(label: &str) -> Result<Option<CommandInfo>, HostError> {
+        command_manager::get(label)
+    }
+
+    pub(crate) fn get_command_by_name(name: &str) -> Result<Option<CommandInfo>, HostError> {
+        command_manager::get_by_name(name)
+    }
+
+    pub(crate) fn get_command_by_alias(alias: &str) -> Result<Option<CommandInfo>, HostError> {
+        command_manager::get_by_alias(alias)
+    }
+
+    pub(crate) fn contains_command(label: &str) -> Result<bool, HostError> {
+        command_manager::contains(label)
+    }
+
+    pub(crate) fn list_commands() -> Result<Vec<CommandInfo>, HostError> {
+        command_manager::list()
+    }
+
+    pub(crate) fn list_owned_commands() -> Result<Vec<CommandInfo>, HostError> {
+        command_manager::list_owned()
     }
 
     pub(crate) fn delay(after_ms: u64, handler: u64) -> Result<u64, HostError> {
@@ -123,11 +147,13 @@ mod imp {
 
     use crate::bindings::ban_service::BanFeatures;
     use crate::bindings::codec_registry::CodecFilterMetadata;
-    use crate::bindings::command_manager::{CommandRegistration, CommandSpec};
+    use crate::bindings::command_manager::{CommandInfo, CommandRegistration, CommandSpec};
     use crate::bindings::event_bus::PacketFilter;
     use crate::bindings::events::{EventKind, NamedEventResult};
     use crate::bindings::permissions::PermissionSnapshot;
     use crate::bindings::types::{ErrorKind, HostError};
+
+    const FAKE_PLUGIN: &str = "fake";
 
     #[derive(Default)]
     pub(crate) struct FakeHost {
@@ -138,6 +164,7 @@ mod imp {
         pub(crate) fired: Vec<(String, String, Vec<u8>)>,
         pub(crate) answer: Option<NamedEventResult>,
         pub(crate) commands: HashMap<String, u64>,
+        pub(crate) command_table: Vec<CommandInfo>,
         pub(crate) tasks: HashMap<u64, (u64, bool)>,
         pub(crate) cancelled: Vec<u64>,
         pub(crate) codec_filters: Vec<(String, u64)>,
@@ -175,6 +202,60 @@ mod imp {
                 Ok(())
             }
         }
+
+        fn find_command(
+            &self,
+            label: &str,
+            matches: fn(&CommandInfo, &str) -> bool,
+        ) -> Result<Option<CommandInfo>, HostError> {
+            self.refuse("command-lookup")?;
+            let label = label.to_lowercase();
+            Ok(self
+                .command_table
+                .iter()
+                .find(|info| matches(info, &label))
+                .cloned())
+        }
+
+        fn sorted_commands(
+            &self,
+            keep: fn(&CommandInfo) -> bool,
+        ) -> Result<Vec<CommandInfo>, HostError> {
+            self.refuse("command-lookup")?;
+            let mut infos: Vec<CommandInfo> = self
+                .command_table
+                .iter()
+                .filter(|info| keep(info))
+                .cloned()
+                .collect();
+            infos.sort_by(|a, b| {
+                a.spec
+                    .name
+                    .cmp(&b.spec.name)
+                    .then(a.plugin_id.cmp(&b.plugin_id))
+            });
+            Ok(infos)
+        }
+    }
+
+    fn is_name(info: &CommandInfo, label: &str) -> bool {
+        info.spec.name == label
+            || info
+                .plugin_id
+                .as_ref()
+                .is_some_and(|plugin| format!("{plugin}:{}", info.spec.name) == label)
+    }
+
+    fn is_alias(info: &CommandInfo, label: &str) -> bool {
+        info.spec.aliases.iter().any(|alias| alias == label)
+    }
+
+    fn is_label(info: &CommandInfo, label: &str) -> bool {
+        is_name(info, label) || is_alias(info, label)
+    }
+
+    fn is_owned(info: &CommandInfo, name: &str) -> bool {
+        info.plugin_id.as_deref() == Some(FAKE_PLUGIN) && info.spec.name == name
     }
 
     thread_local! {
@@ -248,8 +329,17 @@ mod imp {
             let name = spec.name.to_lowercase();
             host.refuse(&name)?;
             host.commands.insert(name.clone(), handler);
+            host.command_table.retain(|info| !is_owned(info, &name));
+            host.command_table.push(CommandInfo {
+                spec: CommandSpec {
+                    name: name.clone(),
+                    aliases: spec.aliases.iter().map(|a| a.to_lowercase()).collect(),
+                    ..spec.clone()
+                },
+                plugin_id: Some(FAKE_PLUGIN.to_owned()),
+            });
             Ok(CommandRegistration {
-                namespaced: format!("fake:{name}"),
+                namespaced: format!("{FAKE_PLUGIN}:{name}"),
                 name,
                 aliases: spec.aliases.clone(),
                 rejected_aliases: Vec::new(),
@@ -259,9 +349,37 @@ mod imp {
 
     pub(crate) fn unregister_command(name: &str) -> Result<(), HostError> {
         with_fake(|host| {
-            host.commands.remove(&name.to_lowercase());
+            let name = name.to_lowercase();
+            host.commands.remove(&name);
+            host.command_table.retain(|info| !is_owned(info, &name));
         });
         Ok(())
+    }
+
+    pub(crate) fn get_command(label: &str) -> Result<Option<CommandInfo>, HostError> {
+        with_fake(|host| host.find_command(label, is_label))
+    }
+
+    pub(crate) fn get_command_by_name(name: &str) -> Result<Option<CommandInfo>, HostError> {
+        with_fake(|host| host.find_command(name, is_name))
+    }
+
+    pub(crate) fn get_command_by_alias(alias: &str) -> Result<Option<CommandInfo>, HostError> {
+        with_fake(|host| host.find_command(alias, is_alias))
+    }
+
+    pub(crate) fn contains_command(label: &str) -> Result<bool, HostError> {
+        Ok(get_command(label)?.is_some())
+    }
+
+    pub(crate) fn list_commands() -> Result<Vec<CommandInfo>, HostError> {
+        with_fake(|host| host.sorted_commands(|_| true))
+    }
+
+    pub(crate) fn list_owned_commands() -> Result<Vec<CommandInfo>, HostError> {
+        with_fake(|host| {
+            host.sorted_commands(|info| info.plugin_id.as_deref() == Some(FAKE_PLUGIN))
+        })
     }
 
     pub(crate) fn delay(_after_ms: u64, handler: u64) -> Result<u64, HostError> {

@@ -442,6 +442,59 @@ async fn test_guest_cannot_unregister_a_command_it_does_not_own() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_command_plugin_looks_up_builtin_native_and_its_own_commands() {
+    let fx = enable_command_plugin().await;
+    let ran = Arc::new(Mutex::new(0));
+    fx.env.command_manager.register_builtin(
+        CommandSpec::new("infrarust").alias("ir"),
+        Box::new(NativeNested {
+            ran: Arc::clone(&ran),
+        }),
+    );
+    fx.env
+        .factory
+        .create_context("native")
+        .command_manager()
+        .register(
+            CommandSpec::new("home").alias("h"),
+            Box::new(NativeNested {
+                ran: Arc::clone(&ran),
+            }),
+        )
+        .unwrap();
+
+    assert!(
+        dispatch_line(
+            &fx.env.command_manager,
+            "find IR native:home h greet find nope"
+        )
+        .await
+    );
+    let marker = fx.plugins_dir.join("command-plugin").join("lookup.marker");
+    let lines = std::fs::read_to_string(&marker).expect("lookup ran in the guest");
+    assert_eq!(
+        lines.lines().collect::<Vec<_>>(),
+        [
+            "IR get=infrarust name=- alias=infrarust contains=true",
+            "native:home get=native:home name=native:home alias=- contains=true",
+            "h get=native:home name=- alias=native:home contains=true",
+            "greet get=command-plugin:greet name=command-plugin:greet alias=- contains=true",
+            "find get=command-plugin:lookup name=- alias=command-plugin:lookup contains=true",
+            "nope get=- name=- alias=- contains=false",
+            "list command-plugin:greet,native:home,infrarust,command-plugin:lookup,\
+             command-plugin:nest,command-plugin:unnest",
+            "owned command-plugin:greet,command-plugin:lookup,command-plugin:nest,\
+             command-plugin:unnest",
+        ]
+    );
+    assert_eq!(
+        *ran.lock().unwrap(),
+        0,
+        "looking a command up never runs it"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_stats_count_command() {
     let (_tmp, plugins_dir) = stage("stats");
     let loader = fresh_loader();

@@ -192,6 +192,7 @@ let _ = invocation.reply(Component::text(reply));
 | `.completer(\|parts: &[String], cursor: u32\| -> Vec<String>)` | `.completer(\|completion: &Completion\| -> Vec<impl Into<Suggestion>>)`, with `partial()`, the sender and tooltips |
 | no permission, usage or hidden flag | `.permission(node)`, `.usage(text)`, `.hidden(true)` |
 | `ctx.unregister_command(name) -> bool` | `-> Result<bool, Error>` |
+| no way to read the command table | `Commands::get`, `get_by_name`, `get_by_alias` and `contains` look a command up by label; `list` returns every command and `list_owned` only your plugin's, as `CommandInfo` |
 
 ## Scheduler
 

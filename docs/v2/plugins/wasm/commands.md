@@ -1,12 +1,12 @@
 ---
 title: Commands
-description: Register proxy commands with aliases, a permission node, usage, and tab-completion from a WASM plugin, and learn what the host registered.
+description: Register proxy commands with aliases, a permission node, usage, and tab-completion from a WASM plugin, learn what the host registered, and look up any registered command.
 outline: [2, 3]
 ---
 
 # Commands
 
-A WASM plugin registers proxy commands through `ctx.command(name)`. The call returns a builder for aliases, a description, usage, a permission node, the handler and a tab-completer; `register()` installs the command on the host and answers what the host registered. The `command` capability is in the [baseline set](./capabilities), so commands work without any extra grant in config.
+A WASM plugin registers proxy commands through `ctx.command(name)`. The call returns a builder for aliases, a description, usage, a permission node, the handler and a tab-completer; `register()` installs the command on the host and answers what the host registered. `Commands` looks up and lists every registered command. The `command` capability is in the [baseline set](./capabilities), so commands work without any extra grant in config.
 
 ## Register a command
 
@@ -144,6 +144,29 @@ ctx.command("stop-event")
 
 Registering a name the plugin already registered replaces the earlier command and drops its closures once the host accepts the new one.
 
+## Looking up commands
+
+```rust
+if let Some(info) = Commands::get("spawn")? {
+    info!("/spawn belongs to {:?}", info.plugin_id);
+}
+```
+
+| Function | Returns | Matches |
+|----------|---------|---------|
+| `Commands::get(label)` | `Result<Option<CommandInfo>, Error>` | The command a player reaches by typing `label`: its name, an alias, or `<plugin-id>:<name>` |
+| `Commands::get_by_name(name)` | `Result<Option<CommandInfo>, Error>` | Only a name or a `<plugin-id>:<name>`, never an alias |
+| `Commands::get_by_alias(alias)` | `Result<Option<CommandInfo>, Error>` | Only an accepted alias, never a name |
+| `Commands::contains(label)` | `Result<bool, Error>` | Same labels as `get` |
+| `Commands::list()` | `Result<Vec<CommandInfo>, Error>` | Every registered command, built-ins and other plugins included, sorted by name |
+| `Commands::list_owned()` | `Result<Vec<CommandInfo>, Error>` | The commands your plugin registered |
+
+Lookups ignore case and see built-ins and other plugins' commands, native and WASM alike. A label resolves the way the proxy resolves what a player types, so an alias that was rejected at registration does not reach your command, and `get_by_alias` does not find it. Each call asks the host, so a command registered or removed since the last call shows up in the next answer.
+
+`CommandInfo` carries the registered spec, with the name lowercased and only the accepted aliases: `name`, `aliases`, `description`, `usage`, `permission` and `hidden`. `plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin-id>:<name>")`, or `None` for built-ins.
+
+The lookups need the `command` capability, like `register`; without it each one returns `PermissionDenied`.
+
 ## Name conflicts and ownership
 
 The host keeps one command table for every plugin, native and WASM alike, and applies the same rules to both:
@@ -177,6 +200,8 @@ sequenceDiagram
 ```
 
 The id is what links a host invocation back to the right closure, so two commands in the same plugin never collide. After a [recovery](./fault-model), the fresh instance registers its commands again and the host points the existing commands at the new handler ids.
+
+The lookups keep nothing in the guest: each `Commands` function is one call to the `command-manager` import of the same name (`get-by-name`, `list-owned` and so on), answered from the host's command table.
 
 ## Worked example
 

@@ -59,8 +59,8 @@ macro_rules! reexports {
             ConnectionState, FilterPriority, Injections, Packet, Verdict,
         };
         pub use crate::command::{
-            CommandBuilder, CommandInvocation, CommandRegistration, CommandSender, Completion,
-            Suggestion,
+            CommandBuilder, CommandInfo, CommandInvocation, CommandRegistration, CommandSender,
+            Commands, Completion, Suggestion,
         };
         pub use crate::component::{
             ClickEvent, Component, Content, Decoration, HoverEvent, IntoTextColor, NamedColor,
