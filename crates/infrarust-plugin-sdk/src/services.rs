@@ -245,6 +245,10 @@ impl Config {
         Ok(wc::get_server(server.as_str())?.map(ServerConfig::from_wit))
     }
 
+    pub fn server_by_domain(domain: &str) -> Result<Option<ServerConfig>, Error> {
+        Ok(wc::get_server_by_domain(domain)?.map(ServerConfig::from_wit))
+    }
+
     pub fn servers() -> Result<Vec<ServerConfig>, Error> {
         Ok(wc::list_servers()?
             .into_iter()

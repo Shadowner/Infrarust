@@ -62,7 +62,7 @@ fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
 | a malformed UUID trapped the plugin | impossible: UUIDs are `Uuid` values |
 | registrations had no limit | `ErrorKind::LimitExceeded` past the plugin's `[wasm.quotas]` (listeners, commands, tasks, channels, codec filters, limbo handlers) |
 
-The player reads (`Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `count`) still answer `None`, an empty list or `0` without `player-read`.
+The player reads (`Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `by_ip`, `count`) still answer `None`, an empty list or `0` without `player-read`.
 
 ## Events
 
@@ -151,6 +151,7 @@ Every reason and message argument takes `impl Into<Component>`, so `deny("Banned
 | `Players.get_by_name(name)`, `get_by_uuid(&str)` | `Players::by_name(name)`, `Players::by_uuid(Uuid)` |
 | `Players.on_server(server)`, `all()` | `Players::on_server(&ServerId)`, `Players::list()`, which answer a `PlayerSummary` (`player: PlayerRef`, `current_server`) per player; `summary.info()` or `Players::get(id)` for the full `PlayerInfo` |
 | `ctx.player_registry()` | the `Players` functions directly |
+| none | `Players::by_ip(IpAddr)`, a `PlayerSummary` per player connected from that address |
 | `player.profile()`, `remote_addr()`, `current_server()`, ... | fields of `PlayerInfo`: `profile`, `remote_addr: SocketAddr`, `current_server`, `online_mode`, `connected`, `active`, `connected_at: SystemTime`, plus `virtual_host`, `client_brand`, `ping` |
 | `player.permission_level()` | removed: use `has_permission("infrarust.admin")` |
 | `player.has_permission(node) -> bool` | `Player::has_permission(node) -> Result<bool, Error>` |
@@ -216,7 +217,7 @@ let _ = invocation.reply(Component::text(reply));
 | `Config.get(key) -> Option<String>` | `Config::get(key) -> Result<Option<String>, Error>` |
 | `Config.server(..)`, `servers()` | `Config::server(&ServerId)`, `Config::servers()`, both `Result` |
 | `ctx.server_manager()`, `ban_service()`, `config_service()` | the `Servers`, `Bans` and `Config` functions directly |
-| none | `Config::server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` (`config-read`) and `write_proxy_document` (`config-write`) |
+| none | `Config::server_by_domain`, `server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` (`config-read`) and `write_proxy_document` (`config-write`) |
 | none | `LoadBalancer` (`config-read` to read, `server-manage` to drain and reset) |
 | none | `Messaging` for plugin channels (`plugin-messaging`) |
 | none | `Proxy` (version, limits, granted capabilities) and `Plugins` (loaded plugins), always available |

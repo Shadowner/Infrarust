@@ -56,7 +56,7 @@ world plugin {
 | `log` | none | `trace`/`debug`/`info`/`warn`/`error` to the host log, and the most verbose level the proxy logs. |
 | `text` | none | Parse and serialize text components with the proxy's own parser. |
 | `event-bus` | `event-bus` (`chat-intercept` for `chat-message` and `command-execute`, `plugin-messaging` for `plugin-message`, `raw-packet` for packets) | Subscribe to event kinds, named events and packets by priority; fire named events. |
-| `players` | `player-read`, `player-write` for actions, `raw-packet` for `send-packet` | Look up players by id, name or UUID, and act on them by id. |
+| `players` | `player-read`, `player-write` for actions, `raw-packet` for `send-packet` | Look up players by id, name, UUID or address, and act on them by id. |
 | `server-manager` | `server-manage` | Read server state, start and stop backends. |
 | `ban-service` | `ban` | Create, remove, look up and page bans. |
 | `config-service` | `config-read`, `config-write` for `write-proxy-config-document` | Read config values, server configs and documents; rewrite the proxy config file. |
@@ -930,14 +930,14 @@ interface event-bus {
 
 ## Players
 
-Players are addressed by id; there is no player resource. The five reads are the infallible reads of the contract: without `player-read` they answer `none`, an empty list or `0`, and the host logs the refusal. Every other function returns a `host-error`.
+Players are addressed by id; there is no player resource. The six reads are the infallible reads of the contract: without `player-read` they answer `none`, an empty list or `0`, and the host logs the refusal. Every other function returns a `host-error`.
 
 ```wit
 interface players {
     use types.{
         player-id, server-id, uuid, player-ref, game-profile, protocol-version, socket-address,
         timestamp-ms, component, title-data, raw-packet, host-error, client-settings,
-        server-address,
+        server-address, ip-address,
     };
 
     record player-summary {
@@ -1008,6 +1008,7 @@ interface players {
     get-by-name: func(username: string) -> option<player-info>;
     get-by-uuid: func(id: uuid) -> option<player-info>;
     %list: func(server: option<server-id>) -> list<player-summary>;
+    get-by-ip: func(ip: ip-address) -> list<player-summary>;
     count: func(server: option<server-id>) -> u32;
 
     send-message: func(player: player-id, message: component) -> result<_, host-error>;
@@ -1035,13 +1036,15 @@ interface players {
 
 | Function | Capability |
 |----------|------------|
-| `get`, `get-by-name`, `get-by-uuid`, `list`, `count`, `has-permission` | `player-read` |
+| `get`, `get-by-name`, `get-by-uuid`, `list`, `get-by-ip`, `count`, `has-permission` | `player-read` |
 | `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server`, `connect`, `set-player-list-header-footer`, `clear-title`, `show-boss-bar`, `update-boss-bar`, `hide-boss-bar`, `send-resource-pack`, `remove-resource-pack`, `transfer`, `store-cookie`, `request-cookie`, `refresh-permissions` | `player-write` |
 | `send-packet` | `raw-packet` |
 
 `disconnect` returns once the kick is queued. `switch-server` waits for the session to accept the switch, bounded by a short host timeout and by the guest call's deadline. `connect`, `transfer`, `request-cookie` and `refresh-permissions` wait for their outcome, bounded by `host_call_timeout` and the guest call's deadline. `show-boss-bar` answers the bar's id, which `update-boss-bar` and `hide-boss-bar` take; an id the plugin does not own answers `not-found`. `settings` and `known-channels` in `player-info` are what the client sent, empty until it did.
 
 `list` answers a `player-summary` per player: its `player-ref` (id, UUID, username) and its current server. The full `player-info` of one player comes from `get`, `get-by-name` or `get-by-uuid`. A full record carries the profile with its textures property, the settings and the channels, and copying one per online player into the guest costs about a millisecond per thousand players; the summary costs a tenth of that.
+
+`get-by-ip` answers the same `player-summary` for each player whose client connects from that address, as the native `PlayerRegistry::get_players_by_ip` matches it: the PROXY protocol source when `receive_proxy_protocol` is on, and an IPv4 address also matches its IPv4-mapped IPv6 form. The host finds them through the proxy's address index, so the call costs the players on that address, not the players online. An address nobody connects from answers an empty list.
 
 ## Text
 
@@ -1213,6 +1216,7 @@ interface config-service {
 
     get-value: func(key: string) -> result<option<string>, host-error>;
     get-server: func(server: server-id) -> result<option<server-config>, host-error>;
+    get-server-by-domain: func(domain: string) -> result<option<server-config>, host-error>;
     list-servers: func() -> result<list<server-config>, host-error>;
     get-server-document: func(server: server-id) -> result<option<string>, host-error>;
     list-server-sources: func() -> result<list<server-source>, host-error>;
@@ -1415,6 +1419,7 @@ interface providers {
 - `scheduler.interval` takes an optional initial delay; without one the first run waits one period. Each later run starts one period after the previous `on-scheduled-task` call returns, so at most one run waits in the plugin's queue. The `handler-id` routes back into `on-scheduled-task`. A `task-handle` is only meaningful to the plugin that got it; `cancel` of a handle it does not hold, or of a delay that already ran, does nothing.
 - Every registering function (`event-bus.subscribe`, `subscribe-named`, `subscribe-packets`, `command-manager.register`, `scheduler.delay`, `scheduler.interval`, `messaging.register-channel`, `codec-registry.register-codec-filter`, `limbo.register-limbo-handler`) answers `limit-exceeded` when the plugin holds its quota of that kind.
 - `codec-registry` filter priorities run from `first` to `last`; see [Codec Filters](./codec-filters).
+- `config-service.get-server-by-domain` answers the server a hostname routes to, resolved like a handshake: case and a trailing dot are ignored, an exact domain wins over a wildcard such as `*.example.com`, and a hostname no server lists answers `none`.
 - `config-service` document functions mirror the native `ConfigService` and redact every secret. They also hide the other plugins' `[plugins.<id>]` blocks: the proxy documents keep only the caller's own block, and `get-value` on a key under another plugin answers `permission-denied` (see [Capabilities](./capabilities#config-read-sees-only-the-plugin-s-own-block)). `write-proxy-config-document` needs `config-write`; it puts the hidden blocks back before writing and answers `permission-denied` for a document that carries another plugin's block; a document that does not parse or validate answers `invalid-argument`, a failed write `unavailable`.
 - `load-balancer` mirrors the native `LoadBalancerService`; an unknown server or address answers `not-found`.
 - `messaging` takes a `channel-id` with a modern id, a legacy name or both, validated by the host (`invalid-argument` otherwise). `send-to-server` answers how many players could carry the message and `unavailable` when none could.

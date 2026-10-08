@@ -10,6 +10,7 @@ const INFALLIBLE_READS: &[(&str, &str)] = &[
     ("players", "get-by-name"),
     ("players", "get-by-uuid"),
     ("players", "list"),
+    ("players", "get-by-ip"),
     ("players", "count"),
     ("limbo", "[method]limbo-session.player-id"),
     ("limbo", "[method]limbo-session.profile"),

@@ -150,6 +150,7 @@ interface config-service {
 
     get-value: func(key: string) -> result<option<string>, host-error>;
     get-server: func(server: server-id) -> result<option<server-config>, host-error>;
+    get-server-by-domain: func(domain: string) -> result<option<server-config>, host-error>;
     list-servers: func() -> result<list<server-config>, host-error>;
     get-server-document: func(server: server-id) -> result<option<string>, host-error>;
     list-server-sources: func() -> result<list<server-source>, host-error>;

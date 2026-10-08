@@ -19,6 +19,13 @@ impl wc::Host for PluginStoreState {
         Ok(self.server_config(server))
     }
 
+    async fn get_server_by_domain(
+        &mut self,
+        domain: String,
+    ) -> wasmtime::Result<HostResult<Option<wc::ServerConfig>>> {
+        Ok(self.server_config_by_domain(&domain))
+    }
+
     async fn list_servers(&mut self) -> wasmtime::Result<HostResult<Vec<wc::ServerConfig>>> {
         Ok(self.server_configs())
     }
@@ -77,6 +84,16 @@ impl PluginStoreState {
             .services()?
             .config_service()
             .get_server_config(&ServerId::from(server))
+            .as_ref()
+            .map(convert::server_config_to_wit))
+    }
+
+    fn server_config_by_domain(&mut self, domain: &str) -> HostResult<Option<wc::ServerConfig>> {
+        self.check(gate!("config-service", "get-server-by-domain"))?;
+        Ok(self
+            .services()?
+            .config_service()
+            .get_server_config_by_domain(domain)
             .as_ref()
             .map(convert::server_config_to_wit))
     }

@@ -2,7 +2,7 @@ interface players {
     use types.{
         player-id, server-id, uuid, player-ref, game-profile, protocol-version, socket-address,
         timestamp-ms, component, title-data, raw-packet, host-error, client-settings,
-        server-address,
+        server-address, ip-address,
     };
 
     record player-info {
@@ -73,6 +73,7 @@ interface players {
     get-by-name: func(username: string) -> option<player-info>;
     get-by-uuid: func(id: uuid) -> option<player-info>;
     %list: func(server: option<server-id>) -> list<player-summary>;
+    get-by-ip: func(ip: ip-address) -> list<player-summary>;
     count: func(server: option<server-id>) -> u32;
 
     send-message: func(player: player-id, message: component) -> result<_, host-error>;

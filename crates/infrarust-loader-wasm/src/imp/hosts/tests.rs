@@ -146,6 +146,65 @@ async fn players_are_read_by_id_name_and_uuid() {
     assert_eq!(players::Host::list(&mut state, None).await.unwrap(), listed);
 }
 
+fn connected_from(id: u16, username: &str, ip: &str) -> Arc<dyn Player> {
+    MockPlayer::new(id.into(), username)
+        .with_remote_addr(SocketAddr::new(ip.parse().unwrap(), 40_000 + id))
+        .on_server("lobby")
+        .into_arc()
+}
+
+async fn players_at(state: &mut PluginStoreState, ip: &str) -> Vec<u64> {
+    let ip = crate::convert::ip_to_wit(ip.parse().unwrap());
+    let found = players::Host::get_by_ip(state, ip).await.unwrap();
+    let listed = players::Host::list(state, None).await.unwrap();
+    assert!(
+        found.iter().all(|summary| listed.contains(summary)),
+        "an address lookup answers the records list answers: {found:?}"
+    );
+    let mut ids: Vec<u64> = found.iter().map(|summary| summary.player.id).collect();
+    ids.sort_unstable();
+    ids
+}
+
+#[tokio::test]
+async fn players_are_found_by_the_ip_they_connected_from() {
+    let mut state = state_with(
+        CapabilitySet::baseline(),
+        vec![
+            connected_from(7, "Steve", "203.0.113.7"),
+            connected_from(8, "SteveAlt", "203.0.113.7"),
+            connected_from(9, "Alex", "198.51.100.2"),
+            connected_from(10, "Herobrine", "2001:db8::7"),
+        ],
+    );
+
+    assert_eq!(players_at(&mut state, "203.0.113.7").await, [7, 8]);
+    assert_eq!(players_at(&mut state, "::ffff:203.0.113.7").await, [7, 8]);
+    assert_eq!(players_at(&mut state, "198.51.100.2").await, [9]);
+    assert_eq!(players_at(&mut state, "2001:db8::7").await, [10]);
+    assert!(players_at(&mut state, "192.0.2.1").await.is_empty());
+    assert!(players_at(&mut state, "2001:db8::8").await.is_empty());
+
+    let alex = players::Host::get_by_ip(&mut state, wt::IpAddress::Ipv4((198, 51, 100, 2)))
+        .await
+        .unwrap();
+    assert_eq!(alex[0].player.username, "Alex");
+    assert_eq!(alex[0].current_server.as_deref(), Some("lobby"));
+}
+
+#[tokio::test]
+async fn an_ip_lookup_without_player_read_answers_like_list() {
+    let mut state = state_with(
+        CapabilitySet::baseline().without(Capability::PlayerRead),
+        vec![connected_from(7, "Steve", "203.0.113.7")],
+    );
+    let found = players::Host::get_by_ip(&mut state, wt::IpAddress::Ipv4((203, 0, 113, 7)))
+        .await
+        .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+    assert_eq!(found, players::Host::list(&mut state, None).await.unwrap());
+}
+
 #[tokio::test]
 async fn a_message_reaches_the_player_by_id() {
     let steve = MockPlayer::new(7, "Steve").into_arc();
@@ -412,6 +471,10 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
                 "get-server",
                 config_service::Host::get_server(s, "lobby".into()).await
             );
+            denied!(
+                "get-server-by-domain",
+                config_service::Host::get_server_by_domain(s, "play.example.com".into()).await
+            );
             denied!("list-servers", config_service::Host::list_servers(s).await);
             denied!(
                 "get-value",
@@ -499,6 +562,9 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
             );
             expect!(failures, capability, "list",
                 players::Host::list(s, None).await, Ok(ref v) if v.is_empty());
+            expect!(failures, capability, "get-by-ip",
+                players::Host::get_by_ip(s, wt::IpAddress::Ipv4((127, 0, 0, 1))).await,
+                Ok(ref v) if v.is_empty());
             expect!(
                 failures,
                 capability,
@@ -1157,6 +1223,103 @@ async fn load_balancer_reads_and_config_writes_reach_the_native_services() {
             .await
             .unwrap(),
         Ok(vec![])
+    );
+}
+
+fn routed_state(capabilities: CapabilitySet) -> PluginStoreState {
+    let router = Arc::new(infrarust_core::routing::DomainRouter::new());
+    for (file, document) in [
+        (
+            "lobby.toml",
+            "id = \"lobby\"\naddresses = [\"10.0.0.1:25565\"]\ndomains = [\"*.example.com\"]\n",
+        ),
+        (
+            "survival.toml",
+            "id = \"survival\"\naddresses = [\"10.0.0.2:25565\"]\ndomains = [\"survival.example.com\"]\n",
+        ),
+    ] {
+        router.add(
+            infrarust_core::provider::ProviderId::new("file", file),
+            toml::from_str(document).unwrap(),
+        );
+    }
+    let config_service = infrarust_core::services::config_service::ConfigServiceImpl::new(
+        router,
+        std::path::PathBuf::from("infrarust.toml"),
+        Arc::new(toml::from_str::<infrarust_config::ProxyConfig>("").unwrap()),
+    );
+    let services = PluginServices {
+        config_service: Arc::new(config_service),
+        ..services(vec![])
+    };
+    build_probe_state("test".to_owned(), &SandboxLimits::default())
+        .with_capabilities(capabilities)
+        .with_ctx(PluginContextFactoryImpl::new(services, HashMap::new()).create_context("test"))
+        .with_instance(InstanceRef::detached())
+}
+
+async fn server_for(state: &mut PluginStoreState, domain: &str) -> Option<String> {
+    config_service::Host::get_server_by_domain(state, domain.into())
+        .await
+        .unwrap()
+        .unwrap()
+        .map(|config| config.id)
+}
+
+#[tokio::test]
+async fn a_domain_finds_the_server_the_proxy_routes_it_to() {
+    let mut state = routed_state(CapabilitySet::baseline());
+
+    for (domain, server) in [
+        ("survival.example.com", Some("survival")),
+        ("Survival.Example.COM.", Some("survival")),
+        ("hub.example.com", Some("lobby")),
+        ("HUB.example.com.", Some("lobby")),
+        ("example.com", None),
+        ("survival.example.org", None),
+    ] {
+        assert_eq!(
+            server_for(&mut state, domain).await.as_deref(),
+            server,
+            "{domain}"
+        );
+    }
+
+    let survival =
+        config_service::Host::get_server_by_domain(&mut state, "survival.example.com".into())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        survival,
+        config_service::Host::get_server(&mut state, "survival".into())
+            .await
+            .unwrap()
+            .unwrap(),
+        "a domain answers the record get-server answers for its server"
+    );
+    assert_eq!(
+        survival.map(|config| config.domains),
+        Some(vec!["survival.example.com".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn a_domain_lookup_without_config_read_is_refused_like_get_server() {
+    let mut state = routed_state(CapabilitySet::baseline().without(Capability::ConfigRead));
+    let by_domain =
+        config_service::Host::get_server_by_domain(&mut state, "survival.example.com".into())
+            .await
+            .unwrap();
+    assert!(
+        is_denied(&by_domain, Capability::ConfigRead),
+        "{by_domain:?}"
+    );
+    assert_eq!(
+        by_domain,
+        config_service::Host::get_server(&mut state, "survival".into())
+            .await
+            .unwrap()
     );
 }
 

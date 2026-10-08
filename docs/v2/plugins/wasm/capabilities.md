@@ -159,13 +159,13 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 |-----------|----------|-------|---------------------|
 | `ban-service` | `ban`, `unban`, `get`, `list` | `ban` | `permission-denied: "missing capability: ban"` |
 | `server-manager` | `get-state`, `start`, `stop`, `list` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
-| `config-service` | `get-value`, `get-server`, `list-servers`, `get-server-document`, `list-server-sources`, `get-proxy-config-document`, `get-effective-proxy-config-document` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `config-service` | `get-value`, `get-server`, `get-server-by-domain`, `list-servers`, `get-server-document`, `list-server-sources`, `get-proxy-config-document`, `get-effective-proxy-config-document` | `config-read` | `permission-denied: "missing capability: config-read"` |
 | `config-service` | `write-proxy-config-document` | `config-write` | `permission-denied: "missing capability: config-write"` |
 | `load-balancer` | `strategy`, `backends` | `config-read` | `permission-denied: "missing capability: config-read"` |
 | `load-balancer` | `set-drained`, `reset-backend` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
 | `messaging` | `register-channel`, `unregister-channel`, `channels`, `send-to-player`, `send-to-backend`, `send-to-server` | `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
 | `players` | `get`, `get-by-name`, `get-by-uuid` | `player-read` | `none` |
-| `players` | `list` | `player-read` | empty list |
+| `players` | `list`, `get-by-ip` | `player-read` | empty list |
 | `players` | `count` | `player-read` | `0` |
 | `players` | `has-permission` | `player-read` | `permission-denied: "missing capability: player-read"` |
 | `players` | `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server`, `connect`, `set-player-list-header-footer`, `clear-title`, `show-boss-bar`, `update-boss-bar`, `hide-boss-bar`, `send-resource-pack`, `remove-resource-pack`, `transfer`, `store-cookie`, `request-cookie`, `refresh-permissions` | `player-write` | `permission-denied: "missing capability: player-write"` |
@@ -182,7 +182,7 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 | `providers` | `register-permission-provider` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
 | `permissions` | `set-snapshot`, `release` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
 
-The five player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info` and `plugin-registry` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds.
+The six player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info` and `plugin-registry` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds.
 
 The host also logs every refusal, naming the plugin, the call (`call="ban-service.get"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal means a server that points at the handler holds nobody. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
 

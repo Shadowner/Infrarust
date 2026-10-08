@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
 
 use uuid::Uuid;
@@ -8,8 +8,8 @@ use crate::bindings::types as wt;
 use crate::component::{Component, from_host};
 use crate::error::Error;
 use crate::types::{
-    ClientSettings, GameProfile, PlayerId, PlayerRef, ServerAddress, ServerId, socket_from_wit,
-    time_from_millis, uuid_from_wit, uuid_to_wit,
+    ClientSettings, GameProfile, PlayerId, PlayerRef, ServerAddress, ServerId, ip_to_wit,
+    socket_from_wit, time_from_millis, uuid_from_wit, uuid_to_wit,
 };
 
 pub use crate::bindings::players::{BossBarColor, BossBarFlags, BossBarOverlay};
@@ -470,6 +470,14 @@ impl Players {
     #[must_use]
     pub fn on_server(server: &ServerId) -> Vec<PlayerSummary> {
         wp::list(Some(server.as_str()))
+            .into_iter()
+            .map(PlayerSummary::from_wit)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn by_ip(ip: IpAddr) -> Vec<PlayerSummary> {
+        wp::get_by_ip(ip_to_wit(ip))
             .into_iter()
             .map(PlayerSummary::from_wit)
             .collect()

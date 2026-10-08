@@ -30,7 +30,7 @@ The service functions need no handle, so you can call them from a command, a sch
 
 | Service | Entry point | Capability | Grant |
 | --- | --- | --- | --- |
-| Player lookups | `Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `count` | `player-read` | baseline |
+| Player lookups | `Players::get`, `by_name`, `by_uuid`, `list`, `on_server`, `by_ip`, `count` | `player-read` | baseline |
 | Player permission check | `Player::has_permission` | `player-read` | baseline |
 | Player actions | `Player::send_message`, `send_title`, `clear_title`, `send_action_bar`, `set_player_list_header_footer`, `show_boss_bar`, `send_resource_pack`, `remove_resource_pack`, `disconnect`, `switch_server`, `connect`, `transfer`, `store_cookie`, `request_cookie`, `refresh_permissions` | `player-write` | baseline |
 | `Player::send_packet` | on the `Player` handle | `raw-packet` | opt-in |
@@ -39,7 +39,7 @@ The service functions need no handle, so you can call them from a command, a sch
 | Ban provider | `ctx.provide_bans` | `ban-provider` | opt-in |
 | Permission provider | `ctx.provide_permissions` | `permission-provider` | opt-in |
 | Permission snapshots | `Permissions::set_snapshot`, `release` | `permission-provider` | opt-in |
-| Config reads | `Config::get`, `server`, `servers`, `server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` | `config-read` | baseline |
+| Config reads | `Config::get`, `server`, `server_by_domain`, `servers`, `server_document`, `server_sources`, `proxy_document`, `effective_proxy_document` | `config-read` | baseline |
 | Config write | `Config::write_proxy_document` | `config-write` | opt-in |
 | Load balancer reads | `LoadBalancer::strategy`, `backends` | `config-read` | baseline |
 | Load balancer maintenance | `LoadBalancer::set_drained`, `reset_backend` | `server-manage` | opt-in |
@@ -106,6 +106,7 @@ impl Players {
     pub fn by_uuid(uuid: Uuid) -> Option<PlayerInfo>;
     pub fn list() -> Vec<PlayerSummary>;
     pub fn on_server(server: &ServerId) -> Vec<PlayerSummary>;
+    pub fn by_ip(ip: IpAddr) -> Vec<PlayerSummary>;
     pub fn count() -> u32;
     pub fn count_on(server: &ServerId) -> u32;
 }
@@ -119,6 +120,22 @@ A `PlayerSummary` has the player's `PlayerRef` (`player.id`, `player.uuid`, `pla
 for player in Players::on_server(&ServerId::from("lobby")) {
     let _ = player.handle().send_message("The lobby restarts in one minute");
 }
+```
+
+`by_ip` answers a `PlayerSummary` per player whose client connects from that address, which is what an alt-account check needs: two accounts on one address both come back, an address nobody connects from answers an empty list. It matches the address in `PlayerInfo::remote_addr`, so with `receive_proxy_protocol` enabled that is the client address from the PROXY protocol header, not the load balancer's, and an IPv4 address also matches clients seen as IPv4-mapped IPv6 (`::ffff:a.b.c.d`). It answers the same light record as `list`, and the proxy finds the players through its address index, so the call costs the players on that address, not the players online.
+
+```rust
+ctx.on::<PostLoginEvent>(EventPriority::NORMAL, |event| {
+    let Some(joined) = Players::get(event.player.id) else { return };
+    let alts: Vec<String> = Players::by_ip(joined.remote_addr.ip())
+        .into_iter()
+        .filter(|other| other.id() != joined.id())
+        .map(|other| other.player.username)
+        .collect();
+    if !alts.is_empty() {
+        info!("{} shares an address with {}", joined.player.username, alts.join(", "));
+    }
+})?;
 ```
 
 `PlayerInfo` carries what the proxy knows about the player when you asked:
@@ -306,16 +323,21 @@ Reads need the baseline `config-read` capability.
 impl Config {
     pub fn get(key: &str) -> Result<Option<String>, Error>;
     pub fn server(server: &ServerId) -> Result<Option<ServerConfig>, Error>;
+    pub fn server_by_domain(domain: &str) -> Result<Option<ServerConfig>, Error>;
     pub fn servers() -> Result<Vec<ServerConfig>, Error>;
 }
 ```
 
-`get` reads one value of the configuration the proxy runs on by its dotted path, as the native `ConfigService::get_value` does: a string comes back as its text, a number or a boolean as its `to_string()`, a table or an array as inline TOML, a secret field as `<redacted>`, and a path with nothing at it as `None`. A path under another plugin's block (`plugins.<other-id>` and below) returns `PermissionDenied`, whether or not that plugin exists, and `get("plugins")` holds the plugin's own entry only. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager).
+`get` reads one value of the configuration the proxy runs on by its dotted path, as the native `ConfigService::get_value` does: a string comes back as its text, a number or a boolean as its `to_string()`, a table or an array as inline TOML, a secret field as `<redacted>`, and a path with nothing at it as `None`. A path under another plugin's block (`plugins.<other-id>` and below) returns `PermissionDenied`, whether or not that plugin exists, and `get("plugins")` holds the plugin's own entry only. `server` and `servers` return `ServerConfig` records with the proxy's view of each backend (id, network, addresses, domains, proxy mode, limbo handlers, max players, disconnect message, proxy protocol, server manager). `server_by_domain` returns the record of the server a hostname routes to, resolved the way the proxy routes a handshake: case and a trailing dot are ignored, an exact domain wins over a wildcard such as `*.example.com`, and a hostname no server lists answers `None`.
 
 ```rust
 let retries: u32 = Config::get("keepalive.retries")?
     .and_then(|value| value.parse().ok())
     .unwrap_or(3);
+
+if let Some(server) = Config::server_by_domain("play.example.com")? {
+    info!("play.example.com goes to {}", server.id);
+}
 ```
 
 The documents mirror the native `ConfigService`, with every secret field redacted and without the other plugins' `[plugins.<id>]` blocks (see [Capabilities](./capabilities#config-read-sees-only-the-plugin-s-own-block)):

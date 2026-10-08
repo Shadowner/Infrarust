@@ -255,6 +255,18 @@ impl wp::Host for PluginStoreState {
             .unwrap_or_default())
     }
 
+    async fn get_by_ip(&mut self, ip: wt::IpAddress) -> wasmtime::Result<Vec<wp::PlayerSummary>> {
+        Ok(self
+            .readable(gate!("players", "get-by-ip"))
+            .map(|ctx| {
+                summaries(
+                    &ctx.player_registry()
+                        .get_players_by_ip(convert::ip_from_wit(ip)),
+                )
+            })
+            .unwrap_or_default())
+    }
+
     async fn count(&mut self, server: Option<String>) -> wasmtime::Result<u32> {
         Ok(self
             .readable(gate!("players", "count"))
