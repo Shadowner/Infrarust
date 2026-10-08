@@ -22,7 +22,7 @@ use crate::codec::CodecInstantiator;
 use crate::config::SandboxLimits;
 use crate::consts::{
     CODEC_REFUSAL_BURST, COMMAND_REFUSAL_BURST, DENIED_CALL_LOG_INTERVAL, EPOCH_DEADLINE_TICKS,
-    MAX_HOST_HANDLES,
+    MAX_HOST_HANDLES, PERMISSION_NODE_REFUSAL_BURST,
 };
 use crate::deadline::{Deadline, HostCallLimit};
 use crate::engine::store_limits;
@@ -43,6 +43,7 @@ pub(crate) enum Quota {
     PluginChannels,
     CodecFilters,
     LimboHandlers,
+    PermissionNodes,
 }
 
 impl Quota {
@@ -54,6 +55,7 @@ impl Quota {
             Self::PluginChannels => "plugin_channels",
             Self::CodecFilters => "codec_filters",
             Self::LimboHandlers => "limbo_handlers",
+            Self::PermissionNodes => "permission_nodes",
         }
     }
 
@@ -65,6 +67,7 @@ impl Quota {
             Self::PluginChannels => "plugin channels",
             Self::CodecFilters => "codec filters",
             Self::LimboHandlers => "limbo handlers",
+            Self::PermissionNodes => "permission nodes",
         }
     }
 
@@ -76,6 +79,7 @@ impl Quota {
             Self::PluginChannels => quotas.plugin_channels,
             Self::CodecFilters => quotas.codec_filters,
             Self::LimboHandlers => quotas.limbo_handlers,
+            Self::PermissionNodes => quotas.permission_nodes,
         }
     }
 }
@@ -197,6 +201,7 @@ struct Throttles {
     quota_refusals: HashMap<Quota, RateLimit>,
     command_refusals: RateLimit,
     codec_refusals: RateLimit,
+    permission_node_refusals: RateLimit,
 }
 
 impl Throttles {
@@ -206,6 +211,10 @@ impl Throttles {
             quota_refusals: HashMap::new(),
             command_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, COMMAND_REFUSAL_BURST),
             codec_refusals: RateLimit::new(DENIED_CALL_LOG_INTERVAL, CODEC_REFUSAL_BURST),
+            permission_node_refusals: RateLimit::new(
+                DENIED_CALL_LOG_INTERVAL,
+                PERMISSION_NODE_REFUSAL_BURST,
+            ),
         }
     }
 }
@@ -308,6 +317,18 @@ impl PluginStoreState {
         };
         tracing::warn!(plugin = %self.guest.plugin_id, filter, suppressed,
             "wasm plugin codec filter registration: {reason}");
+    }
+
+    pub(crate) fn report_permission_node_refusal(&mut self, node: &str, reason: &str) {
+        let Some(suppressed) = self
+            .throttles
+            .permission_node_refusals
+            .admit(Instant::now())
+        else {
+            return;
+        };
+        tracing::warn!(plugin = %self.guest.plugin_id, node, suppressed,
+            "wasm plugin permission node registration: {reason}");
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> HostResult<InstanceRef> {

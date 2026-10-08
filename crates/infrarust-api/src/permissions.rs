@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, PoisonError, RwLock};
 
+use crate::error::ErrorKind;
 use crate::event::BoxFuture;
 use crate::types::{GameProfile, PlayerId};
 
@@ -351,6 +352,15 @@ pub enum PermissionNodeError {
     Reserved(String),
     #[error("'{name}' is already registered by plugin '{plugin}'")]
     OwnedBy { name: String, plugin: String },
+}
+
+impl PermissionNodeError {
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::InvalidName(_) => ErrorKind::InvalidArgument,
+            Self::Reserved(_) | Self::OwnedBy { .. } => ErrorKind::Conflict,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -84,7 +84,7 @@ Commands and limbo handlers are known to the proxy by name, so they are not regi
 | The plugin's capabilities, configuration and limits | Event subscriptions of the old instance (`on_enable` makes new ones) |
 | Commands and limbo handlers that `on_enable` registers again | Commands and limbo handlers registered later, outside `on_enable`, unless `on_enable` registers them again |
 | Codec filters (separate instances; the fresh instance registers the same ids again, which the plugin still owns) | Scheduled tasks (`delay` and `interval`) |
-| | Players the old instance held in limbo (released with a deny) |
+| Permission nodes, with their defaults (registering them again updates them and takes no more quota) | Players the old instance held in limbo (released with a deny) |
 | | Resource handles the guest held, such as limbo session handles |
 
 `on_enable` runs again for every fresh instance, so it can run many times over the life of the proxy.

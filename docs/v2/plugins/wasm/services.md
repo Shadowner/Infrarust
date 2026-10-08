@@ -47,6 +47,7 @@ The service functions need no handle, so you can call them from a command, a sch
 | Named events | `ctx.on_named`, `ctx.fire_named` | `event-bus` | baseline |
 | Proxy information | `Proxy::details`, `version`, `granted_capabilities`, `has_capability` | always available | always |
 | Plugin registry | `Plugins::list`, `get`, `is_loaded` | always available | always |
+| Permission nodes | `ctx.register_permission_node`, `ctx.permission_node`, `ctx.permission_nodes` | always available | always |
 | Commands | `ctx.command(name)`, `Commands::get`, `get_by_name`, `get_by_alias`, `contains`, `list`, `list_owned` | `command` | baseline |
 | Codec filters | `Plugin::register_codec_filters` | `codec-filter` | opt-in |
 | Scheduler | `ctx.delay` / `ctx.interval` / `ctx.interval_with_delay` | `scheduler` | baseline |

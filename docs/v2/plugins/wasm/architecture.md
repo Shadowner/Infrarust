@@ -32,9 +32,9 @@ Infrarust instantiates one wasmtime `Store` per plugin. Each store holds its own
 
 ## The contract: imports and exports
 
-The `infrarust:plugin@0.3.0` world has 19 host imports and 2 guest exports.
+The `infrarust:plugin@0.3.0` world has 20 host imports and 2 guest exports.
 
-### 19 host imports (plugin-callable)
+### 20 host imports (plugin-callable)
 
 | Import | Purpose | Capability gate |
 |--------|---------|-----------------|
@@ -56,6 +56,7 @@ The `infrarust:plugin@0.3.0` world has 19 host imports and 2 guest exports.
 | `proxy-info` | Proxy version and details, and the capabilities this plugin holds | none |
 | `plugin-registry` | List the loaded plugins and read one | none |
 | `permissions` | Replace or release a player's permission snapshot | `permission-provider` |
+| `permission-nodes` | Register the plugin's own permission nodes; read every registered node | none |
 | `providers` | Become the ban provider or the permission provider | `ban-provider` / `permission-provider` |
 
 `types` and `events` carry the shared data shapes and have no linker entry. Every other import is linked for every plugin, and the gated functions check the plugin's capabilities when they are called; see [How capabilities gate imports](#how-capabilities-gate-imports). Every fallible host function returns `result<T, host-error>`; a host function traps the guest only on a host invariant bug.
@@ -77,7 +78,7 @@ The host calls guest exports. A plugin does not push events to the proxy; the pr
 flowchart LR
     subgraph Guest["WASM plugin (guest)"]
         EX["Exports (host-callable)<br/>on-enable / on-disable<br/>handle-event<br/>handle-command / tab-complete<br/>on-scheduled-task<br/>limbo-on-* / codec-filter"]
-        IM["Imports (plugin-callable)<br/>log · text · event-bus · players<br/>server-manager · ban-service<br/>config-service · command-manager<br/>scheduler · limbo · codec-registry<br/>load-balancer · messaging · proxy-info<br/>plugin-registry · permissions · providers"]
+        IM["Imports (plugin-callable)<br/>log · text · event-bus · players<br/>server-manager · ban-service<br/>config-service · command-manager<br/>scheduler · limbo · codec-registry<br/>load-balancer · messaging · proxy-info<br/>plugin-registry · permissions<br/>permission-nodes · providers"]
     end
     subgraph Host["Infrarust proxy (host)"]
         H["Event bus · services · runtime"]

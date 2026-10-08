@@ -1,6 +1,6 @@
 ---
 title: Permissions
-description: Give players permission snapshots from a WASM plugin, answer permissions-setup for one player, become the proxy's permission provider, and change a player's permissions while they are online.
+description: Give players permission snapshots from a WASM plugin, answer permissions-setup for one player, become the proxy's permission provider, change a player's permissions while they are online, and register the plugin's own permission nodes.
 outline: [2, 3]
 ---
 
@@ -15,6 +15,8 @@ A WASM plugin can decide what players are allowed to do, the way a LuckPerms-lik
 | Change a player's permissions while they are online | `Permissions::set_snapshot(player, snapshot)` and `Permissions::release(player)` | `permission-provider` |
 
 How the proxy resolves a node once a player has a checker, and how node defaults work, is the same for every plugin: see [Permissions](../dev/permissions) in the native guide.
+
+Any plugin, provider or not, can also register the nodes it checks, each with a default, and read every registered node. That needs no capability: see [Permission nodes](#permission-nodes).
 
 ## Snapshots
 
@@ -172,6 +174,57 @@ A recovered instance that pushed the empty groups of `Groups::default()` would s
 
 Every player the provider answered for holds a snapshot from it, so these calls only answer `NotFound` for a player whose checker another plugin replaced at login.
 
+## Permission nodes
+
+Register the nodes your plugin checks, each with the default a player gets when the provider has no answer for it, as a native plugin does. Here the plugin id is `warps`:
+
+```rust
+fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
+    ctx.register_permission_node(
+        PermissionNode::new("warps.use", PermissionDefault::True).description("Use /warp"),
+    )?;
+    ctx.register_permission_node(
+        PermissionNode::new("warps.admin", PermissionDefault::Admin)
+            .description("Create and delete warps"),
+    )?;
+    Ok(())
+}
+```
+
+`PermissionDefault::True` grants the node, `False` denies it, and `Admin` grants it to a subject that holds `infrarust.admin`. The full resolution order is in [How a node is resolved](../dev/permissions#how-a-node-is-resolved). Node names are trimmed and lowercased.
+
+`ctx.permission_node(name)` returns one registered node and the id of the plugin that owns it, or `None` when nobody registered it. `ctx.permission_nodes()` returns every registered node, sorted by name. Both see the proxy's nodes, such as `infrarust.admin`, whose `plugin_id` is `None`, and the nodes of every other plugin, native or WASM. A permission plugin can use them for an editor or for tab completion:
+
+```rust
+for info in ctx.permission_nodes() {
+    let owner = info.plugin_id.as_deref().unwrap_or("the proxy");
+    info!("{} from {owner}: {:?}", info.node.name, info.node.default);
+}
+```
+
+### Only your own namespace
+
+A WASM plugin registers only nodes whose name starts with its plugin id and a dot. The `warps` plugin may register `warps.use` and `warps.admin.delete`, but not `fly`, `essentials.fly` or `warpsplus.use`. Plugin ids never contain a dot, so two plugins' namespaces never overlap. Any other name is refused with `ErrorKind::InvalidArgument`, and the message names the prefix the plugin may use.
+
+The rule exists because a default reaches every player the provider has no answer for. A plugin may check a node it never registers, or registers only later in its `on_enable`. If any plugin could register that node, a WASM plugin could register it first with `PermissionDefault::True` and so grant it to every player. WASM plugins are not trusted, so they set defaults only under their own name. Native plugins are trusted and have no such rule.
+
+The native rules still apply inside the namespace:
+
+| Answer | Why |
+|--------|-----|
+| `Ok(())` | The node is registered, or updated when the plugin already owns it. |
+| `ErrorKind::InvalidArgument` | The name is outside the plugin's namespace, or it is not a valid node: an empty segment (`warps..use`), whitespace, or a wildcard (`warps.*`). |
+| `ErrorKind::Conflict` | A native plugin registered the name first, or the name starts with `infrarust.`, which belongs to the proxy. |
+| `ErrorKind::LimitExceeded` | The plugin holds its quota of nodes. |
+
+The host logs a refused name as a warning naming the plugin and the node, at most five lines a minute for each plugin instance. A quota refusal is logged like any other, naming the quota.
+
+### Quota and lifetime
+
+A plugin holds at most `[wasm.quotas] permission_nodes` nodes, 256 by default. Registering a node the plugin already owns replaces its description and default and takes no more room, so `on_enable` can register the same nodes each time it runs. A node another plugin owns does not count against yours.
+
+Nodes live on the host. They are kept across a [recovery](./fault-model) and keep counting: the recovered instance's `on_enable` registers them again without taking more of the quota, and a node it does not register again keeps what the old instance set. There is no call to unregister a node. The host removes all of a plugin's nodes when the plugin is disabled or unloaded, so their defaults stop applying.
+
 ## The contract
 
 ```wit
@@ -187,6 +240,16 @@ interface permissions {
 interface providers {
     register-permission-provider: func() -> result<_, host-error>;
 }
+
+interface permission-nodes {
+    enum permission-default { %false, %true, admin }
+    record permission-node { name: string, description: string, %default: permission-default }
+    record permission-node-info { node: permission-node, plugin-id: option<string> }
+
+    register: func(node: permission-node) -> result<_, host-error>;
+    get: func(name: string) -> option<permission-node-info>;
+    %list: func() -> list<permission-node-info>;
+}
 ```
 
 The guest exports `permission-snapshot-for: func(subject: permission-subject) -> permission-snapshot`, and `permissions-setup-result` has a `custom(permission-snapshot)` case. The full definitions are in the [WIT API reference](./api-reference#host-services).
@@ -195,4 +258,4 @@ The guest exports `permission-snapshot-for: func(subject: permission-subject) ->
 
 - [Permissions](../dev/permissions): nodes, defaults, the native provider model.
 - [Bans](./bans): the other provider a WASM plugin can be.
-- [Capabilities](./capabilities): `permission-provider`.
+- [Capabilities](./capabilities): `permission-provider`, and the [registration quotas](./capabilities#registration-quotas).

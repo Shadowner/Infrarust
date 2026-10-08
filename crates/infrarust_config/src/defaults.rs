@@ -214,6 +214,10 @@ pub const fn wasm_quota_limbo_handlers() -> usize {
     64
 }
 
+pub const fn wasm_quota_permission_nodes() -> usize {
+    256
+}
+
 pub const fn wasm_recovery_max_restarts() -> u32 {
     5
 }

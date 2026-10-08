@@ -40,6 +40,7 @@ world plugin {
     import proxy-info;
     import plugin-registry;
     import permissions;
+    import permission-nodes;
     import providers;
 
     export guest;
@@ -69,6 +70,7 @@ world plugin {
 | `limbo` | `limbo` for `register-limbo-handler` | Register limbo handlers and act on the session resources. |
 | `codec-registry` | `codec-filter` | Register and unregister codec filters. |
 | `permissions` | `permission-provider` | Replace or clear the permission snapshot the host holds for a player. |
+| `permission-nodes` | none | Register the plugin's own permission nodes with their defaults, and read every registered node. |
 | `providers` | `ban-provider` for `register-ban-provider`, `permission-provider` for `register-permission-provider` | Become the proxy's ban provider or permission provider. |
 
 Every interface is linked for every plugin. A call the plugin lacks the capability for is refused when it is made: it returns a `host-error` of kind `permission-denied`, or a neutral value for the few infallible reads listed under [Players](#players). See [Capabilities](./capabilities).
@@ -1416,6 +1418,27 @@ interface permissions {
     release: func(player: player-id) -> result<_, host-error>;
 }
 
+interface permission-nodes {
+    use types.{host-error};
+
+    enum permission-default { %false, %true, admin }
+
+    record permission-node {
+        name: string,
+        description: string,
+        %default: permission-default,
+    }
+
+    record permission-node-info {
+        node: permission-node,
+        plugin-id: option<string>,
+    }
+
+    register: func(node: permission-node) -> result<_, host-error>;
+    get: func(name: string) -> option<permission-node-info>;
+    %list: func() -> list<permission-node-info>;
+}
+
 interface providers {
     use types.{host-error};
     use ban-service.{ban-features};
@@ -1428,7 +1451,7 @@ interface providers {
 - `ban-service.ban` records the plugin as the ban's source. `unban` answers the removed entry. `list` pages through bans with the cursor from the previous page.
 - `command-manager.register` answers what the host registered, including the aliases it rejected because they are taken. The `handler-id` routes invocations and completions back into `handle-command` and `tab-complete`. `unregister` takes any label of a command the plugin owns: its name, an accepted alias or its `<plugin-id>:<name>` form. `get`, `get-by-name`, `get-by-alias`, `contains` and `list` read the whole command table, built-ins and other plugins' commands included, and ignore case: `get` and `contains` match any label, `get-by-name` only a name or a `<plugin-id>:<name>`, `get-by-alias` only an accepted alias. `list` is sorted by name; `list-owned` answers only the calling plugin's commands. A `command-info` carries the registered spec, with the name lowercased and only the accepted aliases, and a `plugin-id` that is `none` for a built-in.
 - `scheduler.interval` takes an optional initial delay; without one the first run waits one period. Each later run starts one period after the previous `on-scheduled-task` call returns, so at most one run waits in the plugin's queue. The `handler-id` routes back into `on-scheduled-task`. A `task-handle` is only meaningful to the plugin that got it; `cancel` of a handle it does not hold, or of a delay that already ran, does nothing.
-- Every registering function (`event-bus.subscribe`, `subscribe-named`, `subscribe-packets`, `command-manager.register`, `scheduler.delay`, `scheduler.interval`, `messaging.register-channel`, `codec-registry.register-codec-filter`, `limbo.register-limbo-handler`) answers `limit-exceeded` when the plugin holds its quota of that kind.
+- Every registering function (`event-bus.subscribe`, `subscribe-named`, `subscribe-packets`, `command-manager.register`, `scheduler.delay`, `scheduler.interval`, `messaging.register-channel`, `codec-registry.register-codec-filter`, `limbo.register-limbo-handler`, `permission-nodes.register`) answers `limit-exceeded` when the plugin holds its quota of that kind.
 - `codec-registry` filter priorities run from `first` to `last`; see [Codec Filters](./codec-filters).
 - `config-service.get-server-by-domain` answers the server a hostname routes to, resolved like a handshake: case and a trailing dot are ignored, an exact domain wins over a wildcard such as `*.example.com`, and a hostname no server lists answers `none`.
 - `config-service` document functions mirror the native `ConfigService` and redact every secret. They also hide the other plugins' `[plugins.<id>]` blocks: the proxy documents keep only the caller's own block, and `get-value` on a key under another plugin answers `permission-denied` (see [Capabilities](./capabilities#config-read-sees-only-the-plugin-s-own-block)). `write-proxy-config-document` needs `config-write`; it puts the hidden blocks back before writing and answers `permission-denied` for a document that carries another plugin's block; a document that does not parse or validate answers `invalid-argument`, a failed write `unavailable`.
@@ -1438,6 +1461,7 @@ interface providers {
 - `proxy-info` and `plugin-registry` are always linked and never refuse: `granted-capabilities` lists what the plugin holds. `plugin-info.health` is the health of a WASM plugin (`recovering` and `quarantined` carry the time until the next attempt when one is scheduled) and `none` for a native plugin; `state` is the lifecycle state of any plugin.
 - The `ban-service` records from `login-stage` to `ban-record-page` are the provider side of bans: what the host hands a ban provider and what it answers. `ban-record` carries a typed `ban-source` where the consumer-side `ban-entry` carries its display string. See [Bans](./bans).
 - `permissions.set-snapshot` replaces the snapshot of a player who holds one from this plugin (answered `not-found` otherwise, `player-gone` when the player is offline, `invalid-argument` above 65,536 rules) and refreshes the player's command tree. `release` clears it back to the node defaults and forgets it; releasing a player the plugin holds nothing for succeeds. See [Permissions](./permissions).
+- `permission-nodes` is never gated. `register` takes only a node whose normalized name starts with `<plugin-id>.` and answers `invalid-argument` for any other, with that prefix in the message; inside the namespace it answers `invalid-argument` for an invalid name and `conflict` for a node a native plugin or the proxy owns. Registering a node the plugin owns again replaces its description and default. `get` and `list` see every node, the proxy's (`plugin-id` is `none`) and every plugin's; `list` is sorted by name. The host removes a plugin's nodes when it is disabled or unloaded. See [Permission nodes](./permissions#permission-nodes).
 - `providers.register-*` register the plugin as the provider named by `[ban] provider` or `[permissions] provider`. A plugin that is not the selected one is answered `conflict`. Registering again, for example from a recovered instance, keeps the first registration and succeeds.
 
 ## Limbo

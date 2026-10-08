@@ -13,6 +13,7 @@ mod limbo;
 mod load_balancer;
 mod log;
 mod messaging;
+mod permission_nodes;
 mod permissions;
 mod ping;
 mod players;

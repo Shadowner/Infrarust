@@ -223,12 +223,13 @@ overridable_config! {
         plugin_channels: usize = defaults::wasm_quota_plugin_channels;
         codec_filters: usize = defaults::wasm_quota_codec_filters;
         limbo_handlers: usize = defaults::wasm_quota_limbo_handlers;
+        permission_nodes: usize = defaults::wasm_quota_permission_nodes;
     }
 }
 
 impl WasmQuotasConfig {
     #[must_use]
-    pub const fn entries(&self) -> [(&'static str, usize); 6] {
+    pub const fn entries(&self) -> [(&'static str, usize); 7] {
         [
             ("event_listeners", self.event_listeners),
             ("commands", self.commands),
@@ -236,6 +237,7 @@ impl WasmQuotasConfig {
             ("plugin_channels", self.plugin_channels),
             ("codec_filters", self.codec_filters),
             ("limbo_handlers", self.limbo_handlers),
+            ("permission_nodes", self.permission_nodes),
         ]
     }
 }
@@ -448,6 +450,7 @@ mod tests {
                 plugin_channels: 128,
                 codec_filters: 32,
                 limbo_handlers: 64,
+                permission_nodes: 256,
             }
         );
     }
@@ -463,6 +466,7 @@ mod tests {
             plugin_channels = 4
             codec_filters = 2
             limbo_handlers = 3
+            permission_nodes = 6
 
             [plugins.busy.wasm.quotas]
             scheduled_tasks = 5000
@@ -476,6 +480,7 @@ mod tests {
             plugin_channels: 4,
             codec_filters: 2,
             limbo_handlers: 3,
+            permission_nodes: 6,
         };
         assert_eq!(config.wasm.limits().quotas, global);
         let busy = config

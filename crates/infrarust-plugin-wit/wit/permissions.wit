@@ -27,3 +27,24 @@ interface permissions {
     set-snapshot: func(player: player-id, snapshot: permission-snapshot) -> result<_, host-error>;
     release: func(player: player-id) -> result<_, host-error>;
 }
+
+interface permission-nodes {
+    use types.{host-error};
+
+    enum permission-default { %false, %true, admin }
+
+    record permission-node {
+        name: string,
+        description: string,
+        %default: permission-default,
+    }
+
+    record permission-node-info {
+        node: permission-node,
+        plugin-id: option<string>,
+    }
+
+    register: func(node: permission-node) -> result<_, host-error>;
+    get: func(name: string) -> option<permission-node-info>;
+    %list: func() -> list<permission-node-info>;
+}

@@ -26,6 +26,7 @@ members = [
     "metadata-sleep",
     "sec-probe",
     "sec-peer",
+    "node-probe",
     "lif-probe",
     "perf-probe",
     "perf-raw",

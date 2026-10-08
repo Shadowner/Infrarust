@@ -531,6 +531,7 @@ scheduled_tasks = 1024
 plugin_channels = 128
 codec_filters = 32
 limbo_handlers = 64
+permission_nodes = 256
 ```
 
 Each key caps how many registrations of one kind a WASM plugin may hold at the same time. A quota counts what the plugin holds now, not what it ever registered: unsubscribing a listener, cancelling a task, or unregistering a command, a channel or a codec filter frees room, and a one-shot task stops counting once it has run. A registration past the quota is refused with a host error of kind `limit-exceeded`, and the plugin keeps what it already held. The proxy logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance.
@@ -543,8 +544,9 @@ Each key caps how many registrations of one kind a WASM plugin may hold at the s
 | `plugin_channels` | Plugin messaging channels the plugin registered. |
 | `codec_filters` | Codec filter ids the plugin registered. |
 | `limbo_handlers` | Limbo handler names the plugin registered. |
+| `permission_nodes` | Permission nodes the plugin registered. Registering a node it already owns updates it and takes no more room. A node is removed only when the plugin is disabled or unloaded. |
 
-A plugin that propagates a refused registration with `?` in `on_enable` fails to enable, as with any other host error. After a fault, the listeners, tasks, commands and limbo handlers of the discarded instance do not count against the fresh one; plugin channels and codec filters are kept across a recovery and keep counting. `[plugins.<id>.wasm.quotas]` sets other quotas for one plugin.
+A plugin that propagates a refused registration with `?` in `on_enable` fails to enable, as with any other host error. After a fault, the listeners, tasks, commands and limbo handlers of the discarded instance do not count against the fresh one; plugin channels, codec filters and permission nodes are kept across a recovery and keep counting. `[plugins.<id>.wasm.quotas]` sets other quotas for one plugin.
 
 Startup fails when a quota is 0 or above 1048576.
 
@@ -639,6 +641,7 @@ scheduled_tasks = 1024
 plugin_channels = 128
 codec_filters = 32
 limbo_handlers = 64
+permission_nodes = 256
 
 # [telemetry]
 # enabled = true

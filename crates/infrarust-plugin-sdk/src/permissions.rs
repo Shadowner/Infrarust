@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
+use crate::bindings::permission_nodes as wpn;
 use crate::bindings::permissions as wp;
 use crate::error::Error;
 use crate::types::{GameProfile, PlayerId, socket_from_wit};
@@ -164,6 +165,89 @@ pub trait PermissionProvider {
     fn snapshot_for(&self, subject: &PermissionSubject) -> PermissionSnapshot;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PermissionDefault {
+    False,
+    True,
+    Admin,
+}
+
+impl PermissionDefault {
+    pub(crate) const fn to_wit(self) -> wpn::PermissionDefault {
+        match self {
+            Self::False => wpn::PermissionDefault::False,
+            Self::True => wpn::PermissionDefault::True,
+            Self::Admin => wpn::PermissionDefault::Admin,
+        }
+    }
+
+    pub(crate) const fn from_wit(default: wpn::PermissionDefault) -> Self {
+        match default {
+            wpn::PermissionDefault::False => Self::False,
+            wpn::PermissionDefault::True => Self::True,
+            wpn::PermissionDefault::Admin => Self::Admin,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PermissionNode {
+    pub name: String,
+    pub description: String,
+    pub default: PermissionDefault,
+}
+
+impl PermissionNode {
+    #[must_use]
+    pub fn new(name: impl Into<String>, default: PermissionDefault) -> Self {
+        Self {
+            name: name.into(),
+            description: String::new(),
+            default,
+        }
+    }
+
+    #[must_use]
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.description = description.into();
+        self
+    }
+
+    pub(crate) fn into_wit(self) -> wpn::PermissionNode {
+        wpn::PermissionNode {
+            name: self.name,
+            description: self.description,
+            default: self.default.to_wit(),
+        }
+    }
+
+    pub(crate) fn from_wit(node: wpn::PermissionNode) -> Self {
+        Self {
+            name: node.name,
+            description: node.description,
+            default: PermissionDefault::from_wit(node.default),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PermissionNodeInfo {
+    pub node: PermissionNode,
+    pub plugin_id: Option<String>,
+}
+
+impl PermissionNodeInfo {
+    pub(crate) fn from_wit(info: wpn::PermissionNodeInfo) -> Self {
+        Self {
+            node: PermissionNode::from_wit(info.node),
+            plugin_id: info.plugin_id,
+        }
+    }
+}
+
 pub struct Permissions;
 
 impl Permissions {
@@ -183,6 +267,8 @@ impl Permissions {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::context::Context;
+    use crate::error::ErrorKind;
 
     #[test]
     fn a_snapshot_normalizes_its_nodes_and_crosses_the_boundary_intact() {
@@ -232,5 +318,93 @@ mod tests {
         };
         assert_eq!(player.remote_addr, "203.0.113.7:51234".parse().unwrap());
         assert!(PermissionSubject::from_wit(wp::PermissionSubject::Console).is_console());
+    }
+
+    fn registered(name: &str) -> Option<wpn::PermissionNodeInfo> {
+        crate::host::with_fake(|host| host.permission_nodes.get(name).cloned())
+    }
+
+    #[test]
+    fn a_registered_node_reaches_the_host_with_its_default_and_description() {
+        let ctx = Context::new();
+        ctx.register_permission_node(
+            PermissionNode::new("Warps.Use", PermissionDefault::Admin).description("Use warps"),
+        )
+        .unwrap();
+        let held = registered("warps.use").expect("the host holds the node");
+        assert_eq!(held.node.default, wpn::PermissionDefault::Admin);
+        assert_eq!(held.node.description, "Use warps");
+
+        ctx.register_permission_node(PermissionNode::new("warps.use", PermissionDefault::True))
+            .unwrap();
+        let replaced = registered("warps.use").unwrap();
+        assert_eq!(replaced.node.default, wpn::PermissionDefault::True);
+        assert_eq!(replaced.node.description, "");
+    }
+
+    #[test]
+    fn a_refused_node_answers_the_hosts_error() {
+        crate::host::with_fake(|host| host.refused.insert("warps.admin".to_owned()));
+        let refused = Context::new()
+            .register_permission_node(PermissionNode::new("warps.admin", PermissionDefault::False))
+            .unwrap_err();
+        assert_eq!(refused.kind(), ErrorKind::Conflict);
+        assert_eq!(refused.message(), "warps.admin is refused");
+        assert_eq!(registered("warps.admin"), None);
+    }
+
+    #[test]
+    fn nodes_are_read_back_with_their_owner() {
+        crate::host::with_fake(|host| {
+            host.permission_nodes.insert(
+                "infrarust.admin".to_owned(),
+                wpn::PermissionNodeInfo {
+                    node: wpn::PermissionNode {
+                        name: "infrarust.admin".to_owned(),
+                        description: "Every proxy command".to_owned(),
+                        default: wpn::PermissionDefault::False,
+                    },
+                    plugin_id: None,
+                },
+            );
+        });
+        let ctx = Context::new();
+        ctx.register_permission_node(PermissionNode::new("warps.use", PermissionDefault::True))
+            .unwrap();
+
+        let warps = ctx.permission_node(" WARPS.Use ").unwrap();
+        assert_eq!(
+            warps.node,
+            PermissionNode::new("warps.use", PermissionDefault::True)
+        );
+        assert_eq!(warps.plugin_id.as_deref(), Some("fake"));
+        let admin = ctx.permission_node("infrarust.admin").unwrap();
+        assert_eq!(admin.plugin_id, None);
+        assert_eq!(admin.node.default, PermissionDefault::False);
+        assert_eq!(admin.node.description, "Every proxy command");
+        assert_eq!(ctx.permission_node("nobody.registered"), None);
+        assert_eq!(
+            ctx.permission_nodes()
+                .into_iter()
+                .map(|info| (info.node.name, info.plugin_id))
+                .collect::<Vec<_>>(),
+            [
+                ("infrarust.admin".to_owned(), None),
+                ("warps.use".to_owned(), Some("fake".to_owned())),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_default_crosses_the_boundary_unchanged() {
+        for default in [
+            PermissionDefault::False,
+            PermissionDefault::True,
+            PermissionDefault::Admin,
+        ] {
+            assert_eq!(PermissionDefault::from_wit(default.to_wit()), default);
+        }
+        let node = PermissionNode::new("warps.fly", PermissionDefault::Admin).description("Fly");
+        assert_eq!(PermissionNode::from_wit(node.clone().into_wit()), node);
     }
 }

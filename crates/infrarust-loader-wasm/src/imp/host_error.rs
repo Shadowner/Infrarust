@@ -3,7 +3,7 @@ use infrarust_api::error::{PlayerError, ServiceError};
 use infrarust_api::filter::FilterRegistryError;
 use infrarust_api::limbo::LimboHandlerError;
 use infrarust_api::messaging::MessagingError;
-use infrarust_api::permissions::Capability;
+use infrarust_api::permissions::{Capability, PermissionNodeError};
 use infrarust_api::services::config_service::ConfigWriteError;
 use infrarust_api::services::load_balancer::LbError;
 use infrarust_plugin_wit::arena::ArenaError;
@@ -84,6 +84,10 @@ pub(crate) fn command_error(error: &CommandError) -> HostError {
     host_error(kind_to_wit(error.kind()), error.to_string())
 }
 
+pub(crate) fn permission_node_error(error: &PermissionNodeError) -> HostError {
+    host_error(kind_to_wit(error.kind()), error.to_string())
+}
+
 pub(crate) fn filter_error(error: &FilterRegistryError) -> HostError {
     host_error(kind_to_wit(error.kind()), error.to_string())
 }
@@ -132,6 +136,23 @@ mod tests {
             })
             .kind,
             ErrorKind::Conflict
+        );
+        assert_eq!(
+            permission_node_error(&PermissionNodeError::InvalidName("a..b".into())).kind,
+            ErrorKind::InvalidArgument
+        );
+        assert_eq!(
+            permission_node_error(&PermissionNodeError::Reserved("infrarust.fly".into())).kind,
+            ErrorKind::Conflict
+        );
+        let owned = permission_node_error(&PermissionNodeError::OwnedBy {
+            name: "warps.use".into(),
+            plugin: "warps".into(),
+        });
+        assert_eq!(owned.kind, ErrorKind::Conflict);
+        assert_eq!(
+            owned.message,
+            "'warps.use' is already registered by plugin 'warps'"
         );
         assert_eq!(
             filter_error(&FilterRegistryError::OwnedBy {

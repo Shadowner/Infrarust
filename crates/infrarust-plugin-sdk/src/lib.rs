@@ -79,7 +79,8 @@ macro_rules! reexports {
             SessionEndReason, SessionHandle, TimeoutOutcome,
         };
         pub use crate::permissions::{
-            PermissionProvider, PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
+            PermissionDefault, PermissionNode, PermissionNodeInfo, PermissionProvider,
+            PermissionSnapshot, PermissionSubject, Permissions, PlayerSubject,
         };
         pub use crate::player::{
             BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, ConnectionResult,

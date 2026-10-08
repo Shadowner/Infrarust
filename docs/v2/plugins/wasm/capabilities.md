@@ -182,7 +182,7 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 | `providers` | `register-permission-provider` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
 | `permissions` | `set-snapshot`, `release` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
 
-The six player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info` and `plugin-registry` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds.
+The six player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info`, `plugin-registry` and `permission-nodes` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds, and any plugin may register the [permission nodes](./permissions#permission-nodes) of its own namespace and read every registered node.
 
 The host also logs every refusal, naming the plugin, the call (`call="ban-service.get"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal means a server that points at the handler holds nobody. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
 
@@ -342,6 +342,7 @@ A plugin cannot grow the host's tables without bound. `[wasm.quotas]` caps what 
 | `plugin_channels` | `128` | Registered plugin messaging channels |
 | `codec_filters` | `32` | Registered codec filter ids |
 | `limbo_handlers` | `64` | Registered limbo handler names |
+| `permission_nodes` | `256` | Registered permission nodes |
 
 ```toml
 [wasm.quotas]
@@ -351,7 +352,7 @@ commands = 128
 commands = 1024
 ```
 
-The count is of what the plugin holds now: unregistering, unsubscribing or cancelling frees room, and a delay stops counting once it has run. Registering a command, channel, codec filter or limbo handler name the plugin already holds takes no more room. A registration past the quota is refused with a `host-error` of kind `limit-exceeded` (`ErrorKind::LimitExceeded` in the SDK), and the host logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance. A plugin that returns such an error from `on_enable` with `?` fails to enable. After a fault the fresh instance starts from what it registers again, except plugin channels and codec filters, which are kept across a recovery. The accepted ranges are in [Global Settings](../../configuration/global#registration-quotas).
+The count is of what the plugin holds now: unregistering, unsubscribing or cancelling frees room, and a delay stops counting once it has run. Registering a command, channel, codec filter, limbo handler name or permission node the plugin already holds takes no more room. A registration past the quota is refused with a `host-error` of kind `limit-exceeded` (`ErrorKind::LimitExceeded` in the SDK), and the host logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance. A plugin that returns such an error from `on_enable` with `?` fails to enable. After a fault the fresh instance starts from what it registers again, except plugin channels, codec filters and permission nodes, which are kept across a recovery. A permission node is removed only when the plugin is disabled or unloaded, since there is no call to unregister one. The accepted ranges are in [Global Settings](../../configuration/global#registration-quotas).
 
 ### Filesystem and WASI
 

@@ -560,6 +560,7 @@ fn test_proxy_out_of_range_wasm_quotas_are_invalid() {
         ("plugin_channels = 0", "wasm.quotas.plugin_channels"),
         ("codec_filters = 0", "wasm.quotas.codec_filters"),
         ("limbo_handlers = 0", "wasm.quotas.limbo_handlers"),
+        ("permission_nodes = 0", "wasm.quotas.permission_nodes"),
         ("event_listeners = 1048577", "wasm.quotas.event_listeners"),
         ("scheduled_tasks = 2000000", "wasm.quotas.scheduled_tasks"),
     ] {

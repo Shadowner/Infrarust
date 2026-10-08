@@ -95,6 +95,9 @@ pub const UNGATED: &[(&str, &str)] = &[
     ("proxy-info", "granted-capabilities"),
     ("plugin-registry", "list"),
     ("plugin-registry", "get"),
+    ("permission-nodes", "register"),
+    ("permission-nodes", "get"),
+    ("permission-nodes", "list"),
 ];
 
 pub const SUBSCRIBE_GATES: &[(&str, Capability)] = &[
@@ -234,6 +237,8 @@ mod tests {
         assert!(required("text", "parse-json").is_empty());
         assert!(required("proxy-info", "granted-capabilities").is_empty());
         assert!(required("plugin-registry", "list").is_empty());
+        assert!(required("permission-nodes", "register").is_empty());
+        assert!(is_known("permission-nodes", "list"));
         for (interface, function) in UNGATED {
             assert!(required(interface, function).is_empty());
         }

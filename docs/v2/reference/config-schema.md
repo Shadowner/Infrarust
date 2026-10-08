@@ -429,8 +429,9 @@ How many registrations of each kind one WASM plugin may hold at the same time. A
 | `plugin_channels` | integer | `128` | Plugin messaging channels |
 | `codec_filters` | integer | `32` | Codec filter ids |
 | `limbo_handlers` | integer | `64` | Limbo handler names |
+| `permission_nodes` | integer | `256` | Permission nodes. Registering an owned node again updates it and takes no more room |
 
-After a fault, what the discarded instance held of listeners, tasks, commands and limbo handlers does not count against the fresh instance. Plugin channels and codec filters are kept across a recovery and keep counting.
+After a fault, what the discarded instance held of listeners, tasks, commands and limbo handlers does not count against the fresh instance. Plugin channels, codec filters and permission nodes are kept across a recovery and keep counting.
 
 Validation: each quota between 1 and 1048576.
 
@@ -442,6 +443,7 @@ scheduled_tasks = 1024
 plugin_channels = 128
 codec_filters = 32
 limbo_handlers = 64
+permission_nodes = 256
 ```
 
 ### `[plugins.<id>]`

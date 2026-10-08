@@ -19,6 +19,7 @@ world plugin {
     import proxy-info;
     import plugin-registry;
     import permissions;
+    import permission-nodes;
     import providers;
 
     export guest;

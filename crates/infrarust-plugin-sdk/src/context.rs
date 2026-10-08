@@ -8,7 +8,7 @@ use crate::error::Error;
 use crate::event::{
     EventPriority, GuestEvent, NamedEvent, NamedOutcome, PacketFilter, RawPacketEvent,
 };
-use crate::permissions::PermissionProvider;
+use crate::permissions::{PermissionNode, PermissionNodeInfo, PermissionProvider};
 use crate::runtime;
 use crate::types::millis;
 
@@ -243,6 +243,23 @@ impl Context {
         provider: impl PermissionProvider + 'static,
     ) -> Result<(), Error> {
         runtime::provide_permissions(Rc::new(provider))
+    }
+
+    pub fn register_permission_node(&self, node: PermissionNode) -> Result<(), Error> {
+        Ok(crate::host::register_permission_node(&node.into_wit())?)
+    }
+
+    #[must_use]
+    pub fn permission_node(&self, name: &str) -> Option<PermissionNodeInfo> {
+        crate::host::permission_node(name).map(PermissionNodeInfo::from_wit)
+    }
+
+    #[must_use]
+    pub fn permission_nodes(&self) -> Vec<PermissionNodeInfo> {
+        crate::host::permission_nodes()
+            .into_iter()
+            .map(PermissionNodeInfo::from_wit)
+            .collect()
     }
 }
 

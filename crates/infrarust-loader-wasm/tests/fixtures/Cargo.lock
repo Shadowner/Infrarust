@@ -158,6 +158,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-node-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-old-world"
 version = "0.0.0"
 dependencies = [

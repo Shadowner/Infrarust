@@ -7,6 +7,7 @@ mod imp {
     use crate::bindings::command_manager::{self, CommandInfo, CommandRegistration, CommandSpec};
     use crate::bindings::event_bus::PacketFilter;
     use crate::bindings::events::{EventKind, NamedEventResult};
+    use crate::bindings::permission_nodes::{PermissionNode, PermissionNodeInfo};
     use crate::bindings::permissions::PermissionSnapshot;
     use crate::bindings::types::HostError;
     use crate::bindings::{event_bus, limbo, permissions, providers, scheduler};
@@ -123,6 +124,18 @@ mod imp {
         permissions::release(player)
     }
 
+    pub(crate) fn register_permission_node(node: &PermissionNode) -> Result<(), HostError> {
+        crate::bindings::permission_nodes::register(node)
+    }
+
+    pub(crate) fn permission_node(name: &str) -> Option<PermissionNodeInfo> {
+        crate::bindings::permission_nodes::get(name)
+    }
+
+    pub(crate) fn permission_nodes() -> Vec<PermissionNodeInfo> {
+        crate::bindings::permission_nodes::list()
+    }
+
     pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
         crate::bindings::log::max_level()
     }
@@ -143,13 +156,14 @@ mod imp {
 #[cfg(not(target_family = "wasm"))]
 mod imp {
     use std::cell::RefCell;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeMap, HashMap, HashSet};
 
     use crate::bindings::ban_service::BanFeatures;
     use crate::bindings::codec_registry::CodecFilterMetadata;
     use crate::bindings::command_manager::{CommandInfo, CommandRegistration, CommandSpec};
     use crate::bindings::event_bus::PacketFilter;
     use crate::bindings::events::{EventKind, NamedEventResult};
+    use crate::bindings::permission_nodes::{PermissionNode, PermissionNodeInfo};
     use crate::bindings::permissions::PermissionSnapshot;
     use crate::bindings::types::{ErrorKind, HostError};
 
@@ -172,6 +186,7 @@ mod imp {
         pub(crate) ban_providers: Vec<BanFeatures>,
         pub(crate) permission_providers: usize,
         pub(crate) snapshots: HashMap<u64, PermissionSnapshot>,
+        pub(crate) permission_nodes: BTreeMap<String, PermissionNodeInfo>,
         pub(crate) refused: HashSet<String>,
         pub(crate) log_level: Option<crate::bindings::log::Level>,
         pub(crate) ping_description: Option<crate::bindings::types::Component>,
@@ -474,6 +489,37 @@ mod imp {
             host.snapshots.remove(&player);
         });
         Ok(())
+    }
+
+    fn node_key(name: &str) -> String {
+        name.trim().to_lowercase()
+    }
+
+    pub(crate) fn register_permission_node(node: &PermissionNode) -> Result<(), HostError> {
+        with_fake(|host| {
+            let name = node_key(&node.name);
+            host.refuse(&name)?;
+            let node = PermissionNode {
+                name: name.clone(),
+                ..node.clone()
+            };
+            host.permission_nodes.insert(
+                name,
+                PermissionNodeInfo {
+                    node,
+                    plugin_id: Some("fake".to_owned()),
+                },
+            );
+            Ok(())
+        })
+    }
+
+    pub(crate) fn permission_node(name: &str) -> Option<PermissionNodeInfo> {
+        with_fake(|host| host.permission_nodes.get(&node_key(name)).cloned())
+    }
+
+    pub(crate) fn permission_nodes() -> Vec<PermissionNodeInfo> {
+        with_fake(|host| host.permission_nodes.values().cloned().collect())
     }
 
     pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
