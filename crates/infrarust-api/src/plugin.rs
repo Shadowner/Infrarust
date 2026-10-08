@@ -369,6 +369,8 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     fn register_permission_node(&self, node: PermissionNode) -> Result<(), PermissionNodeError>;
 
+    fn permission_node(&self, name: &str) -> Option<PermissionNodeInfo>;
+
     fn permission_nodes(&self) -> Vec<PermissionNodeInfo>;
 
     fn config_service(&self) -> Arc<dyn ConfigService>;

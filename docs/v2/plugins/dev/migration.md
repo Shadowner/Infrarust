@@ -408,7 +408,7 @@ What to do: replace `permission_level()` checks with `has_permission(ADMIN_PERMI
 |---------------------------|----------------------|
 | `ban(target, reason, duration) -> ()` | `ban(BanRequest) -> BanEntry` |
 | `unban(&target) -> bool` | `unban(UnbanRequest) -> Option<BanEntry>` |
-| `is_banned(&target) -> bool` | `get(&target)` returns the active ban on that target: `get(t).await?.is_some()` |
+| `is_banned(&target) -> bool` | `is_banned(&target).await -> Result<bool, ServiceError>`, or `get(&target)` for the entry itself |
 | `get_ban(&target) -> Option<BanEntry>` | `get(&target) -> Option<BanEntry>` |
 | `get_all_bans() -> Vec<BanEntry>` | `list(BanQuery) -> BanPage` (cursor pagination), or `list_all()` |
 | none | `check(&LoginAttempt) -> Option<BanVerdict>`: would this login be refused |

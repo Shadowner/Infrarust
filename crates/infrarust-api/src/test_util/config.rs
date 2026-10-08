@@ -169,6 +169,19 @@ impl ConfigService for MockConfigService {
             .cloned()
     }
 
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig> {
+        let domain = domain.trim_end_matches('.');
+        lock(&self.servers)
+            .iter()
+            .find(|config| {
+                config
+                    .domains
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(domain))
+            })
+            .cloned()
+    }
+
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
         lock(&self.servers).clone()
     }
@@ -234,6 +247,20 @@ mod tests {
         assert_eq!(config.list_server_sources().len(), 2);
         assert_eq!(config.get_value("greeting").as_deref(), Some("hello"));
         assert_eq!(config.get_value("other"), None);
+    }
+
+    #[test]
+    fn a_domain_finds_the_server_that_lists_it() {
+        let config = MockConfigService::new().with_server(
+            ServerConfig::new(ServerId::new("lobby")).domains(vec!["play.example.com".into()]),
+        );
+        assert_eq!(
+            config
+                .get_server_config_by_domain("Play.Example.com.")
+                .map(|server| server.id),
+            Some(ServerId::new("lobby"))
+        );
+        assert!(config.get_server_config_by_domain("example.com").is_none());
     }
 
     #[test]

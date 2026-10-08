@@ -214,6 +214,10 @@ mod tests {
         .unwrap();
         assert_eq!(entry.reason.as_deref(), Some("grief"));
 
+        let griefer = BanTarget::Username("Griefer".into());
+        assert!(block_on(bans.is_banned(&griefer)).unwrap());
+        assert!(!block_on(bans.is_banned(&BanTarget::Username("Builder".into()))).unwrap());
+
         let attempt = LoginAttempt::pre_auth(ip("1.2.3.4"), "griefer");
         let verdict = block_on(bans.check(&attempt)).unwrap().unwrap();
         assert_eq!(verdict.entry.id, entry.id);
@@ -223,6 +227,7 @@ mod tests {
             block_on(bans.unban(UnbanRequest::new(BanTarget::Username("Griefer".into())))).unwrap();
         assert!(revoked.is_some());
         assert!(block_on(bans.check(&attempt)).unwrap().is_none());
+        assert!(!block_on(bans.is_banned(&griefer)).unwrap());
     }
 
     #[test]

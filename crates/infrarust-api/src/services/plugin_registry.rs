@@ -23,4 +23,8 @@ impl PluginInfo {
 pub trait PluginRegistry: Send + Sync + private::Sealed {
     fn list_plugin_info(&self) -> Vec<PluginInfo>;
     fn plugin_info(&self, id: &str) -> Option<PluginInfo>;
+
+    fn is_loaded(&self, id: &str) -> bool {
+        self.plugin_info(id).is_some()
+    }
 }

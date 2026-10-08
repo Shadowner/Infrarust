@@ -93,7 +93,7 @@ Registration fails with a `PermissionNodeError`:
 
 Registering a node your plugin already owns replaces its default and description. When the plugin is disabled, its nodes are removed with its commands and listeners.
 
-You do not have to register a node to check it. An unregistered node has no default, so only a provider that answers `True` grants it. Registering it gives your users a sensible default and lets a provider list it: `ctx.permission_nodes()` returns every registered node with the plugin that owns it, which a permission plugin can use for its editor or tab completion.
+You do not have to register a node to check it. An unregistered node has no default, so only a provider that answers `True` grants it. Registering it gives your users a sensible default and lets a provider list it: `ctx.permission_nodes()` returns every registered node with the plugin that owns it, which a permission plugin can use for its editor or tab completion, and `ctx.permission_node(name)` returns one of them, or `None` when no plugin registered it.
 
 ### Nodes the proxy registers
 

@@ -75,6 +75,12 @@ impl NodeRegistry {
             .map(|entry| entry.node.default)
     }
 
+    pub(crate) fn get(&self, node: &str) -> Option<PermissionNodeInfo> {
+        read(&self.entries)
+            .get(normalize_node(node).as_ref())
+            .map(|entry| PermissionNodeInfo::new(entry.node.clone(), entry.owner.clone()))
+    }
+
     pub(crate) fn list(&self) -> Vec<PermissionNodeInfo> {
         let mut infos: Vec<PermissionNodeInfo> = read(&self.entries)
             .values()
@@ -232,6 +238,17 @@ mod tests {
                 "{invalid:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_node_is_found_by_its_normalized_name() {
+        let nodes = registry();
+        let staff = nodes.get(" Demo.STAFF ").unwrap();
+        assert_eq!(staff.node.name, "demo.staff");
+        assert_eq!(staff.node.default, PermissionDefault::Admin);
+        assert_eq!(staff.plugin_id.as_deref(), Some("demo"));
+        assert_eq!(nodes.get(ADMIN_PERMISSION).unwrap().plugin_id, None);
+        assert_eq!(nodes.get("never.registered"), None);
     }
 
     #[test]

@@ -76,6 +76,9 @@ impl PluginContext for MockPluginContext {
     fn register_permission_node(&self, _node: PermissionNode) -> Result<(), PermissionNodeError> {
         unimplemented!("mock")
     }
+    fn permission_node(&self, _name: &str) -> Option<PermissionNodeInfo> {
+        unimplemented!("mock")
+    }
     fn permission_nodes(&self) -> Vec<PermissionNodeInfo> {
         unimplemented!("mock")
     }

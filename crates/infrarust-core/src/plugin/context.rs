@@ -314,6 +314,10 @@ impl PluginContext for PluginContextImpl {
         self.permissions.register_node(Some(&self.plugin_id), node)
     }
 
+    fn permission_node(&self, name: &str) -> Option<PermissionNodeInfo> {
+        self.permissions.node(name)
+    }
+
     fn permission_nodes(&self) -> Vec<PermissionNodeInfo> {
         self.permissions.nodes()
     }

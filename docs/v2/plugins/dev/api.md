@@ -81,7 +81,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `command_manager()` | `Arc<dyn CommandManager>` | Register and unregister commands, during or after `on_enable` |
 | `scheduler()` | `Arc<dyn Scheduler>` | Schedule delayed, recurring and async tasks |
 | `services()` | `Arc<dyn ServiceRegistry>` | Provide an API to other plugins or use theirs, see [Sharing services](./services) |
-| `plugin_registry()` | `Arc<dyn PluginRegistry>` | Read-only view of loaded plugins: each `PluginInfo` carries the plugin's `metadata` and `state` |
+| `plugin_registry()` | `Arc<dyn PluginRegistry>` | Read-only view of loaded plugins: `list_plugin_info()`, `plugin_info(id)` and `is_loaded(id)`; each `PluginInfo` carries the plugin's `metadata` and `state` |
 | `codec_filters()` | `Option<&dyn CodecFilterRegistry>` | Register packet-level filters (needs the `CodecFilter` capability) |
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters (needs the `TransportFilter` capability) |
 | `register_limbo_handler(handler)` | `Result<LimboHandlerRegistration, LimboHandlerError>` | Register a limbo handler, see [Limbo handlers](#limbo-handlers) |
@@ -89,6 +89,7 @@ The `PluginContext` trait provides access to every service and registration meth
 | `register_ban_provider(provider)` | `Result<(), ProviderRejected>` | Become the ban provider. Needs `ban-provider` and `[ban] provider` naming this plugin, see [Bans](./bans) |
 | `register_permission_provider(provider)` | `Result<(), ProviderRejected>` | Become the permission provider. Needs `permission-provider` and `[permissions] provider` naming this plugin, see [Permissions](./permissions) |
 | `register_permission_node(node)` | `Result<(), PermissionNodeError>` | Register a node this plugin checks, with its default. Removed when the plugin is disabled |
+| `permission_node(name)` | `Option<PermissionNodeInfo>` | One registered node, looked up like `has_permission` does: trimmed and lowercased |
 | `permission_nodes()` | `Vec<PermissionNodeInfo>` | Every registered node and the plugin that owns it |
 | `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
@@ -585,6 +586,11 @@ if let Some(server) = config.get_server_config(&ServerId::new("lobby")) {
     tracing::info!("max players: {}", server.max_players);
 }
 
+// Find the server a hostname routes to
+if let Some(server) = config.get_server_config_by_domain("play.example.com") {
+    tracing::info!("play.example.com goes to {}", server.id);
+}
+
 // List all server configs
 for server in config.get_all_server_configs() {
     tracing::info!("{}: {} domains", server.id, server.domains.len());
@@ -595,6 +601,8 @@ if let Some(retries) = config.get_value("keepalive.retries") {
     tracing::info!("keepalive retries: {retries}");
 }
 ```
+
+`get_server_config_by_domain` resolves a hostname the way the proxy routes a handshake: case and a trailing dot are ignored, an exact domain wins over a wildcard such as `*.example.com`, and a hostname no server lists answers `None`.
 
 `get_value` looks its dotted path up in the document `get_effective_proxy_config_document()` returns, so it sees the CLI overrides and the defaults the proxy runs with. A string comes back as its text, a number or a boolean as its `to_string()`, and a table or an array as inline TOML: `get_value("keepalive")` answers `{ interval = "10s", retries = 3, time = "30s" }`. A secret field comes back as `<redacted>`, as in the document, and a path with nothing at it answers `None`.
 

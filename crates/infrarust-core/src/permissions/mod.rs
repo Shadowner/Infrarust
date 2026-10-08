@@ -175,6 +175,10 @@ impl PermissionService {
         self.nodes.unregister_owned(owner)
     }
 
+    pub fn node(&self, node: &str) -> Option<PermissionNodeInfo> {
+        self.nodes.get(node)
+    }
+
     pub fn nodes(&self) -> Vec<PermissionNodeInfo> {
         self.nodes.list()
     }

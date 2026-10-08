@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::{HandlerResult, LimboHandler, LimboSession};
-use infrarust_api::permissions::Capability;
+use infrarust_api::permissions::{Capability, PermissionDefault, PermissionNode};
 use infrarust_api::plugin::PluginContext;
 use infrarust_core::plugin::PluginPermissions;
 use infrarust_core::plugin::context::PluginContextImpl;
@@ -70,6 +70,26 @@ fn limbo_handlers_after_register(ctx: &Arc<PluginContextImpl>) -> usize {
         );
     }
     count
+}
+
+#[test]
+fn a_plugin_looks_up_another_plugins_node_until_it_is_disabled() {
+    let f = factory(vec![]);
+    let owner = f.context("owner");
+    let reader = f.context("reader");
+    owner
+        .register_permission_node(
+            PermissionNode::new("owner.fly", PermissionDefault::Admin).description("Fly"),
+        )
+        .unwrap();
+
+    let info = reader.permission_node("Owner.Fly").unwrap();
+    assert_eq!(info.plugin_id.as_deref(), Some("owner"));
+    assert_eq!(info.node.description, "Fly");
+    assert_eq!(reader.permission_node("owner.walk"), None);
+
+    owner.cleanup();
+    assert_eq!(reader.permission_node("owner.fly"), None);
 }
 
 #[test]

@@ -161,6 +161,8 @@ pub trait ConfigService: Send + Sync + private::Sealed {
     /// Returns the configuration for a specific server.
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig>;
 
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig>;
+
     /// Returns all server configurations.
     fn get_all_server_configs(&self) -> Vec<ServerConfig>;
 

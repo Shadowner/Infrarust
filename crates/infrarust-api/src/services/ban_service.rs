@@ -543,6 +543,10 @@ pub trait BanProvider: Send + Sync {
 }
 
 pub trait BanService: BanProvider + private::Sealed {
+    fn is_banned<'a>(&'a self, target: &'a BanTarget) -> BoxFuture<'a, Result<bool, ServiceError>> {
+        Box::pin(async move { Ok(self.get(target).await?.is_some()) })
+    }
+
     /// Follows the pages of [`list`](BanProvider::list) until the provider
     /// returns no cursor, or a cursor it already returned.
     fn list_all(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, ServiceError>> {

@@ -163,7 +163,7 @@ let config = MockConfigService::new()
 
 | Builder | Effect |
 |---------|--------|
-| `with_server(config)`, `with_servers(n)` | Add one server, or `n` generated ones |
+| `with_server(config)`, `with_servers(n)` | Add one server, or `n` generated ones; `get_server_config_by_domain` matches their `domains` exactly, ignoring case, with no wildcards |
 | `with_server_document(id, toml)`, `with_source(source)` | What `get_server_document` and `list_server_sources` return |
 | `with_value(key, value)` | What `get_value(key)` returns |
 | `with_proxy_document(toml)` | The proxy document, also the starting point for writes |
@@ -176,7 +176,7 @@ let config = MockConfigService::new()
 
 - `MockServerManager::new().with_server("lobby", ServerState::Online)` answers `get_state`; `set_state` changes it while the plugin runs, and `started()` and `stopped()` list the servers the plugin asked to start or stop.
 - `MockLoadBalancerService::new().with_server("lobby", "least_conn", addresses)` gives a server a pool of healthy backends; `set_status(&server, status)` changes one backend, and `set_drained` and `reset_backend` from the trait work on the pool.
-- `MockPluginRegistry::new().with_plugin(info)` answers `list_plugin_info` and `plugin_info` from the `PluginInfo` values you add.
+- `MockPluginRegistry::new().with_plugin(info)` answers `list_plugin_info`, `plugin_info` and `is_loaded` from the `PluginInfo` values you add.
 
 ### Permissions and command sources
 

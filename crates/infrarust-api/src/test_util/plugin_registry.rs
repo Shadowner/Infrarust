@@ -53,5 +53,7 @@ mod tests {
         assert_eq!(registry.list_plugin_info().len(), 1);
         assert!(registry.plugin_info("hello").is_some());
         assert!(registry.plugin_info("other").is_none());
+        assert!(registry.is_loaded("hello"));
+        assert!(!registry.is_loaded("other"));
     }
 }

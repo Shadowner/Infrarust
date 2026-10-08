@@ -101,6 +101,12 @@ impl ConfigService for ConfigServiceImpl {
             .map(|cfg| Self::convert_config(server_id, &cfg))
     }
 
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig> {
+        self.router
+            .resolve(domain)
+            .map(|(_, cfg)| Self::convert_config(&cfg.effective_id(), &cfg))
+    }
+
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
         self.router
             .list_all()
@@ -340,6 +346,10 @@ impl infrarust_api::services::config_service::private::Sealed for ReadOnlyConfig
 impl ConfigService for ReadOnlyConfigService {
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig> {
         self.0.get_server_config(server)
+    }
+
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig> {
+        self.0.get_server_config_by_domain(domain)
     }
 
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
@@ -614,6 +624,48 @@ api_key = \"super-secret-key-value\"
 
         assert!(matches!(error, ConfigWriteError::Validation(_)));
         assert_eq!(stored(&root), before);
+    }
+
+    #[test]
+    fn a_domain_finds_the_server_the_proxy_routes_it_to() {
+        let root = tempfile::tempdir().unwrap();
+        let router = Arc::new(DomainRouter::new());
+        for (file, document) in [
+            (
+                "lobby.toml",
+                "id = \"lobby\"\naddresses = [\"10.0.0.1:25565\"]\ndomains = [\"*.example.com\"]\n",
+            ),
+            (
+                "survival.toml",
+                "id = \"survival\"\naddresses = [\"10.0.0.2:25565\"]\ndomains = [\"survival.example.com\"]\n",
+            ),
+        ] {
+            router.add(
+                crate::provider::ProviderId::new("file", file),
+                toml::from_str(document).unwrap(),
+            );
+        }
+        let service = ConfigServiceImpl::new(
+            router,
+            root.path().join("infrarust.toml"),
+            Arc::new(toml::from_str::<ProxyConfig>("").unwrap()),
+        );
+        let server = |domain: &str| {
+            service
+                .get_server_config_by_domain(domain)
+                .map(|config| config.id.as_str().to_string())
+        };
+
+        assert_eq!(server("survival.example.com").as_deref(), Some("survival"));
+        assert_eq!(server("Survival.Example.COM.").as_deref(), Some("survival"));
+        assert_eq!(server("hub.example.com").as_deref(), Some("lobby"));
+        assert_eq!(server("example.org"), None);
+        assert_eq!(
+            ReadOnlyConfigService::new(Arc::new(service))
+                .get_server_config_by_domain("hub.example.com")
+                .map(|config| config.id),
+            Some(ServerId::new("lobby"))
+        );
     }
 
     #[test]

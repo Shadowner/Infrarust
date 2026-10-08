@@ -196,6 +196,7 @@ let first_page = bans.list(BanQuery::new().limit(50)).await?;
 | `ban(BanRequest)` | The stored `BanEntry`, with the id the provider gave it |
 | `unban(UnbanRequest)` | The removed entry, or `None` if the target was not banned |
 | `get(&BanTarget)` | The active ban on exactly this target |
+| `is_banned(&BanTarget)` | Whether `get` finds an active ban on this target |
 | `list(BanQuery)` / `list_all()` | A page of active bans / every active ban |
 | `features()` | The active provider's features |
 
