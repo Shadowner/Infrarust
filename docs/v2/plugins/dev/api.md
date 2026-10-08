@@ -682,7 +682,12 @@ let _ = ctx.command_manager().unregister("hello");
 |--------|---------|-------------|
 | `register(spec, handler)` | `Result<CommandRegistration, CommandError>` | Register a command; see the conflict rules on the [Commands page](./commands#names-aliases-and-conflicts) |
 | `unregister(name)` | `Result<(), CommandError>` | Remove one of your commands by name, alias, or `<plugin_id>:<name>` |
+| `get(label)` | `Option<CommandInfo>` | The command that answers to a name, an alias, or `<plugin_id>:<name>` |
+| `get_by_name(name)` | `Option<CommandInfo>` | The command with that name or `<plugin_id>:<name>`, aliases excluded |
+| `get_by_alias(alias)` | `Option<CommandInfo>` | The command with that alias, names excluded |
+| `contains(label)` | `bool` | Whether a command answers to that label |
 | `list()` | `Vec<CommandInfo>` | Every registered command, built-ins and other plugins included |
+| `list_owned()` | `Vec<CommandInfo>` | The commands your plugin registered |
 
 Implement `CommandHandler` for your command struct:
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use infrarust_api::command::{
-    CommandContext, CommandError, CommandHandler, CommandSource, CommandSpec,
+    CommandContext, CommandError, CommandHandler, CommandInfo, CommandSource, CommandSpec,
 };
 use infrarust_api::event::BoxFuture;
 use infrarust_api::permissions::AllPermissionsChecker;
@@ -164,6 +164,48 @@ async fn disabling_a_plugin_removes_only_its_own_commands() {
         .register(CommandSpec::new("home"), handler("b", &calls))
         .unwrap();
     assert!(run(&commands, "b:home").await);
+}
+
+#[test]
+fn a_plugin_sees_every_command_but_lists_only_its_own() {
+    let calls = Calls::default();
+    let commands = with_builtin(&calls);
+    let f = factory(&commands);
+    let a = f.context("a");
+    let b = f.context("b");
+    a.command_manager()
+        .register(CommandSpec::new("home").alias("h"), handler("a", &calls))
+        .unwrap();
+    a.command_manager()
+        .register(CommandSpec::new("spawn"), handler("a", &calls))
+        .unwrap();
+    b.command_manager()
+        .register(CommandSpec::new("warp"), handler("b", &calls))
+        .unwrap();
+
+    let names = |infos: Vec<CommandInfo>| -> Vec<String> {
+        infos.iter().map(|info| info.name().to_string()).collect()
+    };
+    assert_eq!(names(a.command_manager().list_owned()), ["home", "spawn"]);
+    assert_eq!(names(b.command_manager().list_owned()), ["warp"]);
+
+    let seen_by_b = b.command_manager();
+    assert_eq!(
+        seen_by_b.get_by_alias("h").and_then(|info| info.plugin_id),
+        Some("a".into())
+    );
+    assert_eq!(
+        seen_by_b.get_by_name("ir"),
+        None,
+        "ir is the alias of a built-in"
+    );
+    assert!(seen_by_b.contains("a:spawn"));
+    assert!(seen_by_b.get("infrarust").is_some());
+
+    disable(&a);
+    assert!(a.command_manager().list_owned().is_empty());
+    assert_eq!(seen_by_b.get("home"), None);
+    assert!(!seen_by_b.contains("h"));
 }
 
 #[tokio::test]

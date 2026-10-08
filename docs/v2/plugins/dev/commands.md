@@ -100,7 +100,27 @@ ctx.scheduler().delay(
 
 The handle is bound to your plugin, so the same ownership rules apply and cleanup still covers it. Players who are already connected see the new command straight away, see [The client command tree](#the-client-command-tree).
 
-`list()` returns a `CommandInfo` for every registered command, built-ins and other plugins included. `CommandInfo::spec` is the registered `CommandSpec`, `plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin_id>:<name>")`, or `None` for built-ins.
+### Looking up commands
+
+```rust
+let commands = ctx.command_manager();
+if let Some(info) = commands.get("spawn") {
+    tracing::info!("/spawn belongs to {:?}", info.plugin_id);
+}
+```
+
+| Method | Returns | Matches |
+|--------|---------|---------|
+| `get(label)` | `Option<CommandInfo>` | The command a player reaches by typing `label`: its name, an alias, or `<plugin_id>:<name>` |
+| `get_by_name(name)` | `Option<CommandInfo>` | Only a name or a `<plugin_id>:<name>`, never an alias |
+| `get_by_alias(alias)` | `Option<CommandInfo>` | Only an accepted alias, never a name |
+| `contains(label)` | `bool` | Same labels as `get` |
+| `list()` | `Vec<CommandInfo>` | Every registered command, built-ins and other plugins included, sorted by name |
+| `list_owned()` | `Vec<CommandInfo>` | The commands your plugin registered |
+
+Lookups ignore case and see built-ins and other plugins' commands. A label resolves the way the proxy resolves what a player types, so an alias that was rejected at registration does not reach your command, and `get_by_alias` does not find it.
+
+`CommandInfo::spec` is the registered `CommandSpec`, with the name lowercased and only the accepted aliases. `plugin_id` is `None` for built-ins, and `namespaced()` returns `Some("<plugin_id>:<name>")`, or `None` for built-ins.
 
 ## CommandHandler
 

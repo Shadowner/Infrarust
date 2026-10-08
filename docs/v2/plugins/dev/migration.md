@@ -280,7 +280,8 @@ What to do: stop relying on unsubscribing another plugin's handle; make sure an 
 | Register | `register(name, aliases, description, handler)`, returning `()` | `register(CommandSpec, handler)`, returning `Result<CommandRegistration, CommandError>` |
 | Register with an owner | `register_with_plugin_id(..)` | Removed: every command belongs to the plugin that registered it |
 | Unregister | `unregister(name)`, returning `()` | `unregister(name)`, returning `Result<(), CommandError>`; only your own commands |
-| List | none | `list()` returns `Vec<CommandInfo>` |
+| List | none | `list()` returns `Vec<CommandInfo>`; `list_owned()` only your plugin's |
+| Look up | none | `get(label)`, `get_by_name(name)`, `get_by_alias(alias)` return `Option<CommandInfo>`; `contains(label)` |
 | Execute | `execute(&self, ctx, player_registry)` | `execute(&self, ctx: CommandContext)` |
 | `CommandContext` | `player_id: Option<PlayerId>`, `args`, `raw` | `source: CommandSource`, `label`, `args`, `raw_args`, `raw`; `#[non_exhaustive]` |
 | Tab completion | `tab_complete(args, cursor) -> Vec<String>`, `tab_complete_for(args, cursor, player_id)` | `suggest(&self, ctx: SuggestContext) -> Vec<Suggestion>`, with tooltips |

@@ -351,5 +351,15 @@ pub trait CommandManager: Send + Sync + private::Sealed {
 
     fn unregister(&self, name: &str) -> Result<(), CommandError>;
 
+    fn get(&self, label: &str) -> Option<CommandInfo>;
+
+    fn get_by_name(&self, name: &str) -> Option<CommandInfo>;
+
+    fn get_by_alias(&self, alias: &str) -> Option<CommandInfo>;
+
+    fn contains(&self, label: &str) -> bool;
+
     fn list(&self) -> Vec<CommandInfo>;
+
+    fn list_owned(&self) -> Vec<CommandInfo>;
 }

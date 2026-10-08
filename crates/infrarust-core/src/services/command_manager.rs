@@ -274,6 +274,28 @@ impl CommandManagerImpl {
             .collect()
     }
 
+    pub fn get(&self, label: &str) -> Option<CommandInfo> {
+        self.read().resolve(label).map(Entry::info)
+    }
+
+    pub fn get_by_name(&self, name: &str) -> Option<CommandInfo> {
+        let name = name.to_lowercase();
+        self.read()
+            .resolve(&name)
+            .filter(|entry| {
+                entry.spec.name == name || entry.namespaced().as_deref() == Some(name.as_str())
+            })
+            .map(Entry::info)
+    }
+
+    pub fn get_by_alias(&self, alias: &str) -> Option<CommandInfo> {
+        let alias = alias.to_lowercase();
+        self.read()
+            .resolve(&alias)
+            .filter(|entry| entry.spec.aliases.contains(&alias))
+            .map(Entry::info)
+    }
+
     pub fn contains(&self, label: &str) -> bool {
         self.read().resolve(label).is_some()
     }
@@ -579,6 +601,40 @@ mod tests {
         );
         assert_eq!(m.suggest(console(), "nope x").await, None);
         assert_eq!(m.suggest(console(), "hi").await, None);
+    }
+
+    #[test]
+    fn a_command_is_looked_up_by_any_label_or_only_by_its_name_or_alias() {
+        let calls = Calls::default();
+        let m = manager(&calls);
+        m.register_owned(
+            "P",
+            CommandSpec::new("hello").aliases(["hi", "ir"]),
+            handler("p", &calls),
+        )
+        .unwrap();
+        let hello = CommandInfo::new(CommandSpec::new("hello").alias("hi"), Some("P".into()));
+
+        for label in ["hello", "HI", "p:hello", "P:Hello"] {
+            assert_eq!(m.get(label), Some(hello.clone()), "{label}");
+        }
+        assert_eq!(m.get_by_name("Hello"), Some(hello.clone()));
+        assert_eq!(m.get_by_name("p:hello"), Some(hello.clone()));
+        assert_eq!(m.get_by_name("hi"), None);
+        assert_eq!(m.get_by_alias("HI"), Some(hello.clone()));
+        assert_eq!(m.get_by_alias("hello"), None);
+        assert_eq!(m.get_by_alias("p:hello"), None);
+
+        assert_eq!(m.get("ir").map(|info| info.plugin_id), Some(None));
+        assert_eq!(m.get_by_alias("ir").map(|info| info.plugin_id), Some(None));
+        assert_eq!(
+            m.get_by_name("infrarust").map(|info| info.plugin_id),
+            Some(None)
+        );
+
+        assert_eq!(m.get("nope"), None);
+        assert_eq!(m.get_by_name("nope"), None);
+        assert_eq!(m.get_by_alias("nope"), None);
     }
 
     #[tokio::test]

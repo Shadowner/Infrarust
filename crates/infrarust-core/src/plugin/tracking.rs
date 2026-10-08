@@ -209,8 +209,28 @@ impl CommandManager for TrackingCommandManager {
         Ok(())
     }
 
+    fn get(&self, label: &str) -> Option<CommandInfo> {
+        self.inner.get(label)
+    }
+
+    fn get_by_name(&self, name: &str) -> Option<CommandInfo> {
+        self.inner.get_by_name(name)
+    }
+
+    fn get_by_alias(&self, alias: &str) -> Option<CommandInfo> {
+        self.inner.get_by_alias(alias)
+    }
+
+    fn contains(&self, label: &str) -> bool {
+        self.inner.contains(label)
+    }
+
     fn list(&self) -> Vec<CommandInfo> {
         self.inner.list()
+    }
+
+    fn list_owned(&self) -> Vec<CommandInfo> {
+        self.inner.commands_for_plugin(&self.plugin_id)
     }
 }
 
