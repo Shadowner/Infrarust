@@ -2,9 +2,11 @@
 
 use infrarust_config::WebConfig;
 use infrarust_core::plugin::StaticPluginLoader;
+use infrarust_plugin_admin_api::log_layer::LogBroadcast;
 
 pub fn build_static_loader(
     web_config: Option<&mut WebConfig>,
+    logs: Option<LogBroadcast>,
 ) -> anyhow::Result<StaticPluginLoader> {
     let loader = StaticPluginLoader::new();
 
@@ -55,12 +57,16 @@ pub fn build_static_loader(
             },
         };
 
-        let admin_api =
-            infrarust_plugin_admin_api::AdminApiPlugin::new(config.clone(), enable_webui);
+        let admin_api = infrarust_plugin_admin_api::AdminApiPlugin::new(
+            config.clone(),
+            enable_webui,
+            logs.clone(),
+        );
         loader.register(admin_api.metadata(), move || {
             Box::new(infrarust_plugin_admin_api::AdminApiPlugin::new(
                 config.clone(),
                 enable_webui,
+                logs.clone(),
             ))
         });
     }
@@ -74,6 +80,7 @@ pub fn build_static_loader(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn web(enable_api: bool) -> WebConfig {
@@ -87,21 +94,22 @@ mod tests {
     #[test]
     fn admin_api_is_registered_when_the_api_is_enabled() {
         let mut config = web(true);
-        let loader = build_static_loader(Some(&mut config)).expect("loopback bind is accepted");
+        let loader =
+            build_static_loader(Some(&mut config), None).expect("loopback bind is accepted");
         assert!(loader.registered_ids().contains(&"admin_api".to_string()));
     }
 
     #[test]
     fn admin_api_is_not_registered_when_the_api_is_disabled() {
         let mut config = web(false);
-        let loader = build_static_loader(Some(&mut config)).expect("nothing to resolve");
+        let loader = build_static_loader(Some(&mut config), None).expect("nothing to resolve");
         assert!(!loader.registered_ids().contains(&"admin_api".to_string()));
         assert!(config.api_key.is_none(), "no key should be generated");
     }
 
     #[test]
     fn admin_api_is_not_registered_without_a_web_section() {
-        let loader = build_static_loader(None).expect("nothing to resolve");
+        let loader = build_static_loader(None, None).expect("nothing to resolve");
         assert!(!loader.registered_ids().contains(&"admin_api".to_string()));
     }
 }

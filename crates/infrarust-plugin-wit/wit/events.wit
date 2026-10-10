@@ -1,7 +1,12 @@
-// The guest subscribes (in on-enable) to the kinds it wants; the host registers
-// a native handler per subscribed kind that marshals to handle-event.
-interface event-bus {                                                         // gated: event-bus
-    use types.{event-priority, listener-handle};
+interface events {
+    use types.{
+        server-id, uuid, protocol-version, socket-address, game-profile, player-ref,
+        component, server-state, server-address, player-id, channel-id, client-settings,
+        packet-direction, raw-packet,
+    };
+    use limbo.{limbo-entry-context};
+    use ban-service.{ban-entry, ban-source};
+    use permissions.{permission-snapshot};
 
     enum event-kind {
         pre-login,
@@ -9,20 +14,524 @@ interface event-bus {                                                         //
         disconnect,
         online-auth-failed,
         permissions-setup,
+        player-choose-initial-server,
         server-pre-connect,
         server-connected,
-        server-switch,
+        server-post-connect,
         kicked-from-server,
-        player-choose-initial-server,
+        chat-message,
         proxy-ping,
         proxy-initialize,
         proxy-shutdown,
         config-reload,
         server-state-change,
-        chat-message,
+        backend-health,
+        login,
+        game-profile-request,
+        command-execute,
+        connection-handshake,
+        connection-rejected,
+        limbo-enter,
+        limbo-exit,
+        player-client-brand,
+        player-settings-changed,
+        player-channel-register,
+        plugin-message,
+        ban-issued,
+        ban-revoked,
+        plugin-enabled,
+        plugin-disabled,
+        pre-transfer,
+        player-resource-pack-status,
+        named-event,
         raw-packet,
     }
 
-    subscribe: func(kind: event-kind, priority: event-priority) -> listener-handle;
-    unsubscribe: func(handle: listener-handle);
+    record pre-login-event {
+        profile: game-profile,
+        remote-addr: socket-address,
+        protocol: protocol-version,
+        server-domain: string,
+        %result: pre-login-result,
+    }
+
+    variant pre-login-result {
+        allowed,
+        denied(component),
+        force-offline,
+        force-online,
+    }
+
+    record post-login-event {
+        player: player-ref,
+        profile: game-profile,
+        protocol: protocol-version,
+    }
+
+    variant disconnect-cause {
+        client-quit,
+        kicked(option<component>),
+        backend-closed(option<component>),
+        shutdown,
+        error,
+    }
+
+    record disconnect-event {
+        player: player-ref,
+        last-server: option<server-id>,
+        cause: disconnect-cause,
+    }
+
+    record online-auth-failed-event {
+        username: string,
+    }
+
+    record permissions-setup-event {
+        player: player-ref,
+        online-mode: bool,
+        %result: permissions-setup-result,
+    }
+
+    variant permissions-setup-result {
+        use-default,
+        custom(permission-snapshot),
+    }
+
+    record player-choose-initial-server-event {
+        player: player-ref,
+        initial-server: server-id,
+        %result: player-choose-initial-server-result,
+    }
+
+    variant player-choose-initial-server-result {
+        allowed,
+        redirect(server-id),
+        send-to-limbo(list<string>),
+        denied(component),
+    }
+
+    enum connect-cause {
+        initial,
+        switch,
+        limbo-exit,
+        kick-redirect,
+        plugin-message,
+    }
+
+    record server-pre-connect-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+        cause: connect-cause,
+        %result: server-pre-connect-result,
+    }
+
+    variant server-pre-connect-result {
+        allowed,
+        connect-to(server-id),
+        send-to-limbo(list<string>),
+        denied(component),
+    }
+
+    record server-connected-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+    }
+
+    record server-post-connect-event {
+        player: player-ref,
+        server: server-id,
+        previous-server: option<server-id>,
+    }
+
+    variant kick-cause {
+        unreachable(string),
+        login-refused,
+        config-disconnect,
+        play-disconnect,
+        connection-lost,
+    }
+
+    record kicked-from-server-event {
+        player: player-ref,
+        server: server-id,
+        reason: option<component>,
+        cause: kick-cause,
+        during-connect: bool,
+        previous-server: option<server-id>,
+        %result: kicked-from-server-result,
+    }
+
+    variant kicked-from-server-result {
+        disconnect-player(option<component>),
+        redirect-to(server-id),
+        send-to-limbo(list<string>),
+        notify(component),
+    }
+
+    record chat-message-event {
+        player: player-ref,
+        message: string,
+        signed: bool,
+        server: option<server-id>,
+        %result: chat-message-result,
+    }
+
+    variant chat-message-result {
+        allow,
+        deny(option<component>),
+        modify(string),
+    }
+
+    record ping-player {
+        name: string,
+        uuid: uuid,
+    }
+
+    record proxy-ping-event {
+        remote-addr: socket-address,
+        server: option<server-id>,
+        virtual-host: option<string>,
+        protocol: protocol-version,
+        legacy: bool,
+        %result: proxy-ping-result,
+    }
+
+    record proxy-ping-result {
+        max-players: s32,
+        online-players: s32,
+        protocol: protocol-version,
+        version-name: string,
+        description: option<component>,
+        favicon: option<option<string>>,
+        player-sample: option<list<ping-player>>,
+    }
+
+    record config-reload-event {
+        provider: string,
+        added: list<server-id>,
+        removed: list<server-id>,
+        updated: list<server-id>,
+    }
+
+    record server-state-change-event {
+        server: server-id,
+        old-state: server-state,
+        new-state: server-state,
+    }
+
+    enum backend-state {
+        healthy,
+        probing,
+        unhealthy,
+        draining,
+    }
+
+    record backend-health-event {
+        address: server-address,
+        servers: list<server-id>,
+        state: backend-state,
+    }
+
+    record login-event {
+        player: player-ref,
+        online-mode: bool,
+        %result: login-result,
+    }
+
+    variant login-result {
+        allowed,
+        denied(component),
+    }
+
+    record game-profile-request-event {
+        original: game-profile,
+        online-mode: bool,
+        remote-addr: socket-address,
+        virtual-host: option<string>,
+        protocol: protocol-version,
+        %result: game-profile-request-result,
+    }
+
+    record game-profile-request-result {
+        profile: game-profile,
+        denied: option<component>,
+    }
+
+    record command-execute-event {
+        player: player-ref,
+        command: string,
+        signed: bool,
+        server: option<server-id>,
+        %result: command-execute-result,
+    }
+
+    variant command-execute-result {
+        allow,
+        deny(option<component>),
+        modify(string),
+        forward-to-backend,
+    }
+
+    enum handshake-intent {
+        status,
+        login,
+        transfer,
+    }
+
+    record connection-handshake-event {
+        remote-addr: socket-address,
+        virtual-host: option<string>,
+        raw-host: string,
+        port: u16,
+        protocol: protocol-version,
+        intent: handshake-intent,
+        legacy: bool,
+        server: option<server-id>,
+        %result: connection-handshake-result,
+    }
+
+    variant connection-handshake-result {
+        allow,
+        deny(option<component>),
+        drop-silently,
+    }
+
+    variant reject-reason {
+        ip-filter,
+        rate-limit,
+        unknown-domain,
+        ip-banned,
+        banned,
+        server-unavailable,
+        plugin(option<string>),
+    }
+
+    record connection-rejected-event {
+        remote-addr: socket-address,
+        virtual-host: option<string>,
+        reason: reject-reason,
+    }
+
+    record limbo-enter-event {
+        player: player-ref,
+        handlers: list<string>,
+        context: limbo-entry-context,
+    }
+
+    variant limbo-exit-reason {
+        released,
+        redirected,
+        sent-to-limbo(list<string>),
+        kicked(component),
+        disconnected,
+        timed-out,
+        shutdown,
+    }
+
+    record limbo-exit-event {
+        player: player-ref,
+        reason: limbo-exit-reason,
+        next-server: option<server-id>,
+    }
+
+    record player-client-brand-event {
+        player: player-ref,
+        brand: string,
+    }
+
+    record player-settings-changed-event {
+        player: player-ref,
+        settings: client-settings,
+    }
+
+    record player-channel-register-event {
+        player: player-ref,
+        channels: list<string>,
+        direction: packet-direction,
+    }
+
+    variant message-endpoint {
+        client,
+        backend(server-id),
+    }
+
+    enum message-phase {
+        configuration,
+        play,
+    }
+
+    record plugin-message-event {
+        player: player-ref,
+        source: message-endpoint,
+        channel: channel-id,
+        raw-channel: string,
+        data: list<u8>,
+        phase: message-phase,
+        %result: plugin-message-result,
+    }
+
+    variant plugin-message-result {
+        forward,
+        handled,
+        replace(list<u8>),
+    }
+
+    record ban-issued-event {
+        entry: ban-entry,
+        source: ban-source,
+        silent: bool,
+    }
+
+    record ban-revoked-event {
+        entry: ban-entry,
+        source: ban-source,
+        silent: bool,
+    }
+
+    record plugin-enabled-event {
+        plugin-id: string,
+        version: string,
+    }
+
+    record plugin-disabled-event {
+        plugin-id: string,
+    }
+
+    enum transfer-origin {
+        plugin,
+        backend,
+    }
+
+    record pre-transfer-event {
+        player: player-ref,
+        host: string,
+        port: u16,
+        origin: transfer-origin,
+        %result: pre-transfer-result,
+    }
+
+    variant pre-transfer-result {
+        allowed,
+        denied(component),
+        redirect(server-address),
+    }
+
+    variant resource-pack-status {
+        successfully-loaded,
+        declined,
+        failed-download,
+        accepted,
+        downloaded,
+        invalid-url,
+        failed-reload,
+        discarded,
+        unknown(s32),
+    }
+
+    enum resource-pack-origin {
+        proxy,
+        backend,
+    }
+
+    record player-resource-pack-status-event {
+        player: player-ref,
+        pack-id: option<uuid>,
+        status: resource-pack-status,
+        origin: resource-pack-origin,
+    }
+
+    record named-event-response {
+        content-type: string,
+        payload: list<u8>,
+    }
+
+    record named-event-event {
+        name: string,
+        source-plugin: string,
+        content-type: string,
+        payload: list<u8>,
+        %result: named-event-result,
+    }
+
+    record named-event-result {
+        cancelled: bool,
+        response: option<named-event-response>,
+    }
+
+    record raw-packet-event {
+        player: player-id,
+        direction: packet-direction,
+        packet: raw-packet,
+        %result: raw-packet-result,
+    }
+
+    variant raw-packet-result {
+        pass,
+        modify(raw-packet),
+        drop,
+    }
+
+    variant event {
+        pre-login(pre-login-event),
+        post-login(post-login-event),
+        disconnect(disconnect-event),
+        online-auth-failed(online-auth-failed-event),
+        permissions-setup(permissions-setup-event),
+        player-choose-initial-server(player-choose-initial-server-event),
+        server-pre-connect(server-pre-connect-event),
+        server-connected(server-connected-event),
+        server-post-connect(server-post-connect-event),
+        kicked-from-server(kicked-from-server-event),
+        chat-message(chat-message-event),
+        proxy-ping(proxy-ping-event),
+        proxy-initialize,
+        proxy-shutdown,
+        config-reload(config-reload-event),
+        server-state-change(server-state-change-event),
+        backend-health(backend-health-event),
+        login(login-event),
+        game-profile-request(game-profile-request-event),
+        command-execute(command-execute-event),
+        connection-handshake(connection-handshake-event),
+        connection-rejected(connection-rejected-event),
+        limbo-enter(limbo-enter-event),
+        limbo-exit(limbo-exit-event),
+        player-client-brand(player-client-brand-event),
+        player-settings-changed(player-settings-changed-event),
+        player-channel-register(player-channel-register-event),
+        plugin-message(plugin-message-event),
+        ban-issued(ban-issued-event),
+        ban-revoked(ban-revoked-event),
+        plugin-enabled(plugin-enabled-event),
+        plugin-disabled(plugin-disabled-event),
+        pre-transfer(pre-transfer-event),
+        player-resource-pack-status(player-resource-pack-status-event),
+        named-event(named-event-event),
+        raw-packet(raw-packet-event),
+    }
+
+    variant event-outcome {
+        unchanged,
+        pre-login(pre-login-result),
+        permissions-setup(permissions-setup-result),
+        player-choose-initial-server(player-choose-initial-server-result),
+        server-pre-connect(server-pre-connect-result),
+        kicked-from-server(kicked-from-server-result),
+        chat-message(chat-message-result),
+        proxy-ping(proxy-ping-result),
+        login(login-result),
+        game-profile-request(game-profile-request-result),
+        command-execute(command-execute-result),
+        connection-handshake(connection-handshake-result),
+        plugin-message(plugin-message-result),
+        pre-transfer(pre-transfer-result),
+        named-event(named-event-result),
+        raw-packet(raw-packet-result),
+    }
+
+    ping-description: func() -> option<component>;
+    ping-favicon: func() -> option<string>;
+    ping-player-sample: func() -> list<ping-player>;
 }

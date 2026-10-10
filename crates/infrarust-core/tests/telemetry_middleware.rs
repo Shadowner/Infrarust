@@ -75,6 +75,7 @@ async fn test_middleware_extracts_handshake_data() {
 
     ctx.extensions.insert(HandshakeData {
         domain: "mc.example.com".to_string(),
+        raw_host: "mc.example.com".to_string(),
         port: 25565,
         protocol_version: ProtocolVersion(767),
         intent: ConnectionIntent::Login,

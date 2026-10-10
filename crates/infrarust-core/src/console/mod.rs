@@ -2,8 +2,8 @@ pub mod commands;
 pub mod dispatcher;
 pub mod output;
 pub mod parser;
+pub mod render;
 
-use std::io::IsTerminal;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -15,8 +15,9 @@ use crate::ban::manager::BanManager;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::plugin::manager::PluginManager;
-use crate::registry::ConnectionRegistry;
+use crate::services::command_manager::CommandManagerImpl;
 use crate::services::config_service::ConfigServiceImpl;
+use crate::session::connection_registry::ConnectionRegistry;
 
 pub struct ConsoleServices {
     pub player_registry: Arc<PlayerRegistryImpl>,
@@ -26,9 +27,9 @@ pub struct ConsoleServices {
     pub config_service: Arc<ConfigServiceImpl>,
     pub plugin_manager: Arc<tokio::sync::RwLock<PluginManager>>,
     pub permission_service: Arc<PermissionService>,
+    pub command_manager: Arc<CommandManagerImpl>,
     pub shutdown: CancellationToken,
     pub start_time: Instant,
-    is_tty: bool,
 }
 
 impl ConsoleServices {
@@ -41,6 +42,7 @@ impl ConsoleServices {
         config_service: Arc<ConfigServiceImpl>,
         plugin_manager: Arc<tokio::sync::RwLock<PluginManager>>,
         permission_service: Arc<PermissionService>,
+        command_manager: Arc<CommandManagerImpl>,
         shutdown: CancellationToken,
         start_time: Instant,
     ) -> Self {
@@ -52,32 +54,25 @@ impl ConsoleServices {
             config_service,
             plugin_manager,
             permission_service,
+            command_manager,
             shutdown,
             start_time,
-            is_tty: std::io::stdout().is_terminal(),
         }
-    }
-
-    pub fn is_tty(&self) -> bool {
-        self.is_tty
     }
 }
 
 pub struct ConsoleTask {
     services: Arc<ConsoleServices>,
     dispatcher: dispatcher::CommandDispatcher,
-    renderer: output::OutputRenderer,
 }
 
 impl ConsoleTask {
     pub fn new(services: Arc<ConsoleServices>) -> Self {
         let mut dispatcher = dispatcher::CommandDispatcher::new();
         commands::register_all(&mut dispatcher);
-        let renderer = output::OutputRenderer::new();
         Self {
             services,
             dispatcher,
-            renderer,
         }
     }
 
@@ -132,7 +127,10 @@ impl ConsoleTask {
             }
 
             let output = self.dispatcher.dispatch(trimmed, &self.services).await;
-            self.renderer.render(output).await;
+            let rendered = render::Renderer::detect().render(&output);
+            if !rendered.is_empty() {
+                println!("{rendered}");
+            }
         }
     }
 }

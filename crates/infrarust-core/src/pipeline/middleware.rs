@@ -14,6 +14,7 @@ pub enum MiddlewareResult {
     ShortCircuit,
     /// Reject the connection with a reason message (sent as kick packet).
     Reject(String),
+    Kick(infrarust_api::types::Component),
 }
 
 /// A composable middleware in the connection processing pipeline.

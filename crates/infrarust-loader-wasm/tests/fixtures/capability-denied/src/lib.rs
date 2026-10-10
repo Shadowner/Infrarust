@@ -1,18 +1,36 @@
-//! WASM-2 `capability-denied` fixture: imports AND calls `ban-service` (so the
-//! import is not dead-code-eliminated) without being granted the `ban`
-//! capability. The host omits the interface from the linker, so instantiation
-//! must fail — the host test asserts `load()` returns `Err`.
-
 wit_bindgen::generate!({
     world: "plugin",
     path: "../../../../infrarust-plugin-wit/wit",
     generate_all,
 });
 
-use crate::infrarust::plugin::ban_service;
-use crate::infrarust::plugin::types::BanTarget;
+use crate::infrarust::plugin::ban_service::{self, BanTarget};
+use crate::infrarust::plugin::types::ErrorKind;
 
 struct Component;
+
+fn kind(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::InvalidArgument => "invalid-argument",
+        ErrorKind::NotFound => "not-found",
+        ErrorKind::PermissionDenied => "permission-denied",
+        ErrorKind::Unavailable => "unavailable",
+        ErrorKind::Timeout => "timeout",
+        ErrorKind::PlayerGone => "player-gone",
+        ErrorKind::Conflict => "conflict",
+        ErrorKind::InvalidState => "invalid-state",
+        ErrorKind::Unsupported => "unsupported",
+        ErrorKind::Internal => "internal",
+        ErrorKind::LimitExceeded => "limit-exceeded",
+    }
+}
+
+fn outcome() -> String {
+    match ban_service::get(&BanTarget::Username("nobody".to_string())) {
+        Ok(entry) => format!("ok: {}", entry.is_some()),
+        Err(error) => format!("{}: {}", kind(error.kind), error.message),
+    }
+}
 
 fixture_common::raw_fixture!(
     Component,
@@ -20,8 +38,7 @@ fixture_common::raw_fixture!(
     name: "Capability Denied Fixture",
     description: None,
     on_enable: {
-        let _ = ban_service::is_banned(&BanTarget::Username("nobody".to_string()));
-        Ok(())
+        std::fs::write("ban.txt", outcome()).map_err(|e| e.to_string())
     }
 );
 

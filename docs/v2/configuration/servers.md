@@ -102,6 +102,7 @@ Forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) require at le
 | `max_players` | integer | `0` | Maximum players allowed on this server. `0` means unlimited. |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message shown to players when the backend is unreachable. |
 | `limbo_handlers` | list of strings | `[]` | Registered handler names for the limbo handler chain, executed in order. |
+| `bungeecord_channel` | bool | `false` | Let this server's plugins use the `BungeeCord` plugin messaging channel. Needs [`[plugin_messaging] bungeecord = true`](./global#plugin-messaging) and `offline` or `client_only`. |
 
 #### Proxy modes
 
@@ -116,6 +117,8 @@ All modes use `snake_case` in the config file.
 | Server-only | `"server_only"` | Authentication handled entirely by the backend. |
 
 Passthrough, zero-copy, and server-only are "forwarding" modes: the proxy relays raw bytes after the handshake. Client-only and offline are "intercepted" modes: the proxy parses and may modify packets.
+
+The value `"full"` (encryption on both sides) is reserved for a future release. A server file that uses it is rejected when it is loaded.
 
 ::: tip
 Zero-copy mode only works on Linux. On other platforms, Infrarust logs a warning and still accepts the config, but performance won't differ from passthrough.
@@ -241,6 +244,7 @@ start_timeout = "60s"
 | `shutdown_timeout` | duration | `"30s"` | How long to wait for graceful shutdown before killing the process. |
 | `shutdown_after` | duration | none | Idle time before auto-shutdown. Omit to keep the server running. |
 | `start_timeout` | duration | `"60s"` | How long to wait for the ready pattern before giving up. |
+| `poll_interval` | duration | `"5s"` | How often to check the process state. |
 
 #### Pterodactyl
 
@@ -290,6 +294,7 @@ Infrarust validates every server file at startup and on hot-reload. Invalid file
 - `addresses` must contain at least one entry.
 - Forwarding modes (`passthrough`, `zero_copy`, `server_only`) require at least one domain.
 - Forwarding modes cannot set `network` (they don't support server switching).
+- Forwarding modes cannot set `bungeecord_channel` (the proxy does not read their backend's packets).
 - `name` and `network` must match `[a-z0-9_-]+` and be at most 64 characters.
 - Domain strings cannot be empty.
 - No two server files can share the same effective ID.

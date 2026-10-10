@@ -10,6 +10,8 @@ use dashmap::{DashMap, DashSet};
 use infrarust_config::ServerAddress;
 use infrarust_transport::{ConnectAttempt, ConnectAttemptObserver};
 
+use crate::util::sync::{read, write};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendState {
     Healthy,
@@ -62,6 +64,8 @@ pub trait BackendHealthView: Send + Sync {
     fn claim_probe(&self, _addr: &ServerAddress) -> bool {
         false
     }
+
+    fn mark_warming(&self, _addr: &ServerAddress, _ramp_window: Duration) {}
 }
 
 const DEFAULT_FAILURE_THRESHOLD: u32 = 3;
@@ -158,19 +162,11 @@ impl PassiveBackendHealth {
     }
 
     pub fn add_listener(&self, listener: Arc<dyn HealthTransitionListener>) {
-        self.listeners
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(listener);
+        write(&self.listeners).push(listener);
     }
 
     fn notify(&self, addr: &ServerAddress, to: BackendState) {
-        for listener in self
-            .listeners
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-        {
+        for listener in read(&self.listeners).iter() {
             listener.on_transition(addr, to);
         }
     }
@@ -324,27 +320,6 @@ impl PassiveBackendHealth {
         }
     }
 
-    pub fn mark_warming(&self, addr: &ServerAddress, ramp_window: Duration) {
-        {
-            let mut entry = self
-                .state
-                .entry(addr.clone())
-                .or_insert(AddressHealth::fresh(false));
-            entry.consecutive_failures = 0;
-            entry.first_failure = None;
-            entry.probe_claimed_at = None;
-            let in_ramp = entry.healthy
-                && entry
-                    .healthy_since
-                    .is_some_and(|since| since.elapsed() < ramp_window);
-            if !in_ramp {
-                entry.healthy = true;
-                entry.healthy_since = Some(Instant::now());
-            }
-        }
-        self.maybe_prune();
-    }
-
     pub fn retain_known(&self, known: &HashSet<ServerAddress>) {
         self.state.retain(|addr, _| known.contains(addr));
     }
@@ -423,6 +398,27 @@ impl BackendHealthView for PassiveBackendHealth {
         entry.probe_claimed_at = Some(now);
         true
     }
+
+    fn mark_warming(&self, addr: &ServerAddress, ramp_window: Duration) {
+        {
+            let mut entry = self
+                .state
+                .entry(addr.clone())
+                .or_insert(AddressHealth::fresh(false));
+            entry.consecutive_failures = 0;
+            entry.first_failure = None;
+            entry.probe_claimed_at = None;
+            let in_ramp = entry.healthy
+                && entry
+                    .healthy_since
+                    .is_some_and(|since| since.elapsed() < ramp_window);
+            if !in_ramp {
+                entry.healthy = true;
+                entry.healthy_since = Some(Instant::now());
+            }
+        }
+        self.maybe_prune();
+    }
 }
 
 impl ConnectAttemptObserver for PassiveBackendHealth {
@@ -437,6 +433,7 @@ impl ConnectAttemptObserver for PassiveBackendHealth {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::sync::Mutex;
 
     use super::*;

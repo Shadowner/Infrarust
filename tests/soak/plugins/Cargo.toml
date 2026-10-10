@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["soak-witness", "soak-flaky", "soak-quarantine", "soak-codec", "soak-codec-faulty"]
+
+[workspace.dependencies]
+infrarust-plugin-sdk = { path = "../../../crates/infrarust-plugin-sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"

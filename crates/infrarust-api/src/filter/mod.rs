@@ -7,8 +7,8 @@
 //!   Run on the hot path — must be fast (< 1 us).
 //!
 //! - **Transport filters** ([`TransportFilter`]):
-//!   Operate on raw TCP bytes before Minecraft framing. Async, shared instances.
-//!   Can reject connections at the TCP level.
+//!   Gate each accepted TCP connection before Minecraft framing. Async, shared
+//!   instances. Can reject connections at the TCP level.
 
 pub mod codec;
 pub mod metadata;
@@ -20,5 +20,7 @@ pub use codec::{
     ConnectionSide, FrameOutput,
 };
 pub use metadata::{FilterMetadata, FilterPriority};
-pub use registry::{CodecFilterRegistry, TransportFilterRegistry};
+pub use registry::{
+    CodecFilterRegistry, FilterRegistryError, PROXY_FILTER_OWNER, TransportFilterRegistry,
+};
 pub use transport::{FilterVerdict, TransportContext, TransportFilter};

@@ -24,18 +24,22 @@ impl Plugin for HelloPlugin {
 
             ctx.event_bus()
                 .subscribe(EventPriority::NORMAL, |event: &mut DisconnectEvent| {
-                    tracing::info!("[HelloPlugin] {} left the proxy", event.username);
+                    tracing::info!("[HelloPlugin] {} left the proxy", event.username());
                 });
 
             ctx.event_bus()
                 .subscribe(EventPriority::NORMAL, |event: &mut ChatMessageEvent| {
                     if event.message.contains("hello") {
                         tracing::info!(
-                            "[HelloPlugin] Detected 'hello' in a chat message: {}",
+                            "[HelloPlugin] {} said 'hello' on {}: {}",
+                            event.profile().username,
+                            event.server.as_ref().map_or("limbo", ServerId::as_str),
                             event.message
                         );
-                        tracing::info!("[HelloPlugin] Rejecting the message");
-                        event.deny(Component::text("Test"));
+                        event.deny(
+                            Component::text("Use /hello to greet the proxy instead.")
+                                .color("yellow"),
+                        );
                     }
                 });
 
@@ -44,11 +48,10 @@ impl Plugin for HelloPlugin {
             //     .subscribe(EventPriority::NORMAL, |event: &mut PlayerChooseInitialServerEvent| {
             //         tracing::info!(
             //             "[HelloPlugin] {} connecting to {} — redirecting to limbo",
-            //             event.profile.username,
+            //             event.profile().username,
+            //             event.initial_server,
             //         );
-            //         event.set_result(PlayerChooseInitialServerResult::Allowed {
-            //             limbo_handlers: vec!["test-gate".to_string()],
-            //         });
+            //         event.send_to_limbo(vec!["test-gate".to_string()]);
             //     });
 
             // Catch kicks → send to limbo instead of disconnecting
@@ -56,36 +59,36 @@ impl Plugin for HelloPlugin {
             //     .subscribe(EventPriority::NORMAL, |event: &mut KickedFromServerEvent| {
             //         tracing::info!(
             //             "[HelloPlugin] {} was kicked from {} — catching in limbo",
-            //             event.player_id,
+            //             event.profile().username,
             //             event.server,
             //         );
-            //         event.set_result(KickedFromServerResult::SendToLimbo { limbo_handlers: vec![] });
+            //         event.send_to_limbo(vec!["test-gate".to_string()]);
             //     });
 
-            ctx.command_manager().register(
-                "hello",
-                &["hi", "hey"],
-                "Says hello to the player",
-                Box::new(HelloCommand),
-            );
+            let commands = ctx.command_manager();
+            let hello = CommandSpec::new("hello")
+                .aliases(["hi", "hey"])
+                .description("Says hello to the player");
+            if let Err(e) = commands.register(hello, Box::new(HelloCommand)) {
+                tracing::warn!("[HelloPlugin] /hello was not registered: {e}");
+            }
+            let limbo = CommandSpec::new("limbo").description("Sends you to the limbo test gate");
+            if let Err(e) = commands.register(limbo, Box::new(LimboCommand)) {
+                tracing::warn!("[HelloPlugin] /limbo was not registered: {e}");
+            }
 
-            ctx.command_manager().register(
-                "limbo",
-                &[],
-                "Sends you to the limbo test gate",
-                Box::new(LimboCommand),
-            );
+            ctx.register_limbo_handler(Box::new(TestGateHandler))?;
 
-            ctx.register_limbo_handler(Box::new(TestGateHandler));
-
-            let player_registry = ctx.player_registry_handle();
-            ctx.scheduler().interval(
+            let player_registry = ctx.player_registry();
+            ctx.scheduler().repeat(
                 std::time::Duration::from_secs(60),
+                None,
                 Box::new(move || {
                     tracing::info!("[HelloPlugin] 60 seconds have passed!");
                     player_registry.get_all_players().iter().for_each(|player| {
                         let _ = player.send_message(Component::text("Hello from the scheduler!"));
                     });
+                    Box::pin(async {})
                 }),
             );
 
@@ -107,22 +110,14 @@ impl Plugin for HelloPlugin {
 struct HelloCommand;
 
 impl CommandHandler for HelloCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id
-                && let Some(player) = player_registry.get_player_by_id(id)
-            {
-                let _ = player.send_message(
-                    Component::text("Hello from Infrarust! ")
-                        .color("gold")
-                        .bold()
-                        .append(Component::text("Welcome to the proxy.").color("gray")),
-                );
-            }
+            ctx.source.send_message(
+                Component::text("Hello from Infrarust! ")
+                    .color("gold")
+                    .bold()
+                    .append(Component::text("Welcome to the proxy.").color("gray")),
+            );
         })
     }
 }
@@ -130,15 +125,9 @@ impl CommandHandler for HelloCommand {
 struct LimboCommand;
 
 impl CommandHandler for LimboCommand {
-    fn execute<'a>(
-        &'a self,
-        ctx: CommandContext,
-        player_registry: &'a dyn PlayerRegistry,
-    ) -> BoxFuture<'a, ()> {
+    fn execute<'a>(&'a self, ctx: CommandContext) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(id) = ctx.player_id
-                && let Some(player) = player_registry.get_player_by_id(id)
-            {
+            if let Some(player) = ctx.source.player() {
                 let _ =
                     player.send_message(Component::text("Sending you to limbo...").color("yellow"));
                 // "$limbo" is a sentinel that the connection handler recognizes
@@ -221,7 +210,7 @@ impl LimboHandler for TestGateHandler {
             tracing::info!("[TestGate] Player {player_id:?} typed /success, releasing from limbo");
             let _ =
                 session.send_message(Component::text("Redirecting to server...").color("green"));
-            session.complete(HandlerResult::Accept);
+            session.complete(LimboOutcome::Accept);
         } else {
             let _ = session
                 .send_message(Component::text(format!("Unknown command: /{command}")).color("red"));

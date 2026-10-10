@@ -1,45 +1,38 @@
-//! Tunable sandbox constants. Values are hardcoded for WASM-1; wiring them to
-//! `ProxyConfig` is deferred (see the `TODO(config)` markers).
-
 use std::time::Duration;
 
-/// How often the dedicated OS thread bumps the engine epoch (§9.2).
-pub(crate) const EPOCH_TICK_INTERVAL: Duration = Duration::from_millis(50);
-
-/// Epoch ticks granted before the deadline callback first fires, re-granted on each
-/// cooperative yield. One tick ≈ [`EPOCH_TICK_INTERVAL`].
 pub(crate) const EPOCH_DEADLINE_TICKS: u64 = 1;
 
-/// Cooperative yields tolerated per guest call before a hard trap (`Interrupt`).
-/// ≈ `MAX_EPOCH_YIELDS_BEFORE_TRAP * EPOCH_TICK_INTERVAL` ≈ 3 s of pure spin.
-/// The cpu-spin test's wall-clock timeout must stay strictly above this.
-pub(crate) const MAX_EPOCH_YIELDS_BEFORE_TRAP: u32 = 60;
+pub(crate) const LEGACY_CACHE_SUBDIR: &str = ".cache";
 
-/// Epoch ticks granted to a single synchronous codec guest call before a hard
-/// trap. Reset before every `create`/`filter`/lifecycle call (see `codec::proxies`).
-/// A per-packet filter completes in microseconds, so this is ~16×50 ms of pure
-/// headroom that only a runaway filter can exceed — false trips are impossible.
-pub(crate) const CODEC_EPOCH_DEADLINE_TICKS: u64 = 16;
+pub(crate) const MAX_COMPONENT_BYTES: u64 = 256 * 1024 * 1024;
 
-/// Linear-memory cap per plugin instance (§9.3). TODO(config): read from `ProxyConfig`.
-/// Instance/table/memory *counts* keep wasmtime's defaults (a component needs several core
-/// instances), so only memory growth is bounded here.
-pub(crate) const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+pub(crate) const ERROR_TEXT_LIMIT: usize = 1024;
 
-/// AOT cache subdirectory, created under the scanned plugin dir.
-pub(crate) const CACHE_SUBDIR: &str = ".cache";
-
-/// Coarse wasmtime-line marker mixed into the cache key (bump on major upgrade).
-/// wasmtime's own embedded version section is the real cross-version safety net.
-pub(crate) const WASMTIME_CACHE_TAG: &str = "wasmtime-45";
-
-/// WIT world version mixed into the cache key so a world bump invalidates artifacts.
 pub(crate) use infrarust_plugin_wit::WORLD_VERSION;
 
-/// Upper bound on a single async host service call (ban/server start-stop). Epoch
-/// interruption cannot preempt a guest parked inside a host `.await`, so each such
-/// call is wrapped in this timeout; on expiry the guest sees `service-error`.
-/// Generous so legitimately slow operations complete. TODO(config): make tunable.
-pub(crate) const HOST_CALL_TIMEOUT: Duration = Duration::from_secs(30);
-
 pub(crate) const PLAYER_SWITCH_TIMEOUT: Duration = Duration::from_millis(250);
+
+pub(crate) const MAX_BOSS_BARS: usize = 256;
+
+pub(crate) const MAX_HOST_HANDLES: usize = 4096;
+
+pub(crate) const QUEUE_FULL_WARN_INTERVAL: Duration = Duration::from_secs(5);
+
+pub(crate) const DEADLINE_MARGIN_DIVISOR: u32 = 5;
+
+pub(crate) const MAX_DEADLINE_MARGIN: Duration = Duration::from_millis(250);
+
+pub(crate) const FAR_FUTURE: Duration = Duration::from_secs(86_400 * 365 * 30);
+
+pub(crate) const DENIED_CALL_LOG_INTERVAL: Duration = Duration::from_secs(60);
+pub(crate) const COMMAND_REFUSAL_BURST: u32 = 5;
+pub(crate) const CODEC_REFUSAL_BURST: u32 = 5;
+pub(crate) const PERMISSION_NODE_REFUSAL_BURST: u32 = 5;
+
+pub(crate) const CODEC_LOG_INTERVAL: Duration = Duration::from_secs(1);
+
+pub(crate) const CODEC_LOG_BURST: u32 = 20;
+
+pub(crate) const GUEST_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+
+pub(crate) const GUEST_WARNING_BURST: u32 = 5;

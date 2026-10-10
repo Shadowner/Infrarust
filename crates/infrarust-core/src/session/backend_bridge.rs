@@ -21,6 +21,8 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
+use crate::player::packets::encode_for_state;
+use crate::session::kick::BackendKick;
 use crate::util::domain_rewrite::rewrite_handshake;
 
 const READ_CHUNK: usize = 16 * 1024;
@@ -110,42 +112,13 @@ impl BackendBridge {
         self.flush().await
     }
 
-    /// Encodes and sends a typed packet to the backend.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if packet ID lookup fails or I/O errors occur.
     pub async fn send_packet<P: Packet>(
         &mut self,
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        if self.state != P::STATE {
-            return Err(CoreError::Auth(format!(
-                "cannot send {} ({}) while the bridge is in {}",
-                P::NAME,
-                P::STATE,
-                self.state
-            )));
-        }
-
-        let packet_id = registry
-            .get_packet_id::<P>(self.protocol_version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!(
-                    "no packet ID for {} in {} ({})",
-                    P::NAME,
-                    P::STATE,
-                    P::DIRECTION
-                ))
-            })?;
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, self.protocol_version)?;
-
-        self.encoder.append_raw(packet_id, &payload)?;
-        let data = self.encoder.take();
-        self.stream.write_all(&data).await?;
-        Ok(())
+        let frame = encode_for_state(packet, self.state, self.protocol_version, registry)?;
+        self.write_frame(&frame).await
     }
 
     /// Activates packet compression with the given threshold, or leaves it
@@ -185,86 +158,32 @@ impl BackendBridge {
         Ok(())
     }
 
-    /// Sends handshake + login start with an offline UUID to the backend.
-    ///
-    /// Used by `ClientOnlyHandler` where the proxy authenticates the client
-    /// and then connects to the backend in offline mode.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on handshake rewrite, encoding, or I/O errors.
-    pub async fn send_initial_packets_offline(
-        &mut self,
-        handshake_data: &HandshakeData,
-        server_config: &ServerConfig,
-        username: &str,
-        registry: &PacketRegistry,
-    ) -> Result<(), CoreError> {
-        let version = handshake_data.protocol_version;
-
-        // Write (possibly rewritten) handshake
-        let handshake_bytes = rewrite_handshake(handshake_data, server_config)?;
-        self.stream.write_all(&handshake_bytes).await?;
-
-        // Build and send login start with offline UUID
-        let uuid = offline_uuid(username);
-        let login_start = SLoginStart {
-            name: username.to_string(),
-            uuid: Some(uuid),
-            profile_key: None,
-        };
-
-        let packet_id = registry
-            .get_packet_id::<SLoginStart>(version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!("no SLoginStart id for protocol {}", version.0))
-            })?;
-
+    pub async fn send_handshake(&mut self, handshake: &SHandshake) -> Result<(), CoreError> {
         let mut payload = Vec::new();
-        login_start.encode(&mut payload, version)?;
-
-        self.encoder.append_raw(packet_id, &payload)?;
+        handshake.encode(&mut payload, self.protocol_version)?;
+        self.encoder.append_raw(0x00, &payload)?;
         let data = self.encoder.take();
         self.stream.write_all(&data).await?;
-        self.stream.flush().await?;
-
         Ok(())
     }
 
-    pub async fn send_handshake_and_login(
+    pub async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), CoreError> {
+        self.stream.write_all(bytes).await?;
+        Ok(())
+    }
+
+    pub async fn send_login_start(
         &mut self,
-        handshake: &SHandshake,
         username: &str,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        let version = self.protocol_version;
-
-        let mut handshake_payload = Vec::new();
-        handshake.encode(&mut handshake_payload, version)?;
-        self.encoder.append_raw(0x00, &handshake_payload)?;
-        let handshake_data = self.encoder.take();
-        self.stream.write_all(&handshake_data).await?;
-
-        let uuid = offline_uuid(username);
         let login_start = SLoginStart {
             name: username.to_string(),
-            uuid: Some(uuid),
+            uuid: Some(offline_uuid(username)),
             profile_key: None,
         };
-
-        let packet_id = registry
-            .get_packet_id::<SLoginStart>(version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!("no SLoginStart id for protocol {}", version.0))
-            })?;
-
-        let mut payload = Vec::new();
-        login_start.encode(&mut payload, version)?;
-
-        self.encoder.append_raw(packet_id, &payload)?;
-        let data = self.encoder.take();
-        self.stream.write_all(&data).await?;
+        self.send_packet(&login_start, registry).await?;
         self.stream.flush().await?;
-
         Ok(())
     }
 
@@ -317,12 +236,12 @@ impl BackendBridge {
                             break;
                         }
 
-                        if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>()
-                        {
-                            return Err(CoreError::Rejected(format!(
-                                "backend refused login: {}",
-                                disconnect.reason
-                            )));
+                        if packet.as_any().downcast_ref::<CLoginDisconnect>().is_some() {
+                            return Err(CoreError::BackendKick(Box::new(BackendKick::new(
+                                frame,
+                                ConnectionState::Login,
+                                version,
+                            ))));
                         }
 
                         if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>()
@@ -332,7 +251,7 @@ impl BackendBridge {
                                     let response =
                                         crate::forwarding::velocity::build_velocity_response(
                                             request, fwd_data, secret,
-                                        );
+                                        )?;
                                     self.send_packet(&response, registry).await?;
                                     tracing::info!("velocity forwarding applied (auto-detected)");
                                     continue;

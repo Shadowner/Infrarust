@@ -8,6 +8,7 @@
 
 pub mod crafty;
 pub mod error;
+mod http;
 pub mod local;
 mod monitor;
 pub mod provider;

@@ -4,9 +4,9 @@
 //! and session verification against `sessionserver.mojang.com`.
 
 use num_bigint::BigInt;
-use rand::RngCore;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
+use rsa::rand_core::{OsRng, RngCore};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
 use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
@@ -53,7 +53,7 @@ impl MojangAuth {
     }
 
     fn build(session_url: String) -> Result<Self, CoreError> {
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = OsRng;
         let rsa_key = RsaPrivateKey::new(&mut rng, 1024)
             .map_err(|e| CoreError::Auth(format!("RSA key generation failed: {e}")))?;
 
@@ -98,7 +98,7 @@ impl MojangAuth {
     ) -> Result<GameProfile, CoreError> {
         // Generate random verify token
         let mut verify_token = [0u8; 4];
-        rand::rngs::OsRng.fill_bytes(&mut verify_token);
+        OsRng.fill_bytes(&mut verify_token);
 
         // Send EncryptionRequest
         let version = client.protocol_version;
@@ -147,12 +147,12 @@ impl MojangAuth {
             .decrypt(Pkcs1v15Encrypt, &enc_response.shared_secret)
             .map_err(|e| CoreError::Auth(format!("shared secret decrypt failed: {e}")))?;
 
-        if shared_secret.len() != 16 {
-            return Err(CoreError::Auth(format!(
+        let key: [u8; 16] = shared_secret.as_slice().try_into().map_err(|_| {
+            CoreError::Auth(format!(
                 "shared secret must be 16 bytes, got {}",
                 shared_secret.len()
-            )));
-        }
+            ))
+        })?;
 
         match &enc_response.proof {
             EncryptionProof::VerifyToken(token) => {
@@ -183,10 +183,6 @@ impl MojangAuth {
         let profile = self.verify_session(username, &server_hash).await?;
 
         // Enable encryption on client bridge
-        #[allow(clippy::expect_used)] // Length already validated above
-        let key: [u8; 16] = shared_secret
-            .try_into()
-            .expect("shared secret length already validated as 16");
         client.enable_encryption(&key);
 
         Ok(profile)
@@ -308,7 +304,7 @@ mod tests {
         use rsa::pkcs1v15::SigningKey;
         use rsa::signature::{SignatureEncoding, Signer};
 
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = OsRng;
         let key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let der = key.to_public_key().to_public_key_der().unwrap().to_vec();
 

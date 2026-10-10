@@ -6,7 +6,9 @@ use crate::codec::varint::VarInt;
 use crate::codec::{Decode, Encode, McBufWriteExt};
 use crate::error::{ProtocolError, ProtocolResult};
 
-const MAX_STRING_CHARS: usize = 32767;
+pub(crate) const MAX_STRING_CHARS: usize = 32767;
+
+pub(crate) const MAX_BYTE_ARRAY_LEN: usize = crate::MAX_PACKET_DATA_SIZE;
 
 fn cautious_capacity(size_hint: usize) -> usize {
     const MAX_PREALLOC_BYTES: usize = 1024 * 1024;
@@ -22,7 +24,7 @@ pub(crate) fn bool_from_byte(byte: u8) -> ProtocolResult<bool> {
 }
 
 impl Encode for bool {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_bool(*self)
     }
 }
@@ -34,7 +36,7 @@ impl Decode<'_> for bool {
 }
 
 impl Encode for u8 {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_all(&[*self])?;
         Ok(())
     }
@@ -52,7 +54,7 @@ impl Decode<'_> for u8 {
 }
 
 impl Encode for i8 {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_all(&[(*self).cast_unsigned()])?;
         Ok(())
     }
@@ -68,7 +70,7 @@ impl Decode<'_> for i8 {
 macro_rules! impl_codec_be {
     ($ty:ty, $size:literal, $ctx:literal) => {
         impl Encode for $ty {
-            fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+            fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
                 w.write_all(&self.to_be_bytes())?;
                 Ok(())
             }
@@ -76,14 +78,11 @@ macro_rules! impl_codec_be {
 
         impl Decode<'_> for $ty {
             fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-                if r.len() < $size {
+                let Some((bytes, rest)) = r.split_first_chunk::<$size>() else {
                     return Err(ProtocolError::Incomplete { context: $ctx });
-                }
-                let (bytes, rest) = r.split_at($size);
-                let val =
-                    <$ty>::from_be_bytes(bytes.try_into().expect("split_at guarantees length"));
+                };
                 *r = rest;
-                Ok(val)
+                Ok(<$ty>::from_be_bytes(*bytes))
             }
         }
     };
@@ -100,18 +99,18 @@ impl_codec_be!(f32, 4, "f32");
 impl_codec_be!(f64, 8, "f64");
 
 impl Encode for String {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         encode_string(self.as_str(), w)
     }
 }
 
 impl Decode<'_> for String {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        decode_string(r, MAX_STRING_CHARS)
+        read_string_bounded_from_reader(r, MAX_STRING_CHARS)
     }
 }
 
-pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
+pub(crate) fn encode_string(s: &str, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
     let char_len = s.chars().count();
     if char_len > MAX_STRING_CHARS {
         return Err(ProtocolError::too_large(MAX_STRING_CHARS, char_len));
@@ -122,33 +121,8 @@ pub(crate) fn encode_string(s: &str, w: &mut impl Write) -> ProtocolResult<()> {
     Ok(())
 }
 
-pub(crate) fn decode_string(r: &mut &[u8], max_chars: usize) -> ProtocolResult<String> {
-    let raw_len = VarInt::decode(r)?.0;
-    if raw_len < 0 {
-        return Err(ProtocolError::invalid("negative length"));
-    }
-    let byte_len = raw_len as usize;
-    let max_bytes = max_chars * 4;
-    if byte_len > max_bytes {
-        return Err(ProtocolError::too_large(max_bytes, byte_len));
-    }
-    if r.len() < byte_len {
-        return Err(ProtocolError::Incomplete {
-            context: "String data",
-        });
-    }
-    let (data, rest) = r.split_at(byte_len);
-    let s = String::from_utf8(data.to_vec())
-        .map_err(|_| ProtocolError::invalid("invalid UTF-8 in string"))?;
-    if s.chars().count() > max_chars {
-        return Err(ProtocolError::too_large(max_chars, s.chars().count()));
-    }
-    *r = rest;
-    Ok(s)
-}
-
 impl Encode for Uuid {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_uuid(self)
     }
 }
@@ -161,33 +135,19 @@ impl Decode<'_> for Uuid {
 }
 
 impl Encode for Vec<u8> {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         w.write_byte_array(self)
     }
 }
 
 impl Decode<'_> for Vec<u8> {
     fn decode(r: &mut &[u8]) -> ProtocolResult<Self> {
-        let raw_len = VarInt::decode(r)?.0;
-        if raw_len < 0 {
-            return Err(ProtocolError::invalid("negative length"));
-        }
-        let len = raw_len as usize;
-        if r.len() < len {
-            return Err(ProtocolError::Incomplete {
-                context: "byte array",
-            });
-        }
-        let mut buf = Self::with_capacity(cautious_capacity(len));
-        let (data, rest) = r.split_at(len);
-        buf.extend_from_slice(data);
-        *r = rest;
-        Ok(buf)
+        read_length_prefixed(r, MAX_BYTE_ARRAY_LEN, "byte array")
     }
 }
 
 impl<T: Encode> Encode for Option<T> {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         match self {
             Some(val) => {
                 true.encode(w)?;
@@ -212,37 +172,41 @@ impl<'a, T: Decode<'a>> Decode<'a> for Option<T> {
     }
 }
 
+pub(crate) fn read_length_prefixed(
+    reader: &mut (impl Read + ?Sized),
+    max_len: usize,
+    what: &'static str,
+) -> ProtocolResult<Vec<u8>> {
+    let len = usize::try_from(read_varint_from_reader(reader)?.0)
+        .map_err(|_| ProtocolError::invalid(format!("negative {what} length")))?;
+    if len > max_len {
+        return Err(ProtocolError::too_large(max_len, len));
+    }
+    let mut buf = Vec::with_capacity(cautious_capacity(len));
+    let read = reader.take(len as u64).read_to_end(&mut buf)?;
+    if read < len {
+        return Err(ProtocolError::Incomplete { context: what });
+    }
+    Ok(buf)
+}
+
 pub(crate) fn read_string_bounded_from_reader(
-    reader: &mut impl Read,
+    reader: &mut (impl Read + ?Sized),
     max_chars: usize,
 ) -> ProtocolResult<String> {
-    let raw_len = read_varint_from_reader(reader)?.0;
-    if raw_len < 0 {
-        return Err(ProtocolError::invalid("negative length"));
-    }
-    let byte_len = raw_len as usize;
-    let max_bytes = max_chars * 4;
-    if byte_len > max_bytes {
-        return Err(ProtocolError::too_large(max_bytes, byte_len));
-    }
-    let mut buf = Vec::with_capacity(cautious_capacity(byte_len));
-    let read = reader.take(byte_len as u64).read_to_end(&mut buf)?;
-    if read < byte_len {
-        return Err(ProtocolError::Incomplete {
-            context: "String data",
-        });
-    }
+    let buf = read_length_prefixed(reader, max_chars.saturating_mul(4), "string")?;
     let s =
         String::from_utf8(buf).map_err(|_| ProtocolError::invalid("invalid UTF-8 in string"))?;
-    if s.chars().count() > max_chars {
-        return Err(ProtocolError::too_large(max_chars, s.chars().count()));
+    let chars = s.chars().count();
+    if chars > max_chars {
+        return Err(ProtocolError::too_large(max_chars, chars));
     }
     Ok(s)
 }
 
 macro_rules! impl_var_reader {
     ($fn_name:ident, $int_ty:ty, $wrapper:path, $max_size:expr, $err:literal) => {
-        pub(crate) fn $fn_name(reader: &mut impl Read) -> ProtocolResult<$wrapper> {
+        pub(crate) fn $fn_name(reader: &mut (impl Read + ?Sized)) -> ProtocolResult<$wrapper> {
             let mut val: $int_ty = 0;
             for i in 0..$max_size {
                 let mut byte = [0u8; 1];
@@ -382,12 +346,31 @@ mod tests {
 
     #[test]
     fn test_string_bounded_read() {
+        use crate::codec::McBufReadExt;
+
         let val = "a]".repeat(20);
         let mut buf = Vec::new();
         val.encode(&mut buf).unwrap();
         let mut slice: &[u8] = &buf;
-        let err = decode_string(&mut slice, 10).unwrap_err();
+        let err = slice.read_string_bounded(10).unwrap_err();
         assert!(err.is_fatal());
+    }
+
+    #[test]
+    fn test_byte_array_decode_is_capped_by_the_packet_data_size() {
+        let mut buf = Vec::new();
+        VarInt((MAX_BYTE_ARRAY_LEN + 1) as i32)
+            .encode(&mut buf)
+            .unwrap();
+        let mut cursor = buf.as_slice();
+        let err = Vec::<u8>::decode(&mut cursor).unwrap_err();
+        assert!(matches!(err, ProtocolError::TooLarge { .. }), "{err}");
+
+        let mut buf = Vec::new();
+        VarInt(MAX_BYTE_ARRAY_LEN as i32).encode(&mut buf).unwrap();
+        let mut cursor = buf.as_slice();
+        let err = Vec::<u8>::decode(&mut cursor).unwrap_err();
+        assert!(matches!(err, ProtocolError::Incomplete { .. }), "{err}");
     }
 
     #[test]

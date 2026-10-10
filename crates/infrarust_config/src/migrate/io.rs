@@ -8,34 +8,34 @@ use super::convert::{
 use super::v1_types::{V1InfrarustConfig, V1ServerConfig};
 use crate::error::ConfigError;
 
+#[derive(Debug, Default)]
+pub struct MigrationReport {
+    pub converted: usize,
+    pub skipped: usize,
+    pub warnings: Vec<MigrationWarning>,
+}
+
 pub fn migrate_directory(
     input_dir: &Path,
     output_dir: &Path,
-) -> Result<Vec<MigrationWarning>, ConfigError> {
+) -> Result<MigrationReport, ConfigError> {
     if !input_dir.is_dir() {
-        return Err(ConfigError::Validation(format!(
-            "Input directory does not exist: {}",
-            input_dir.display()
-        )));
+        return Err(ConfigError::DirectoryNotFound(input_dir.to_path_buf()));
     }
 
-    std::fs::create_dir_all(output_dir).map_err(|e| {
-        ConfigError::Validation(format!(
-            "Cannot create output directory {}: {e}",
-            output_dir.display()
-        ))
+    std::fs::create_dir_all(output_dir).map_err(|source| ConfigError::CreateDir {
+        path: output_dir.to_path_buf(),
+        source,
     })?;
 
     let mut all_warnings = Vec::new();
-    let mut converted = 0u32;
-    let mut skipped = 0u32;
+    let mut converted = 0usize;
+    let mut skipped = 0usize;
 
     let mut entries = Vec::new();
-    for result in std::fs::read_dir(input_dir).map_err(|e| {
-        ConfigError::Validation(format!(
-            "Cannot read input directory {}: {e}",
-            input_dir.display()
-        ))
+    for result in std::fs::read_dir(input_dir).map_err(|source| ConfigError::ReadDir {
+        path: input_dir.to_path_buf(),
+        source,
     })? {
         match result {
             Ok(entry) => entries.push(entry),
@@ -133,59 +133,52 @@ pub fn migrate_directory(
     }
 
     if converted == 0 && skipped > 0 {
-        let details: Vec<String> = all_warnings
-            .iter()
-            .map(|w| format!("{}: {}", w.file, w.message))
-            .collect();
-        return Err(ConfigError::Validation(format!(
-            "migration produced no output: all {skipped} candidate file(s) were skipped — {}",
-            details.join("; ")
-        )));
+        return Err(ConfigError::NothingMigrated {
+            skipped,
+            warnings: all_warnings,
+        });
     }
 
-    all_warnings.push(MigrationWarning {
-        severity: MigrationSeverity::Info,
-        file: "summary".to_string(),
-        message: format!("{converted} file(s) converted, {skipped} skipped"),
-    });
-
-    Ok(all_warnings)
+    Ok(MigrationReport {
+        converted,
+        skipped,
+        warnings: all_warnings,
+    })
 }
 
 pub fn migrate_proxy_config(
     input_file: &Path,
     output_file: &Path,
 ) -> Result<Vec<MigrationWarning>, ConfigError> {
-    let content = std::fs::read_to_string(input_file).map_err(|e| {
-        ConfigError::Validation(format!(
-            "Cannot read config file {}: {e}",
-            input_file.display()
-        ))
+    let content = std::fs::read_to_string(input_file).map_err(|source| ConfigError::ReadFile {
+        path: input_file.to_path_buf(),
+        source,
     })?;
 
-    let v1: V1InfrarustConfig = serde_yml::from_str(&content).map_err(|e| {
-        ConfigError::Validation(format!("YAML parse error in {}: {e}", input_file.display()))
-    })?;
+    let v1: V1InfrarustConfig =
+        serde_yml::from_str(&content).map_err(|source| ConfigError::ParseYaml {
+            path: input_file.to_path_buf(),
+            source,
+        })?;
 
     let result = convert_v1_proxy_config(&v1);
 
-    let toml_content = toml::to_string_pretty(&result.config)
-        .map_err(|e| ConfigError::Validation(format!("TOML serialization error: {e}")))?;
+    let toml_content =
+        toml::to_string_pretty(&result.config).map_err(|source| ConfigError::SerializeToml {
+            path: output_file.to_path_buf(),
+            source,
+        })?;
 
     if let Some(parent) = output_file.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            ConfigError::Validation(format!(
-                "Cannot create output directory {}: {e}",
-                parent.display()
-            ))
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::CreateDir {
+            path: parent.to_path_buf(),
+            source,
         })?;
     }
 
-    std::fs::write(output_file, toml_content).map_err(|e| {
-        ConfigError::Validation(format!(
-            "Cannot write output file {}: {e}",
-            output_file.display()
-        ))
+    std::fs::write(output_file, toml_content).map_err(|source| ConfigError::WriteFile {
+        path: output_file.to_path_buf(),
+        source,
     })?;
 
     Ok(result.warnings)
@@ -193,6 +186,7 @@ pub fn migrate_proxy_config(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use std::fs;
 
@@ -225,7 +219,7 @@ motds:
         )
         .unwrap();
 
-        let warnings = migrate_directory(&input, &output).unwrap();
+        let report = migrate_directory(&input, &output).unwrap();
 
         let out_path = output.join("survival.toml");
         assert!(out_path.exists());
@@ -236,8 +230,29 @@ motds:
         assert!(config.motd.sleeping.is_some());
         assert!(config.motd.online.is_some());
 
-        let summary = warnings.iter().find(|w| w.file == "summary").unwrap();
-        assert!(summary.message.contains("1 file(s) converted"));
+        assert_eq!(report.converted, 1);
+        assert_eq!(report.skipped, 0);
+        assert!(report.warnings.iter().all(|w| w.file != "summary"));
+    }
+
+    #[test]
+    fn test_migrate_counts_skipped_files_next_to_converted_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("v1");
+        let output = tmp.path().join("v2");
+        fs::create_dir_all(&input).unwrap();
+        fs::write(
+            input.join("lobby.yaml"),
+            "domains:\n  - lobby.example.com\naddresses:\n  - 127.0.0.1:25566\n",
+        )
+        .unwrap();
+        fs::write(input.join("empty.yaml"), "domains: []\naddresses: []\n").unwrap();
+
+        let report = migrate_directory(&input, &output).unwrap();
+        assert_eq!(report.converted, 1);
+        assert_eq!(report.skipped, 1);
+        assert!(report.warnings.iter().any(|w| w.file == "empty.yaml"));
+        assert!(report.warnings.iter().all(|w| w.file != "summary"));
     }
 
     #[test]
@@ -255,7 +270,17 @@ motds:
         fs::write(input.join("broken.yaml"), ": not [ valid yaml").unwrap();
 
         let err = migrate_directory(&input, &output).unwrap_err();
+        assert!(
+            matches!(&err, ConfigError::NothingMigrated { skipped: 1, warnings } if warnings.len() == 1),
+            "{err:?}"
+        );
         assert!(err.to_string().contains("broken.yaml"));
+    }
+
+    #[test]
+    fn test_migrate_invalid_dir_is_a_missing_directory() {
+        let err = migrate_directory(Path::new("/nonexistent"), Path::new("/tmp/out")).unwrap_err();
+        assert!(matches!(err, ConfigError::DirectoryNotFound(_)), "{err:?}");
     }
 
     #[test]
@@ -265,8 +290,9 @@ motds:
         let output = tmp.path().join("v2");
         fs::create_dir_all(&input).unwrap();
 
-        let warnings = migrate_directory(&input, &output).unwrap();
-        let summary = warnings.iter().find(|w| w.file == "summary").unwrap();
-        assert!(summary.message.contains("0 file(s) converted"));
+        let report = migrate_directory(&input, &output).unwrap();
+        assert_eq!(report.converted, 0);
+        assert_eq!(report.skipped, 0);
+        assert!(report.warnings.is_empty());
     }
 }

@@ -6,6 +6,9 @@ rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 description = "HTTP REST API plugin for Infrarust proxy administration"
+keywords = ["minecraft", "proxy", "plugin", "admin", "rest"]
+categories = ["game-development", "web-programming::http-server"]
+include = ["Cargo.toml", "build.rs", "src/**/*", "tests/**/*", "frontend/.output/public/**/*"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -40,7 +43,13 @@ time = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
 
+[features]
+default = []
+test-util = []
+
 [dev-dependencies]
+infrarust-plugin-admin-api = { path = ".", features = ["test-util"] }
+infrarust-api = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = { workspace = true }
 http-body-util = { workspace = true }

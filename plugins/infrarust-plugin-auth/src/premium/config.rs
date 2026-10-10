@@ -83,6 +83,7 @@ impl Default for PremiumMessages {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

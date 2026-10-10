@@ -13,7 +13,7 @@ fn decode_keepalive_id(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResul
 }
 
 fn encode_keepalive_id(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     id: i64,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
@@ -50,6 +50,7 @@ define_twin_packets! {
         V1_21_5 => 0x26,
         V1_21_9 => 0x2B,
         V26_1   => 0x2C,
+        V26_3   => 0x2D,
     ],
     serverbound_ids: ids![
         V1_7_2  => 0x00,

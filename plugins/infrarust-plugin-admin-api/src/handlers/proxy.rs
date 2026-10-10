@@ -42,16 +42,3 @@ pub async fn shutdown(
 
     Ok(mutation_ok("Proxy shutdown initiated"))
 }
-
-pub async fn gc(
-    State(_state): State<Arc<ApiState>>,
-) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
-    tracing::info!(
-        target: "audit",
-        action = "gc",
-        source = "admin_api",
-        "GC requested via Admin API"
-    );
-
-    Ok(mutation_ok("Garbage collection completed (no-op in Rust)"))
-}

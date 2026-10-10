@@ -14,7 +14,7 @@ pub use crate::types::{
 pub use crate::error::{PlayerError, PluginError, ServiceError};
 
 // Event system
-pub use crate::event::bus::{EventBus, EventBusExt};
+pub use crate::event::bus::{EventBus, EventBusExt, FireError};
 pub use crate::event::{
     BoxFuture, ConnectionState, Event, EventPriority, ListenerHandle, PacketDirection,
     PacketFilter, ResultedEvent,
@@ -24,40 +24,65 @@ pub use crate::event::{
 pub use crate::events::*;
 
 // Plugin lifecycle
-pub use crate::plugin::{Plugin, PluginContext, PluginDependency, PluginMetadata};
+pub use crate::plugin::{
+    Plugin, PluginContext, PluginDependency, PluginHealth, PluginMetadata, PluginRuntimeStatus,
+    PluginState,
+};
 
 // Player
-pub use crate::player::Player;
+pub use crate::player::{
+    BossBar, BossBarColor, BossBarFlags, BossBarHandle, BossBarOverlay, BossBarUpdate, ChatMode,
+    ClientSettings, ConnectionResult, MainHand, ParticleStatus, Player, ResourcePackRequest,
+    ResourcePackStatus, SkinParts,
+};
+
+pub use crate::messaging::{
+    ChannelId, ChannelIdError, ChannelRegistrar, Endpoint, MessagePhase, MessagingError,
+    ServerMessenger,
+};
 
 // Services
 pub use crate::services::{
-    BackendState, BackendStatus, BanEntry, BanService, BanTarget, ConfigService, ConfigWriteError,
-    LbError, LoadBalancerService, PlayerRegistry, PluginRegistry, ProxyInfo, ProxyMode, Scheduler,
-    ServerConfig, ServerManager, ServerState, TaskHandle,
+    BackendState, BackendStatus, BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest,
+    BanService, BanSource, BanTarget, BanVerdict, ConfigService, ConfigWriteError, KeepaliveInfo,
+    LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry, PluginInfo,
+    PluginRegistry, ProviderKind, ProviderRejected, ProxyInfo, ProxyMode, RateLimitInfo, Scheduler,
+    ServerConfig, ServerManager, ServerSource, ServerState, ServiceHandle, ServiceRegistry,
+    ServiceRegistryExt, StatusCacheInfo, TaskHandle, UnbanRequest, UnknownDomainBehavior,
 };
 
 // Permissions and capabilities
-pub use crate::permissions::{Capability, CapabilitySet, PermissionChecker, PermissionLevel};
+pub use crate::permissions::{
+    ADMIN_PERMISSION, Capability, CapabilitySet, PermissionChecker, PermissionDefault,
+    PermissionMap, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
+    PermissionSnapshot, PermissionSubject, SnapshotPermissionChecker, Tristate,
+};
 
 // Limbo
 pub use crate::limbo::{
-    HandlerResult, LimboEntryContext, LimboHandler, LimboSession, SessionEndReason, SessionHandle,
+    HandlerResult, LimboEntryContext, LimboHandler, LimboHandlerError, LimboHandlerRegistration,
+    LimboOutcome, LimboSession, SessionEndReason, SessionHandle,
 };
 
 // Virtual backend
+#[cfg(feature = "unstable")]
 pub use crate::virtual_backend::{VirtualBackendHandler, VirtualBackendSession};
 
 // Commands
-pub use crate::command::{CommandContext, CommandHandler, CommandManager};
+pub use crate::command::{
+    CommandContext, CommandError, CommandHandler, CommandInfo, CommandManager, CommandRegistration,
+    CommandSource, CommandSpec, SuggestContext, Suggestion,
+};
 
 // Proxy messages
-pub use crate::message::ProxyMessage;
+pub use crate::branding::ProxyMessage;
 
 // Filters
 pub use crate::filter::{
     CodecFilterError, CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry,
-    CodecSessionInit, CodecVerdict, ConnectionSide, FilterMetadata, FilterPriority, FilterVerdict,
-    FrameOutput, TransportContext, TransportFilter, TransportFilterRegistry,
+    CodecSessionInit, CodecVerdict, ConnectionSide, FilterMetadata, FilterPriority,
+    FilterRegistryError, FilterVerdict, FrameOutput, TransportContext, TransportFilter,
+    TransportFilterRegistry,
 };
 
 pub use crate::provider::{

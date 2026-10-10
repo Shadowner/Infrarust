@@ -1,96 +1,126 @@
 //! Chat message events.
 
-use crate::event::{Event, ResultedEvent};
-use crate::types::{Component, PlayerId};
+use std::sync::Arc;
+
+use crate::player::Player;
+use crate::types::{Component, ServerId};
 
 /// Fired when a player sends a chat message.
 ///
 /// Listeners can allow, deny, or modify the message.
+#[non_exhaustive]
 pub struct ChatMessageEvent {
-    /// The player who sent the message.
-    pub player_id: PlayerId,
-    /// The original message text.
+    pub player: Arc<dyn Player>,
     pub message: String,
+    pub signed: bool,
+    pub server: Option<ServerId>,
     result: ChatMessageResult,
 }
 
 impl ChatMessageEvent {
-    pub fn new(player_id: PlayerId, message: String) -> Self {
+    pub fn new(
+        player: Arc<dyn Player>,
+        message: String,
+        signed: bool,
+        server: Option<ServerId>,
+    ) -> Self {
         Self {
-            player_id,
+            player,
             message,
+            signed,
+            server,
             result: ChatMessageResult::default(),
         }
     }
 
-    /// Shortcut: deny the message with a reason.
-    pub fn deny(&mut self, reason: Component) {
-        self.result = ChatMessageResult::Deny { reason };
+    pub fn allow(&mut self) {
+        self.result = ChatMessageResult::Allow;
     }
 
-    /// Shortcut: modify the message text.
-    pub fn modify(&mut self, new_message: String) {
-        self.result = ChatMessageResult::Modify { new_message };
+    pub fn deny(&mut self, reason: Component) {
+        self.result = ChatMessageResult::Deny {
+            reason: Some(reason),
+        };
+    }
+
+    pub fn deny_silently(&mut self) {
+        self.result = ChatMessageResult::Deny { reason: None };
+    }
+
+    pub fn modify(&mut self, message: impl Into<String>) {
+        self.result = ChatMessageResult::Modify {
+            message: message.into(),
+        };
     }
 }
 
 /// The result of a [`ChatMessageEvent`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub enum ChatMessageResult {
-    /// Allow the message through unmodified.
     #[default]
     Allow,
-    /// Block the message and optionally notify the sender.
     Deny {
-        /// The reason shown to the sender.
-        reason: Component,
+        reason: Option<Component>,
     },
-    /// Replace the message content.
     Modify {
-        /// The new message text.
-        new_message: String,
+        message: String,
     },
 }
 
-impl Event for ChatMessageEvent {}
-impl ResultedEvent for ChatMessageEvent {
-    type Result = ChatMessageResult;
+crate::events::player_event!(ChatMessageEvent, profile);
 
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
+crate::event::resulted_event!(ChatMessageEvent, ChatMessageResult);
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crate::event::ResultedEvent;
+    use crate::test_util::MockPlayer;
+    use crate::types::PlayerId;
+
+    pub(crate) fn steve() -> Arc<dyn Player> {
+        MockPlayer::new(1, "Steve").into_arc()
+    }
+
+    fn chat(message: &str) -> ChatMessageEvent {
+        ChatMessageEvent::new(steve(), message.into(), false, Some(ServerId::new("lobby")))
+    }
 
     #[test]
     fn default_allows() {
-        let event = ChatMessageEvent::new(PlayerId::new(1), "hello".into());
-        assert!(matches!(event.result(), ChatMessageResult::Allow));
+        let event = chat("hello");
+        assert_eq!(event.result(), &ChatMessageResult::Allow);
+        assert_eq!(event.player_id(), PlayerId::new(1));
+        assert_eq!(event.profile().username, "Steve");
     }
 
     #[test]
     fn deny_message() {
-        let mut event = ChatMessageEvent::new(PlayerId::new(1), "bad word".into());
+        let mut event = chat("bad word");
         event.deny(Component::error("Watch your language!"));
-        assert!(matches!(event.result(), ChatMessageResult::Deny { .. }));
+        assert_eq!(
+            event.result(),
+            &ChatMessageResult::Deny {
+                reason: Some(Component::error("Watch your language!"))
+            }
+        );
+        event.deny_silently();
+        assert_eq!(event.result(), &ChatMessageResult::Deny { reason: None });
+        event.allow();
+        assert_eq!(event.result(), &ChatMessageResult::Allow);
     }
 
     #[test]
     fn modify_message() {
-        let mut event = ChatMessageEvent::new(PlayerId::new(1), "hello".into());
-        event.modify("HELLO".into());
-        match event.result() {
-            ChatMessageResult::Modify { new_message } => assert_eq!(new_message, "HELLO"),
-            _ => panic!("expected Modify"),
-        }
+        let mut event = chat("hello");
+        event.modify("HELLO");
+        assert_eq!(
+            event.result(),
+            &ChatMessageResult::Modify {
+                message: "HELLO".into()
+            }
+        );
     }
 }

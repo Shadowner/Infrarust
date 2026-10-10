@@ -1,4 +1,3 @@
-//! Shared boilerplate for the raw-`wit_bindgen` sandbox fixtures.
 #[allow(clippy::crate_in_macro_def)]
 #[macro_export]
 macro_rules! raw_fixture {
@@ -9,8 +8,28 @@ macro_rules! raw_fixture {
         description: $desc:expr,
         on_enable: $on_enable:block $(,)?
     ) => {
-        impl crate::exports::infrarust::plugin::guest::Guest for $comp {
-            fn metadata() -> crate::exports::infrarust::plugin::guest::PluginMetadata {
+        $crate::raw_fixture!(
+            $comp,
+            id: $id,
+            name: $name,
+            description: $desc,
+            on_enable: $on_enable,
+            handle_event: |_listener: u64, _ev: crate::exports::infrarust::plugin::guest::Event| {
+                crate::exports::infrarust::plugin::guest::EventOutcome::Unchanged
+            },
+        );
+    };
+    (
+        $comp:ident,
+        id: $id:literal,
+        name: $name:literal,
+        description: $desc:expr,
+        on_enable: $on_enable:block,
+        handle_event: $handle:expr $(,)?
+    ) => {
+        $crate::raw_fixture_with_metadata!(
+            $comp,
+            metadata: {
                 crate::exports::infrarust::plugin::guest::PluginMetadata {
                     id: ::std::string::String::from($id),
                     name: ::std::string::String::from($name),
@@ -19,31 +38,66 @@ macro_rules! raw_fixture {
                     description: $desc,
                     dependencies: ::std::vec::Vec::new(),
                 }
-            }
-            fn on_enable() -> ::core::result::Result<(), ::std::string::String> $on_enable
-            fn on_disable() -> ::core::result::Result<(), ::std::string::String> {
+            },
+            on_enable: $on_enable,
+            handle_event: $handle,
+        );
+    };
+}
+
+#[allow(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! raw_fixture_with_metadata {
+    (
+        $comp:ident,
+        metadata: $metadata:block,
+        on_enable: $on_enable:block $(,)?
+    ) => {
+        $crate::raw_fixture_with_metadata!(
+            $comp,
+            metadata: $metadata,
+            on_enable: $on_enable,
+            handle_event: |_listener: u64, _ev: crate::exports::infrarust::plugin::guest::Event| {
+                crate::exports::infrarust::plugin::guest::EventOutcome::Unchanged
+            },
+        );
+    };
+    (
+        $comp:ident,
+        metadata: $metadata:block,
+        on_enable: $on_enable:block,
+        handle_event: $handle:expr $(,)?
+    ) => {
+        impl crate::exports::infrarust::plugin::guest::Guest for $comp {
+            fn metadata() -> crate::exports::infrarust::plugin::guest::PluginMetadata $metadata
+            fn on_enable(
+                _reason: crate::exports::infrarust::plugin::guest::EnableReason,
+            ) -> ::core::result::Result<(), ::std::string::String> $on_enable
+            fn on_disable(
+                _reason: crate::exports::infrarust::plugin::guest::DisableReason,
+            ) -> ::core::result::Result<(), ::std::string::String> {
                 ::core::result::Result::Ok(())
             }
             fn handle_event(
-                _listener: u64,
-                _ev: crate::exports::infrarust::plugin::guest::Event,
+                listener: u64,
+                ev: crate::exports::infrarust::plugin::guest::Event,
             ) -> crate::exports::infrarust::plugin::guest::EventOutcome {
-                crate::exports::infrarust::plugin::guest::EventOutcome::None
+                ($handle)(listener, ev)
             }
             fn handle_command(
-                _callback_id: u64,
-                _args: ::std::vec::Vec<::std::string::String>,
-                _player: ::core::option::Option<u64>,
+                _handler: u64,
+                _invocation: crate::exports::infrarust::plugin::guest::CommandInvocation,
             ) {
             }
             fn tab_complete(
-                _callback_id: u64,
-                _partial: ::std::vec::Vec<::std::string::String>,
+                _handler: u64,
+                _sender: crate::exports::infrarust::plugin::guest::CommandSender,
+                _args: ::std::vec::Vec<::std::string::String>,
                 _cursor: u32,
-            ) -> ::std::vec::Vec<::std::string::String> {
+            ) -> ::std::vec::Vec<crate::exports::infrarust::plugin::guest::Suggestion> {
                 ::std::vec::Vec::new()
             }
-            fn on_scheduled_task(_callback_id: u64) {}
+            fn on_scheduled_task(_handler: u64) {}
             fn limbo_on_player_enter(
                 _handler: u64,
                 _session: &crate::exports::infrarust::plugin::guest::LimboSession,
@@ -70,13 +124,54 @@ macro_rules! raw_fixture {
                 _reason: crate::exports::infrarust::plugin::guest::SessionEndReason,
             ) {
             }
-            fn permission_level_of(
-                _handler: u64,
-            ) -> crate::exports::infrarust::plugin::guest::PermissionLevel {
-                crate::exports::infrarust::plugin::guest::PermissionLevel::Player
+            fn ban_provider_check(
+                _attempt: crate::infrarust::plugin::ban_service::LoginAttempt,
+            ) -> ::core::result::Result<
+                ::core::option::Option<crate::infrarust::plugin::ban_service::BanVerdict>,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
             }
-            fn check_permission(_handler: u64, _permission: ::std::string::String) -> bool {
-                false
+            fn ban_provider_ban(
+                _request: crate::infrarust::plugin::ban_service::BanRequest,
+                _source: crate::infrarust::plugin::ban_service::BanSource,
+            ) -> ::core::result::Result<
+                crate::infrarust::plugin::ban_service::BanRecord,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_unban(
+                _request: crate::infrarust::plugin::ban_service::UnbanRequest,
+            ) -> ::core::result::Result<
+                ::core::option::Option<crate::infrarust::plugin::ban_service::BanRecord>,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_get(
+                _target: crate::infrarust::plugin::ban_service::BanTarget,
+            ) -> ::core::result::Result<
+                ::core::option::Option<crate::infrarust::plugin::ban_service::BanRecord>,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn ban_provider_list(
+                _query: crate::infrarust::plugin::ban_service::BanQuery,
+            ) -> ::core::result::Result<
+                crate::infrarust::plugin::ban_service::BanRecordPage,
+                ::std::string::String,
+            > {
+                ::core::result::Result::Err(::std::string::String::from("no ban provider"))
+            }
+            fn permission_snapshot_for(
+                _subject: crate::infrarust::plugin::permissions::PermissionSubject,
+            ) -> crate::infrarust::plugin::permissions::PermissionSnapshot {
+                crate::infrarust::plugin::permissions::PermissionSnapshot {
+                    rules: ::std::vec::Vec::new(),
+                    admin: false,
+                }
             }
         }
 
@@ -102,6 +197,11 @@ macro_rules! raw_fixture {
                 &self,
                 _packet_id: i32,
                 _data: ::std::vec::Vec<u8>,
+            ) -> crate::exports::infrarust::plugin::codec_filter::FilterVerdict {
+                crate::exports::infrarust::plugin::codec_filter::FilterVerdict::Pass
+            }
+            fn take_output(
+                &self,
             ) -> crate::exports::infrarust::plugin::codec_filter::FilterOutput {
                 crate::exports::infrarust::plugin::codec_filter::FilterOutput::Pass
             }

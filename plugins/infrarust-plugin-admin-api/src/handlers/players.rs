@@ -11,11 +11,10 @@ use crate::dto::player::{PlayerCountResponse, PlayerDetailResponse, PlayerRespon
 use crate::dto::requests::{BroadcastRequest, KickRequest, MessageRequest, SendRequest};
 use crate::error::ApiError;
 use crate::response::{
-    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, default_page,
-    default_per_page, mutation_ok, ok,
+    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, mutation_ok, ok,
 };
 use crate::state::ApiState;
-use crate::util::proxy_mode_str;
+use crate::util::ProxyModeName;
 
 const MAX_TEXT_LEN: usize = 256;
 
@@ -30,23 +29,22 @@ fn validate_text(text: &str) -> Result<(), ApiError> {
 
 #[derive(Debug, Deserialize)]
 pub struct PlayerListQuery {
-    #[serde(default = "default_page")]
-    pub page: usize,
-    #[serde(default = "default_per_page")]
-    pub per_page: usize,
     pub server: Option<String>,
     pub mode: Option<String>,
 }
 
 pub async fn list(
     State(state): State<Arc<ApiState>>,
+    Query(mut pagination): Query<PaginationParams>,
     Query(query): Query<PlayerListQuery>,
 ) -> Result<Json<PaginatedResponse<PlayerResponse>>, ApiError> {
-    let mut pagination = PaginationParams {
-        page: query.page,
-        per_page: query.per_page,
-    };
     pagination.normalize();
+
+    let mode_filter = query
+        .mode
+        .as_deref()
+        .map(str::parse::<ProxyModeName>)
+        .transpose()?;
 
     let mut players = state.player_registry.get_all_players();
 
@@ -57,15 +55,14 @@ pub async fn list(
         });
     }
 
-    if let Some(ref mode_filter) = query.mode {
-        players.retain(|p| {
-            if let Some(server_id) = p.current_server()
-                && let Some(config) = state.config_service.get_server_config(&server_id)
-            {
-                return proxy_mode_str(config.proxy_mode) == mode_filter.as_str();
+    if let Some(mode) = mode_filter {
+        let mut on_mode = Vec::with_capacity(players.len());
+        for player in players {
+            if proxy_mode_of(&state, player.as_ref())? == Some(mode) {
+                on_mode.push(player);
             }
-            false
-        });
+        }
+        players = on_mode;
     }
 
     players.sort_by(|a, b| {
@@ -107,12 +104,9 @@ pub async fn count(
             *by_server
                 .entry(server_id.as_str().to_string())
                 .or_insert(0usize) += 1;
-
-            if let Some(config) = state.config_service.get_server_config(&server_id) {
-                *by_mode
-                    .entry(proxy_mode_str(config.proxy_mode).to_string())
-                    .or_insert(0usize) += 1;
-            }
+        }
+        if let Some(mode) = proxy_mode_of(&state, player.as_ref())? {
+            *by_mode.entry(mode.to_string()).or_insert(0usize) += 1;
         }
     }
 
@@ -231,6 +225,16 @@ pub async fn broadcast(
     Ok(mutation_ok(format!(
         "Broadcast sent to {sent} players ({failed} failed)"
     )))
+}
+
+fn proxy_mode_of(state: &ApiState, player: &dyn Player) -> Result<Option<ProxyModeName>, ApiError> {
+    let Some(server_id) = player.current_server() else {
+        return Ok(None);
+    };
+    let Some(config) = state.config_service.get_server_config(&server_id) else {
+        return Ok(None);
+    };
+    Ok(Some(ProxyModeName::try_from(config.proxy_mode)?))
 }
 
 fn find_player(state: &ApiState, id_or_username: &str) -> Option<Arc<dyn Player>> {

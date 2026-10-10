@@ -5,7 +5,7 @@ pub mod config;
 pub mod detector;
 pub mod lookup;
 
-pub use cache::{PremiumCache, PremiumStatus};
+pub use cache::{FailedAuth, PremiumCache, PremiumStatus};
 pub use config::PremiumConfig;
 pub use detector::PremiumDetector;
 pub use lookup::MojangApiLookup;

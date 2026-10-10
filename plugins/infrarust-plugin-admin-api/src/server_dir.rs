@@ -125,6 +125,57 @@ impl Committed<'_> {
     }
 }
 
+pub struct WriteLock<'a> {
+    dir: &'a ServerDir,
+    guard: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl<'a> WriteLock<'a> {
+    /// Replaces the document filed as `id`.
+    pub async fn replace(self, id: &DocumentId, text: String) -> Result<Committed<'a>, StoreError> {
+        let config = document_config(id, &text)?;
+        let path = self.dir.path_of(id);
+        self.dir.store(path, text, config).await?;
+
+        Ok(Committed {
+            id: id.clone(),
+            _guard: self.guard,
+        })
+    }
+
+    /// Deletes the document filed under `id`, or `None` when there is none.
+    pub async fn remove(self, id: &DocumentId) -> Result<Option<Committed<'a>>, StoreError> {
+        let path = self.dir.path_of(id);
+
+        if !self
+            .dir
+            .snapshot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&path)
+        {
+            return Ok(None);
+        }
+
+        if let Err(source) = tokio::fs::remove_file(&path).await
+            && source.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(StoreError::Io { path, source });
+        }
+
+        self.dir
+            .snapshot
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&path);
+
+        Ok(Some(Committed {
+            id: id.clone(),
+            _guard: self.guard,
+        }))
+    }
+}
+
 /// A change detected between the directory and the last known snapshot.
 pub enum DirChange {
     Added(ServerDocument),
@@ -135,8 +186,8 @@ pub enum DirChange {
 impl DirChange {
     fn into_event(self) -> PluginProviderEvent {
         match self {
-            DirChange::Added(doc) => PluginProviderEvent::AddedDocument(doc),
-            DirChange::Updated(doc) => PluginProviderEvent::UpdatedDocument(doc),
+            DirChange::Added(doc) => PluginProviderEvent::Added(doc),
+            DirChange::Updated(doc) => PluginProviderEvent::Updated(doc),
             DirChange::Removed(id) => PluginProviderEvent::Removed(id),
         }
     }
@@ -268,53 +319,13 @@ impl ServerDir {
         })
     }
 
-    /// Replaces the document filed as `id`.
-    pub async fn replace(
-        &self,
-        id: &DocumentId,
-        text: String,
-    ) -> Result<Committed<'_>, StoreError> {
-        let config = document_config(id, &text)?;
-        let path = self.path_of(id);
-
-        let guard = self.write_lock.lock().await;
-        self.store(path, text, config).await?;
-
-        Ok(Committed {
-            id: id.clone(),
-            _guard: guard,
-        })
-    }
-
-    /// Deletes the document filed under `id`, or `None` when there is none.
-    pub async fn remove(&self, id: &DocumentId) -> Result<Option<Committed<'_>>, StoreError> {
-        let path = self.path_of(id);
-        let guard = self.write_lock.lock().await;
-
-        if !self
-            .snapshot
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .contains_key(&path)
-        {
-            return Ok(None);
+    /// Takes the write lock, so the caller can check a document and then
+    /// write it without another writer slipping in between.
+    pub async fn lock_writes(&self) -> WriteLock<'_> {
+        WriteLock {
+            dir: self,
+            guard: self.write_lock.lock().await,
         }
-
-        if let Err(source) = tokio::fs::remove_file(&path).await
-            && source.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(StoreError::Io { path, source });
-        }
-
-        self.snapshot
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&path);
-
-        Ok(Some(Committed {
-            id: id.clone(),
-            _guard: guard,
-        }))
     }
 
     async fn store(
@@ -432,7 +443,8 @@ pub fn parse_document(stem: &str, text: &str) -> Result<ServerConfig, String> {
         config.id = Some(stem.to_string());
     }
 
-    infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
+    // The proxy reports the warnings when it applies the document.
+    let _ = infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
     Ok(config)
 }
 
@@ -622,10 +634,11 @@ fn migrate_legacy_store(data_dir: &Path, dir: &Path) {
             continue;
         }
 
-        let proxy_mode = crate::util::proxy_mode_str(
-            crate::util::parse_proxy_mode(&server.proxy_mode)
-                .unwrap_or(infrarust_api::services::config_service::ProxyMode::Passthrough),
-        );
+        let proxy_mode = server
+            .proxy_mode
+            .parse::<crate::util::ProxyModeName>()
+            .unwrap_or(crate::util::ProxyModeName::Passthrough)
+            .as_str();
         let document = match toml::to_string_pretty(&MigratedServer {
             id: &server.id,
             domains: &server.domains,
@@ -675,8 +688,8 @@ fn migrate_legacy_store(data_dir: &Path, dir: &Path) {
     tracing::info!(count = migrated, path = %done.display(), "Migrated legacy servers.json");
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_support {
     //! [`PluginProviderSender`]s standing in for the proxy.
 
     use std::sync::{Arc, Mutex};
@@ -687,10 +700,10 @@ pub(crate) mod test_support {
     use super::{DocumentId, PluginProviderEvent, PluginProviderSender, ServerDir};
 
     #[derive(Clone, Default)]
-    pub(crate) struct RecordingSender(Arc<Mutex<Vec<String>>>);
+    pub struct RecordingSender(Arc<Mutex<Vec<String>>>);
 
     impl RecordingSender {
-        pub(crate) fn events(&self) -> Vec<String> {
+        pub fn events(&self) -> Vec<String> {
             self.0.lock().unwrap_or_else(|p| p.into_inner()).clone()
         }
     }
@@ -698,8 +711,8 @@ pub(crate) mod test_support {
     impl PluginProviderSender for RecordingSender {
         fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
             let label = match event {
-                PluginProviderEvent::AddedDocument(doc) => format!("added:{}", doc.id.as_str()),
-                PluginProviderEvent::UpdatedDocument(doc) => format!("updated:{}", doc.id.as_str()),
+                PluginProviderEvent::Added(doc) => format!("added:{}", doc.id.as_str()),
+                PluginProviderEvent::Updated(doc) => format!("updated:{}", doc.id.as_str()),
                 PluginProviderEvent::Removed(id) => format!("removed:{}", id.as_str()),
                 _ => "other".to_string(),
             };
@@ -712,12 +725,12 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) struct SlowSender {
+    pub struct SlowSender {
         delay: Duration,
     }
 
     impl SlowSender {
-        pub(crate) fn new(delay: Duration) -> Self {
+        pub fn new(delay: Duration) -> Self {
             Self { delay }
         }
     }
@@ -735,16 +748,16 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) type Announcements = Arc<Mutex<Vec<(String, Option<String>)>>>;
+    pub type Announcements = Arc<Mutex<Vec<(String, Option<String>)>>>;
 
-    pub(crate) struct DocumentDuringSend {
+    pub struct DocumentDuringSend {
         dir: Arc<ServerDir>,
         delay: Duration,
         announcements: Announcements,
     }
 
     impl DocumentDuringSend {
-        pub(crate) fn new(dir: Arc<ServerDir>, delay: Duration) -> (Self, Announcements) {
+        pub fn new(dir: Arc<ServerDir>, delay: Duration) -> (Self, Announcements) {
             let announcements = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
@@ -761,8 +774,7 @@ pub(crate) mod test_support {
         fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
             Box::pin(async move {
                 let (id, announced) = match event {
-                    PluginProviderEvent::AddedDocument(doc)
-                    | PluginProviderEvent::UpdatedDocument(doc) => {
+                    PluginProviderEvent::Added(doc) | PluginProviderEvent::Updated(doc) => {
                         (doc.id.as_str().to_string(), doc.toml)
                     }
                     _ => return true,
@@ -1002,13 +1014,25 @@ mod tests {
         let (root, dir) = open();
         store(&dir, "survival", SURVIVAL).await;
 
-        let removed = dir.remove(&id("survival")).await.unwrap();
+        let removed = dir
+            .lock_writes()
+            .await
+            .remove(&id("survival"))
+            .await
+            .unwrap();
         assert_eq!(
             removed.map(|removed| removed.id().to_string()).as_deref(),
             Some("survival")
         );
         assert!(!root.path().join("servers/survival.toml").exists());
-        assert!(dir.remove(&id("survival")).await.unwrap().is_none());
+        assert!(
+            dir.lock_writes()
+                .await
+                .remove(&id("survival"))
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(dir.diff().await.is_empty());
     }
 

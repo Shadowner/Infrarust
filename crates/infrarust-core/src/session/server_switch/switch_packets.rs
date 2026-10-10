@@ -9,12 +9,11 @@ use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::play::dimension::{
     DimensionInfo, extract_dimension_from_join_game,
 };
-use infrarust_protocol::packets::play::respawn::CRespawn;
-use infrarust_protocol::packets::play::respawn_switch;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
+use crate::player::packets::respawn_frame;
 use crate::session::client_bridge::ClientBridge;
 
 /// Sends the server switch packets to the client.
@@ -56,34 +55,20 @@ pub async fn send_switch_packets(
         // Pre-1.16: double Respawn trick
         // First: send Respawn with a DIFFERENT dimension to force world unload
         let temp_dim = temp_dimension(&dimension);
-        send_respawn(client, &temp_dim, version, registry).await?;
+        client
+            .write_frame(&respawn_frame(&temp_dim, version, registry)?)
+            .await?;
         // Second: send Respawn with the REAL dimension
-        send_respawn(client, &dimension, version, registry).await?;
+        client
+            .write_frame(&respawn_frame(&dimension, version, registry)?)
+            .await?;
     } else {
         // 1.16-1.20.1: single Respawn (JoinGame already triggers world reset)
-        send_respawn(client, &dimension, version, registry).await?;
+        client
+            .write_frame(&respawn_frame(&dimension, version, registry)?)
+            .await?;
     }
 
-    Ok(())
-}
-
-/// Sends a constructed Respawn packet to the client.
-async fn send_respawn(
-    client: &mut ClientBridge,
-    dimension: &DimensionInfo,
-    version: ProtocolVersion,
-    registry: &PacketRegistry,
-) -> Result<(), CoreError> {
-    let respawn = respawn_switch::for_switch(dimension, version);
-    let packet_id = registry
-        .get_packet_id::<CRespawn>(version)
-        .ok_or_else(|| CoreError::Protocol(ProtocolError::invalid("no Respawn packet ID")))?;
-
-    let mut payload = Vec::new();
-    respawn.encode(&mut payload, version)?;
-
-    let frame = PacketFrame::new(packet_id, payload.into());
-    client.write_frame(&frame).await?;
     Ok(())
 }
 

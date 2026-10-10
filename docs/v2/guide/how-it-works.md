@@ -17,10 +17,10 @@ flowchart TD
     TF -->|Accepted| CP[Common pipeline]
 
     CP --> IP[IP filter]
-    IP --> BAN_IP[Ban IP check]
-    BAN_IP --> HS[Handshake parser]
+    IP --> HS[Handshake parser]
     HS -->|Legacy client| LEGACY[Legacy handler]
-    HS -->|Modern client| RL[Rate limiter]
+    HS -->|Modern client| BAN_IP[Ban IP check]
+    BAN_IP --> RL[Rate limiter]
     RL --> DR[Domain router]
     DR -->|No match| REJECT[Kick or drop]
 
@@ -30,9 +30,9 @@ flowchart TD
     LP --> LS[Login start parser]
     LS --> BAN[Ban check]
     BAN --> TEL[Telemetry span]
-    TEL --> SM[Server manager]
+    TEL --> BS[Backend selection]
 
-    SM --> MODE{Proxy mode?}
+    BS --> MODE{Proxy mode?}
     MODE -->|passthrough / zero_copy / server_only| PT[Passthrough handler]
     MODE -->|client_only| CO[Intercepted handler + Mojang auth]
     MODE -->|offline| OFF[Intercepted handler, no auth]
@@ -46,7 +46,7 @@ flowchart TD
 
 Infrarust binds a TCP listener on the configured address (default `0.0.0.0:25565`). The default `max_connections` is `0`, which means unlimited and no limiting. When `max_connections` is set above zero, the listener creates a semaphore of that size and acquires a permit before each accept; once the permits run out, new connections wait until an open one is dropped. The permit is held for the lifetime of the connection.
 
-Before any packet parsing, plugins can register transport filters that inspect the raw `TransportContext` (remote address, local address, connection time). A filter returning `Reject` drops the connection immediately. This runs before the proxy even reads a byte from the client.
+Each accepted connection is handed to its own task. The listener never reads from a client itself. When `receive_proxy_protocol` is on, the task first reads the PROXY protocol header, so the real client IP is known before anything else looks at the connection. A client that connects and sends nothing, or sends its header slowly, holds up only its own connection: it keeps its `max_connections` permit until the 5-second header timeout closes it, and the listener goes on accepting others in the meantime. Before any packet parsing, the task runs the transport filters that native plugins registered. A filter sees the connection's `TransportContext` (remote address, local address, the real client IP from the PROXY protocol header, connection time and a connection id) and answers `Continue` or `Reject`. A rejected connection is closed without an answer, and a filter that panics or runs past `[events] transport_filter_timeout` rejects it too. Because the filters run in the connection's task, a slow filter holds up only that connection, never the listener. Every filter that let a connection through is told when it closes. See [transport filters](../plugins/dev/architecture#layer-1-transportfilter).
 
 ## The common pipeline
 
@@ -56,10 +56,6 @@ Every connection runs through the common pipeline, a sequence of five middleware
 
 Checks the client IP against a global allow/deny list. Blocked IPs never reach the handshake parser.
 
-### Ban IP check
-
-Checks the client IP against the ban system. Unlike the username ban check in the login pipeline, this runs before the handshake is parsed. Banned IPs cannot receive the MOTD or status ping.
-
 ### Handshake parser
 
 The first real protocol work. The middleware reads bytes from the TCP stream with a 10-second timeout and attempts to decode them.
@@ -67,7 +63,7 @@ The first real protocol work. The middleware reads bytes from the TCP stream wit
 The first byte determines the client type:
 
 - `0xFE` indicates a legacy ping (Minecraft Beta through 1.6). The middleware inserts a `LegacyDetected` marker and short-circuits the pipeline. The legacy handler takes over from there.
-- `0x02` indicates a legacy login attempt (unsupported, also short-circuits).
+- `0x02` indicates a legacy login (1.6 and older). It also short-circuits: the legacy handler checks bans, fires the same player events as the passthrough handler, then forwards the login to the backend.
 - Any other value is treated as a modern Minecraft frame (1.7+).
 
 For modern clients, the middleware decodes the `SHandshake` packet (always packet ID `0x00`). This packet has been stable since Minecraft 1.7, so Infrarust can proxy any protocol version without knowing its specific packet layout.
@@ -82,6 +78,10 @@ The handshake contains four fields:
 | `next_state` | VarInt | 1 = status ping, 2 = login |
 
 The middleware strips Forge Mod Loader markers (`\0FML\0`, `\0FML2\0`, `\0FML3\0`) from the domain, lowercases it, and stores the result as `HandshakeData` in the connection context. The raw packet bytes are preserved for forwarding to the backend later.
+
+### Ban IP check
+
+Runs after the handshake parser, and only for status connections: it checks the client IP against the ban system, so a banned IP cannot receive the MOTD or status ping. Login connections pass through and are checked by the ban check in the login pipeline. Legacy clients never reach it; the legacy handler checks bans itself.
 
 ### Rate limiter
 
@@ -110,7 +110,7 @@ Status connections go to the status handler, which returns the server list ping 
 
 ## The login pipeline
 
-Login connections run through a second pipeline: the login start parser, the ban check, and telemetry, plus a server manager middleware that is added only when at least one server has a `server_manager` configuration.
+Login connections run through a second pipeline: the login start parser, the ban check, telemetry, and the backend selection that orders the server's addresses.
 
 ### Login start parser
 
@@ -124,9 +124,9 @@ Checks the player's username and IP against the ban system. This is the full che
 
 Creates a tracing span for the session, tagged with the server name, player username, and proxy mode. This span wraps the entire proxy handler execution for distributed tracing.
 
-### Server manager
+### Server wake
 
-If the matched server has a `server_manager` configuration, this middleware checks whether the backend is online. If the server is stopped or sleeping, it triggers a wake-up and holds the connection until the server is ready. This is how the "start server on player connect" feature works.
+Starting a server that has a `server_manager` configuration is not part of the pipeline. The handler does it right before it connects the player to that server, once the plugins have picked it: a player refused at login or sent to another server never starts it. The player waits until the server is ready, and a server that cannot start fires `KickedFromServerEvent`, so a plugin can send the player elsewhere. This is how the "start server on player connect" feature works.
 
 ## Proxy handlers
 
@@ -136,17 +136,19 @@ After both pipelines complete, the connection is dispatched to a handler based o
 
 Used by the forwarding modes: `passthrough`, `zero_copy`, and `server_only`. The handler:
 
-1. Fires a `ServerPreConnectEvent` through the event bus (a plugin can deny the connection here; redirect results such as send-to-limbo are ignored in passthrough and only acted on by the intercepted handler)
-2. Connects to the backend server using the addresses from the server config
-3. Forwards the raw handshake and login packets to the backend
-4. Registers a `PlayerSession` in the connection registry
-5. Starts bidirectional forwarding between the client and backend TCP streams
+1. Fires `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent` and `LoginEvent`, and checks bans against the final profile (a plugin can refuse the player here, before any backend is contacted)
+2. Registers a `PlayerSession` in the connection registry and fires `PostLoginEvent`
+3. Fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent` through the event bus (a plugin can deny the connection or pick another server in a forwarding mode; send-to-limbo disconnects the player, since only the intercepted handler can hold a player in limbo)
+4. Starts the chosen server when it has a `server_manager` and is not online, and waits until it is
+5. Connects to the backend server using the addresses from the server config, and fires `KickedFromServerEvent` when none answers or the server could not be started, so a plugin can redirect the player
+6. Forwards the raw handshake and login packets to the backend and fires `ServerConnectedEvent`
+7. Starts bidirectional forwarding between the client and backend TCP streams
 
 If `domain_rewrite` is configured, the handler re-encodes the handshake packet with the new domain before forwarding. Three rewrite modes exist: `none` (forward as-is), `explicit` (use a fixed string), and `from_backend` (use the host of the first backend address).
 
 The forwarder is selected based on proxy mode. On Linux with `zero_copy` mode, Infrarust uses `splice(2)` for kernel-level data transfer without copying bytes into userspace. Every other mode, including `zero_copy` on non-Linux platforms, uses `tokio::io::copy_bidirectional`.
 
-When either side closes the connection, the handler unregisters the session and fires a `DisconnectEvent`.
+When either side closes the connection, the handler fires a `DisconnectEvent` and then unregisters the session.
 
 ### Intercepted handler (client_only and offline)
 
@@ -156,7 +158,7 @@ In `client_only` mode, the handler performs Mojang authentication: it sends an e
 
 In `offline` mode, no authentication happens. The proxy accepts whatever username the client provides.
 
-After authentication, the handler resolves the initial connection mode. If the backend is reachable, it connects and starts a session loop that reads packets from both the client and the backend, passing them through codec filter chains registered by plugins. If the backend is unavailable and a limbo handler is registered, the player enters limbo (a virtual world hosted by the proxy itself) until the backend comes online.
+After authentication, the handler resolves the initial connection mode. If the server lists `limbo_handlers` that resolve, the player enters limbo (a virtual world hosted by the proxy itself) before any backend attempt, and stays there until a handler lets them through. Otherwise the handler connects to the backend and starts a session loop that reads packets from both the client and the backend, passing them through codec filter chains registered by plugins. If the backend cannot be reached, `KickedFromServerEvent` fires and the player is kicked unless a plugin sends them elsewhere.
 
 The session loop also supports server switching: a plugin can instruct the proxy to move a player to a different backend without disconnecting them from the proxy.
 

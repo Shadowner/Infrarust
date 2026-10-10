@@ -1,6 +1,4 @@
-#[cfg(all(feature = "wasm", wasm_fixtures_available))]
-#[path = "../tests/mock_services/mod.rs"]
-mod mock_services;
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 #[cfg(all(feature = "wasm", wasm_fixtures_available))]
 fn main() {
@@ -25,27 +23,17 @@ mod bench {
 
     use bytes::Bytes;
     use infrarust_api::filter::{
-        CodecFilterFactory, CodecFilterInstance, CodecFilterRegistry, CodecSessionInit,
-        CodecVerdict, FilterMetadata, FrameOutput,
+        CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, FilterMetadata,
+        FrameOutput,
     };
     use infrarust_api::loader::{PluginContextFactory, PluginLoader};
     use infrarust_api::types::{ProtocolVersion, RawPacket};
     use infrarust_config::ProxyConfig;
-    use infrarust_core::event_bus::EventBusImpl;
     use infrarust_core::filter::codec_chain::{CodecFilterChain, build_codec_chains};
     use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
-    use infrarust_core::filter::transport_registry::TransportFilterRegistryImpl;
     use infrarust_core::plugin::manager::PluginServices;
-    use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions, PluginRegistryImpl};
-    use infrarust_core::routing::DomainRouter;
-    use infrarust_core::services::command_manager::CommandManagerImpl;
-    use infrarust_core::services::scheduler::SchedulerImpl;
-    use infrarust_core::services::server_manager_bridge::NoopServerManager;
-    use infrarust_loader_wasm::{WasmPluginLoader, build_engine};
-
-    use super::mock_services::{
-        MockBanService, MockConfigService, MockLoadBalancerService, MockPlayerRegistry,
-    };
+    use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
+    use infrarust_loader_wasm::{WasmLoaderConfig, WasmPluginLoader, build_engine};
 
     const ITERS: u64 = 200_000;
     const WARMUP: u64 = 20_000;
@@ -94,6 +82,57 @@ mod bench {
         start.elapsed().as_nanos() as f64 / ITERS as f64
     }
 
+    const CREATE_ITERS: u64 = 2_000;
+
+    fn us_per_create(registry: &CodecFilterRegistryImpl) -> f64 {
+        for _ in 0..CREATE_ITERS / 10 {
+            drop(black_box(client_chain(registry)));
+        }
+        let start = Instant::now();
+        for _ in 0..CREATE_ITERS {
+            drop(black_box(client_chain(registry)));
+        }
+        start.elapsed().as_nanos() as f64 / CREATE_ITERS as f64 / 1_000.0
+    }
+
+    const CONNECTIONS: usize = 1_000;
+
+    fn open_connections(
+        registry: &CodecFilterRegistryImpl,
+    ) -> Vec<(CodecFilterChain, CodecFilterChain)> {
+        (0..CONNECTIONS)
+            .map(|connection| {
+                build_codec_chains(
+                    registry,
+                    ProtocolVersion::new(767),
+                    connection as u64,
+                    "127.0.0.1:1".parse().unwrap(),
+                    None,
+                )
+            })
+            .collect()
+    }
+
+    fn ns_interleaved(registry: &CodecFilterRegistryImpl) -> (f64, f64) {
+        let mut open = open_connections(registry);
+        let mut packet = RawPacket::new(0x10, Bytes::from(vec![0xABu8; 512]));
+        for (client, _) in &mut open {
+            let _ = black_box(client.process(black_box(&mut packet)));
+        }
+        let start = Instant::now();
+        for i in 0..ITERS as usize {
+            let (client, _) = &mut open[i % CONNECTIONS];
+            let _ = black_box(client.process(black_box(&mut packet)));
+        }
+        let interleaved = start.elapsed().as_nanos() as f64 / ITERS as f64;
+        let hot = ns_per_packet(&mut open[0].0, 512);
+        for (mut client, mut server) in open {
+            client.close();
+            server.close();
+        }
+        (interleaved, hot)
+    }
+
     fn fixture_path(name: &str) -> PathBuf {
         PathBuf::from(env!("INFRARUST_WASM_FIXTURE_DIR"))
             .join(format!("fixture_{}.wasm", name.replace('-', "_")))
@@ -103,6 +142,7 @@ mod bench {
     /// filter into, plus the keep-alives that must outlive the chains.
     async fn load_wasm(
         plugins_dir: PathBuf,
+        wasm_section: &str,
     ) -> (
         Arc<CodecFilterRegistryImpl>,
         Box<dyn infrarust_api::plugin::Plugin>,
@@ -110,34 +150,27 @@ mod bench {
     ) {
         let registry = Arc::new(CodecFilterRegistryImpl::new());
         let services = PluginServices {
-            event_bus: Arc::new(EventBusImpl::new()),
-            player_registry: Arc::new(MockPlayerRegistry),
-            server_manager: Arc::new(NoopServerManager),
-            ban_service: Arc::new(MockBanService),
-            command_manager: Arc::new(CommandManagerImpl::new()),
-            scheduler: Arc::new(SchedulerImpl::new()),
-            config_service: Arc::new(MockConfigService),
-            load_balancer_service: Arc::new(MockLoadBalancerService),
-            plugin_registry: Arc::new(PluginRegistryImpl::new()),
             codec_filter_registry: Arc::clone(&registry),
-            transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
-            domain_router: Arc::new(DomainRouter::new()),
-            proxy_shutdown: tokio_util::sync::CancellationToken::new(),
-            proxy_info: infrarust_api::services::proxy_info::ProxyInfo::default(),
             plugins_dir: plugins_dir.clone(),
+            ..PluginServices::for_tests()
         };
         let mut configs = HashMap::new();
         configs.insert(
             "codec-modify".to_string(),
             PluginPermissions {
                 permissions: vec!["codec-filter".to_string()],
+                deny: Vec::new(),
                 trusted: false,
             },
         );
         let factory = PluginContextFactoryImpl::new(services, configs);
 
-        let config: ProxyConfig = toml::from_str("").unwrap();
-        let loader = WasmPluginLoader::new(build_engine(&config).unwrap());
+        let config: ProxyConfig = toml::from_str(wasm_section).unwrap();
+        let loader = WasmPluginLoader::new(
+            build_engine(&config).unwrap(),
+            WasmLoaderConfig::from_proxy_config(&config).with_cache_dir(None),
+        )
+        .unwrap();
         loader.discover(&plugins_dir).await.unwrap();
         let plugin = loader.load("codec-modify", &factory).await.unwrap();
         let ctx = factory.create_context("codec-modify");
@@ -156,7 +189,9 @@ mod bench {
     pub fn run() {
         // Native baseline.
         let native_registry = CodecFilterRegistryImpl::new();
-        native_registry.register(Box::new(NativePassthroughFactory));
+        native_registry
+            .register_builtin(Box::new(NativePassthroughFactory))
+            .unwrap();
         let mut native_chain = client_chain(&native_registry);
 
         // WASM synchronous filter (production path).
@@ -165,8 +200,10 @@ mod bench {
             .build()
             .unwrap();
         let plugins_dir = staged_plugins_dir();
-        let (wasm_registry, _plugin, _loader) = rt.block_on(load_wasm(plugins_dir));
+        let (wasm_registry, _plugin, _loader) = rt.block_on(load_wasm(plugins_dir.clone(), ""));
         let mut wasm_chain = client_chain(&wasm_registry);
+        let (pooled_registry, _pooled_plugin, _pooled_loader) =
+            rt.block_on(load_wasm(plugins_dir, "[wasm]\ninstance_pool = 4096\n"));
 
         println!(
             "\ncodec boundary benchmark — {ITERS} iterations/measurement, id 0x10 (pass-through, zero-copy return)"
@@ -192,6 +229,17 @@ mod bench {
             } else {
                 "over (see report)"
             }
+        );
+        let native_create = us_per_create(&native_registry);
+        let wasm_create = us_per_create(&wasm_registry);
+        let pooled_create = us_per_create(&pooled_registry);
+        println!(
+            "  chain create + close ({CREATE_ITERS} iterations, client + server side): native {native_create:.2}µs, wasm {wasm_create:.2}µs, wasm with instance_pool {pooled_create:.2}µs\n"
+        );
+        let (interleaved, hot) = ns_interleaved(&wasm_registry);
+        let (pooled_interleaved, pooled_hot) = ns_interleaved(&pooled_registry);
+        println!(
+            "  512B pass over {CONNECTIONS} open connections, round robin: wasm {interleaved:.1}ns (one hot connection {hot:.1}ns), wasm with instance_pool {pooled_interleaved:.1}ns (one hot connection {pooled_hot:.1}ns)\n"
         );
     }
 }

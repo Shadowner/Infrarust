@@ -1,75 +1,170 @@
 //! [`PluginManager`] — orchestrates plugin lifecycle.
 
 use std::collections::{HashMap, HashSet};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
-use infrarust_api::command::CommandManager;
+use futures_util::FutureExt;
+use futures_util::future::join_all;
 use infrarust_api::error::PluginError;
-use infrarust_api::event::bus::EventBus;
-use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+use infrarust_api::event::Event;
+use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
+use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata, PluginRuntimeStatus};
 use infrarust_api::services::{
     ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
     player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
-    scheduler::Scheduler, server_manager::ServerManager,
+    server_manager::ServerManager,
 };
+use infrarust_plugin_common::validate_plugin_id;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use crate::event_bus::EventBusImpl;
+use crate::event_bus::diagnostic::panic_message;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
+use crate::provider::plugin_adapter::PluginProviderActivator;
+use crate::services::scheduler::SchedulerImpl;
 
+use super::PluginRegistryImpl;
 use super::PluginState;
 use super::context::PluginContextImpl;
-use super::context_factory::PluginContextFactory;
+use super::context_factory::{PluginContextFactory, PluginContextFactoryImpl};
 use super::dependency::resolve_load_order;
+use super::error::PluginManagerError;
 use super::loader::PluginLoader;
 
 /// Services required to construct per-plugin contexts.
 pub struct PluginServices {
-    pub event_bus: Arc<dyn EventBus>,
+    pub event_bus: Arc<EventBusImpl>,
     pub player_registry: Arc<dyn PlayerRegistry>,
     pub server_manager: Arc<dyn ServerManager>,
     pub ban_service: Arc<dyn BanService>,
-    pub command_manager: Arc<dyn CommandManager>,
-    pub scheduler: Arc<dyn Scheduler>,
+    pub command_manager: Arc<crate::services::command_manager::CommandManagerImpl>,
+    pub scheduler: Arc<SchedulerImpl>,
     pub config_service: Arc<dyn ConfigService>,
     pub load_balancer_service: Arc<dyn LoadBalancerService>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
-    pub domain_router: Arc<crate::routing::DomainRouter>,
+    pub provider_activator: Arc<PluginProviderActivator>,
     pub proxy_shutdown: CancellationToken,
     pub proxy_info: ProxyInfo,
     pub plugins_dir: PathBuf,
 }
 
+type LoaderIndex = usize;
+
+pub const DEFAULT_SHUTDOWN_DISABLE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const UNLOAD_TIMEOUT: Duration = Duration::from_secs(1);
+const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const ENABLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShutdownLimits {
+    pub on_disable: Duration,
+    pub total: Duration,
+}
+
+impl Default for ShutdownLimits {
+    fn default() -> Self {
+        Self {
+            on_disable: DEFAULT_SHUTDOWN_DISABLE_TIMEOUT,
+            total: DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT,
+        }
+    }
+}
+
 pub struct PluginManager {
-    loaders: Vec<Box<dyn PluginLoader>>,
+    loaders: Vec<Arc<dyn PluginLoader>>,
     plugins: Vec<LoadedPlugin>,
     states: HashMap<String, PluginState>,
     load_order: Vec<String>,
-    loader_mapping: HashMap<String, String>, // plugin_id -> loader_name
-    loaded_loaders: Vec<String>,             // loaders whose on_load() succeeded
-    disabled: HashSet<String>,               // plugin ids disabled via config
+    loader_of: HashMap<String, LoaderIndex>,
+    loaded_loaders: Vec<LoaderIndex>,
+    disabled: HashSet<String>,
+    discovered: HashMap<String, PluginMetadata>,
+    refused: Vec<PluginManagerError>,
+    event_bus: Option<Arc<EventBusImpl>>,
+    registry: Option<Arc<PluginRegistryImpl>>,
+    context_factory: Option<Arc<PluginContextFactoryImpl>>,
+    shutdown_limits: ShutdownLimits,
 }
 
 struct LoadedPlugin {
-    plugin: Box<dyn Plugin>,
-    context: Arc<dyn PluginContext>,
+    plugin: Arc<dyn Plugin>,
+    context: Arc<PluginContextImpl>,
     metadata: PluginMetadata,
-    loader_name: String,
+    loader: Arc<dyn PluginLoader>,
+}
+
+#[derive(Clone)]
+struct Teardown {
+    event_bus: Option<Arc<EventBusImpl>>,
+    context_factory: Option<Arc<PluginContextFactoryImpl>>,
+    on_disable: Duration,
+}
+
+pub(crate) struct PluginStop {
+    teardown: Teardown,
+    loaded: LoadedPlugin,
+    enabled: bool,
+    total: Duration,
+}
+
+impl PluginStop {
+    pub(crate) async fn run(self) {
+        let deadline = Instant::now() + self.total;
+        self.teardown
+            .stop(&self.loaded, self.enabled, deadline)
+            .await;
+    }
 }
 
 impl PluginManager {
     pub fn new(loaders: Vec<Box<dyn PluginLoader>>) -> Self {
         Self {
-            loaders,
+            loaders: loaders.into_iter().map(Arc::from).collect(),
             plugins: Vec::new(),
             states: HashMap::new(),
             load_order: Vec::new(),
-            loader_mapping: HashMap::new(),
+            loader_of: HashMap::new(),
             loaded_loaders: Vec::new(),
             disabled: HashSet::new(),
+            discovered: HashMap::new(),
+            refused: Vec::new(),
+            event_bus: None,
+            registry: None,
+            context_factory: None,
+            shutdown_limits: ShutdownLimits::default(),
+        }
+    }
+
+    pub fn set_shutdown_limits(&mut self, limits: ShutdownLimits) {
+        self.shutdown_limits = limits;
+    }
+
+    pub fn set_event_bus(&mut self, event_bus: Arc<EventBusImpl>) {
+        self.event_bus = Some(event_bus);
+    }
+
+    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistryImpl>) {
+        self.registry = Some(registry);
+    }
+
+    async fn announce<E: Event>(&self, event: E) {
+        if let Some(bus) = &self.event_bus {
+            bus.post(event);
+            if tokio::time::timeout(ANNOUNCE_TIMEOUT, bus.flush())
+                .await
+                .is_err()
+            {
+                tracing::warn!(event = std::any::type_name::<E>(), limit = ?ANNOUNCE_TIMEOUT,
+                    "a plugin lifecycle event is still being delivered; going on without it");
+            }
         }
     }
 
@@ -77,61 +172,91 @@ impl PluginManager {
         self.disabled = ids;
     }
 
-    /// Discovers all plugins via loaders, detects duplicate IDs,
-    /// and resolves load order via topological sort.
     pub async fn discover_all(
         &mut self,
         plugin_dir: &Path,
-    ) -> Result<Vec<PluginMetadata>, PluginError> {
-        let mut all_metadata: Vec<PluginMetadata> = Vec::new();
-        let mut seen_ids: HashMap<String, String> = HashMap::new();
+    ) -> Result<Vec<PluginMetadata>, PluginManagerError> {
+        let mut accepted: Vec<PluginMetadata> = Vec::new();
+        let mut loader_of: HashMap<String, LoaderIndex> = HashMap::new();
+        let mut refused: Vec<PluginManagerError> = Vec::new();
 
-        for loader in &self.loaders {
-            let discovered = loader.discover(plugin_dir).await.map_err(|e| {
-                PluginError::InitFailed(format!("Loader '{}' discovery failed: {e}", loader.name()))
+        for (at, loader) in self.loaders.iter().enumerate() {
+            let discovered = loader.discover(plugin_dir).await.map_err(|source| {
+                PluginManagerError::Discovery {
+                    loader: loader.name().to_owned(),
+                    source,
+                }
             })?;
 
             for metadata in discovered {
-                if let Some(existing_loader) = seen_ids.get(&metadata.id) {
-                    return Err(PluginError::InitFailed(format!(
-                        "Duplicate plugin id '{}': found in loader '{}' and '{}'",
-                        metadata.id,
-                        existing_loader,
-                        loader.name()
-                    )));
+                if let Err(reason) = validate_plugin_id(&metadata.id) {
+                    refused.push(PluginManagerError::InvalidId {
+                        loader: loader.name().to_owned(),
+                        origin: loader.plugin_source(&metadata.id),
+                        reason,
+                    });
+                    continue;
                 }
-                seen_ids.insert(metadata.id.clone(), loader.name().to_string());
-                all_metadata.push(metadata);
+                if let Some(&owner) = loader_of.get(&metadata.id) {
+                    refused.push(PluginManagerError::DuplicateId {
+                        origin: loader.plugin_source(&metadata.id),
+                        plugin: metadata.id,
+                        kept: self.loaders[owner].name().to_owned(),
+                        refused: loader.name().to_owned(),
+                    });
+                    continue;
+                }
+                loader_of.insert(metadata.id.clone(), at);
+                accepted.push(metadata);
             }
         }
 
-        let load_order = resolve_load_order(&all_metadata)?;
+        let resolution = resolve_load_order(&accepted);
+        for error in &resolution.refused {
+            if let Some(plugin) = error.plugin() {
+                self.states
+                    .insert(plugin.to_owned(), PluginState::Error(error.to_string()));
+            }
+        }
+        refused.extend(resolution.refused);
+        for error in &refused {
+            tracing::error!(error = %error, "Plugin refused");
+        }
 
-        self.load_order = load_order;
-        self.loader_mapping = seen_ids;
+        let loadable: HashSet<&str> = resolution.order.iter().map(String::as_str).collect();
+        accepted.retain(|metadata| loadable.contains(metadata.id.as_str()));
+        self.discovered = accepted
+            .iter()
+            .map(|metadata| (metadata.id.clone(), metadata.clone()))
+            .collect();
+        self.load_order = resolution.order;
+        self.loader_of = loader_of;
+        self.refused = refused;
 
-        Ok(all_metadata)
+        Ok(accepted)
     }
 
     pub async fn load_and_enable_all(
         &mut self,
-        context_factory: &dyn PluginContextFactory,
-    ) -> Vec<PluginError> {
-        let mut errors = Vec::new();
+        context_factory: Arc<PluginContextFactoryImpl>,
+    ) -> Vec<PluginManagerError> {
+        let mut errors = std::mem::take(&mut self.refused);
         let load_order = self.load_order.clone();
+        let factory: &dyn PluginContextFactory = context_factory.as_ref();
 
-        let mut failed_loaders: HashSet<String> = HashSet::new();
-        let mut ok_loaders: Vec<String> = Vec::new();
-        for loader in &self.loaders {
-            match loader.on_load(context_factory).await {
-                Ok(()) => ok_loaders.push(loader.name().to_string()),
-                Err(e) => {
-                    let name = loader.name().to_string();
-                    tracing::error!(loader = %name, error = %e, "Loader on_load() failed");
-                    errors.push(PluginError::InitFailed(format!(
-                        "Loader '{name}' on_load failed: {e}"
-                    )));
-                    failed_loaders.insert(name);
+        let mut failed_loaders: HashSet<LoaderIndex> = HashSet::new();
+        let mut ok_loaders: Vec<LoaderIndex> = Vec::new();
+        for (at, loader) in self.loaders.iter().enumerate() {
+            match loader.on_load(factory).await {
+                Ok(()) => ok_loaders.push(at),
+                Err(source) => {
+                    let name = loader.name();
+                    tracing::error!(loader = %name, error = %source, "Loader on_load() failed");
+                    errors.push(PluginManagerError::Loader {
+                        loader: name.to_owned(),
+                        source,
+                    });
+                    failed_loaders.insert(at);
                 }
             }
         }
@@ -143,17 +268,25 @@ impl PluginManager {
                 self.states.insert(plugin_id.clone(), PluginState::Disabled);
                 continue;
             }
-            let loader_name = match self.loader_mapping.get(plugin_id) {
-                Some(name) => name.clone(),
-                None => {
-                    errors.push(PluginError::InitFailed(format!(
-                        "No loader mapping for plugin '{plugin_id}'"
-                    )));
-                    continue;
-                }
+            if let Some(dependency) = self.hard_dependency_not_enabled(plugin_id) {
+                let error = PluginManagerError::DependencyNotEnabled {
+                    plugin: plugin_id.clone(),
+                    dependency,
+                };
+                tracing::error!(plugin = %plugin_id, error = %error, "Plugin not enabled");
+                self.states
+                    .insert(plugin_id.clone(), PluginState::Error(error.to_string()));
+                errors.push(error);
+                continue;
+            }
+            let Some(&at) = self.loader_of.get(plugin_id) else {
+                errors.push(PluginManagerError::NoLoader(plugin_id.clone()));
+                continue;
             };
+            let loader = Arc::clone(&self.loaders[at]);
+            let loader_name = loader.name();
 
-            if failed_loaders.contains(&loader_name) {
+            if failed_loaders.contains(&at) {
                 self.states.insert(
                     plugin_id.clone(),
                     PluginState::Error(format!("loader '{loader_name}' on_load failed")),
@@ -161,161 +294,181 @@ impl PluginManager {
                 continue;
             }
 
-            let loader = match self.loaders.iter().find(|l| l.name() == loader_name) {
-                Some(l) => l,
-                None => {
-                    errors.push(PluginError::InitFailed(format!(
-                        "Loader '{loader_name}' not found for plugin '{plugin_id}'"
-                    )));
-                    continue;
-                }
-            };
-
-            let plugin = match loader.load(plugin_id, context_factory).await {
-                Ok(p) => p,
-                Err(e) => {
-                    let err = PluginError::InitFailed(format!(
-                        "Loader '{loader_name}' failed to load '{plugin_id}': {e}"
-                    ));
+            let plugin: Arc<dyn Plugin> = match loader.load(plugin_id, factory).await {
+                Ok(p) => Arc::from(p),
+                Err(source) => {
                     self.states
-                        .insert(plugin_id.clone(), PluginState::Error(e.to_string()));
-                    tracing::error!(plugin = %plugin_id, error = %e, "Plugin failed to load");
-                    errors.push(err);
+                        .insert(plugin_id.clone(), PluginState::Error(source.to_string()));
+                    tracing::error!(plugin = %plugin_id, error = %source, "Plugin failed to load");
+                    errors.push(PluginManagerError::Load {
+                        loader: loader_name.to_owned(),
+                        plugin: plugin_id.clone(),
+                        source,
+                    });
                     continue;
                 }
             };
 
             let metadata = plugin.metadata();
-            let ctx = context_factory.create_context(plugin_id);
+            let ctx = context_factory.context(plugin_id);
 
             self.states.insert(plugin_id.clone(), PluginState::Loading);
-            match plugin.on_enable(ctx.as_ref()).await {
+            match enable_within(plugin.as_ref(), ctx.as_ref()).await {
                 Ok(()) => {
                     self.states.insert(plugin_id.clone(), PluginState::Enabled);
                     tracing::info!(plugin = %plugin_id, "Plugin enabled");
+                    if let Some(registry) = &self.registry {
+                        registry.insert_enabled(&metadata, &plugin);
+                    }
+                    self.announce(PluginEnabledEvent::new(
+                        plugin_id.clone(),
+                        metadata.version.clone(),
+                    ))
+                    .await;
 
                     self.plugins.push(LoadedPlugin {
                         plugin,
                         context: ctx,
                         metadata,
-                        loader_name,
+                        loader,
                     });
                 }
-                Err(e) => {
+                Err(source) => {
                     self.states
-                        .insert(plugin_id.clone(), PluginState::Error(e.to_string()));
-                    tracing::error!(plugin = %plugin_id, error = %e, "Plugin failed to enable");
-
-                    if let Some(ctx_impl) = ctx.as_any().downcast_ref::<PluginContextImpl>() {
-                        ctx_impl.cleanup();
-                    }
-                    errors.push(e);
+                        .insert(plugin_id.clone(), PluginState::Error(source.to_string()));
+                    tracing::error!(plugin = %plugin_id, error = %source, "Plugin failed to enable");
+                    ctx.cleanup();
+                    unload_within(loader.as_ref(), plugin_id).await;
+                    context_factory.forget_context(plugin_id);
+                    errors.push(PluginManagerError::Enable {
+                        plugin: plugin_id.clone(),
+                        source,
+                    });
                 }
             }
         }
 
+        self.context_factory = Some(context_factory);
         errors
     }
 
-    /// Disables all plugins in reverse order, then unloads via loaders.
+    fn hard_dependency_not_enabled(&self, plugin_id: &str) -> Option<String> {
+        self.discovered
+            .get(plugin_id)?
+            .dependencies
+            .iter()
+            .filter(|dep| !dep.optional)
+            .find(|dep| !matches!(self.states.get(&dep.id), Some(PluginState::Enabled)))
+            .map(|dep| dep.id.clone())
+    }
+
     pub async fn shutdown(&mut self) {
+        let deadline = Instant::now() + self.shutdown_limits.total;
+        self.shutdown_until(deadline).await;
+    }
+
+    pub async fn shutdown_until(&mut self, deadline: Instant) {
         let plugins = std::mem::take(&mut self.plugins);
-
-        for loaded in plugins.iter().rev() {
-            let state = self.states.get(&loaded.metadata.id);
-            if !matches!(state, Some(PluginState::Enabled)) {
-                continue;
-            }
-
-            tracing::info!(plugin = %loaded.metadata.id, "Disabling plugin");
-            self.states
-                .insert(loaded.metadata.id.clone(), PluginState::Disabled);
-
-            if let Err(e) = loaded.plugin.on_disable().await {
-                tracing::error!(
-                    plugin = %loaded.metadata.id,
-                    error = %e,
-                    "Plugin on_disable() failed"
-                );
-            }
-
-            // Cleanup is always executed, even if on_disable errored
-            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-                ctx_impl.cleanup();
-            }
+        if let Some(loaded) = plugins.first() {
+            loaded.context.proxy_shutdown().cancel();
         }
 
-        for loaded in plugins.iter().rev() {
-            let loader = self.loaders.iter().find(|l| l.name() == loaded.loader_name);
-
-            if let Some(loader) = loader
-                && let Err(e) = loader.unload(&loaded.metadata.id).await
-            {
-                tracing::error!(
-                    plugin = %loaded.metadata.id,
-                    error = %e,
-                    "Loader unload failed"
-                );
-            }
+        let teardown = self.teardown();
+        for level in shutdown_levels(&plugins) {
+            let stopping: Vec<(&LoadedPlugin, bool)> = level
+                .into_iter()
+                .map(|at| {
+                    let loaded = &plugins[at];
+                    (loaded, self.begin_disable(&loaded.metadata.id))
+                })
+                .collect();
+            join_all(
+                stopping
+                    .into_iter()
+                    .map(|(loaded, enabled)| teardown.stop(loaded, enabled, deadline)),
+            )
+            .await;
         }
 
         let loaded = std::mem::take(&mut self.loaded_loaders);
-        for name in loaded.iter().rev() {
-            if let Some(loader) = self.loaders.iter().find(|l| l.name() == name)
-                && let Err(e) = loader.on_shutdown().await
-            {
-                tracing::error!(loader = %name, error = %e, "Loader on_shutdown() failed");
-            }
-        }
-    }
-
-    /// Collects all limbo handlers from enabled plugins.
-    /// Call exactly once after `load_and_enable_all()`.
-    pub fn collect_limbo_handlers(&self) -> Vec<Box<dyn infrarust_api::limbo::LimboHandler>> {
-        let mut all = Vec::new();
-        for loaded in &self.plugins {
-            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-                all.extend(ctx_impl.take_limbo_handlers());
-            }
-        }
-        all
-    }
-
-    pub fn collect_config_providers(
-        &self,
-    ) -> Vec<(
-        String,
-        Box<dyn infrarust_api::provider::PluginConfigProvider>,
-    )> {
-        let mut all = Vec::new();
-        for loaded in &self.plugins {
-            if let Some(ctx_impl) = loaded.context.as_any().downcast_ref::<PluginContextImpl>() {
-                let providers = ctx_impl.take_config_providers();
-                for provider in providers {
-                    all.push((loaded.metadata.id.clone(), provider));
+        for at in loaded.into_iter().rev() {
+            let loader = &self.loaders[at];
+            match tokio::time::timeout(UNLOAD_TIMEOUT, loader.on_shutdown()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!(loader = %loader.name(), error = %e, "Loader on_shutdown() failed");
+                }
+                Err(_) => {
+                    tracing::warn!(loader = %loader.name(), limit = ?UNLOAD_TIMEOUT,
+                        "Loader on_shutdown() did not return in time; going on without it");
                 }
             }
         }
-        all
     }
 
-    pub fn store_provider_cleanup(
-        &self,
-        results: Vec<(String, crate::provider::plugin_adapter::ActivatedProvider)>,
-    ) {
-        for (plugin_id, activated) in results {
-            for loaded in &self.plugins {
-                if loaded.metadata.id == plugin_id {
-                    if let Some(ctx_impl) =
-                        loaded.context.as_any().downcast_ref::<PluginContextImpl>()
-                    {
-                        ctx_impl.register_active_provider_ids(activated.config_ids);
-                        ctx_impl.register_provider_token(activated.watch_token);
-                    }
-                    break;
-                }
-            }
+    fn begin_disable(&mut self, id: &str) -> bool {
+        if !matches!(self.states.get(id), Some(PluginState::Enabled)) {
+            return false;
         }
+        tracing::info!(plugin = %id, "Disabling plugin");
+        self.states.insert(id.to_owned(), PluginState::Disabled);
+        if let Some(registry) = &self.registry {
+            registry.remove(id);
+        }
+        true
+    }
+
+    fn teardown(&self) -> Teardown {
+        Teardown {
+            event_bus: self.event_bus.clone(),
+            context_factory: self.context_factory.clone(),
+            on_disable: self.shutdown_limits.on_disable,
+        }
+    }
+
+    pub async fn disable_plugin(&mut self, id: &str) -> Result<(), PluginManagerError> {
+        self.begin_plugin_stop(id)?.run().await;
+        Ok(())
+    }
+
+    pub(crate) fn begin_plugin_stop(&mut self, id: &str) -> Result<PluginStop, PluginManagerError> {
+        let Some(at) = self.plugins.iter().position(|p| p.metadata.id == id) else {
+            return Err(PluginManagerError::UnknownPlugin(id.to_owned()));
+        };
+        if let Some(dependent) = self.plugins.iter().find(|p| {
+            p.metadata.id != id
+                && matches!(self.states.get(&p.metadata.id), Some(PluginState::Enabled))
+                && p.metadata
+                    .dependencies
+                    .iter()
+                    .any(|dep| dep.id == id && !dep.optional)
+        }) {
+            return Err(PluginManagerError::RequiredBy {
+                plugin: id.to_owned(),
+                dependent: dependent.metadata.id.clone(),
+            });
+        }
+        let loaded = self.plugins.remove(at);
+        let enabled = self.begin_disable(id);
+        Ok(PluginStop {
+            teardown: self.teardown(),
+            loaded,
+            enabled,
+            total: self.shutdown_limits.total,
+        })
+    }
+
+    pub async fn activate_config_providers(&self) {
+        for loaded in &self.plugins {
+            loaded.context.activate_queued_config_providers().await;
+        }
+    }
+
+    pub fn plugin_context(&self, id: &str) -> Option<Arc<dyn PluginContext>> {
+        self.plugins
+            .iter()
+            .find(|loaded| loaded.metadata.id == id)
+            .map(|loaded| Arc::clone(&loaded.context) as Arc<dyn PluginContext>)
     }
 
     pub fn is_plugin_loaded(&self, id: &str) -> bool {
@@ -326,187 +479,159 @@ impl PluginManager {
         self.states.get(id)
     }
 
+    pub fn plugin_runtime(&self, id: &str) -> Option<PluginRuntimeStatus> {
+        self.plugins
+            .iter()
+            .find(|loaded| loaded.metadata.id == id)
+            .and_then(|loaded| loaded.plugin.runtime_status())
+    }
+
     pub fn list_plugins(&self) -> Vec<&PluginMetadata> {
         self.plugins.iter().map(|p| &p.metadata).collect()
     }
 }
 
+impl Teardown {
+    async fn stop(&self, loaded: &LoadedPlugin, enabled: bool, deadline: Instant) {
+        let id = &loaded.metadata.id;
+        let mut finished = true;
+        if enabled {
+            let limit = self.on_disable;
+            let cut_at = deadline.min(Instant::now() + limit);
+            let disabling =
+                AssertUnwindSafe(async { loaded.plugin.on_disable().await }).catch_unwind();
+            match tokio::time::timeout_at(cut_at, disabling).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => {
+                    tracing::error!(plugin = %id, error = %e, "Plugin on_disable() failed");
+                }
+                Ok(Err(payload)) => {
+                    tracing::error!(plugin = %id, panic = %panic_message(payload.as_ref()), "Plugin on_disable() panicked");
+                }
+                Err(_) => {
+                    tracing::warn!(plugin = %id, limit = ?limit,
+                        "Plugin on_disable() did not return in time; stopping the plugin without it");
+                    finished = false;
+                }
+            }
+        }
+        if !finished {
+            self.unload(loaded).await;
+        }
+        if enabled {
+            loaded.context.cleanup();
+            self.forget_context(id);
+            if let Some(bus) = &self.event_bus {
+                bus.post(PluginDisabledEvent::new(id.clone()));
+                if tokio::time::timeout_at(deadline, bus.flush())
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!(plugin = %id, "PluginDisabledEvent still being delivered at the stop deadline");
+                }
+            }
+        }
+        if finished {
+            self.unload(loaded).await;
+        }
+    }
+
+    async fn unload(&self, loaded: &LoadedPlugin) {
+        unload_within(loaded.loader.as_ref(), &loaded.metadata.id).await;
+        self.forget_context(&loaded.metadata.id);
+    }
+
+    fn forget_context(&self, id: &str) {
+        if let Some(factory) = &self.context_factory {
+            factory.forget_context(id);
+        }
+    }
+}
+
+async fn enable_within(plugin: &dyn Plugin, ctx: &dyn PluginContext) -> Result<(), PluginError> {
+    let enabling = AssertUnwindSafe(async { plugin.on_enable(ctx).await }).catch_unwind();
+    match tokio::time::timeout(ENABLE_TIMEOUT, enabling).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(payload)) => Err(PluginError::InitFailed(format!(
+            "on_enable panicked: {}",
+            panic_message(payload.as_ref())
+        ))),
+        Err(_) => Err(PluginError::InitFailed(format!(
+            "on_enable did not return within {ENABLE_TIMEOUT:?}"
+        ))),
+    }
+}
+
+async fn unload_within(loader: &dyn PluginLoader, id: &str) {
+    match tokio::time::timeout(UNLOAD_TIMEOUT, loader.unload(id)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::error!(plugin = %id, error = %e, "Loader unload failed"),
+        Err(_) => tracing::warn!(plugin = %id, limit = ?UNLOAD_TIMEOUT,
+            "Loader unload did not return in time; going on without it"),
+    }
+}
+
+fn shutdown_levels(plugins: &[LoadedPlugin]) -> Vec<Vec<usize>> {
+    let position: HashMap<&str, usize> = plugins
+        .iter()
+        .enumerate()
+        .map(|(at, loaded)| (loaded.metadata.id.as_str(), at))
+        .collect();
+    let mut level = vec![0usize; plugins.len()];
+    for _ in 0..plugins.len() {
+        let mut changed = false;
+        for (at, loaded) in plugins.iter().enumerate() {
+            for dependency in &loaded.metadata.dependencies {
+                if let Some(&below) = position.get(dependency.id.as_str())
+                    && below != at
+                    && level[below] <= level[at]
+                {
+                    level[below] = level[at] + 1;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let deepest = level.iter().copied().max().unwrap_or(0);
+    let mut levels = vec![Vec::new(); if plugins.is_empty() { 0 } else { deepest + 1 }];
+    for at in (0..plugins.len()).rev() {
+        levels[level[at]].push(at);
+    }
+    levels
+}
+
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use std::path::Path;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use infrarust_api::error::PluginError;
     use infrarust_api::event::BoxFuture;
-    use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 
-    use crate::plugin::context_factory::PluginContextFactory;
     use crate::plugin::static_loader::StaticPluginLoader;
+    use crate::test_support::TestPlugin;
+    use crate::util::sync::lock;
 
     use super::*;
 
-    struct TestPlugin {
-        id: String,
-        enabled: Arc<AtomicBool>,
-    }
-
-    impl Plugin for TestPlugin {
-        fn metadata(&self) -> PluginMetadata {
-            PluginMetadata::new(&self.id, &self.id, "0.1.0")
-        }
-
-        fn on_enable<'a>(
-            &'a self,
-            _ctx: &'a dyn PluginContext,
-        ) -> BoxFuture<'a, Result<(), PluginError>> {
-            self.enabled.store(true, Ordering::Relaxed);
-            Box::pin(async { Ok(()) })
-        }
-
-        fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
-            self.enabled.store(false, Ordering::Relaxed);
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    struct MockPluginContext {
-        plugin_id: String,
-        capabilities: infrarust_api::permissions::CapabilitySet,
-    }
-
-    impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
-
-    impl PluginContext for MockPluginContext {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
-        fn event_bus(&self) -> &dyn EventBus {
-            unimplemented!("mock")
-        }
-
-        fn player_registry(&self) -> &dyn PlayerRegistry {
-            unimplemented!("mock")
-        }
-
-        fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry> {
-            unimplemented!("mock")
-        }
-
-        fn server_manager(&self) -> &dyn ServerManager {
-            unimplemented!("mock")
-        }
-
-        fn ban_service(&self) -> &dyn BanService {
-            unimplemented!("mock")
-        }
-
-        fn config_service(&self) -> &dyn ConfigService {
-            unimplemented!("mock")
-        }
-
-        fn command_manager(&self) -> &dyn CommandManager {
-            unimplemented!("mock")
-        }
-
-        fn scheduler(&self) -> &dyn Scheduler {
-            unimplemented!("mock")
-        }
-
-        fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
-            unimplemented!("mock")
-        }
-
-        fn register_config_provider(
-            &self,
-            _provider: Box<dyn infrarust_api::provider::PluginConfigProvider>,
-        ) {
-            // no-op for tests
-        }
-
-        fn codec_filters(
-            &self,
-        ) -> Option<&dyn infrarust_api::filter::registry::CodecFilterRegistry> {
-            None
-        }
-
-        fn transport_filters(
-            &self,
-        ) -> Option<&dyn infrarust_api::filter::registry::TransportFilterRegistry> {
-            None
-        }
-
-        fn plugin_id(&self) -> &str {
-            &self.plugin_id
-        }
-        fn data_dir(&self) -> PathBuf {
-            PathBuf::from("plugins").join(&self.plugin_id)
-        }
-        fn plugin_registry(&self) -> &dyn PluginRegistry {
-            unimplemented!("mock")
-        }
-        fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry> {
-            unimplemented!("mock")
-        }
-        fn server_manager_handle(&self) -> Arc<dyn ServerManager> {
-            unimplemented!("mock")
-        }
-        fn ban_service_handle(&self) -> Arc<dyn BanService> {
-            unimplemented!("mock")
-        }
-        fn config_service_handle(&self) -> Arc<dyn ConfigService> {
-            unimplemented!("mock")
-        }
-        fn load_balancer_service(&self) -> &dyn LoadBalancerService {
-            unimplemented!("mock")
-        }
-        fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService> {
-            unimplemented!("mock")
-        }
-        fn event_bus_handle(&self) -> Arc<dyn EventBus> {
-            unimplemented!("mock")
-        }
-        fn proxy_shutdown(&self) -> CancellationToken {
-            CancellationToken::new()
-        }
-        fn proxy_info(&self) -> &ProxyInfo {
-            unimplemented!("mock")
-        }
-        fn capabilities(&self) -> &infrarust_api::permissions::CapabilitySet {
-            &self.capabilities
-        }
-    }
-
-    struct MockPluginContextFactory;
-
-    impl PluginContextFactory for MockPluginContextFactory {
-        fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
-            Arc::new(MockPluginContext {
-                plugin_id: plugin_id.to_string(),
-                capabilities: infrarust_api::permissions::CapabilitySet::native_trusted(),
-            })
-        }
+    fn factory() -> Arc<PluginContextFactoryImpl> {
+        Arc::new(PluginContextFactoryImpl::new(
+            PluginServices::for_tests(),
+            HashMap::new(),
+        ))
     }
 
     #[tokio::test]
     async fn test_plugin_manager_discovers_from_multiple_loaders() {
         let loader_a = StaticPluginLoader::new();
         loader_a.register(PluginMetadata::new("plugin_a", "A", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "plugin_a".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("plugin_a"))
         });
 
         let loader_b = StaticPluginLoader::new();
         loader_b.register(PluginMetadata::new("plugin_b", "B", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "plugin_b".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("plugin_b"))
         });
 
         let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
@@ -519,52 +644,43 @@ mod tests {
     async fn test_plugin_manager_detects_duplicate_ids_across_loaders() {
         let loader_a = StaticPluginLoader::new();
         loader_a.register(PluginMetadata::new("conflict", "A", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "conflict".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("conflict"))
         });
 
         let loader_b = StaticPluginLoader::new();
         loader_b.register(PluginMetadata::new("conflict", "B", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "conflict".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("conflict"))
         });
 
         let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
 
-        let result = manager.discover_all(Path::new("plugins")).await;
-        assert!(result.is_err());
+        let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].name, "A");
+        let errors = manager.load_and_enable_all(factory()).await;
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(
+            errors[0].to_string(),
+            "plugin 'conflict' from loader 'static' is refused: loader 'static' already provides that id"
+        );
+        assert!(manager.is_plugin_loaded("conflict"));
     }
 
     #[tokio::test]
     async fn test_plugin_manager_full_lifecycle() {
         let loader = StaticPluginLoader::new();
-        let enabled = Arc::new(AtomicBool::new(false));
-        let enabled_clone = enabled.clone();
-
-        loader.register(
-            PluginMetadata::new("lifecycle_test", "Lifecycle Test", "1.0.0"),
-            move || {
-                Box::new(TestPlugin {
-                    id: "lifecycle_test".into(),
-                    enabled: enabled_clone.clone(),
-                })
-            },
-        );
+        let plugin = TestPlugin::new("lifecycle_test");
+        plugin.register(&loader);
 
         let mut manager = PluginManager::new(vec![Box::new(loader)]);
-        let factory = MockPluginContextFactory;
 
         manager.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = manager.load_and_enable_all(&factory).await;
+        let errors = manager.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
-        assert!(enabled.load(Ordering::Relaxed));
+        assert!(plugin.is_enabled());
 
         manager.shutdown().await;
-        assert!(!enabled.load(Ordering::Relaxed));
+        assert!(!plugin.is_enabled());
     }
     use std::sync::Mutex;
 
@@ -575,6 +691,39 @@ mod tests {
         log: Arc<Mutex<Vec<String>>>,
         metadatas: Vec<PluginMetadata>,
         fail_on_load: bool,
+        on_enable: OnEnable,
+    }
+
+    #[derive(Clone, Copy)]
+    enum OnEnable {
+        Ok,
+        Hang,
+        Panic,
+    }
+
+    struct Enabling {
+        id: String,
+        on_enable: OnEnable,
+    }
+
+    impl Plugin for Enabling {
+        fn metadata(&self) -> PluginMetadata {
+            PluginMetadata::new(&self.id, &self.id, "1.0.0")
+        }
+
+        fn on_enable<'a>(
+            &'a self,
+            _ctx: &'a dyn PluginContext,
+        ) -> BoxFuture<'a, Result<(), PluginError>> {
+            let on_enable = self.on_enable;
+            Box::pin(async move {
+                match on_enable {
+                    OnEnable::Ok => Ok(()),
+                    OnEnable::Hang => std::future::pending().await,
+                    OnEnable::Panic => panic!("enable failed hard"),
+                }
+            })
+        }
     }
 
     impl PluginLoader for LifecycleLoader {
@@ -599,7 +748,7 @@ mod tests {
             let fail = self.fail_on_load;
             let name = self.name;
             Box::pin(async move {
-                log.lock().expect("lock poisoned").push(label);
+                lock(&log).push(label);
                 if fail {
                     Err(LoaderError::LoadFailed {
                         plugin_id: name.to_string(),
@@ -619,14 +768,10 @@ mod tests {
         ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
             let log = Arc::clone(&self.log);
             let id = plugin_id.to_string();
+            let on_enable = self.on_enable;
             Box::pin(async move {
-                log.lock()
-                    .expect("lock poisoned")
-                    .push(format!("load:{id}"));
-                Ok(Box::new(TestPlugin {
-                    id,
-                    enabled: Arc::new(AtomicBool::new(false)),
-                }) as Box<dyn Plugin>)
+                lock(&log).push(format!("load:{id}"));
+                Ok(Box::new(Enabling { id, on_enable }) as Box<dyn Plugin>)
             })
         }
 
@@ -634,9 +779,7 @@ mod tests {
             let log = Arc::clone(&self.log);
             let id = plugin_id.to_string();
             Box::pin(async move {
-                log.lock()
-                    .expect("lock poisoned")
-                    .push(format!("unload:{id}"));
+                lock(&log).push(format!("unload:{id}"));
                 Ok(())
             })
         }
@@ -645,7 +788,7 @@ mod tests {
             let log = Arc::clone(&self.log);
             let label = format!("on_shutdown:{}", self.name);
             Box::pin(async move {
-                log.lock().expect("lock poisoned").push(label);
+                lock(&log).push(label);
                 Ok(())
             })
         }
@@ -659,10 +802,11 @@ mod tests {
             log: Arc::clone(&log),
             metadatas: vec![PluginMetadata::new("p1", "P1", "1.0.0")],
             fail_on_load: false,
+            on_enable: OnEnable::Ok,
         };
         let mut mgr = PluginManager::new(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        let errors = mgr.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
         mgr.shutdown().await;
 
@@ -686,10 +830,11 @@ mod tests {
             log: Arc::clone(&log),
             metadatas: vec![],
             fail_on_load: false,
+            on_enable: OnEnable::Ok,
         };
         let mut mgr = PluginManager::new(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        let errors = mgr.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
         mgr.shutdown().await;
 
@@ -706,16 +851,18 @@ mod tests {
             log: Arc::clone(&log),
             metadatas: vec![PluginMetadata::new("b1", "B1", "1.0.0")],
             fail_on_load: true,
+            on_enable: OnEnable::Ok,
         };
         let good = LifecycleLoader {
             name: "good",
             log: Arc::clone(&log),
             metadatas: vec![PluginMetadata::new("g1", "G1", "1.0.0")],
             fail_on_load: false,
+            on_enable: OnEnable::Ok,
         };
         let mut mgr = PluginManager::new(vec![Box::new(bad), Box::new(good)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        let errors = mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        let errors = mgr.load_and_enable_all(factory()).await;
 
         // The failed on_load surfaces exactly one error...
         assert_eq!(errors.len(), 1);
@@ -738,6 +885,206 @@ mod tests {
         assert!(seq.contains(&"on_shutdown:good".to_string()));
     }
 
+    async fn enable_faulty(on_enable: OnEnable) -> (PluginManager, Vec<String>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let loader = LifecycleLoader {
+            name: "faulty",
+            log: Arc::clone(&log),
+            metadatas: vec![PluginMetadata::new("f1", "F1", "1.0.0")],
+            fail_on_load: false,
+            on_enable,
+        };
+        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        mgr.discover_all(Path::new("plugins")).await.unwrap();
+        let errors = mgr.load_and_enable_all(factory()).await;
+        assert!(
+            matches!(errors.as_slice(), [PluginManagerError::Enable { .. }]),
+            "{errors:?}"
+        );
+        assert!(matches!(
+            mgr.plugin_state("f1"),
+            Some(PluginState::Error(_))
+        ));
+        let seq = lock(&log).clone();
+        (mgr, seq)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hanging_on_enable_is_cut_and_its_plugin_unloaded() {
+        let started = Instant::now();
+        let (_, seq) = enable_faulty(OnEnable::Hang).await;
+        assert_eq!(started.elapsed(), ENABLE_TIMEOUT);
+        assert_eq!(seq, ["on_load:faulty", "load:f1", "unload:f1"]);
+    }
+
+    #[tokio::test]
+    async fn a_panicking_on_enable_fails_only_that_plugin() {
+        let (_, seq) = enable_faulty(OnEnable::Panic).await;
+        assert_eq!(seq, ["on_load:faulty", "load:f1", "unload:f1"]);
+    }
+
+    type Timeline = Arc<Mutex<Vec<(String, Duration)>>>;
+
+    struct SlowPlugin {
+        metadata: PluginMetadata,
+        disable_for: Duration,
+        started: Instant,
+        timeline: Timeline,
+        stopping: Mutex<Option<CancellationToken>>,
+    }
+
+    impl SlowPlugin {
+        fn note(&self, what: &str) {
+            lock(&self.timeline).push((
+                format!("{what}:{}", self.metadata.id),
+                self.started.elapsed(),
+            ));
+        }
+    }
+
+    impl Plugin for SlowPlugin {
+        fn metadata(&self) -> PluginMetadata {
+            self.metadata.clone()
+        }
+
+        fn on_enable<'a>(
+            &'a self,
+            ctx: &'a dyn PluginContext,
+        ) -> BoxFuture<'a, Result<(), PluginError>> {
+            *lock(&self.stopping) = Some(ctx.proxy_shutdown());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
+            Box::pin(async move {
+                if lock(&self.stopping)
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    self.note("told");
+                }
+                self.note("start");
+                tokio::time::sleep(self.disable_for).await;
+                self.note("end");
+                Ok(())
+            })
+        }
+    }
+
+    fn slow_loader(
+        plugins: &[(&'static str, &[&'static str], u64)],
+        timeline: &Timeline,
+    ) -> StaticPluginLoader {
+        let loader = StaticPluginLoader::new();
+        let started = Instant::now();
+        for &(id, dependencies, seconds) in plugins {
+            let mut metadata = PluginMetadata::new(id, id, "1.0.0");
+            for dependency in dependencies {
+                metadata = metadata.depends_on(*dependency);
+            }
+            let timeline = Arc::clone(timeline);
+            let made = metadata.clone();
+            loader.register(metadata, move || {
+                Box::new(SlowPlugin {
+                    metadata: made.clone(),
+                    disable_for: Duration::from_secs(seconds),
+                    started,
+                    timeline: Arc::clone(&timeline),
+                    stopping: Mutex::new(None),
+                })
+            });
+        }
+        loader
+    }
+
+    async fn shut_down(
+        plugins: &[(&'static str, &[&'static str], u64)],
+        limits: ShutdownLimits,
+    ) -> (Vec<(String, Duration)>, Duration, PluginManager) {
+        let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PluginManager::new(vec![Box::new(slow_loader(plugins, &timeline))]);
+        manager.set_shutdown_limits(limits);
+        manager.discover_all(Path::new("plugins")).await.unwrap();
+        assert!(manager.load_and_enable_all(factory()).await.is_empty());
+        let started = Instant::now();
+        manager.shutdown().await;
+        let took = started.elapsed();
+        let seen = lock(&timeline).clone();
+        (seen, took, manager)
+    }
+
+    fn at(timeline: &[(String, Duration)], what: &str) -> Duration {
+        timeline
+            .iter()
+            .find(|(seen, _)| seen == what)
+            .map(|(_, at)| *at)
+            .unwrap_or_else(|| panic!("{what} missing from {timeline:?}"))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_disables_one_dependency_level_at_a_time_and_a_level_all_at_once() {
+        let (timeline, took, _) = shut_down(
+            &[("base", &[], 2), ("top", &["base"], 1), ("lone", &[], 3)],
+            ShutdownLimits::default(),
+        )
+        .await;
+        let start_top = at(&timeline, "start:top");
+        let start_lone = at(&timeline, "start:lone");
+        assert_eq!(
+            start_top, start_lone,
+            "a level is disabled all at once: {timeline:?}"
+        );
+        assert!(at(&timeline, "start:base") >= at(&timeline, "end:top"));
+        assert!(
+            at(&timeline, "start:base") >= at(&timeline, "end:lone"),
+            "the next level waits for the whole level before it: {timeline:?}"
+        );
+        assert_eq!(took, Duration::from_secs(5), "{timeline:?}");
+        for id in ["base", "top", "lone"] {
+            assert!(
+                timeline
+                    .iter()
+                    .any(|(seen, _)| *seen == format!("told:{id}")),
+                "the proxy shutdown token is cancelled before on_disable runs: {timeline:?}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_on_disable_is_cut_at_the_shutdown_limit_and_the_plugin_still_cleaned_up() {
+        let (timeline, took, manager) = shut_down(
+            &[("stuck", &[], 3600), ("quick", &[], 1)],
+            ShutdownLimits::default(),
+        )
+        .await;
+        assert_eq!(took, DEFAULT_SHUTDOWN_DISABLE_TIMEOUT, "{timeline:?}");
+        assert!(timeline.iter().any(|(seen, _)| seen == "end:quick"));
+        assert!(!timeline.iter().any(|(seen, _)| seen == "end:stuck"));
+        assert!(matches!(
+            manager.plugin_state("stuck"),
+            Some(PluginState::Disabled)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_plugin_phase_ends_at_its_limit_across_levels() {
+        let (timeline, took, _) = shut_down(
+            &[
+                ("low", &[], 4),
+                ("middle", &["low"], 4),
+                ("high", &["middle"], 4),
+            ],
+            ShutdownLimits::default(),
+        )
+        .await;
+        assert_eq!(took, DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT, "{timeline:?}");
+        assert_eq!(at(&timeline, "start:low"), Duration::from_secs(8));
+        assert!(
+            !timeline.iter().any(|(seen, _)| seen == "end:low"),
+            "the last level is cut at the phase limit: {timeline:?}"
+        );
+    }
+
     #[tokio::test]
     async fn second_shutdown_does_not_repeat_on_shutdown() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -746,10 +1093,11 @@ mod tests {
             log: Arc::clone(&log),
             metadatas: vec![PluginMetadata::new("p1", "P1", "1.0.0")],
             fail_on_load: false,
+            on_enable: OnEnable::Ok,
         };
         let mut mgr = PluginManager::new(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
-        mgr.load_and_enable_all(&MockPluginContextFactory).await;
+        mgr.load_and_enable_all(factory()).await;
         mgr.shutdown().await;
         mgr.shutdown().await;
 

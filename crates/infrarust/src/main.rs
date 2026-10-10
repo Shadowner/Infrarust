@@ -2,26 +2,23 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use std::future::Future;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
 use infrarust_config::ProxyConfig;
-use infrarust_core::plugin::manager::{PluginManager, PluginServices};
-use infrarust_core::server::ProxyServer;
-use infrarust_core::services::ban_bridge::BanServiceBridge;
+use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
-use infrarust_core::services::scheduler::SchedulerImpl;
-use infrarust_core::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
 use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_core::terminal::Banner;
+use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 
 mod migrate;
 mod plugins;
@@ -60,7 +57,7 @@ enum Command {
     /// Migrate V1 proxy configs (YAML) to V2 server configs (TOML)
     Migrate {
         input: std::path::PathBuf,
-        #[arg(short, long, default_value = "./servers")]
+        #[arg(short, long, default_value_os_t = infrarust_config::defaults::servers_dir())]
         output: std::path::PathBuf,
         #[arg(long)]
         config: Option<std::path::PathBuf>,
@@ -70,6 +67,7 @@ enum Command {
 #[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    infrarust_core::terminal::color::init();
 
     if let Some(Command::Migrate {
         input,
@@ -85,26 +83,16 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let config = if !cli.config.exists()
+    let (config, config_warnings) = if !cli.config.exists()
         && cli.config == Path::new("infrarust.toml")
         && std::io::stdout().is_terminal()
     {
-        match wizard::run(&cli.config) {
-            Ok(wizard::WizardOutcome::Config(c)) => {
-                let mut c = *c;
-                // CLI overrides (load_config does this for the normal path)
-                if let Some(bind) = cli.bind {
-                    c.bind = bind;
-                }
-                if let Some(ref plugins_dir) = cli.plugins_dir {
-                    c.plugins_dir = plugins_dir.clone();
-                }
-                if let Some(ref servers_dir) = cli.servers_dir {
-                    c.servers_dir = servers_dir.clone();
-                }
-                c
-            }
-            Ok(wizard::WizardOutcome::ExitClean) => return ExitCode::SUCCESS,
+        match wizard::run(&cli.config).and_then(|outcome| match outcome {
+            wizard::WizardOutcome::Config(c) => finalize_config(&cli, *c).map(Some),
+            wizard::WizardOutcome::ExitClean => Ok(None),
+        }) {
+            Ok(Some(c)) => c,
+            Ok(None) => return ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("error: {e:#}");
                 return ExitCode::FAILURE;
@@ -120,82 +108,22 @@ fn main() -> ExitCode {
         }
     };
 
-    // Init tracing subscriber. RUST_LOG takes priority over --log-level
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&cli.log_level));
+    let log_broadcast = config
+        .web
+        .as_ref()
+        .is_some_and(|w| w.enable_api)
+        .then(|| LogBroadcast::new(512, 1000));
+    let _tracing_guard = init_tracing(
+        &cli.log_level,
+        &config,
+        log_broadcast.as_ref().map(LogBroadcast::layer),
+    );
 
-    let formatter = InfrarustFormatter::new();
+    startup_banner(&config).print();
 
-    let log_layer = if config.web.as_ref().is_some_and(|w| w.enable_api) {
-        use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
-        let lb = LogBroadcast::new(512, 1000);
-        let layer = BroadcastLogLayer::new(lb.tx.clone(), lb.history.clone(), 1000);
-        let _ = LogBroadcast::install(lb);
-        Some(layer)
-    } else {
-        None
-    };
-
-    {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
-
-        #[cfg(feature = "telemetry")]
-        let _otel_guard = {
-            if let Some(ref tc) = config.telemetry {
-                if tc.enabled {
-                    match infrarust_core::telemetry::init_telemetry(tc) {
-                        Ok(guard) => {
-                            let tracer = opentelemetry::global::tracer("infrarust");
-                            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-
-                            tracing_subscriber::registry()
-                                .with(filter)
-                                .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                                .with(otel_layer)
-                                .with(log_layer)
-                                .init();
-                            Some(guard)
-                        }
-                        Err(e) => {
-                            tracing_subscriber::registry()
-                                .with(filter)
-                                .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                                .with(log_layer)
-                                .init();
-                            tracing::warn!(
-                                "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    tracing_subscriber::registry()
-                        .with(filter)
-                        .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                        .with(log_layer)
-                        .init();
-                    None
-                }
-            } else {
-                tracing_subscriber::registry()
-                    .with(filter)
-                    .with(tracing_subscriber::fmt::layer().event_format(formatter))
-                    .with(log_layer)
-                    .init();
-                None
-            }
-        };
-
-        #[cfg(not(feature = "telemetry"))]
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(tracing_subscriber::fmt::layer().event_format(formatter))
-            .with(log_layer)
-            .init();
+    for warning in config_warnings {
+        tracing::warn!("{warning}");
     }
-
-    infrarust_core::telemetry::formatter::print_banner();
 
     tracing::info!(
         bind = %config.bind,
@@ -217,7 +145,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config, cli.config)) {
+    match runtime.block_on(run(config, cli.config, log_broadcast)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -226,14 +154,65 @@ fn main() -> ExitCode {
     }
 }
 
-fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
+struct TracingGuard {
+    #[cfg(feature = "telemetry")]
+    _otel: Option<infrarust_core::telemetry::OtelGuard>,
+}
+
+fn init_tracing(
+    log_level: &str,
+    #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] config: &ProxyConfig,
+    log_layer: Option<BroadcastLogLayer>,
+) -> TracingGuard {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+
+    let registry = tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().event_format(InfrarustFormatter::new()));
+
+    #[cfg(feature = "telemetry")]
+    let otel = enabled_telemetry(config).map(infrarust_core::telemetry::init_telemetry);
+    #[cfg(feature = "telemetry")]
+    let registry = registry.with(otel.as_ref().is_some_and(Result::is_ok).then(|| {
+        tracing_opentelemetry::layer().with_tracer(opentelemetry::global::tracer("infrarust"))
+    }));
+
+    registry.with(log_layer).init();
+
+    TracingGuard {
+        #[cfg(feature = "telemetry")]
+        _otel: match otel {
+            Some(Ok(guard)) => Some(guard),
+            Some(Err(e)) => {
+                tracing::warn!(
+                    "failed to initialize OpenTelemetry: {e}, continuing without telemetry"
+                );
+                None
+            }
+            None => None,
+        },
+    }
+}
+
+#[cfg(feature = "telemetry")]
+fn enabled_telemetry(config: &ProxyConfig) -> Option<&infrarust_config::TelemetryConfig> {
+    config.telemetry.as_ref().filter(|tc| tc.enabled)
+}
+
+fn load_config(cli: &Cli) -> anyhow::Result<(ProxyConfig, Vec<String>)> {
     let content = std::fs::read_to_string(&cli.config)
         .with_context(|| format!("cannot read config file: {}", cli.config.display()))?;
 
-    let mut config: ProxyConfig = toml::from_str(&content)
+    let config: ProxyConfig = toml::from_str(&content)
         .with_context(|| format!("invalid TOML in {}", cli.config.display()))?;
 
-    // CLI overrides
+    finalize_config(cli, config)
+}
+
+fn apply_cli_overrides(cli: &Cli, config: &mut ProxyConfig) {
     if let Some(bind) = cli.bind {
         config.bind = bind;
     }
@@ -243,239 +222,76 @@ fn load_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     if let Some(ref servers_dir) = cli.servers_dir {
         config.servers_dir = servers_dir.clone();
     }
-
-    infrarust_config::validate_proxy_config(&config).context("configuration validation failed")?;
-
-    Ok(config)
 }
 
-fn build_proxy_info(config: &ProxyConfig) -> infrarust_api::services::proxy_info::ProxyInfo {
-    use infrarust_api::services::proxy_info::{
-        KeepaliveInfo, ProxyInfo, RateLimitInfo, StatusCacheInfo, UnknownDomainBehavior,
-    };
-
-    ProxyInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        bind: config.bind,
-        max_connections: config.max_connections,
-        connect_timeout: config.connect_timeout,
-        receive_proxy_protocol: config.receive_proxy_protocol,
-        worker_threads: config.worker_threads,
-        so_reuseport: config.so_reuseport,
-        rate_limit: RateLimitInfo {
-            max_connections: config.rate_limit.max_connections,
-            window: config.rate_limit.window,
-            status_max: config.rate_limit.status_max,
-            status_window: config.rate_limit.status_window,
-        },
-        status_cache: StatusCacheInfo {
-            ttl: config.status_cache.ttl,
-            max_entries: config.status_cache.max_entries,
-        },
-        keepalive: KeepaliveInfo {
-            time: config.keepalive.time,
-            interval: config.keepalive.interval,
-            retries: config.keepalive.retries,
-        },
-        telemetry_enabled: config.telemetry.as_ref().is_some_and(|t| t.enabled),
-        docker_enabled: config.docker.is_some(),
-        web_api_enabled: config.web.as_ref().is_some_and(|w| w.enable_api),
-        web_ui_enabled: config.web.as_ref().is_some_and(|w| w.webui_enabled()),
-        unknown_domain_behavior: match config.unknown_domain_behavior {
-            infrarust_config::UnknownDomainBehavior::DefaultMotd => {
-                UnknownDomainBehavior::DefaultMotd
-            }
-            infrarust_config::UnknownDomainBehavior::Drop => UnknownDomainBehavior::Drop,
-        },
-    }
+fn finalize_config(
+    cli: &Cli,
+    mut config: ProxyConfig,
+) -> anyhow::Result<(ProxyConfig, Vec<String>)> {
+    apply_cli_overrides(cli, &mut config);
+    let warnings = infrarust_config::validate_proxy_config(&config)
+        .context("configuration validation failed")?;
+    Ok((config, warnings))
 }
 
-async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Result<()> {
+async fn run(
+    config: ProxyConfig,
+    config_path: std::path::PathBuf,
+    log_broadcast: Option<LogBroadcast>,
+) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
     // Signal handler in background
-    let shutdown_signal = shutdown.clone();
-    tokio::spawn(async move {
-        signal_handler().await;
-        tracing::info!("shutdown signal received");
-        shutdown_signal.cancel();
-    });
+    tokio::spawn(watch_signals(
+        OsSignals::install(),
+        shutdown.clone(),
+        |code| std::process::exit(code),
+    ));
 
     let mut web_config = config.web.clone();
-    let plugins_dir = config.plugins_dir.clone();
-    let proxy_info = build_proxy_info(&config);
-    let plugin_cfgs = config.plugins.clone();
 
-    // Build the WASM engine before `config` is moved into the proxy server.
     #[cfg(feature = "wasm")]
     let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
+    #[cfg(feature = "wasm")]
+    let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
 
-    // Build and run the proxy server
-    let mut server = ProxyServer::new(config, config_path, shutdown.clone())
+    let static_loader = plugins::build_static_loader(web_config.as_mut(), log_broadcast)?;
+    let static_ids = static_loader.registered_ids();
+    let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
+
+    let builder = ProxyRuntime::builder(config, config_path)
+        .shutdown_token(shutdown.clone())
+        .proxy_info(proxy_info)
+        .trusted_plugins(static_ids)
+        .loader(Box::new(static_loader));
+
+    #[cfg(feature = "wasm")]
+    let builder = builder.loader(Box::new(
+        infrarust_loader_wasm::WasmPluginLoader::new(wasm_engine, wasm_config)
+            .context("failed to start the wasm plugin loader")?,
+    ));
+
+    let running = builder
+        .start()
         .await
         .context("failed to initialize proxy server")?;
 
-    let static_loader = plugins::build_static_loader(web_config.as_mut())?;
-    let static_ids = static_loader.registered_ids();
-    #[cfg_attr(not(feature = "wasm"), allow(unused_mut))]
-    let mut loaders: Vec<Box<dyn infrarust_core::plugin::PluginLoader>> =
-        vec![Box::new(static_loader)];
-
-    #[cfg(feature = "wasm")]
-    loaders.push(Box::new(infrarust_loader_wasm::WasmPluginLoader::new(
-        wasm_engine,
-    )));
-
-    let mut plugin_manager = PluginManager::new(loaders);
-    plugin_manager.set_disabled_plugins(
-        plugin_cfgs
-            .iter()
-            .filter(|(_, c)| !c.enabled)
-            .map(|(id, _)| id.clone())
-            .collect(),
-    );
-
-    let services = server.services();
-
-    plugin_manager
-        .discover_all(&plugins_dir)
-        .await
-        .context("failed to discover plugins")?;
-
-    let server_manager: Arc<dyn infrarust_api::services::server_manager::ServerManager> =
-        match &services.server_manager {
-            Some(sm) => Arc::new(ServerManagerBridge::new(Arc::clone(sm))),
-            None => Arc::new(NoopServerManager),
-        };
-
-    let transport_filter_registry =
-        Arc::new(infrarust_core::filter::transport_registry::TransportFilterRegistryImpl::new());
-
-    let plugin_registry = Arc::new(infrarust_core::plugin::PluginRegistryImpl::new());
-
-    let start_time = std::time::Instant::now();
-
-    infrarust_core::commands::register_builtin_commands(
-        &services.command_manager,
-        services,
-        Arc::clone(&plugin_registry)
-            as Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry>,
-        start_time,
-    );
-
-    let plugin_services = PluginServices {
-        event_bus: Arc::clone(&services.event_bus) as Arc<dyn infrarust_api::event::bus::EventBus>,
-        player_registry: Arc::clone(&services.player_registry)
-            as Arc<dyn infrarust_api::services::player_registry::PlayerRegistry>,
-        server_manager,
-        ban_service: Arc::new(BanServiceBridge::new(Arc::clone(&services.ban_manager))),
-        command_manager: Arc::clone(&services.command_manager)
-            as Arc<dyn infrarust_api::command::CommandManager>,
-        scheduler: Arc::new(SchedulerImpl::new()),
-        config_service: Arc::new(ConfigServiceImpl::new(
+    let services = running.services();
+    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
+        Arc::clone(&services.player_registry),
+        Arc::clone(&services.connection_registry),
+        Arc::clone(&services.ban_manager),
+        services.server_manager.clone(),
+        Arc::new(ConfigServiceImpl::new(
             Arc::clone(&services.domain_router),
             services.config_path.clone(),
             Arc::clone(&services.config),
         )),
-        load_balancer_service: Arc::clone(&services.load_balancer_service) as _,
-        plugin_registry: Arc::clone(&plugin_registry)
-            as Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry>,
-        codec_filter_registry: Arc::clone(&services.codec_filter_registry),
-        transport_filter_registry: Arc::clone(&transport_filter_registry),
-        domain_router: Arc::clone(&services.domain_router),
-        proxy_shutdown: shutdown.clone(),
-        proxy_info,
-        plugins_dir,
-    };
-
-    use infrarust_core::plugin::PluginPermissions;
-    let mut plugin_configs: std::collections::HashMap<String, PluginPermissions> = plugin_cfgs
-        .into_iter()
-        .map(|(id, c)| {
-            (
-                id,
-                PluginPermissions {
-                    permissions: c.permissions,
-                    trusted: false,
-                },
-            )
-        })
-        .collect();
-    for id in static_ids {
-        plugin_configs
-            .entry(id)
-            .and_modify(|p| p.trusted = true)
-            .or_insert(PluginPermissions {
-                permissions: Vec::new(),
-                trusted: true,
-            });
-    }
-
-    let context_factory =
-        infrarust_core::plugin::PluginContextFactoryImpl::new(plugin_services, plugin_configs);
-
-    let errors = plugin_manager.load_and_enable_all(&context_factory).await;
-    if !errors.is_empty() {
-        tracing::warn!(count = errors.len(), "Some plugins failed to enable");
-    }
-
-    // Refresh the plugin registry snapshot so all plugins are visible via the API
-    plugin_registry.update_from(&plugin_manager.list_plugins(), &|id| {
-        plugin_manager.plugin_state(id).cloned()
-    });
-
-    // Collect limbo handlers registered by plugins and populate the registry
-    for handler in plugin_manager.collect_limbo_handlers() {
-        services.limbo_handler_registry.register(Arc::from(handler));
-    }
-
-    let plugin_providers = plugin_manager.collect_config_providers();
-    if !plugin_providers.is_empty() {
-        tracing::info!(
-            count = plugin_providers.len(),
-            "activating plugin config providers"
-        );
-        let results = infrarust_core::provider::plugin_adapter::activate_plugin_providers(
-            plugin_providers,
-            services.provider_event_sender.clone(),
-            &services.domain_router,
-            shutdown.clone(),
-        )
-        .await;
-        plugin_manager.store_provider_cleanup(results);
-    }
-
-    // Clone Arcs for console before releasing the immutable borrow on `server`
-    let console_player_registry = Arc::clone(&services.player_registry);
-    let console_connection_registry = Arc::clone(&services.connection_registry);
-    let console_ban_manager = Arc::clone(&services.ban_manager);
-    let console_server_manager = services.server_manager.clone();
-    let console_domain_router = Arc::clone(&services.domain_router);
-    let console_config_path = services.config_path.clone();
-    let console_config = Arc::clone(&services.config);
-    let console_permission_service = Arc::clone(&services.permission_service);
-
-    // Rebuild transport filter chain now that plugins may have registered filters
-    server.rebuild_transport_filter_chain(&transport_filter_registry);
-
-    // Wrap PluginManager in Arc<RwLock> for shared read access from console
-    let plugin_manager = Arc::new(tokio::sync::RwLock::new(plugin_manager));
-
-    // Start interactive console
-    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
-        console_player_registry,
-        console_connection_registry,
-        console_ban_manager,
-        console_server_manager,
-        Arc::new(ConfigServiceImpl::new(
-            console_domain_router,
-            console_config_path,
-            console_config,
-        )),
-        Arc::clone(&plugin_manager),
-        console_permission_service,
+        Arc::clone(running.plugin_manager()),
+        Arc::clone(&services.permission_service),
+        Arc::clone(&services.command_manager),
         shutdown.clone(),
-        start_time,
+        running.start_time(),
     ));
 
     let console_task = infrarust_core::console::ConsoleTask::new(console_services);
@@ -492,69 +308,239 @@ async fn run(config: ProxyConfig, config_path: std::path::PathBuf) -> anyhow::Re
         tracing::info!("{label} accessible at: http://{}", web.bind);
     }
 
-    let server = Arc::new(server);
-
-    server.event_bus().fire(ProxyInitializeEvent).await;
-
-    Arc::clone(&server)
-        .run()
-        .await
-        .context("proxy server error")?;
-
+    let result = running.wait().await;
     console_handle.abort();
-
-    server.event_bus().fire(ProxyShutdownEvent).await;
-
-    plugin_manager.write().await.shutdown().await;
-
-    // Post-shutdown: drain active connections with a timeout
-    let remaining = server.registry().count();
-    if remaining > 0 {
-        tracing::info!(remaining, "waiting for active connections to drain");
-
-        let _ = tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let count = server.registry().count();
-                if count == 0 {
-                    tracing::info!("all connections drained");
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
-            }
-        })
-        .await
-        .inspect_err(|_| {
-            tracing::warn!(
-                remaining = server.registry().count(),
-                "drain timeout, forcing shutdown"
-            );
-        });
-    }
+    result.context("proxy server error")?;
 
     tracing::info!("infrarust stopped");
     Ok(())
 }
 
-async fn signal_handler() {
-    use tokio::signal;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopSignal {
+    Interrupt,
+    Terminate,
+}
 
-    let ctrl_c = signal::ctrl_c();
-
-    #[cfg(unix)]
-    {
-        #[allow(clippy::expect_used)]
-        // Fatal: if we can't install the signal handler, there's no recovery
-        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler");
-        tokio::select! {
-            biased;
-            _ = sigterm.recv() => {}
-            _ = ctrl_c => {}
+impl StopSignal {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
         }
     }
 
-    #[cfg(not(unix))]
-    {
-        ctrl_c.await.ok();
+    const fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            Self::Terminate => 143,
+        }
+    }
+}
+
+trait StopSignals: Send {
+    fn next(&mut self) -> impl Future<Output = Option<StopSignal>> + Send;
+}
+
+struct OsSignals {
+    #[cfg(unix)]
+    terminate: Option<tokio::signal::unix::Signal>,
+}
+
+impl OsSignals {
+    fn install() -> Self {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let terminate = match signal(SignalKind::terminate()) {
+                Ok(terminate) => Some(terminate),
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to install SIGTERM handler; only Ctrl-C will stop the proxy");
+                    None
+                }
+            };
+            Self { terminate }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {}
+        }
+    }
+}
+
+impl StopSignals for OsSignals {
+    async fn next(&mut self) -> Option<StopSignal> {
+        #[cfg(unix)]
+        if let Some(terminate) = self.terminate.as_mut() {
+            return tokio::select! {
+                biased;
+                received = terminate.recv() => received.map(|()| StopSignal::Terminate),
+                received = tokio::signal::ctrl_c() => received.ok().map(|()| StopSignal::Interrupt),
+            };
+        }
+        tokio::signal::ctrl_c()
+            .await
+            .ok()
+            .map(|()| StopSignal::Interrupt)
+    }
+}
+
+async fn watch_signals(
+    mut signals: impl StopSignals,
+    shutdown: CancellationToken,
+    exit: impl FnOnce(i32) + Send,
+) {
+    while let Some(signal) = signals.next().await {
+        if shutdown.is_cancelled() {
+            tracing::warn!(
+                signal = signal.name(),
+                "shutdown signal received while the proxy is already stopping; exiting now without finishing the shutdown"
+            );
+            exit(signal.exit_code());
+            return;
+        }
+        tracing::info!(
+            signal = signal.name(),
+            "shutdown signal received; send it again to exit at once"
+        );
+        shutdown.cancel();
+    }
+}
+
+fn startup_banner(config: &ProxyConfig) -> Banner {
+    let workers = match config.worker_threads {
+        0 => "auto".to_string(),
+        count => count.to_string(),
+    };
+    let mut banner = Banner::new()
+        .row("listen", config.bind)
+        .row("servers", config.servers_dir.display())
+        .row("plugins", config.plugins_dir.display())
+        .row("workers", workers);
+    if let Some(web) = config.web.as_ref().filter(|web| web.enable_api) {
+        banner = banner.row("web", &web.bind);
+    }
+    if config.docker.is_some() {
+        banner = banner.row("docker", "on");
+    }
+    banner.row(
+        "platform",
+        format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::parse_from(std::iter::once("infrarust").chain(args.iter().copied()))
+    }
+
+    fn wizard_like_config(servers_dir: &Path) -> ProxyConfig {
+        let toml_str = format!(
+            "bind = \"0.0.0.0:25565\"\nservers_dir = {:?}\n\n[web]\nenable_api = true\nbind = \"127.0.0.1:8080\"\n",
+            servers_dir.display().to_string()
+        );
+        toml::from_str(&toml_str).unwrap()
+    }
+
+    struct Scripted(std::collections::VecDeque<StopSignal>);
+
+    impl StopSignals for Scripted {
+        fn next(&mut self) -> impl Future<Output = Option<StopSignal>> + Send {
+            std::future::ready(self.0.pop_front())
+        }
+    }
+
+    async fn watch(signals: &[StopSignal], shutdown: &CancellationToken) -> Option<i32> {
+        let exited = Arc::new(std::sync::Mutex::new(None));
+        let seen = Arc::clone(&exited);
+        watch_signals(
+            Scripted(signals.iter().copied().collect()),
+            shutdown.clone(),
+            move |code| *seen.lock().unwrap() = Some(code),
+        )
+        .await;
+        *exited.lock().unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_first_signal_starts_the_shutdown_and_the_second_exits_at_once() {
+        let shutdown = CancellationToken::new();
+        let code = watch(&[StopSignal::Terminate, StopSignal::Interrupt], &shutdown).await;
+        assert!(shutdown.is_cancelled());
+        assert_eq!(code, Some(130));
+    }
+
+    #[tokio::test]
+    async fn one_signal_only_starts_the_shutdown() {
+        let shutdown = CancellationToken::new();
+        assert_eq!(watch(&[StopSignal::Terminate], &shutdown).await, None);
+        assert!(shutdown.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn a_signal_while_the_proxy_is_already_stopping_exits_at_once() {
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        assert_eq!(
+            watch(&[StopSignal::Terminate], &shutdown).await,
+            Some(143),
+            "a stop from the console counts as the first request"
+        );
+    }
+
+    #[test]
+    fn cli_overrides_replace_only_the_flags_given() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = wizard_like_config(tmp.path());
+        let plugins_dir = config.plugins_dir.clone();
+
+        apply_cli_overrides(&parse(&["--bind", "127.0.0.1:25577"]), &mut config);
+        assert_eq!(config.bind, "127.0.0.1:25577".parse().unwrap());
+        assert_eq!(config.servers_dir, tmp.path());
+        assert_eq!(config.plugins_dir, plugins_dir);
+
+        apply_cli_overrides(
+            &parse(&["--servers-dir", "/srv/mc", "--plugins-dir", "/srv/plugins"]),
+            &mut config,
+        );
+        assert_eq!(config.bind, "127.0.0.1:25577".parse().unwrap());
+        assert_eq!(config.servers_dir, Path::new("/srv/mc"));
+        assert_eq!(config.plugins_dir, Path::new("/srv/plugins"));
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn telemetry_is_only_enabled_when_the_section_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = wizard_like_config(tmp.path());
+        assert!(enabled_telemetry(&config).is_none());
+
+        let mut config = config;
+        config.telemetry = Some(infrarust_config::TelemetryConfig::default());
+        assert!(enabled_telemetry(&config).is_none());
+
+        config.telemetry = Some(infrarust_config::TelemetryConfig {
+            enabled: true,
+            ..infrarust_config::TelemetryConfig::default()
+        });
+        assert!(enabled_telemetry(&config).is_some_and(|tc| tc.enabled));
+    }
+
+    #[test]
+    fn a_bind_override_is_validated_against_the_generated_web_bind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = wizard_like_config(tmp.path());
+
+        let err = finalize_config(&parse(&["--bind", "0.0.0.0:8080"]), config.clone()).unwrap_err();
+        assert!(format!("{err:#}").contains("collides"), "{err:#}");
+
+        let (ok, warnings) = finalize_config(&parse(&["--bind", "0.0.0.0:25566"]), config).unwrap();
+        assert_eq!(ok.bind, "0.0.0.0:25566".parse().unwrap());
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 }

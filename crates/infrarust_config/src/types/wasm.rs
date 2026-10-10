@@ -1,0 +1,749 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::defaults;
+use crate::types::{WasmMount, WasmNetworkConfig};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WasmConfig {
+    #[serde(default = "defaults::wasm_epoch_tick")]
+    #[serde(with = "humantime_serde")]
+    pub epoch_tick: Duration,
+
+    #[serde(default = "defaults::wasm_memory_limit_mb")]
+    pub memory_limit_mb: u32,
+
+    #[serde(default = "defaults::wasm_cpu_budget")]
+    #[serde(with = "humantime_serde")]
+    pub cpu_budget: Duration,
+
+    #[serde(default = "defaults::wasm_codec_cpu_budget")]
+    #[serde(with = "humantime_serde")]
+    pub codec_cpu_budget: Duration,
+
+    #[serde(default = "defaults::wasm_host_call_timeout")]
+    #[serde(with = "humantime_serde")]
+    pub host_call_timeout: Duration,
+
+    #[serde(default = "defaults::wasm_max_call_duration")]
+    #[serde(with = "humantime_serde")]
+    pub max_call_duration: Duration,
+
+    #[serde(default = "defaults::wasm_queue_capacity")]
+    pub queue_capacity: usize,
+
+    #[serde(default = "defaults::wasm_instance_pool")]
+    pub instance_pool: u32,
+
+    #[serde(default = "defaults::wasm_cache_dir")]
+    pub cache_dir: PathBuf,
+
+    #[serde(default)]
+    pub recovery: WasmRecoveryConfig,
+
+    #[serde(default)]
+    pub quotas: WasmQuotasConfig,
+
+    #[serde(default)]
+    pub codec_quarantine: WasmCodecQuarantineConfig,
+}
+
+impl Default for WasmConfig {
+    fn default() -> Self {
+        Self {
+            epoch_tick: defaults::wasm_epoch_tick(),
+            memory_limit_mb: defaults::wasm_memory_limit_mb(),
+            cpu_budget: defaults::wasm_cpu_budget(),
+            codec_cpu_budget: defaults::wasm_codec_cpu_budget(),
+            host_call_timeout: defaults::wasm_host_call_timeout(),
+            max_call_duration: defaults::wasm_max_call_duration(),
+            queue_capacity: defaults::wasm_queue_capacity(),
+            instance_pool: defaults::wasm_instance_pool(),
+            cache_dir: defaults::wasm_cache_dir(),
+            recovery: WasmRecoveryConfig::default(),
+            quotas: WasmQuotasConfig::default(),
+            codec_quarantine: WasmCodecQuarantineConfig::default(),
+        }
+    }
+}
+
+impl WasmConfig {
+    #[must_use]
+    pub const fn limits(&self) -> WasmLimits {
+        WasmLimits {
+            memory_limit_mb: self.memory_limit_mb,
+            cpu_budget: self.cpu_budget,
+            codec_cpu_budget: self.codec_cpu_budget,
+            host_call_timeout: self.host_call_timeout,
+            max_call_duration: self.max_call_duration,
+            queue_capacity: self.queue_capacity,
+            recovery: self.recovery,
+            quotas: self.quotas,
+            codec_quarantine: self.codec_quarantine,
+        }
+    }
+
+    #[must_use]
+    pub fn limits_for(&self, overrides: Option<&PluginWasmConfig>) -> WasmLimits {
+        let base = self.limits();
+        overrides.map_or(base, |o| o.apply(base))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginWasmConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<u32>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub cpu_budget: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub codec_cpu_budget: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub host_call_timeout: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(with = "humantime_serde::option")]
+    pub max_call_duration: Option<Duration>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_capacity: Option<usize>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<PluginWasmRecoveryConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quotas: Option<PluginWasmQuotasConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codec_quarantine: Option<PluginWasmCodecQuarantineConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<WasmNetworkConfig>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<WasmMount>,
+}
+
+impl PluginWasmConfig {
+    #[must_use]
+    pub fn apply(&self, base: WasmLimits) -> WasmLimits {
+        WasmLimits {
+            memory_limit_mb: self.memory_limit_mb.unwrap_or(base.memory_limit_mb),
+            cpu_budget: self.cpu_budget.unwrap_or(base.cpu_budget),
+            codec_cpu_budget: self.codec_cpu_budget.unwrap_or(base.codec_cpu_budget),
+            host_call_timeout: self.host_call_timeout.unwrap_or(base.host_call_timeout),
+            max_call_duration: self.max_call_duration.unwrap_or(base.max_call_duration),
+            queue_capacity: self.queue_capacity.unwrap_or(base.queue_capacity),
+            recovery: self
+                .recovery
+                .as_ref()
+                .map_or(base.recovery, |overrides| overrides.apply(base.recovery)),
+            quotas: self
+                .quotas
+                .as_ref()
+                .map_or(base.quotas, |overrides| overrides.apply(base.quotas)),
+            codec_quarantine: self
+                .codec_quarantine
+                .as_ref()
+                .map_or(base.codec_quarantine, |overrides| {
+                    overrides.apply(base.codec_quarantine)
+                }),
+        }
+    }
+}
+
+macro_rules! overridable_config {
+    (
+        $global:ident / $plugin:ident {
+            $( $field:ident: $ty:ty = $default:path $(, with = $with:literal)?; )*
+        }
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(default, deny_unknown_fields)]
+        pub struct $global {
+            $(
+                $(#[serde(with = $with)])?
+                pub $field: $ty,
+            )*
+        }
+
+        impl Default for $global {
+            fn default() -> Self {
+                Self {
+                    $( $field: $default(), )*
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub struct $plugin {
+            $(
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                $(#[serde(with = $with)])?
+                pub $field: Option<$ty>,
+            )*
+        }
+
+        impl $plugin {
+            #[must_use]
+            pub fn apply(&self, base: $global) -> $global {
+                $global {
+                    $( $field: self.$field.unwrap_or(base.$field), )*
+                }
+            }
+        }
+    };
+}
+
+overridable_config! {
+    WasmRecoveryConfig / PluginWasmRecoveryConfig {
+        max_restarts: u32 = defaults::wasm_recovery_max_restarts;
+        window: Duration = defaults::wasm_recovery_window, with = "humantime_serde";
+        backoff_initial: Duration = defaults::wasm_recovery_backoff_initial, with = "humantime_serde";
+        backoff_max: Duration = defaults::wasm_recovery_backoff_max, with = "humantime_serde";
+    }
+}
+
+overridable_config! {
+    WasmQuotasConfig / PluginWasmQuotasConfig {
+        event_listeners: usize = defaults::wasm_quota_event_listeners;
+        commands: usize = defaults::wasm_quota_commands;
+        scheduled_tasks: usize = defaults::wasm_quota_scheduled_tasks;
+        plugin_channels: usize = defaults::wasm_quota_plugin_channels;
+        codec_filters: usize = defaults::wasm_quota_codec_filters;
+        limbo_handlers: usize = defaults::wasm_quota_limbo_handlers;
+        permission_nodes: usize = defaults::wasm_quota_permission_nodes;
+    }
+}
+
+impl WasmQuotasConfig {
+    #[must_use]
+    pub const fn entries(&self) -> [(&'static str, usize); 7] {
+        [
+            ("event_listeners", self.event_listeners),
+            ("commands", self.commands),
+            ("scheduled_tasks", self.scheduled_tasks),
+            ("plugin_channels", self.plugin_channels),
+            ("codec_filters", self.codec_filters),
+            ("limbo_handlers", self.limbo_handlers),
+            ("permission_nodes", self.permission_nodes),
+        ]
+    }
+}
+
+overridable_config! {
+    WasmCodecQuarantineConfig / PluginWasmCodecQuarantineConfig {
+        faults: u32 = defaults::wasm_codec_quarantine_faults;
+        window: Duration = defaults::wasm_codec_quarantine_window, with = "humantime_serde";
+        backoff_initial: Duration = defaults::wasm_codec_quarantine_backoff_initial, with = "humantime_serde";
+        backoff_max: Duration = defaults::wasm_codec_quarantine_backoff_max, with = "humantime_serde";
+    }
+}
+
+impl WasmCodecQuarantineConfig {
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.faults > 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WasmLimits {
+    pub memory_limit_mb: u32,
+    pub cpu_budget: Duration,
+    pub codec_cpu_budget: Duration,
+    pub host_call_timeout: Duration,
+    pub max_call_duration: Duration,
+    pub queue_capacity: usize,
+    pub recovery: WasmRecoveryConfig,
+    pub quotas: WasmQuotasConfig,
+    pub codec_quarantine: WasmCodecQuarantineConfig,
+}
+
+impl Default for WasmLimits {
+    fn default() -> Self {
+        WasmConfig::default().limits()
+    }
+}
+
+impl WasmLimits {
+    #[must_use]
+    pub fn memory_limit_bytes(&self) -> usize {
+        usize::try_from(u64::from(self.memory_limit_mb) * 1024 * 1024).unwrap_or(usize::MAX)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::ProxyConfig;
+
+    #[test]
+    fn an_absent_wasm_section_uses_the_documented_defaults() {
+        let config: ProxyConfig = toml::from_str("").unwrap();
+        assert_eq!(config.wasm, WasmConfig::default());
+        assert_eq!(config.wasm.epoch_tick, Duration::from_millis(1));
+        assert_eq!(config.wasm.instance_pool, 0);
+        assert_eq!(
+            config.wasm.limits(),
+            WasmLimits {
+                memory_limit_mb: 64,
+                cpu_budget: Duration::from_secs(3),
+                codec_cpu_budget: Duration::from_millis(5),
+                host_call_timeout: Duration::from_secs(30),
+                max_call_duration: Duration::from_secs(60),
+                queue_capacity: 1024,
+                recovery: WasmRecoveryConfig::default(),
+                quotas: WasmQuotasConfig::default(),
+                codec_quarantine: WasmCodecQuarantineConfig::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn the_wasm_section_parses_every_key() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm]
+            epoch_tick = "20ms"
+            memory_limit_mb = 128
+            cpu_budget = "5s"
+            codec_cpu_budget = "400ms"
+            host_call_timeout = "10s"
+            max_call_duration = "45s"
+            queue_capacity = 64
+            instance_pool = 256
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.wasm.epoch_tick, Duration::from_millis(20));
+        assert_eq!(config.wasm.instance_pool, 256);
+        assert_eq!(
+            config.wasm.limits(),
+            WasmLimits {
+                memory_limit_mb: 128,
+                cpu_budget: Duration::from_secs(5),
+                codec_cpu_budget: Duration::from_millis(400),
+                host_call_timeout: Duration::from_secs(10),
+                max_call_duration: Duration::from_secs(45),
+                queue_capacity: 64,
+                recovery: WasmRecoveryConfig::default(),
+                quotas: WasmQuotasConfig::default(),
+                codec_quarantine: WasmCodecQuarantineConfig::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_plugin_override_replaces_only_the_keys_it_sets() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm]
+            memory_limit_mb = 128
+            queue_capacity = 64
+
+            [plugins.chatty.wasm]
+            memory_limit_mb = 16
+            cpu_budget = "500ms"
+            "#,
+        )
+        .unwrap();
+        let overrides = config.plugins["chatty"].wasm.as_ref();
+        let limits = config.wasm.limits_for(overrides);
+        assert_eq!(limits.memory_limit_mb, 16);
+        assert_eq!(limits.cpu_budget, Duration::from_millis(500));
+        assert_eq!(limits.queue_capacity, 64);
+        assert_eq!(limits.host_call_timeout, Duration::from_secs(30));
+        assert_eq!(config.wasm.limits_for(None), config.wasm.limits());
+    }
+
+    #[test]
+    fn the_codec_quarantine_table_has_documented_defaults_and_per_plugin_overrides() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.codec_quarantine]
+            window = "30s"
+
+            [plugins.anticheat.wasm.codec_quarantine]
+            faults = 0
+            "#,
+        )
+        .unwrap();
+        let base = config.wasm.limits().codec_quarantine;
+        assert_eq!(base.faults, 5);
+        assert!(base.is_enabled());
+        assert_eq!(base.window, Duration::from_secs(30));
+        assert_eq!(base.backoff_initial, Duration::from_secs(10));
+        assert_eq!(base.backoff_max, Duration::from_secs(300));
+        let overridden = config
+            .wasm
+            .limits_for(config.plugins["anticheat"].wasm.as_ref())
+            .codec_quarantine;
+        assert!(!overridden.is_enabled());
+        assert_eq!(overridden.window, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn an_absent_recovery_table_uses_the_documented_defaults() {
+        let config: ProxyConfig = toml::from_str("[wasm]\nqueue_capacity = 8\n").unwrap();
+        let recovery = config.wasm.limits().recovery;
+        assert_eq!(recovery.max_restarts, 5);
+        assert_eq!(recovery.window, Duration::from_secs(300));
+        assert_eq!(recovery.backoff_initial, Duration::from_secs(1));
+        assert_eq!(recovery.backoff_max, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn the_recovery_table_parses_and_a_plugin_overrides_only_its_keys() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.recovery]
+            max_restarts = 3
+            window = "1m"
+            backoff_initial = "2s"
+            backoff_max = "10m"
+
+            [plugins.flaky.wasm.recovery]
+            max_restarts = 1
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.wasm.limits().recovery,
+            WasmRecoveryConfig {
+                max_restarts: 3,
+                window: Duration::from_secs(60),
+                backoff_initial: Duration::from_secs(2),
+                backoff_max: Duration::from_secs(600),
+            }
+        );
+        let flaky = config
+            .wasm
+            .limits_for(config.plugins["flaky"].wasm.as_ref())
+            .recovery;
+        assert_eq!(flaky.max_restarts, 1);
+        assert_eq!(flaky.window, Duration::from_secs(60));
+        assert_eq!(flaky.backoff_max, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn an_absent_quotas_table_uses_the_documented_defaults() {
+        let config: ProxyConfig = toml::from_str("[wasm]\nqueue_capacity = 8\n").unwrap();
+        assert_eq!(
+            config.wasm.limits().quotas,
+            WasmQuotasConfig {
+                event_listeners: 1024,
+                commands: 256,
+                scheduled_tasks: 1024,
+                plugin_channels: 128,
+                codec_filters: 32,
+                limbo_handlers: 64,
+                permission_nodes: 256,
+            }
+        );
+    }
+
+    #[test]
+    fn the_quotas_table_parses_and_a_plugin_overrides_only_its_keys() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [wasm.quotas]
+            event_listeners = 50
+            commands = 10
+            scheduled_tasks = 20
+            plugin_channels = 4
+            codec_filters = 2
+            limbo_handlers = 3
+            permission_nodes = 6
+
+            [plugins.busy.wasm.quotas]
+            scheduled_tasks = 5000
+            "#,
+        )
+        .unwrap();
+        let global = WasmQuotasConfig {
+            event_listeners: 50,
+            commands: 10,
+            scheduled_tasks: 20,
+            plugin_channels: 4,
+            codec_filters: 2,
+            limbo_handlers: 3,
+            permission_nodes: 6,
+        };
+        assert_eq!(config.wasm.limits().quotas, global);
+        let busy = config
+            .wasm
+            .limits_for(config.plugins["busy"].wasm.as_ref())
+            .quotas;
+        assert_eq!(
+            busy,
+            WasmQuotasConfig {
+                scheduled_tasks: 5000,
+                ..global
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_quota_keys_are_rejected() {
+        let global = toml::from_str::<ProxyConfig>("[wasm.quotas]\nlisteners = 3\n");
+        assert!(global.is_err(), "a misspelt quota key must not be ignored");
+        let plugin = toml::from_str::<ProxyConfig>("[plugins.p.wasm.quotas]\ntasks = 3\n");
+        assert!(plugin.is_err());
+    }
+
+    #[test]
+    fn quota_overrides_serialize_only_the_keys_that_are_set() {
+        let overrides = PluginWasmConfig {
+            quotas: Some(PluginWasmQuotasConfig {
+                commands: Some(12),
+                ..PluginWasmQuotasConfig::default()
+            }),
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&overrides).unwrap();
+        assert!(!text.contains("event_listeners"), "{text}");
+        let back: PluginWasmConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back, overrides);
+        let plain = toml::to_string(&PluginWasmConfig::default()).unwrap();
+        assert!(!plain.contains("quotas"), "{plain}");
+    }
+
+    #[test]
+    fn unknown_recovery_keys_are_rejected() {
+        let global = toml::from_str::<ProxyConfig>("[wasm.recovery]\nmax_retries = 3\n");
+        assert!(
+            global.is_err(),
+            "a misspelt recovery key must not be ignored"
+        );
+        let plugin = toml::from_str::<ProxyConfig>("[plugins.p.wasm.recovery]\nwindows = \"1m\"\n");
+        assert!(plugin.is_err());
+    }
+
+    #[test]
+    fn unknown_wasm_keys_are_rejected() {
+        let global = toml::from_str::<ProxyConfig>("[wasm]\nmemory_limit = 64\n");
+        assert!(global.is_err(), "a misspelt [wasm] key must not be ignored");
+        let plugin = toml::from_str::<ProxyConfig>("[plugins.p.wasm]\nepoch_tick = \"10ms\"\n");
+        assert!(
+            plugin.is_err(),
+            "epoch_tick is engine-wide and cannot be set per plugin"
+        );
+    }
+
+    #[test]
+    fn plugin_overrides_serialize_only_the_keys_that_are_set() {
+        let overrides = PluginWasmConfig {
+            memory_limit_mb: Some(16),
+            max_call_duration: Some(Duration::from_secs(5)),
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&overrides).unwrap();
+        let back: PluginWasmConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back, overrides);
+        assert!(!text.contains("cpu_budget"), "{text}");
+    }
+
+    #[test]
+    fn the_network_table_and_mounts_parse_into_typed_rules() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [plugins.libertybans]
+            permissions = ["network", "filesystem-extended"]
+
+            [plugins.libertybans.wasm.network]
+            allow = ["127.0.0.1:5432", "10.0.0.0/8:3306", "[::1]:*", "db.internal:5432", "api.example.com:443", "*.example.org:443", "10.1.2.3:8000-8100"]
+            dns = true
+            http = true
+
+            [[plugins.libertybans.wasm.mounts]]
+            host = "/srv/libertybans/shared"
+            guest = "/shared"
+            read_only = true
+            "#,
+        )
+        .unwrap();
+        let wasm = config.plugins["libertybans"].wasm.as_ref().unwrap();
+        let network = wasm.network.as_ref().unwrap();
+        let allow: Vec<String> = network.allow.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            allow,
+            [
+                "127.0.0.1:5432",
+                "10.0.0.0/8:3306",
+                "[::1]:*",
+                "db.internal:5432",
+                "api.example.com:443",
+                "*.example.org:443",
+                "10.1.2.3:8000-8100",
+            ]
+        );
+        assert!(matches!(
+            network.allow[1].host(),
+            crate::HostPattern::Net(_)
+        ));
+        assert_eq!(network.dns, Some(true));
+        assert!(network.http);
+        assert_eq!(
+            wasm.mounts,
+            [WasmMount {
+                host: PathBuf::from("/srv/libertybans/shared"),
+                guest: "/shared".to_owned(),
+                read_only: true,
+            }]
+        );
+        assert_eq!(
+            config.wasm.limits_for(Some(wasm)),
+            config.wasm.limits(),
+            "network and mounts are not limits"
+        );
+    }
+
+    #[test]
+    fn network_and_mount_defaults() {
+        let config: ProxyConfig = toml::from_str(
+            r#"
+            [plugins.p.wasm.network]
+            allow = ["db.internal:5432"]
+
+            [[plugins.p.wasm.mounts]]
+            host = "/srv/p"
+            guest = "/data"
+            "#,
+        )
+        .unwrap();
+        let wasm = config.plugins["p"].wasm.as_ref().unwrap();
+        let network = wasm.network.as_ref().unwrap();
+        assert_eq!(network.dns, None);
+        assert!(network.dns_enabled(), "a hostname rule turns dns on");
+        assert!(network.http, "http defaults to true");
+        assert!(wasm.mounts[0].read_only, "mounts are read-only by default");
+
+        let empty: ProxyConfig = toml::from_str(
+            "[plugins.p.wasm.network]
+",
+        )
+        .unwrap();
+        let network = empty.plugins["p"].wasm.as_ref().unwrap().network.clone();
+        assert_eq!(network, Some(WasmNetworkConfig::default()));
+        assert!(!WasmNetworkConfig::default().dns_enabled());
+        assert!(WasmNetworkConfig::default().allow.is_empty());
+
+        let absent: ProxyConfig = toml::from_str(
+            "[plugins.p.wasm]
+memory_limit_mb = 8
+",
+        )
+        .unwrap();
+        let wasm = absent.plugins["p"].wasm.as_ref().unwrap();
+        assert!(wasm.network.is_none());
+        assert!(wasm.mounts.is_empty());
+    }
+
+    #[test]
+    fn a_bad_network_rule_fails_the_parse_with_the_rule_and_the_reason() {
+        let err = toml::from_str::<ProxyConfig>(
+            "[plugins.p.wasm.network]\nallow = [\"127.0.0.1:80\", \"*:443\"]\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("invalid network rule \"*:443\": a bare `*` host is not allowed"),
+            "{err}"
+        );
+        let err =
+            toml::from_str::<ProxyConfig>("[plugins.p.wasm.network]\nallow = [\"db.internal\"]\n")
+                .unwrap_err()
+                .to_string();
+        assert!(
+            err.contains("invalid network rule \"db.internal\": missing `:port`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn unknown_network_and_mount_keys_are_rejected() {
+        for text in [
+            "[plugins.p.wasm.network]\nallowed = []\n",
+            "[plugins.p.wasm.network]\nhttps = true\n",
+            "[[plugins.p.wasm.mounts]]\nhost = \"/a\"\nguest = \"/b\"\nwritable = true\n",
+            "[[plugins.p.wasm.mounts]]\nguest = \"/b\"\n",
+            "[[plugins.p.wasm.mounts]]\nhost = \"/a\"\n",
+            "[wasm.network]\nallow = []\n",
+        ] {
+            assert!(
+                toml::from_str::<ProxyConfig>(text).is_err(),
+                "{text} must not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn network_and_mounts_round_trip() {
+        let overrides = PluginWasmConfig {
+            network: Some(WasmNetworkConfig {
+                allow: ["127.0.0.1:5432", "[fd00::/8]:*", "*.example.org:443"]
+                    .iter()
+                    .map(|text| text.parse().unwrap())
+                    .collect(),
+                dns: Some(false),
+                http: false,
+            }),
+            mounts: vec![
+                WasmMount {
+                    host: PathBuf::from("/srv/shared"),
+                    guest: "/shared".to_owned(),
+                    read_only: true,
+                },
+                WasmMount {
+                    host: PathBuf::from("/srv/out"),
+                    guest: "/out".to_owned(),
+                    read_only: false,
+                },
+            ],
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&overrides).unwrap();
+        let back: PluginWasmConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back, overrides);
+        assert!(text.contains("\"[fd00::/8]:*\""), "{text}");
+
+        let plain = toml::to_string(&PluginWasmConfig::default()).unwrap();
+        assert!(
+            !plain.contains("network") && !plain.contains("mounts"),
+            "{plain}"
+        );
+
+        let implicit_dns = PluginWasmConfig {
+            network: Some(WasmNetworkConfig::default()),
+            ..PluginWasmConfig::default()
+        };
+        let text = toml::to_string(&implicit_dns).unwrap();
+        assert!(!text.contains("dns"), "{text}");
+        assert_eq!(
+            toml::from_str::<PluginWasmConfig>(&text).unwrap(),
+            implicit_dns
+        );
+    }
+
+    #[test]
+    fn memory_limit_converts_to_bytes() {
+        let limits = WasmLimits {
+            memory_limit_mb: 3,
+            ..WasmLimits::default()
+        };
+        assert_eq!(limits.memory_limit_bytes(), 3 * 1024 * 1024);
+    }
+}

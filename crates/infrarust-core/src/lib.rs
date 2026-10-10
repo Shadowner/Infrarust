@@ -20,13 +20,20 @@ pub mod permissions;
 pub mod pipeline;
 pub mod player;
 pub mod plugin;
+pub mod plugin_messaging;
 pub mod provider;
-pub mod registry;
+pub mod registry {
+    pub use crate::session::connection_registry::{ConnectionRegistry, SessionGuard};
+}
 pub mod registry_data;
 pub mod routing;
+pub mod runtime;
 pub mod server;
 pub mod services;
 pub mod session;
 pub mod status;
 pub mod telemetry;
+pub mod terminal;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod util;

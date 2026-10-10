@@ -112,3 +112,30 @@ fn test_deny_unknown_fields() {
     let result: Result<ServerConfig, _> = toml::from_str(toml_str);
     assert!(result.is_err(), "unknown field should cause an error");
 }
+
+#[test]
+fn test_local_server_manager_poll_interval_defaults_to_five_seconds() {
+    let config = load_creative();
+    let Some(ServerManagerConfig::Local(local)) = config.server_manager else {
+        panic!("expected Local");
+    };
+    assert_eq!(local.poll_interval, std::time::Duration::from_secs(5));
+
+    let config: ServerConfig = toml::from_str(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+
+        [server_manager]
+        type = "local"
+        command = "java"
+        working_dir = "/srv/mc"
+        poll_interval = "2s"
+    "#,
+    )
+    .unwrap();
+    let Some(ServerManagerConfig::Local(local)) = config.server_manager else {
+        panic!("expected Local");
+    };
+    assert_eq!(local.poll_interval, std::time::Duration::from_secs(2));
+}

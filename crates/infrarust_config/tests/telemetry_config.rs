@@ -3,14 +3,16 @@
 
 use std::time::Duration;
 
-use infrarust_config::{MetricsConfig, ProxyConfig, ResourceConfig, TelemetryConfig, TracesConfig};
+use infrarust_config::{
+    MetricsConfig, OtlpProtocol, ProxyConfig, ResourceConfig, TelemetryConfig, TracesConfig,
+};
 
 #[test]
 fn test_telemetry_config_default() {
     let tc = TelemetryConfig::default();
     assert!(!tc.enabled);
     assert!(tc.endpoint.is_none());
-    assert_eq!(tc.protocol, "grpc");
+    assert_eq!(tc.protocol, OtlpProtocol::Grpc);
     assert!(tc.metrics.enabled);
     assert!(tc.traces.enabled);
     assert_eq!(tc.resource.service_name, "infrarust");
@@ -42,7 +44,7 @@ fn test_telemetry_config_parse_full() {
     let tc = config.telemetry.expect("telemetry should be Some");
     assert!(tc.enabled);
     assert_eq!(tc.endpoint.as_deref(), Some("http://otel:4317"));
-    assert_eq!(tc.protocol, "http");
+    assert_eq!(tc.protocol, OtlpProtocol::Http);
     assert!(!tc.metrics.enabled);
     assert_eq!(tc.metrics.export_interval, Duration::from_secs(30));
     assert!(tc.traces.enabled);
@@ -88,4 +90,20 @@ fn test_resource_config_default() {
     assert_eq!(rc.service_name, "infrarust");
     // service_version is env!("CARGO_PKG_VERSION"), just check it's not empty
     assert!(!rc.service_version.is_empty());
+}
+
+#[test]
+fn test_telemetry_protocol_is_parsed_as_an_enum() {
+    for (text, expected) in [("grpc", OtlpProtocol::Grpc), ("http", OtlpProtocol::Http)] {
+        let config: ProxyConfig =
+            toml::from_str(&format!("[telemetry]\nprotocol = \"{text}\"")).expect(text);
+        assert_eq!(config.telemetry.expect(text).protocol, expected);
+    }
+    for text in ["udp", "GRPC", ""] {
+        let parsed = toml::from_str::<ProxyConfig>(&format!("[telemetry]\nprotocol = \"{text}\""));
+        assert!(
+            parsed.is_err(),
+            "telemetry.protocol = {text:?} must be refused"
+        );
+    }
 }

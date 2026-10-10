@@ -1,0 +1,433 @@
+use super::ResultCell;
+use crate::bindings::events as we;
+use crate::component::{Component, from_host};
+use crate::types::{FromWit, PlayerRef, ServerId};
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PlayerChooseInitialServerResult {
+    Allowed,
+    Redirect(ServerId),
+    SendToLimbo(Vec<String>),
+    Denied(Component),
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PlayerChooseInitialServerEvent {
+    pub player: PlayerRef,
+    pub initial_server: ServerId,
+    result: ResultCell<PlayerChooseInitialServerResult>,
+}
+
+impl PlayerChooseInitialServerEvent {
+    #[must_use]
+    pub const fn result(&self) -> &PlayerChooseInitialServerResult {
+        self.result.get()
+    }
+
+    pub fn set_result(&mut self, result: PlayerChooseInitialServerResult) {
+        self.result.set(result);
+    }
+
+    pub fn allow(&mut self) {
+        self.set_result(PlayerChooseInitialServerResult::Allowed);
+    }
+
+    pub fn redirect_to(&mut self, server: impl Into<ServerId>) {
+        self.set_result(PlayerChooseInitialServerResult::Redirect(server.into()));
+    }
+
+    pub fn send_to_limbo(&mut self, handlers: Vec<String>) {
+        self.set_result(PlayerChooseInitialServerResult::SendToLimbo(handlers));
+    }
+
+    pub fn deny(&mut self, reason: impl Into<Component>) {
+        self.set_result(PlayerChooseInitialServerResult::Denied(reason.into()));
+    }
+}
+
+guest_event!(
+    PlayerChooseInitialServerEvent,
+    PlayerChooseInitialServer,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        initial_server: ServerId::from(e.initial_server),
+        result: ResultCell::new(match e.result {
+            we::PlayerChooseInitialServerResult::Allowed => {
+                PlayerChooseInitialServerResult::Allowed
+            }
+            we::PlayerChooseInitialServerResult::Redirect(server) => {
+                PlayerChooseInitialServerResult::Redirect(ServerId::from(server))
+            }
+            we::PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
+                PlayerChooseInitialServerResult::SendToLimbo(handlers)
+            }
+            we::PlayerChooseInitialServerResult::Denied(reason) => {
+                PlayerChooseInitialServerResult::Denied(from_host(reason))
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        PlayerChooseInitialServerResult::Allowed => {
+            we::PlayerChooseInitialServerResult::Allowed
+        }
+        PlayerChooseInitialServerResult::Redirect(server) => {
+            we::PlayerChooseInitialServerResult::Redirect(server.into_string())
+        }
+        PlayerChooseInitialServerResult::SendToLimbo(handlers) => {
+            we::PlayerChooseInitialServerResult::SendToLimbo(handlers)
+        }
+        PlayerChooseInitialServerResult::Denied(reason) => {
+            we::PlayerChooseInitialServerResult::Denied(reason.to_arena())
+        }
+    }
+);
+
+pub use infrarust_plugin_common::enums::ConnectCause;
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ServerPreConnectResult {
+    Allowed,
+    ConnectTo(ServerId),
+    SendToLimbo(Vec<String>),
+    Denied(Component),
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ServerPreConnectEvent {
+    pub player: PlayerRef,
+    pub server: ServerId,
+    pub previous_server: Option<ServerId>,
+    pub cause: ConnectCause,
+    result: ResultCell<ServerPreConnectResult>,
+}
+
+impl ServerPreConnectEvent {
+    #[must_use]
+    pub const fn result(&self) -> &ServerPreConnectResult {
+        self.result.get()
+    }
+
+    pub fn set_result(&mut self, result: ServerPreConnectResult) {
+        self.result.set(result);
+    }
+
+    pub fn allow(&mut self) {
+        self.set_result(ServerPreConnectResult::Allowed);
+    }
+
+    pub fn redirect_to(&mut self, server: impl Into<ServerId>) {
+        self.set_result(ServerPreConnectResult::ConnectTo(server.into()));
+    }
+
+    pub fn send_to_limbo(&mut self, handlers: Vec<String>) {
+        self.set_result(ServerPreConnectResult::SendToLimbo(handlers));
+    }
+
+    pub fn deny(&mut self, reason: impl Into<Component>) {
+        self.set_result(ServerPreConnectResult::Denied(reason.into()));
+    }
+}
+
+guest_event!(
+    ServerPreConnectEvent,
+    ServerPreConnect,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        server: ServerId::from(e.server),
+        previous_server: e.previous_server.map(ServerId::from),
+        cause: ConnectCause::from_wit(e.cause),
+        result: ResultCell::new(match e.result {
+            we::ServerPreConnectResult::Allowed => ServerPreConnectResult::Allowed,
+            we::ServerPreConnectResult::ConnectTo(server) => {
+                ServerPreConnectResult::ConnectTo(ServerId::from(server))
+            }
+            we::ServerPreConnectResult::SendToLimbo(handlers) => {
+                ServerPreConnectResult::SendToLimbo(handlers)
+            }
+            we::ServerPreConnectResult::Denied(reason) => {
+                ServerPreConnectResult::Denied(from_host(reason))
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        ServerPreConnectResult::Allowed => we::ServerPreConnectResult::Allowed,
+        ServerPreConnectResult::ConnectTo(server) => {
+            we::ServerPreConnectResult::ConnectTo(server.into_string())
+        }
+        ServerPreConnectResult::SendToLimbo(handlers) => {
+            we::ServerPreConnectResult::SendToLimbo(handlers)
+        }
+        ServerPreConnectResult::Denied(reason) => {
+            we::ServerPreConnectResult::Denied(reason.to_arena())
+        }
+    }
+);
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ServerConnectedEvent {
+    pub player: PlayerRef,
+    pub server: ServerId,
+    pub previous_server: Option<ServerId>,
+}
+
+guest_event!(ServerConnectedEvent, ServerConnected, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    server: ServerId::from(e.server),
+    previous_server: e.previous_server.map(ServerId::from),
+});
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ServerPostConnectEvent {
+    pub player: PlayerRef,
+    pub server: ServerId,
+    pub previous_server: Option<ServerId>,
+}
+
+impl ServerPostConnectEvent {
+    #[must_use]
+    pub fn switched_from(&self) -> Option<&ServerId> {
+        self.previous_server
+            .as_ref()
+            .filter(|previous| **previous != self.server)
+    }
+}
+
+guest_event!(ServerPostConnectEvent, ServerPostConnect, |e| Self {
+    player: PlayerRef::from_wit(e.player),
+    server: ServerId::from(e.server),
+    previous_server: e.previous_server.map(ServerId::from),
+});
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KickCause {
+    Unreachable(String),
+    LoginRefused,
+    ConfigDisconnect,
+    PlayDisconnect,
+    ConnectionLost,
+}
+
+impl KickCause {
+    fn from_wit(cause: we::KickCause) -> Self {
+        match cause {
+            we::KickCause::Unreachable(error) => Self::Unreachable(error),
+            we::KickCause::LoginRefused => Self::LoginRefused,
+            we::KickCause::ConfigDisconnect => Self::ConfigDisconnect,
+            we::KickCause::PlayDisconnect => Self::PlayDisconnect,
+            we::KickCause::ConnectionLost => Self::ConnectionLost,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum KickedFromServerResult {
+    DisconnectPlayer(Option<Component>),
+    RedirectTo(ServerId),
+    SendToLimbo(Vec<String>),
+    Notify(Component),
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct KickedFromServerEvent {
+    pub player: PlayerRef,
+    pub server: ServerId,
+    pub reason: Option<Component>,
+    pub cause: KickCause,
+    pub during_connect: bool,
+    pub previous_server: Option<ServerId>,
+    result: ResultCell<KickedFromServerResult>,
+}
+
+impl KickedFromServerEvent {
+    #[must_use]
+    pub const fn result(&self) -> &KickedFromServerResult {
+        self.result.get()
+    }
+
+    pub fn set_result(&mut self, result: KickedFromServerResult) {
+        self.result.set(result);
+    }
+
+    pub fn disconnect(&mut self, reason: impl Into<Component>) {
+        self.set_result(KickedFromServerResult::DisconnectPlayer(Some(
+            reason.into(),
+        )));
+    }
+
+    pub fn redirect_to(&mut self, server: impl Into<ServerId>) {
+        self.set_result(KickedFromServerResult::RedirectTo(server.into()));
+    }
+
+    pub fn send_to_limbo(&mut self, handlers: Vec<String>) {
+        self.set_result(KickedFromServerResult::SendToLimbo(handlers));
+    }
+
+    pub fn notify(&mut self, message: impl Into<Component>) {
+        self.set_result(KickedFromServerResult::Notify(message.into()));
+    }
+}
+
+guest_event!(
+    KickedFromServerEvent,
+    KickedFromServer,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        server: ServerId::from(e.server),
+        reason: e.reason.map(from_host),
+        cause: KickCause::from_wit(e.cause),
+        during_connect: e.during_connect,
+        previous_server: e.previous_server.map(ServerId::from),
+        result: ResultCell::new(match e.result {
+            we::KickedFromServerResult::DisconnectPlayer(reason) => {
+                KickedFromServerResult::DisconnectPlayer(reason.map(from_host))
+            }
+            we::KickedFromServerResult::RedirectTo(server) => {
+                KickedFromServerResult::RedirectTo(ServerId::from(server))
+            }
+            we::KickedFromServerResult::SendToLimbo(handlers) => {
+                KickedFromServerResult::SendToLimbo(handlers)
+            }
+            we::KickedFromServerResult::Notify(message) => {
+                KickedFromServerResult::Notify(from_host(message))
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        KickedFromServerResult::DisconnectPlayer(reason) => {
+            we::KickedFromServerResult::DisconnectPlayer(reason.as_ref().map(Component::to_arena))
+        }
+        KickedFromServerResult::RedirectTo(server) => {
+            we::KickedFromServerResult::RedirectTo(server.into_string())
+        }
+        KickedFromServerResult::SendToLimbo(handlers) => {
+            we::KickedFromServerResult::SendToLimbo(handlers)
+        }
+        KickedFromServerResult::Notify(message) => {
+            we::KickedFromServerResult::Notify(message.to_arena())
+        }
+    }
+);
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::bindings::events::{Event, EventOutcome};
+    use crate::bindings::types as wt;
+    use crate::event::GuestEvent;
+
+    fn steve() -> wt::PlayerRef {
+        wt::PlayerRef {
+            id: 1,
+            uuid: wt::Uuid { hi: 0, lo: 1 },
+            username: "Steve".into(),
+        }
+    }
+
+    #[test]
+    fn a_redirect_is_sent_and_an_untouched_pre_connect_is_unchanged() {
+        let event = || {
+            ServerPreConnectEvent::from_event(Event::ServerPreConnect(we::ServerPreConnectEvent {
+                player: steve(),
+                server: "lobby".into(),
+                previous_server: None,
+                cause: we::ConnectCause::Initial,
+                result: we::ServerPreConnectResult::Allowed,
+            }))
+            .unwrap()
+        };
+        assert_eq!(event().into_outcome(), EventOutcome::Unchanged);
+        let mut redirected = event();
+        assert_eq!(redirected.cause, ConnectCause::Initial);
+        redirected.redirect_to("backend-2");
+        assert_eq!(
+            redirected.into_outcome(),
+            EventOutcome::ServerPreConnect(we::ServerPreConnectResult::ConnectTo(
+                "backend-2".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn an_initial_server_choice_sees_an_earlier_deny_and_can_deny() {
+        let event = |result| {
+            PlayerChooseInitialServerEvent::from_event(Event::PlayerChooseInitialServer(
+                we::PlayerChooseInitialServerEvent {
+                    player: steve(),
+                    initial_server: "hub".into(),
+                    result,
+                },
+            ))
+            .unwrap()
+        };
+        let full = Component::text("Full");
+        let denied = event(we::PlayerChooseInitialServerResult::Denied(full.to_arena()));
+        assert_eq!(
+            denied.result(),
+            &PlayerChooseInitialServerResult::Denied(full)
+        );
+        assert_eq!(denied.into_outcome(), EventOutcome::Unchanged);
+
+        let mut closing = event(we::PlayerChooseInitialServerResult::Allowed);
+        closing.deny("Closed");
+        assert_eq!(
+            closing.into_outcome(),
+            EventOutcome::PlayerChooseInitialServer(we::PlayerChooseInitialServerResult::Denied(
+                Component::text("Closed").to_arena()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_kick_decodes_its_cause_reason_and_current_result() {
+        let event =
+            KickedFromServerEvent::from_event(Event::KickedFromServer(we::KickedFromServerEvent {
+                player: steve(),
+                server: "survival".into(),
+                reason: None,
+                cause: we::KickCause::Unreachable("refused".into()),
+                during_connect: true,
+                previous_server: Some("lobby".into()),
+                result: we::KickedFromServerResult::DisconnectPlayer(None),
+            }))
+            .unwrap();
+        assert_eq!(event.cause, KickCause::Unreachable("refused".into()));
+        assert_eq!(
+            event.result(),
+            &KickedFromServerResult::DisconnectPlayer(None)
+        );
+        assert_eq!(event.previous_server, Some(ServerId::from("lobby")));
+    }
+
+    #[test]
+    fn a_post_connect_knows_whether_it_is_a_switch() {
+        let post = |previous: Option<&str>| {
+            ServerPostConnectEvent::from_event(Event::ServerPostConnect(
+                we::ServerPostConnectEvent {
+                    player: steve(),
+                    server: "survival".into(),
+                    previous_server: previous.map(str::to_owned),
+                },
+            ))
+            .unwrap()
+        };
+        assert_eq!(post(None).switched_from(), None);
+        assert_eq!(post(Some("survival")).switched_from(), None);
+        assert_eq!(
+            post(Some("lobby")).switched_from(),
+            Some(&ServerId::from("lobby"))
+        );
+    }
+}

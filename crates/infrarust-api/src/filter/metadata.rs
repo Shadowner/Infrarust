@@ -13,24 +13,7 @@ pub struct FilterMetadata {
     pub before: Vec<String>,
 }
 
-/// Priority of a filter within its chain.
-///
-/// Lower values execute first. When two filters have no dependency
-/// relationship, priority is used as a tiebreaker.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum FilterPriority {
-    /// Executes first (e.g. security filters).
-    First = 0,
-    /// Executes early.
-    Early = 1,
-    /// Default priority.
-    #[default]
-    Normal = 2,
-    /// Executes late.
-    Late = 3,
-    /// Executes last (e.g. logging filters).
-    Last = 4,
-}
+pub use infrarust_plugin_common::enums::FilterPriority;
 
 impl FilterMetadata {
     /// Creates metadata with only an id and default priority.

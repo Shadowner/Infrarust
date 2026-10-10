@@ -20,7 +20,9 @@ path = "plugins/my-gate.wasm"
 permissions = ["limbo"]
 ```
 
-Without the capability, `reg.add` still compiles and runs, but the host rejects the registration and logs a warning. The handler never fires.
+Without the capability, `reg.add` still compiles and runs, but the host refuses the registration and the handler never fires. `register-limbo-handler` returns `result<_, host-error>` and the host answers `permission-denied`, but the SDK's `LimboRegistrar::add` drops that error, so the plugin cannot tell; the host logs the refusal at `error` (once a minute at most) and warns at load that the plugin imports `register-limbo-handler` without `limbo`. With `strict_capabilities = true` the plugin is refused at load instead.
+
+A plugin holds at most `[wasm.quotas] limbo_handlers` handler names (64 by default). Past it the host answers `limit-exceeded`, which `LimboRegistrar::add` drops like any other refusal: the handler never fires and the host logs a warning naming the plugin and the quota.
 
 :::info
 Capabilities are listed in kebab-case. The baseline set (event bus, player read/write, command, scheduler, config read) is granted to every WASM plugin; `limbo` is one of the opt-ins you must list. See [Capabilities](./capabilities) for the full table.
@@ -48,14 +50,14 @@ impl LimboHandler for Gate {
 
     fn on_command(&self, session: &LimboSession, command: &str, _args: &[String]) {
         if command == "continue" {
-            session.complete(HandlerOutcome::Accept);
+            session.complete(HandlerOutcome::Accept).ok();
         }
     }
 }
 
 #[plugin(id = "my-gate", name = "My Gate")]
 impl Plugin for MyPlugin {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 
@@ -82,8 +84,8 @@ pub trait LimboHandler {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome;
     fn on_command(&self, session: &LimboSession, command: &str, args: &[String]) {}
     fn on_chat(&self, session: &LimboSession, message: &str) {}
-    fn on_disconnect(&self, player_id: u64) {}
-    fn on_session_end(&self, player_id: u64, reason: SessionEndReason) {}
+    fn on_disconnect(&self, player: PlayerId) {}
+    fn on_session_end(&self, player: PlayerId, reason: SessionEndReason) {}
 }
 ```
 
@@ -92,16 +94,16 @@ pub trait LimboHandler {
 | `on_player_enter` | Player enters limbo | `&LimboSession`, returns `HandlerOutcome` |
 | `on_command` | Player runs a command while held | `&LimboSession`, command name, args |
 | `on_chat` | Player sends a chat message while held | `&LimboSession`, message text |
-| `on_disconnect` | Player's connection drops | `player_id` |
-| `on_session_end` | Session ends for any reason | `player_id`, `SessionEndReason` |
+| `on_disconnect` | Player's connection drops | `PlayerId` |
+| `on_session_end` | Session ends for any reason | `PlayerId`, `SessionEndReason` |
 
 :::tip
-The plugin state is single-threaded with no async runtime. Keep mutable handler state in `Cell`/`RefCell` fields, as the fixture's `Gate` does with a `RefCell<HashSet<u64>>` of waiting player IDs.
+The plugin state is single-threaded with no async runtime. Keep mutable handler state in `Cell`/`RefCell` fields, as the fixture's `Gate` does with a `RefCell<HashSet<PlayerId>>` of waiting players.
 :::
 
 ## HandlerOutcome
 
-The value `on_player_enter` returns, and the value you pass to `complete` to end a hold. The variants:
+The value `on_player_enter` returns, and the value you pass to `complete` to end a hold. `complete` takes the terminal variants only: `Hold` and `HoldWithTimeout` are refused there (see [Completing a hold](#completing-a-hold)). The variants:
 
 | Variant | Effect |
 |---------|--------|
@@ -109,7 +111,7 @@ The value `on_player_enter` returns, and the value you pass to `complete` to end
 | `Deny(Component)` | Disconnect the player with the given message |
 | `Hold` | Keep the player in limbo; release later via `complete` |
 | `HoldWithTimeout { after, on_timeout }` | Hold, then resolve with `on_timeout` if `complete` is not called within `after` |
-| `Redirect(String)` | Send the player to the named server |
+| `Redirect(ServerId)` | Send the player to the named server |
 | `SendToLimbo(Vec<String>)` | Route the player through another limbo-handler chain |
 
 ```rust
@@ -118,7 +120,7 @@ pub enum HandlerOutcome {
     Deny(Component),
     Hold,
     HoldWithTimeout { after: Duration, on_timeout: TimeoutOutcome },
-    Redirect(String),
+    Redirect(ServerId),
     SendToLimbo(Vec<String>),
 }
 ```
@@ -131,7 +133,7 @@ pub enum HandlerOutcome {
 pub enum TimeoutOutcome {
     Accept,
     Deny(Component),
-    Redirect(String),
+    Redirect(ServerId),
     SendToLimbo(Vec<String>),
 }
 ```
@@ -156,13 +158,13 @@ fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `player_id()` | `u64` | The held player's session id |
+| `player_id()` | `PlayerId` | The held player's id |
 | `profile()` | `GameProfile` | The player's game profile |
 | `entry_context()` | `EntryContext` | Why the player entered limbo |
-| `send_message(Component)` | `Result<(), PlayerError>` | Send a chat message |
-| `send_title(TitleData)` | `Result<(), PlayerError>` | Send a title |
-| `send_action_bar(Component)` | `Result<(), PlayerError>` | Send an action-bar message |
-| `complete(HandlerOutcome)` | `()` | Release, deny, or redirect a held player |
+| `send_message(impl Into<Component>)` | `Result<(), Error>` | Send a chat message |
+| `send_title(&TitleData)` | `Result<(), Error>` | Send a title |
+| `send_action_bar(impl Into<Component>)` | `Result<(), Error>` | Send an action-bar message |
+| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect a held player; `InvalidArgument` when the outcome is `Hold` or `HoldWithTimeout`, or its text is invalid |
 | `handle()` | `SessionHandle` | Mint a storable handle for later completion |
 
 ### EntryContext
@@ -171,9 +173,9 @@ fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
 
 ```rust
 pub enum EntryContext {
-    InitialConnection(String),                          // server id
-    KickedFromServer { server: String, reason: String },
-    PluginRedirect(Option<String>),                     // optional server id
+    InitialConnection(ServerId),
+    KickedFromServer { server: ServerId, reason: Component },
+    PluginRedirect(Option<ServerId>),
 }
 ```
 
@@ -185,14 +187,32 @@ Branch on this to vary the gate, for example a maintenance message for `InitialC
 
 | Method | Returns | Purpose |
 |--------|---------|---------|
-| `player_id()` | `u64` | The held player's session id |
-| `send_message(Component)` | `Result<(), PlayerError>` | Send a chat message |
-| `send_title(TitleData)` | `Result<(), PlayerError>` | Send a title |
-| `send_action_bar(Component)` | `Result<(), PlayerError>` | Send an action-bar message |
-| `complete(HandlerOutcome)` | `()` | Release, deny, or redirect the held player |
+| `player_id()` | `PlayerId` | The held player's id |
+| `send_message(impl Into<Component>)` | `Result<(), Error>` | Send a chat message |
+| `send_title(&TitleData)` | `Result<(), Error>` | Send a title |
+| `send_action_bar(impl Into<Component>)` | `Result<(), Error>` | Send an action-bar message |
+| `complete(HandlerOutcome)` | `Result<(), Error>` | Release, deny, or redirect the held player; `InvalidArgument` when the outcome is `Hold` or `HoldWithTimeout`, or its text is invalid |
 | `cancelled()` | `bool` | True once the session has ended |
 
 `complete` on a stale handle is a safe no-op: the host captures the hold generation when the handle is minted, so a completion that arrives after the session advanced or ended does nothing. `cancelled()` returns `true` once the engine has ended the session, which lets a repeating task know to stop.
+
+The `send_*` methods of a `LimboSession` and a `SessionHandle` return these error kinds:
+
+| `ErrorKind` | When |
+|-------------|------|
+| `PlayerGone` | The limbo session has ended: the player left, or was released, redirected or sent to another chain. The player can no longer be reached through this session; `cancelled()` is `true` or about to be. |
+| `Unavailable` | The message could not be queued: the player's outgoing queue is full, or the proxy could not encode it for the player's version. The session is still live and a later send may go through. |
+| `InvalidArgument` | The text component or title is invalid, such as a component nested deeper than 64 levels. |
+
+`PlayerGone` is the kind every player-facing call uses for a player who left, so a stored handle can tell "stop" from "try again".
+
+### Completing a hold
+
+`complete` ends a hold with `Accept`, `Deny`, `Redirect` or `SendToLimbo`. It cannot start another hold: `complete(Hold)` and `complete(HoldWithTimeout { .. })` return an `InvalidArgument` error and change nothing. The player stays held, and a deadline set by `HoldWithTimeout` keeps its original time and `on_timeout`; the handle can still complete the hold later.
+
+A `HoldWithTimeout` deadline cannot be moved. A gate that needs to extend its wait returns `Hold` from `on_player_enter` and keeps its own deadline: a `Context::new().delay` task that completes the hold with `Deny`, which the gate cancels and schedules again to extend the wait.
+
+A native handler gets the same treatment. `LimboSession::complete` and `SessionHandle::complete` return `()`, so they cannot report the refusal: a hold passed to them is ignored with a warning in the log, the player stays held, and the current deadline keeps its time.
 
 ### Async hold pattern
 
@@ -203,18 +223,21 @@ struct DelayedGate;
 
 impl LimboHandler for DelayedGate {
     fn on_player_enter(&self, session: &LimboSession) -> HandlerOutcome {
-        let handle = session.handle();                  // [!code focus]
-        Context::new().delay(Duration::from_millis(50), move || {
-            if !handle.cancelled() {                     // [!code focus]
-                handle.complete(HandlerOutcome::Accept); // [!code focus]
+        let handle = session.handle();                        // [!code focus]
+        let scheduled = Context::new().delay(Duration::from_millis(50), move || {
+            if !handle.cancelled() {                           // [!code focus]
+                handle.complete(HandlerOutcome::Accept).ok();  // [!code focus]
             }
         });
-        HandlerOutcome::Hold                             // [!code focus]
+        match scheduled {
+            Ok(_) => HandlerOutcome::Hold,                     // [!code focus]
+            Err(_) => HandlerOutcome::Accept,
+        }
     }
 }
 ```
 
-`Context::new()` is a zero-sized handle to the runtime, so a `LimboHandler` that does not receive a `&Context` can still schedule tasks and subscribe to events. `delay` runs the task once after the duration; `interval` runs it repeatedly. Both return a `TaskHandle` you can pass to `ctx.cancel`.
+`Context::new()` is a cheap handle to the runtime, so a `LimboHandler` that does not receive a `&Context` can still schedule tasks and subscribe to events. `delay` runs the task once after the duration; `interval` runs it repeatedly. Both return `Result<TaskHandle, Error>`; the example accepts the player at once when the task could not be scheduled, rather than holding them with nothing to release them.
 
 ## Session lifecycle
 
@@ -236,7 +259,9 @@ sequenceDiagram
 
 ### on_session_end
 
-`on_session_end` fires when the player's limbo session ends, for any reason. Use it to drop a stored `SessionHandle` and cancel scheduled tasks tied to that player.
+`on_session_end` fires when the player's limbo session ends, for any reason but one. Use it to drop a stored `SessionHandle` and cancel scheduled tasks tied to that player.
+
+The exception is `SendToLimbo`, from `on_player_enter`, from `complete` or as the `on_timeout` of a timed hold: the player goes on to the other handler chain without leaving the limbo world, and neither `on_session_end` nor `on_disconnect` reaches the handlers the player leaves. The session they saw has still ended: a `SessionHandle` minted in it reports `cancelled()`, and `complete` on it does nothing. The host stops holding that player for your plugin, so a later fault of the plugin does not deny them. Drop what you stored for the player when `cancelled()` turns `true`.
 
 ```rust
 pub enum SessionEndReason {
@@ -264,15 +289,17 @@ A handle stored across a hold outlives the session if you never drop it. Clean u
 
 ## Fail-closed behavior
 
-The host treats a guest trap as a denial, never a silent pass. A trap also poisons the instance, so subsequent dispatches to that instance short-circuit instead of running stale guest code.
+The host treats a guest trap as a denial, never a silent pass. A trap also discards the instance: the host never runs guest code in it again and starts a fresh instance instead (see [Fault model](./fault-model)).
 
 | Dispatch | On trap |
 |----------|---------|
-| `on_player_enter` | Session is denied with "Limbo handler unavailable"; instance poisoned |
-| `on_command` | The command is dropped; instance poisoned |
-| `on_chat` | The chat message is dropped; instance poisoned |
-| `on_disconnect` | Cleanup is skipped; instance poisoned |
-| `on_session_end` | Cleanup is skipped; instance poisoned |
+| `on_player_enter` | Session is denied with "Limbo handler unavailable" |
+| `on_command` | The command is dropped |
+| `on_chat` | The chat message is dropped |
+| `on_disconnect` | Cleanup is skipped |
+| `on_session_end` | Cleanup is skipped |
+
+Every player the discarded instance was still holding (its handler returned `Hold` or `HoldWithTimeout` and has not completed yet) is released at once with the same "Limbo handler unavailable" denial, so no player waits on a handler that no longer exists. A player the plugin held who has gone on to another handler chain with `SendToLimbo` is no longer held by it and is left alone. Handlers are known by name: when the fresh instance registers the same handler names in `on_enable`, the proxy's existing handlers route to it. A name it does not register again denies the players who reach it. While the plugin is quarantined, its handlers deny every player that enters.
 
 A handler that panics in `on_player_enter` denies the player rather than leaving them stuck in limbo:
 
@@ -286,7 +313,7 @@ impl LimboHandler for Boom {
 }
 ```
 
-The host also denies the session if it cannot upgrade the instance reference or cannot lend the native session to the guest.
+The host also denies the session if it cannot upgrade the instance reference or cannot lend the native session to the guest. An outcome returned from `on_player_enter` whose text the host cannot accept, such as a `Deny` component nested deeper than 64 levels, still applies, with a placeholder text and a warning in the log.
 
 ## See also
 
@@ -294,5 +321,6 @@ The host also denies the session if it cannot upgrade the instance reference or 
 - [Capabilities](./capabilities): the full capability table and the baseline set
 - [API Reference](./api-reference): every exported type and method
 - [Examples](./examples): complete plugin sources, including limbo gates
-- [Architecture](./architecture): how the host lends sessions and poisons instances
+- [Architecture](./architecture): how the host lends sessions to the guest
+- [Fault model](./fault-model): what happens to held players when an instance is replaced
 - [Native plugin guide](../dev/getting-started): the async native API, which differs from this synchronous WASM API

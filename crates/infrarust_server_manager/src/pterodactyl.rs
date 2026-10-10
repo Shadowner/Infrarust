@@ -1,8 +1,7 @@
-use std::time::Duration;
-
 use infrarust_config::PterodactylManagerConfig;
 
 use crate::error::ServerManagerError;
+use crate::http::{HTTP_TIMEOUT, check_response};
 use crate::provider::{ProviderStatus, ServerProvider};
 
 /// Provider for Pterodactyl panel servers via REST API.
@@ -36,18 +35,11 @@ impl PterodactylProvider {
             .bearer_auth(&self.api_key)
             .header("Accept", "application/json")
             .json(&serde_json::json!({"signal": signal}))
-            .timeout(Duration::from_secs(10))
+            .timeout(HTTP_TIMEOUT)
             .send()
             .await?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ServerManagerError::ApiResponse(format!(
-                "Pterodactyl power {signal} returned {status}: {body}"
-            )));
-        }
-
+        check_response(resp, &format!("Pterodactyl power {signal}")).await?;
         Ok(())
     }
 }
@@ -87,19 +79,14 @@ impl ServerProvider for PterodactylProvider {
                 .get(&url)
                 .bearer_auth(&self.api_key)
                 .header("Accept", "application/json")
-                .timeout(Duration::from_secs(10))
+                .timeout(HTTP_TIMEOUT)
                 .send()
                 .await?;
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                return Err(ServerManagerError::ApiResponse(format!(
-                    "Pterodactyl resources returned {status}: {body}"
-                )));
-            }
-
-            let body: serde_json::Value = resp.json().await?;
+            let body: serde_json::Value = check_response(resp, "Pterodactyl resources")
+                .await?
+                .json()
+                .await?;
             let Some(current_state) = body["attributes"]["current_state"].as_str() else {
                 tracing::warn!(
                     server_id = %self.server_id,

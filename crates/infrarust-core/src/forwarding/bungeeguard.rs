@@ -49,6 +49,7 @@ mod tests {
             server_address: "mc.example.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let handler = BungeeGuardForwardingHandler::new("my-secret-token".to_string());
@@ -87,6 +88,7 @@ mod tests {
             server_address: "mc.example.com".to_string(),
             server_port: 25565,
             next_state: ConnectionState::Login,
+            transfer: false,
         };
 
         let handler = BungeeGuardForwardingHandler::new("secret123".to_string());

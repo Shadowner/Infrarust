@@ -6,37 +6,25 @@ use infrarust_api::types::RawPacket;
 
 use super::bindings::exports::infrarust::plugin::codec_filter as wit_codec;
 use crate::bindings::infrarust::plugin::types as wit_types;
-use crate::convert::raw_packet_from_wit;
+use crate::convert::{ip_to_wit, raw_packet_from_wit, socket_to_wit, wit_enum_map};
 
 pub(crate) fn session_init_to_wit(init: &CodecSessionInit) -> wit_codec::CodecSessionInit {
     wit_codec::CodecSessionInit {
         client_version: init.client_version.raw(),
         connection_id: init.connection_id,
-        remote_addr: init.remote_addr.to_string(),
-        real_ip: init.real_ip.map(|ip| ip.to_string()),
+        remote_addr: socket_to_wit(init.remote_addr),
+        real_ip: init.real_ip.map(ip_to_wit),
         side: connection_side_to_wit(init.side),
     }
 }
 
-pub(crate) fn connection_state_to_wit(state: ConnectionState) -> wit_types::ConnectionState {
-    match state {
-        ConnectionState::Handshake => wit_types::ConnectionState::Handshake,
-        ConnectionState::Status => wit_types::ConnectionState::Status,
-        ConnectionState::Login => wit_types::ConnectionState::Login,
-        ConnectionState::Configuration => wit_types::ConnectionState::Configuration,
-        ConnectionState::Play => wit_types::ConnectionState::Play,
-        // `ConnectionState` is #[non_exhaustive]; a future native state has no WIT
-        // equivalent yet — wire it explicitly when added.
-        _ => wit_types::ConnectionState::Play,
-    }
-}
+wit_enum_map!(connection_state_to_wit: ConnectionState => wit_types::ConnectionState {
+    Handshake, Status, Login, Configuration, Play
+} else Play);
 
-fn connection_side_to_wit(side: ConnectionSide) -> wit_codec::ConnectionSide {
-    match side {
-        ConnectionSide::ClientSide => wit_codec::ConnectionSide::ClientSide,
-        ConnectionSide::ServerSide => wit_codec::ConnectionSide::ServerSide,
-    }
-}
+wit_enum_map!(connection_side_to_wit: ConnectionSide => wit_codec::ConnectionSide {
+    ClientSide, ServerSide
+});
 
 pub(crate) fn apply_filter_output(
     out: wit_codec::FilterOutput,

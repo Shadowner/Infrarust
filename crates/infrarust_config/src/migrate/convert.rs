@@ -194,6 +194,7 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         ip_filter,
         disconnect_message: None,
         limbo_handlers: Vec::new(),
+        bungeecord_channel: false,
     };
 
     MigrationResult { config, warnings }
@@ -368,6 +369,7 @@ fn convert_server_manager(
                 shutdown_timeout: crate::defaults::shutdown_timeout(),
                 shutdown_after,
                 start_timeout: crate::defaults::start_timeout(),
+                poll_interval: crate::defaults::poll_interval(),
             }))
         }
         "pterodactyl" => {
@@ -617,6 +619,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .as_ref()
         .and_then(|f| f.ban.as_ref())
         .map(|b| BanConfig {
+            provider: crate::BanProviderSelection::Builtin,
             file: b
                 .file_path
                 .as_ref()
@@ -626,9 +629,8 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
                 .auto_cleanup_interval
                 .map(Duration::from_secs)
                 .unwrap_or_else(crate::defaults::ban_purge_interval),
-            enable_audit_log: b
-                .enable_audit_log
-                .unwrap_or_else(crate::defaults::ban_audit_log),
+            enable_audit_log: b.enable_audit_log.unwrap_or_else(crate::defaults::true_val),
+            check_timeout: crate::defaults::ban_check_timeout(),
         })
         .unwrap_or_default();
 
@@ -649,7 +651,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
     let telemetry = v1.telemetry.as_ref().map(|t| TelemetryConfig {
         enabled: t.enabled,
         endpoint: t.export_url.clone(),
-        protocol: crate::defaults::telemetry_protocol(),
+        protocol: crate::types::OtlpProtocol::default(),
         metrics: MetricsConfig {
             enabled: t.enable_metrics.unwrap_or(true),
             export_interval: t
@@ -735,6 +737,9 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
     let config = ProxyConfig {
         bind,
         active_health: ActiveHealthConfig::default(),
+        events: Default::default(),
+        plugin_messaging: Default::default(),
+        wasm: Default::default(),
         max_connections: 0,
         connect_timeout: crate::defaults::connect_timeout(),
         connect_max_attempts: crate::defaults::connect_max_attempts(),
@@ -751,7 +756,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         ban,
         docker,
         unknown_domain_behavior: Default::default(),
-        announce_proxy_commands: crate::defaults::announce_proxy_commands(),
+        announce_proxy_commands: crate::defaults::true_val(),
         forwarding: None,
         auth: Default::default(),
         ip_filter: None,
@@ -765,6 +770,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::migrate::v1_types::*;
 

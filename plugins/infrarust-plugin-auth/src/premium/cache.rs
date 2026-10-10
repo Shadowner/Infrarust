@@ -11,15 +11,30 @@ pub enum PremiumStatus {
     Cracked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailedAuth {
+    PremiumName,
+    OtherName,
+}
+
+/// How long a status outlives its TTL, so that an online auth failing right
+/// after the status expired still knows whether the name was premium.
+const EXPIRED_STATUS_GRACE: Duration = Duration::from_secs(60);
+
 struct CacheEntry {
     status: PremiumStatus,
     cached_at: Instant,
 }
 
+struct FailedAuthEntry {
+    kind: FailedAuth,
+    failed_at: Instant,
+}
+
 pub struct PremiumCache {
     entries: DashMap<String, CacheEntry>,
     ttl: Duration,
-    failed_auths: DashMap<String, Instant>,
+    failed_auths: DashMap<String, FailedAuthEntry>,
     failed_auth_ttl: Duration,
 }
 
@@ -34,15 +49,8 @@ impl PremiumCache {
     }
 
     pub fn get(&self, username: &str) -> Option<PremiumStatus> {
-        let key = username.to_lowercase();
-        let entry = self.entries.get(&key)?;
-        if entry.cached_at.elapsed() < self.ttl {
-            Some(entry.status.clone())
-        } else {
-            drop(entry);
-            self.entries.remove(&key);
-            None
-        }
+        let entry = self.entries.get(&username.to_lowercase())?;
+        (entry.cached_at.elapsed() < self.ttl).then(|| entry.status.clone())
     }
 
     pub fn put(&self, username: &str, status: PremiumStatus) {
@@ -61,23 +69,41 @@ impl PremiumCache {
         self.failed_auths.remove(&key);
     }
 
-    pub fn mark_auth_failed(&self, username: &str) {
-        self.failed_auths
-            .insert(username.to_lowercase(), Instant::now());
+    pub fn mark_auth_failed(&self, username: &str) -> FailedAuth {
+        let key = username.to_lowercase();
+        let last_known = self.entries.get(&key).map(|entry| entry.status.clone());
+        let kind = match last_known {
+            Some(PremiumStatus::Premium { .. }) => FailedAuth::PremiumName,
+            _ => FailedAuth::OtherName,
+        };
+        self.failed_auths.insert(
+            key,
+            FailedAuthEntry {
+                kind,
+                failed_at: Instant::now(),
+            },
+        );
+        kind
     }
 
-    pub fn is_auth_failed(&self, username: &str) -> bool {
+    pub fn failed_auth(&self, username: &str) -> Option<FailedAuth> {
         let key = username.to_lowercase();
-        let Some(entry) = self.failed_auths.get(&key) else {
-            return false;
-        };
-        if entry.elapsed() < self.failed_auth_ttl {
-            true
+        let entry = self.failed_auths.get(&key)?;
+        if entry.failed_at.elapsed() < self.failed_auth_ttl {
+            Some(entry.kind)
         } else {
             drop(entry);
             self.failed_auths.remove(&key);
-            false
+            None
         }
+    }
+
+    pub fn sweep(&self) {
+        let status_lifetime = self.ttl.saturating_add(EXPIRED_STATUS_GRACE);
+        self.entries
+            .retain(|_, entry| entry.cached_at.elapsed() < status_lifetime);
+        self.failed_auths
+            .retain(|_, entry| entry.failed_at.elapsed() < self.failed_auth_ttl);
     }
 }
 
@@ -128,10 +154,92 @@ mod tests {
     fn failed_auth_remembered() {
         let cache = PremiumCache::new(Duration::from_secs(60), Duration::from_secs(60));
 
-        assert!(!cache.is_auth_failed("Hypixel"));
+        assert_eq!(cache.failed_auth("Hypixel"), None);
 
         cache.mark_auth_failed("Hypixel");
-        assert!(cache.is_auth_failed("hypixel"));
+        assert_eq!(cache.failed_auth("hypixel"), Some(FailedAuth::OtherName));
+    }
+
+    #[test]
+    fn a_failed_auth_on_a_premium_name_is_remembered_as_such() {
+        let cache = PremiumCache::new(Duration::from_secs(60), Duration::from_secs(60));
+        cache.put(
+            "Hypixel",
+            PremiumStatus::Premium {
+                mojang_uuid: Uuid::nil(),
+            },
+        );
+        cache.put("Steve", PremiumStatus::Cracked);
+
+        assert_eq!(cache.mark_auth_failed("Hypixel"), FailedAuth::PremiumName);
+        assert_eq!(cache.mark_auth_failed("Steve"), FailedAuth::OtherName);
+
+        cache.invalidate("Steve");
+        assert_eq!(cache.failed_auth("hypixel"), Some(FailedAuth::PremiumName));
+    }
+
+    #[test]
+    fn a_premium_name_stays_remembered_after_its_status_expires() {
+        let cache = PremiumCache::new(Duration::ZERO, Duration::from_secs(60));
+        cache.put(
+            "Hypixel",
+            PremiumStatus::Premium {
+                mojang_uuid: Uuid::nil(),
+            },
+        );
+        cache.mark_auth_failed("Hypixel");
+        cache.sweep();
+
+        assert!(cache.get("Hypixel").is_none());
+        assert_eq!(cache.failed_auth("Hypixel"), Some(FailedAuth::PremiumName));
+    }
+
+    #[test]
+    fn a_sweep_keeps_a_just_expired_status_for_the_failed_auth() {
+        let cache = PremiumCache::new(Duration::ZERO, Duration::from_secs(60));
+        cache.put(
+            "Hypixel",
+            PremiumStatus::Premium {
+                mojang_uuid: Uuid::nil(),
+            },
+        );
+        cache.sweep();
+
+        assert_eq!(cache.mark_auth_failed("Hypixel"), FailedAuth::PremiumName);
+    }
+
+    #[test]
+    fn a_sweep_drops_stale_statuses_and_expired_failed_auths() {
+        let cache = PremiumCache::new(Duration::ZERO, Duration::ZERO);
+        cache.entries.insert(
+            "steve".to_string(),
+            CacheEntry {
+                status: PremiumStatus::Cracked,
+                cached_at: Instant::now()
+                    .checked_sub(EXPIRED_STATUS_GRACE + Duration::from_secs(1))
+                    .unwrap(),
+            },
+        );
+        cache.mark_auth_failed("Hypixel");
+
+        cache.sweep();
+
+        assert!(cache.entries.is_empty());
+        assert!(cache.failed_auths.is_empty());
+    }
+
+    #[test]
+    fn a_failed_auth_counts_a_premium_name_whose_status_just_expired() {
+        let cache = PremiumCache::new(Duration::ZERO, Duration::from_secs(60));
+        cache.put(
+            "Hypixel",
+            PremiumStatus::Premium {
+                mojang_uuid: Uuid::nil(),
+            },
+        );
+        assert!(cache.get("Hypixel").is_none());
+
+        assert_eq!(cache.mark_auth_failed("Hypixel"), FailedAuth::PremiumName);
     }
 
     #[test]
@@ -139,7 +247,7 @@ mod tests {
         let cache = PremiumCache::new(Duration::from_secs(60), Duration::from_millis(0));
 
         cache.mark_auth_failed("Hypixel");
-        assert!(!cache.is_auth_failed("Hypixel"));
+        assert_eq!(cache.failed_auth("Hypixel"), None);
     }
 
     #[test]
@@ -147,9 +255,9 @@ mod tests {
         let cache = PremiumCache::new(Duration::from_secs(60), Duration::from_secs(60));
 
         cache.mark_auth_failed("Steve");
-        assert!(cache.is_auth_failed("Steve"));
+        assert!(cache.failed_auth("Steve").is_some());
 
         cache.invalidate("Steve");
-        assert!(!cache.is_auth_failed("Steve"));
+        assert_eq!(cache.failed_auth("Steve"), None);
     }
 }

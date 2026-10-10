@@ -1,12 +1,12 @@
 ---
 title: Deploying & Configuring Plugins
-description: Install a WASM plugin into Infrarust and grant it capabilities through the TOML configuration.
+description: Install a WASM plugin into Infrarust, grant or deny it capabilities, and tune its sandbox limits through the TOML configuration.
 outline: [2, 3]
 ---
 
 # Deploying & Configuring Plugins
 
-A WASM plugin is a single `.wasm` file. You drop it into the plugins directory and the proxy compiles, sandboxes, and loads it at startup. Capabilities beyond the baseline set are granted per plugin in `infrarust.toml`.
+A WASM plugin is a single `.wasm` file. You drop it into the plugins directory and the proxy compiles, sandboxes, and loads it at startup. Capabilities beyond the baseline set are granted per plugin in `infrarust.toml`, where you can also deny capabilities and change the sandbox limits.
 
 ## Where plugins live
 
@@ -23,7 +23,9 @@ Copy your compiled artifact into that directory:
 cp target/wasm32-wasip2/release/my_plugin.wasm ./plugins/
 ```
 
-The scan is recursive and matches every file with a `.wasm` extension, so subdirectories work for organizing many plugins. The `.cache` subdirectory is the one exception and is always skipped during discovery.
+Only the top level of `plugins_dir` is scanned: every regular file with a `.wasm` extension directly in it, or a symlink to such a file, is a plugin candidate. Subdirectories are never entered. They hold the plugins' data directories, `plugins_dir/<plugin-id>`, which each plugin can write to; scanning them would let a plugin drop a component there and have it loaded at the next start as another plugin. A file reached through two links is loaded once.
+
+Keep backup copies and old versions outside `plugins_dir`, or in a subdirectory, where they are ignored. Two copies at the top level that report the same id make the proxy refuse both, see [The plugin id](#the-plugin-id).
 
 ::: tip
 See [Building a Plugin](./building) for producing the `.wasm` artifact with `cargo build --release --target wasm32-wasip2`.
@@ -31,7 +33,7 @@ See [Building a Plugin](./building) for producing the `.wasm` artifact with `car
 
 ## The plugin id
 
-Each plugin reports a `PluginMetadata` from its guest code. The `id` is a unique `snake_case` string set in the SDK:
+Each plugin reports a `PluginMetadata` from its guest code. The `id` is a unique string set in the SDK: 1 to 64 lowercase letters, digits, `-` and `_`, starting with a letter or a digit.
 
 ```rust
 fn metadata(&self) -> PluginMetadata {
@@ -39,7 +41,12 @@ fn metadata(&self) -> PluginMetadata {
 }
 ```
 
-The proxy keys every plugin by this id, not by the file name. The config table for a plugin must match the id exactly.
+The `#[plugin]` macro checks the id at compile time, and the proxy checks it again when it reads the metadata, with the same rule. The id names the plugin's data directory, `plugins_dir/<id>`, so a plugin whose `metadata()` reports any other id, such as `../other`, `/home/proxy` or `My Plugin`, is refused at discovery with the reason.
+
+The proxy keys every plugin by this id, not by the file name. The config table for a plugin must match the id exactly. Ids must be unique:
+
+- Two `.wasm` files that report the same id are both refused, with one error naming every file. No copy is kept, since which one would win depends on the scan order.
+- A `.wasm` that reports the id of a plugin compiled into the proxy is refused, and the error names the file. The compiled-in plugin loads.
 
 ## Per-plugin configuration
 
@@ -51,12 +58,15 @@ Plugin settings live in a `[plugins.<plugin-id>]` table. The table is keyed by t
 permissions = ["ban", "server-manage"]  # [!code focus]
 ```
 
-The `PluginConfig` table accepts three keys:
+The `PluginConfig` table accepts these keys:
 
 | Key | Type | Default | Applies to |
 |-----|------|---------|------------|
 | `permissions` | list of strings | `[]` | All plugins. Opt-in capability strings (kebab-case). |
-| `enabled` | bool | unset | Parsed but not yet enforced; removing the file is the current way to skip a plugin. |
+| `deny` | list of strings | `[]` | All plugins. Capabilities to remove, applied after the baseline and `permissions`. |
+| `strict_capabilities` | bool | `false` | WASM plugins. `true` refuses to load the plugin when it imports a host function it lacks the capability for, see [Missing capability](#missing-capability). |
+| `enabled` | bool | `true` | All plugins. `false` skips the plugin at startup. |
+| `wasm` | table | none | WASM plugins. Per-plugin sandbox limits, see [Sandbox limits](#sandbox-limits), and the `network` allow-list and `mounts`, see [Network and extra folders](#network-and-extra-folders). |
 | `path` | string | none | Native plugins only. WASM plugins omit it. |
 
 ::: warning
@@ -81,7 +91,7 @@ Baseline (always granted):
 
 Opt-in (must be listed in `permissions`):
 
-`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `network`, `filesystem-extended`, `permission-provider`, `virtual-backend`.
+`ban`, `server-manage`, `codec-filter`, `limbo`, `raw-packet`, `chat-intercept`, `plugin-messaging`, `config-write`, `network`, `filesystem-extended`, `permission-provider`, `ban-provider`, `virtual-backend`.
 
 Capability strings are kebab-case. An unknown string, or one that is not grantable through config, is ignored with a warning at load and the plugin loads without it. The `transport-filter` capability exists internally but cannot be granted via config and is always rejected with a warning.
 
@@ -91,13 +101,25 @@ Capability strings are kebab-case. An unknown string, or one that is not grantab
 permissions = ["limbo", "ban"]
 ```
 
+To take a capability away, including a baseline one, list it in `deny`. `deny` is applied last, so it wins over `permissions`:
+
+```toml
+[plugins.my_plugin]
+permissions = ["ban"]
+deny = ["player-write"]
+```
+
+With this, the plugin can look players up but cannot message, move or kick them.
+
+A denied capability behaves as if it had never been granted: the plugin loads, and the calls that need it are refused. A denied `config-read` makes config lookups return a `permission-denied` error, and a denied `player-write` makes the player-acting calls return the same error. Details in [Capabilities](./capabilities#refused-calls).
+
 ::: info
 Native (compiled-in) plugins are trusted and receive every capability. WASM plugins receive the baseline plus whatever opt-ins you declare. The full table of capabilities, what each unlocks, and which host interfaces they map to is in [Capabilities](./capabilities).
 :::
 
 ## What happens at load
 
-The host builds a per-plugin linker from the granted capability set. A host interface is linked only when its capability is present.
+Every host interface is linked for every plugin. Before instantiating, the host compares the plugin's imports with its granted capabilities and logs one warning per import it will refuse, or refuses the plugin when `strict_capabilities` is set.
 
 ```mermaid
 sequenceDiagram
@@ -107,11 +129,12 @@ sequenceDiagram
     Proxy->>Cache: compile or load .cwasm
     Cache-->>Proxy: component
     Proxy->>Proxy: read metadata, resolve config
-    Proxy->>Proxy: build linker from capability set
-    Proxy->>Plugin: instantiate
-    alt imports an unlinked interface
-        Plugin--xProxy: capability denied (load fails)
-    else all imports satisfied
+    Proxy->>Proxy: compare imports with granted capabilities
+    alt ungranted import and strict_capabilities
+        Proxy--xPlugin: capability denied (load fails)
+    else otherwise
+        Proxy->>Proxy: warn once per ungranted import
+        Proxy->>Plugin: instantiate
         Plugin-->>Proxy: instance ready
         Proxy->>Plugin: on_enable
     end
@@ -119,40 +142,125 @@ sequenceDiagram
 
 ### Missing capability
 
-If a plugin imports a host interface it was not granted, instantiation fails. The host reports a capability-denied error and the plugin does not load. Grant the matching capability in `permissions` to fix it.
+If a plugin imports a host function it was not granted, it still loads and the host logs one warning per interface:
 
-One exception: the `limbo` interface is always linked regardless of the `limbo` capability. Importing it never blocks load. If the `limbo` capability is absent, calls to `register-limbo-handler` are ignored at runtime (the host logs a warning) rather than causing a load failure.
+```
+WARN plugin analytics imports ban-service but lacks the `ban` capability; calls will be refused
+```
 
-### A trap poisons the plugin
+Each call to that function is then refused: functions with an error type return a `missing capability` error, the others return an empty answer and do nothing. Grant the capability in `permissions` if the plugin needs it. A limbo handler registered without `limbo` is refused the same way and logged at `error`, since the plugin cannot tell.
 
-If the guest traps during `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host marks the instance poisoned and reports the failure. A poisoned plugin is effectively disabled: its `on_disable` is skipped rather than re-entering trapped guest code.
+To refuse such a plugin at startup instead, set `strict_capabilities`:
+
+```toml
+[plugins.analytics]
+permissions = ["ban"]
+strict_capabilities = true
+```
+
+The full list of what each refused call returns is in [Capabilities](./capabilities#what-a-missing-capability-does).
+
+### A plugin built for another contract is refused
+
+The proxy reads which contract each component was built for before running any of its code. A plugin built for `infrarust:plugin@0.2.3` is refused at discovery with `plugin built for infrarust:plugin@0.2.3; this host supports infrarust:plugin@0.3.x, rebuild it with an infrarust-plugin-sdk that targets infrarust:plugin@0.3.x`. Rebuild it against the current SDK; [Migrating to 0.3](./migration-0.3) lists the source changes. A `.wasm` that is not an Infrarust plugin at all is refused as `not an Infrarust plugin component`.
+
+### A refused plugin does not stop the others
+
+Each problem found at discovery refuses only the plugin it concerns, logged at `error` with the file and the cause, and the proxy starts with the rest. That covers a file that cannot be read or is not a binary component (an empty or truncated upload, WebAssembly text, a core module, a file larger than 256 MiB), a `metadata()` that traps or does not return within the smaller of `max_call_duration` and 5 seconds, an invalid or duplicate id, a missing hard dependency and a dependency cycle. A plugin whose hard dependency is refused, disabled with `enabled = false`, or fails to enable is not enabled either. Only a `plugins_dir` that exists but cannot be read stops the proxy. The full list is in [Lifecycle](./lifecycle#discovery).
+
+### A trap during `on_enable` fails the plugin
+
+If the guest traps during its first `on_enable` (a panic, an out-of-bounds access, or a CPU-time overrun), the host reports the failure and the plugin is not enabled. Once a plugin is enabled, a trap or a call past `max_call_duration` does not disable it: the host starts a fresh instance and runs `on_enable` again, and quarantines a plugin that keeps failing. See [Fault model](./fault-model) and the `[wasm.recovery]` settings.
 
 ## The AOT cache
 
-The proxy precompiles each `.wasm` to a native `.cwasm` artifact under a `.cache` subdirectory inside `plugins_dir`. Subsequent startups load the cached artifact and skip compilation.
+The proxy compiles each `.wasm` to native code and keeps the result in the directory named by `cache_dir` in the `[wasm]` table, so later starts skip compilation:
 
-The cache key is the content hash of the `.wasm` plus a wasmtime version tag plus the WIT contract version (`infrarust:plugin@0.2.3`). Changing the plugin, upgrading wasmtime, or bumping the contract produces a new key, so stale artifacts are never reused. A `.cwasm` that fails to load is detected, removed, and recompiled automatically.
+```toml
+[wasm]
+cache_dir = "./cache/wasm"  # the default, relative to the working directory
+```
+
+- The cache is kept apart from `plugins_dir` on purpose. An entry runs as native code inside the proxy, so whoever may add `.wasm` files must not be able to write there. The proxy refuses to start when `cache_dir` is `plugins_dir` or lies inside it. Make the directory writable by the proxy user only: on Unix the proxy ignores and replaces an entry that another user owns, that group or others can write, or that is a symbolic link.
+- An entry is keyed on the content of the `.wasm`, the exact wasmtime version and engine settings of the proxy, and the contract version (`infrarust:plugin@0.3.0`). A changed plugin, a proxy built with another wasmtime, or a new contract is compiled again. An entry that fails to load is compiled again and replaced.
+- After each start the proxy removes the entries that no plugin in `plugins_dir` uses, so replacing or removing a plugin does not leave its old artifact behind. Give each proxy its own `cache_dir`: proxies that share one with different plugins remove each other's entries.
+- When `cache_dir` cannot be created or written, on a read-only filesystem for example, the proxy logs one warning naming it and compiles every plugin in memory at each start. The plugins still load.
+
+The details, from the cache key to the file checks, are in [Lifecycle](./lifecycle#aot-compilation-and-caching).
 
 ::: tip
-The `.cache` directory is safe to delete. The proxy recreates it on the next startup by recompiling from the `.wasm` files. You never place a `.cwasm` there by hand.
+The cache directory is safe to delete: the proxy compiles the plugins again at the next start. Never put a `.cwasm` there by hand. A `plugins_dir/.cache` directory left by an earlier version is no longer read and can be deleted; the proxy says so once in its log.
 :::
 
-## Sandbox summary
+## Sandbox limits
 
 Each plugin runs in an isolated wasmtime instance with hard limits:
 
 | Resource | Limit |
 |----------|-------|
-| CPU | Cooperative epoch interruption; a runaway guest call traps instead of blocking the proxy. |
-| Memory | Linear memory is capped per instance (64 MiB). |
-| Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. No other host paths are reachable. |
-| Network | No outbound access in the current build. |
+| CPU | Cooperative epoch interruption; a guest call that uses more than `cpu_budget` (3 s) traps instead of blocking the proxy. |
+| Memory | Linear memory is capped per instance at `memory_limit_mb` (64 MiB). |
+| Call time | One call may run for `max_call_duration` (60 s), host calls included; each host call that waits on the proxy (server start and stop, bans, `connect`, `transfer`, `request-cookie`, permission refresh, permission snapshots with `set-snapshot` and `release`, named events) is capped at `host_call_timeout` (30 s), and `switch-server` at 250 ms. |
+| Call queue | The plugin handles one call at a time; up to `queue_capacity` (1024) calls wait, further calls are refused immediately. |
+| Registrations | At most 1024 event listeners, 256 commands, 1024 live scheduled tasks, 128 plugin channels, 32 codec filters and 64 limbo handlers held at once, set in `[wasm.quotas]`. A registration past a quota is refused with `limit-exceeded`. |
+| Filesystem | One preopened directory, `plugins_dir/<plugin-id>`, mounted as `/`. With `filesystem-extended`, the folders listed in `[[plugins.<id>.wasm.mounts]]` as well, read-only by default. |
+| Network | None by default. With `network`, only the destinations listed in `[plugins.<id>.wasm.network] allow`. |
 
-Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy or read files outside its own data directory. Capability details are in [Capabilities](./capabilities).
+The defaults come from the `[wasm]` table of `infrarust.toml`. Override them for one plugin under `[plugins.<id>.wasm]`:
+
+```toml
+[wasm]
+cpu_budget = "3s"
+queue_capacity = 1024
+
+[plugins.my_plugin.wasm]
+memory_limit_mb = 128
+queue_capacity = 4096
+
+[plugins.my_plugin.wasm.quotas]
+scheduled_tasks = 4096
+```
+
+Every `[wasm]` key except `epoch_tick` can be overridden; keys left out keep the proxy-wide value. `[plugins.<id>.wasm.recovery]`, `[plugins.<id>.wasm.quotas]` and `[plugins.<id>.wasm.codec_quarantine]` override `[wasm.recovery]`, `[wasm.quotas]` and `[wasm.codec_quarantine]` the same way, key by key. A plugin that schedules a delay per player, for example, may need a larger `scheduled_tasks` quota than the rest. See [Global Settings](../../configuration/global#wasm-plugin-sandbox) for each key and its accepted range, and [Registration quotas](../../configuration/global#registration-quotas) for what each quota counts.
+
+Capabilities gate which host services a plugin can call; the sandbox gates how much machine it can consume. The two together mean a misbehaving plugin cannot stall the proxy, or reach files and hosts you did not list. Capability details are in [Capabilities](./capabilities).
+
+## Network and extra folders
+
+A plugin that needs a database, a web API or a folder shared with another program gets the capability and a list of what it may reach. Both keys live under `[plugins.<id>.wasm]`:
+
+```toml
+[plugins.libertybans]
+permissions = ["network", "filesystem-extended"]
+
+[plugins.libertybans.wasm.network]
+allow = ["127.0.0.1:5432", "db.internal:5432", "api.example.com:443"]
+# dns = true     # default: on when allow has a hostname rule
+# http = true    # default
+
+[[plugins.libertybans.wasm.mounts]]
+host = "/srv/libertybans/shared"
+guest = "/shared"
+# read_only = true   # default
+```
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `network.allow` | list of `host:port` rules | `[]` | Destinations the plugin may reach, and the only sources it receives UDP datagrams or accepts TCP connections from. Hosts: an IPv4 address, `[IPv6]`, a range (`10.0.0.0/8`, `[fd00::/8]`), a hostname, or `*.suffix` (HTTP only). Ports: a number, `a-b`, or `*`. A bare `*` host is refused |
+| `network.dns` | bool | `true` if `allow` has a hostname rule | Lets the guest resolve names itself |
+| `network.http` | bool | `true` | Lets the guest send HTTP and HTTPS requests, still filtered by `allow` |
+| `mounts[].host` | path | required | Host directory; must exist when the plugin loads |
+| `mounts[].guest` | path | required | Absolute guest path, not `/`, not overlapping another mount |
+| `mounts[].read_only` | bool | `true` | `false` allows writes |
+
+Without the matching capability the table is ignored and a warning says so. `network` with an empty list refuses everything. A missing mount directory fails the load of that plugin, naming the plugin and the path. The rules, what each one allows, and the security trade-offs are on [Network & Extra Folders](./network).
+
+Neither the data directory nor a writable mount has a size limit, and a hard link that another program places in either one gives the plugin access to the linked file. Put plugin data on storage with its own quota and keep other programs from writing into these folders; see [Disk use and hard links](./capabilities#disk-use-and-hard-links).
 
 ## Next steps
 
 - [Building a Plugin](./building): produce the `.wasm` artifact.
 - [Capabilities](./capabilities): the full capability table and host interfaces.
+- [Network & Extra Folders](./network): outbound access and extra mounts.
 - [Getting Started](./getting-started): write your first plugin against the SDK.
 - [Configuration reference](../../configuration/): every `infrarust.toml` setting.

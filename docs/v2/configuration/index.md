@@ -143,7 +143,7 @@ For the full list of server config fields, see [Server Definitions](./servers).
 
 Infrarust watches the `servers_dir` directory for changes. When you add, edit, or remove a `.toml` file, the proxy picks up the change automatically. No restart required.
 
-The file watcher uses 200ms debouncing to avoid reacting to partial writes. After the debounce window, it computes a diff against the known configuration and applies only what changed:
+The file watcher waits until the directory has been quiet for 300ms (and at most 2s after the first change) so it never reads a file that is still being written. It then computes a diff against the known configuration and applies only what changed:
 
 - New file added: server becomes routable immediately
 - File modified: routing and settings update in place

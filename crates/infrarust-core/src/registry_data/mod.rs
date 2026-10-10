@@ -15,3 +15,7 @@ pub(crate) trait RegistryDataProvider: Send + Sync {
 
     fn supports_version(&self, version: ProtocolVersion) -> bool;
 }
+
+pub fn highest_embedded_version() -> Option<ProtocolVersion> {
+    embedded::highest_version()
+}

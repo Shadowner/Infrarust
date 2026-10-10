@@ -6,9 +6,9 @@ outline: [2, 3]
 
 # Plugin Architecture
 
-Infrarust processes every player connection through a layered pipeline. Each layer operates at a different level of abstraction, from raw TCP bytes to high-level game events. Plugins hook into whichever layer matches what they need to do.
+Infrarust processes every player connection through a layered pipeline. Each layer operates at a different level of abstraction, from accepted TCP connections to high-level game events. Plugins hook into whichever layer matches what they need to do.
 
-Native plugins are Rust crates compiled into the proxy binary. They run in-process with full access to every proxy service, including the transport-level byte stream. There is no sandbox: a native plugin is trusted code that the operator chose to compile in, and a misbehaving one can crash or stall the proxy. WASM plugins use a separate capability-gated model and do not reach the lowest layers described here. This page covers the native layers.
+Native plugins are Rust crates compiled into the proxy binary. They run in-process with full access to every proxy service, including the transport layer that gates TCP connections. There is no sandbox: a native plugin is trusted code that the operator chose to compile in, and a misbehaving one can crash or stall the proxy. WASM plugins use a separate capability-gated model and do not reach the lowest layers described here. This page covers the native layers.
 
 ## The pipeline
 
@@ -19,8 +19,8 @@ TCP connection accepted
         │
         ▼
 ┌───────────────────┐
-│  TransportFilter  │  Raw TCP bytes, before Minecraft framing.
-│  (Layer 1)        │  Can reject connections at the TCP level.
+│  TransportFilter  │  Accepted TCP connections, before framing.
+│  (Layer 1)        │  Can reject them; told when they close.
 └───────┬───────────┘
         │
         ▼
@@ -46,7 +46,7 @@ Each layer is independent. A plugin can hook into one layer, multiple layers, or
 
 ## Layer 1: TransportFilter
 
-Transport filters operate on raw TCP bytes before the proxy applies Minecraft packet framing. They see every connection, including passthrough-mode connections where the proxy does not decode packets at all.
+A transport filter is a connection gate. The proxy asks it about every accepted TCP connection before it reads a single Minecraft packet, and tells it when that connection closes. Transport filters see every connection: intercepted ones (`offline`, `client_only`), forwarded ones (`passthrough`, `zero_copy`, `server_only`) where the proxy never decodes the game traffic, and pre-1.7 legacy clients.
 
 The trait is defined in `crates/infrarust-api/src/filter/transport.rs`:
 
@@ -57,38 +57,109 @@ pub trait TransportFilter: Send + Sync {
     fn on_accept<'a>(&'a self, ctx: &'a mut TransportContext)
         -> BoxFuture<'a, FilterVerdict>;
 
-    fn on_client_data<'a>(
-        &'a self,
-        ctx: &'a mut TransportContext,
-        data: &'a mut BytesMut,
-    ) -> BoxFuture<'a, FilterVerdict>;
-
-    fn on_server_data<'a>(
-        &'a self,
-        ctx: &'a mut TransportContext,
-        data: &'a mut BytesMut,
-    ) -> BoxFuture<'a, FilterVerdict>;
-
     fn on_close(&self, _ctx: &TransportContext) {}
 }
-```
 
-`on_accept` fires when a TCP connection arrives. Return `FilterVerdict::Reject` to close it immediately (IP bans, rate limiting). `on_client_data` and `on_server_data` fire on each chunk of bytes flowing in either direction, letting you inspect or modify the raw stream.
-
-`TransportContext` carries connection metadata: remote address, local address, real IP (if behind PROXY protocol), connection time, byte counters, and a type-erased `Extensions` map for sharing state between filters.
-
-```rust
 pub enum FilterVerdict {
-    Continue,   // No changes, pass data through.
-    Modified,   // Data was modified in the BytesMut buffer.
-    Reject,     // Drop the connection.
+    Continue,   // Let the connection through to the next filter.
+    Reject,     // Close it without an answer.
 }
 ```
 
-Transport filters are shared instances (`Send + Sync`). The proxy calls them for every connection. Methods are async because this layer is not on the per-packet hot path.
+Transport filters are shared instances (`Send + Sync`): one filter object serves every connection. `on_accept` is async because this layer is not on the per-packet hot path.
+
+### on_accept
+
+`on_accept` runs in the connection's own task, never in the accept loop. A filter that takes its time, such as an anti-VPN lookup or a database query, delays only the connection it is looking at; the proxy keeps accepting and serving everyone else. It runs after the PROXY protocol header has been decoded (when [`receive_proxy_protocol`](../../reference/proxy-protocol) is on) and before the handshake is read.
+
+The filters run one after another, in [chain order](#filter-ordering). The first `Reject` stops the chain. The proxy then closes the socket without sending anything, not even a kick message or a server list answer, and fires a [`ConnectionRejectedEvent`](./events#connectionrejectedevent) with the reason `RejectReason::Plugin { plugin_id }`, where `plugin_id` is the plugin that registered the filter (`None` for a filter the proxy registered itself) and `virtual_host` is `None` because no handshake was read. To refuse a player with a message, deny the `ConnectionHandshakeEvent` instead.
+
+Each call has a time limit, [`[events] transport_filter_timeout`](../../configuration/global#plugin-event-handlers) (5 seconds by default). A filter that panics, or that has not answered when the limit runs out, rejects the connection: transport filters fail closed, like the ban provider does for logins. The proxy drops the unfinished future, logs a warning that names the filter and its plugin, and fires the same `ConnectionRejectedEvent`. The fault only costs that one connection: the next one runs the filter again as usual. If the proxy shuts down while a filter is running, the call is cancelled and the connection closed.
+
+### on_close
+
+`on_close` is called exactly once for every connection the filter let through with `Continue`, when that connection ends, whatever ends it: a server list ping or a play session that finished, a rejection later in the pipeline (unknown domain, IP filter, ban, a denied `ConnectionHandshakeEvent`), an I/O error, a panic in the proxy's connection code, or a proxy shutdown. This holds in every proxy mode and for legacy clients.
+
+`on_accept` and `on_close` pair up per filter:
+
+- When a filter rejects a connection, or panics or times out on it, the filters before it in the chain that had already returned `Continue` get their `on_close` at once. The filter that rejected gets none, and neither do the filters after it, which never saw the connection.
+- Filters are closed in the reverse of chain order.
+- `on_close` runs once the client socket is closed. It is synchronous, so keep it short. A panic in it is caught and logged, and the other filters still get theirs.
+- A filter whose plugin is disabled while one of its connections is open still gets `on_close` for that connection, so its bookkeeping stays balanced. Connections accepted after the disable no longer run it.
+
+This makes counters safe: increment in `on_accept` when you return `Continue`, decrement in `on_close`.
+
+### TransportContext
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `remote_addr` | `SocketAddr` | The TCP peer. Behind a load balancer this is the load balancer |
+| `local_addr` | `SocketAddr` | The listener address the connection arrived on |
+| `real_ip` | `Option<IpAddr>` | The client IP from the PROXY protocol header when `receive_proxy_protocol` is on, `None` otherwise. An IPv4-mapped IPv6 address is given as IPv4 |
+| `connection_time` | `Instant` | When the connection was accepted |
+| `connection_id` | `u64` | Non-zero and unique for the life of the proxy process. If the connection logs in, it is also the player's `PlayerId` (`player.id().as_u64()`) and the `connection_id` of its codec filters' `CodecSessionInit` |
+| `extensions` | `Extensions` | A type map shared by the transport filters of this connection |
+
+`on_close` receives the same context `on_accept` filled, extensions included, so a filter can keep per-connection state there (a start time, a lookup result) and read it back when the connection ends. The extensions stay with the transport filters: they are not copied into the proxy's connection pipeline, because no plugin-facing API reads the pipeline's internal state and nothing downstream could look at them.
+
+### What transport filters cannot do
+
+Transport filters have no access to the bytes of a connection. Feeding them the stream would mean wrapping every socket and copying every byte through the filter chain, which would disable the `zero_copy` mode's `splice` forwarding and slow every other mode down, so it is not supported. To look at or change game traffic, use a [codec filter](#layer-2-codecfilter) (intercepted modes) or an [event](#layer-3-eventbus).
+
+A transport filter cannot answer the client either: a rejected connection is closed silently.
+
+Here is a filter that caps the number of open connections per client IP:
+
+```rust
+use std::collections::HashMap;
+use std::net::IpAddr;
+use std::sync::Mutex;
+
+use infrarust_api::prelude::*;
+
+struct PerIpLimit {
+    max: usize,
+    open: Mutex<HashMap<IpAddr, usize>>,
+}
+
+fn client_ip(ctx: &TransportContext) -> IpAddr {
+    ctx.real_ip.unwrap_or(ctx.remote_addr.ip())
+}
+
+impl TransportFilter for PerIpLimit {
+    fn metadata(&self) -> FilterMetadata {
+        FilterMetadata::new("per_ip_limit")
+    }
+
+    fn on_accept<'a>(&'a self, ctx: &'a mut TransportContext) -> BoxFuture<'a, FilterVerdict> {
+        let mut open = self.open.lock().unwrap();
+        let count = open.entry(client_ip(ctx)).or_insert(0);
+        let verdict = if *count < self.max {
+            *count += 1;
+            FilterVerdict::Continue
+        } else {
+            FilterVerdict::Reject
+        };
+        Box::pin(async move { verdict })
+    }
+
+    fn on_close(&self, ctx: &TransportContext) {
+        // Only connections that got Continue reach on_close,
+        // so this always undoes an increment.
+        let ip = client_ip(ctx);
+        let mut open = self.open.lock().unwrap();
+        if let Some(count) = open.get_mut(&ip) {
+            *count -= 1;
+            if *count == 0 {
+                open.remove(&ip);
+            }
+        }
+    }
+}
+```
 
 ::: warning
-Transport filters are not available to WASM plugins. Direct byte access is restricted to native plugins.
+Transport filters are not available to WASM plugins. The `transport-filter` capability can only be held by trusted native plugins.
 :::
 
 ### Registering a transport filter
@@ -102,12 +173,16 @@ fn on_enable<'a>(
 ) -> BoxFuture<'a, Result<(), PluginError>> {
     Box::pin(async move {
         if let Some(registry) = ctx.transport_filters() {
-            registry.register(Box::new(MyTransportFilter));
+            registry
+                .register(Box::new(MyTransportFilter))
+                .map_err(|e| PluginError::InitFailed(e.to_string()))?;
         }
         Ok(())
     })
 }
 ```
+
+The filter id is owned by the plugin that registers it. Registering an id that another plugin already owns fails with `FilterRegistryError::OwnedBy`, and `unregister` only removes your own filters. When the plugin is disabled, the proxy removes its transport filters and rebuilds the chain, so the next accepted connection no longer runs them.
 
 ## Layer 2: CodecFilter
 
@@ -167,9 +242,14 @@ The factory's `create` method receives a `CodecSessionInit` struct with the clie
 
 ```rust
 if let Some(registry) = ctx.codec_filters() {
-    registry.register(Box::new(MyCodecFilterFactory));
+    if let Err(e) = registry.register(Box::new(MyCodecFilterFactory)) {
+        // FilterRegistryError::OwnedBy: another plugin or the proxy owns this id.
+        tracing::warn!("codec filter not registered: {e}");
+    }
 }
 ```
+
+The same ownership rules apply as for transport filters. The proxy builds the codec chain of each session when it starts, so disabling the plugin removes its codec filters from every connection opened afterwards; sessions already running keep the instances they were created with until they close.
 
 ## Layer 3: EventBus
 
@@ -179,11 +259,13 @@ Events fall into categories:
 
 | Category | Events |
 |----------|--------|
-| Lifecycle | `PreLoginEvent`, `PostLoginEvent`, `DisconnectEvent`, `OnlineAuthFailed`, `PermissionsSetupEvent` |
-| Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerSwitchEvent`, `KickedFromServerEvent` |
-| Chat | `ChatMessageEvent` |
-| Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent` |
-| Packet (Tier 3) | `RawPacketEvent` |
+| Handshake | `ConnectionHandshakeEvent`, `ConnectionRejectedEvent` |
+| Lifecycle | `PreLoginEvent`, `OnlineAuthFailedEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `DisconnectEvent` |
+| Connection | `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent` |
+| Chat | `ChatMessageEvent`, `CommandExecuteEvent` |
+| Proxy | `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `ConfigReloadEvent`, `ServerStateChangeEvent`, `BackendHealthEvent` |
+| Packet (Tier 3) | `RawPacketEvent` (packet subscriptions only) |
+| Plugin-defined | `NamedEvent` and your own event types, fired with `fire` ([custom events](./events#custom-events)) |
 
 The [events page](./events) documents each event's fields and result type.
 
@@ -226,9 +308,9 @@ pub enum PreLoginResult {
 }
 ```
 
-`ServerPreConnectEvent` lets you redirect players to another backend, send them to a limbo handler chain, or deny the connection entirely. Its result enum also has a `VirtualBackend` arm, but routing to a virtual backend is not wired into the proxy yet (see below).
+`ServerPreConnectEvent` lets you redirect players to another backend, send them to a limbo handler chain, or deny the connection entirely. Routing to a virtual backend is not wired into the proxy yet (see below).
 
-`ChatMessageEvent` lets you allow, deny, or modify messages.
+`ChatMessageEvent` lets you allow, deny, or modify messages, signed ones included. `CommandExecuteEvent` does the same for commands, before the proxy runs its own.
 
 ### Priority ordering
 
@@ -263,6 +345,8 @@ ctx.event_bus().subscribe_packet_typed(
 ```
 
 The proxy skips event dispatch for packets that have no listeners registered, so unused packet subscriptions have zero overhead.
+
+`RawPacketEvent` is not an `Event`, so it cannot be passed to `subscribe` or `subscribe_async`. Packet subscriptions are the only way to receive it.
 
 ## Layer 4: LimboHandler
 
@@ -320,22 +404,33 @@ pub enum HandlerResult {
     SendToLimbo(Vec<String>),  // Chain into another set of limbo handlers.
     HoldWithTimeout {    // Like Hold, but auto-complete after the deadline.
         after: Duration,
-        on_timeout: Box<HandlerResult>,
+        on_timeout: LimboOutcome,
     },
+}
+
+pub enum LimboOutcome {
+    Accept,
+    Deny(Component),
+    Redirect(ServerId),
+    SendToLimbo(Vec<String>),
 }
 ```
 
-When a handler returns `Hold`, the player stays in the void world. The handler uses the `LimboSession` to communicate: send chat messages, display titles, show action bar text. When it's done (player authenticated, server finished booting), it calls `session.complete(result)` to release the player. `HoldWithTimeout` is the same, except the engine owns a timer and applies `on_timeout` if `complete()` is not called within `after`. The deadline holds even if the handler's own task dies, and `on_timeout` must be a terminal result (`Accept`, `Deny`, `Redirect`, or `SendToLimbo`); a nested hold there is treated as `Accept`.
+When a handler returns `Hold`, the player stays in the void world. The handler uses the `LimboSession` to communicate: send chat messages, display titles, show action bar text. When it's done (player authenticated, server finished booting), it calls `session.complete(outcome)` to release the player. `HoldWithTimeout` is the same, except the engine owns a timer and applies `on_timeout` if `complete()` is not called within `after`. The deadline holds even if the handler's own task dies.
+
+`complete()` and `on_timeout` take a `LimboOutcome`, the terminal subset of `HandlerResult`, so neither can start another hold. `LimboOutcome` converts into `HandlerResult` with `.into()`. A `HoldWithTimeout` deadline cannot be moved: to extend a wait, return `Hold` and keep your own timer, then complete with `Deny` when it runs out.
+
+The session's `send_message`, `send_title` and `send_action_bar` return `PlayerError::Disconnected` once the limbo session has ended (the player left, or was released or sent elsewhere), and `PlayerError::SendFailed` when the player's outgoing queue is full or the packet cannot be built. A `SessionHandle` kept past the session gets the same answers, so `Disconnected` tells a background task to stop.
 
 Limbo handlers are chained. Each server configuration lists which limbo handlers run and in what order. A player passes through them sequentially.
 
 ### Registering a limbo handler
 
 ```rust
-ctx.register_limbo_handler(Box::new(MyLimboHandler));
+ctx.register_limbo_handler(Box::new(MyLimboHandler))?;
 ```
 
-The handler's `name()` return value must match the name used in server configuration files.
+The handler's `name()` return value must match the name used in server configuration files. Names are unique across plugins, registration works at any time, and removing a handler releases the players it holds. See [Limbo handlers](./api#limbo-handlers).
 
 ## Filter ordering
 
@@ -378,7 +473,7 @@ Most plugins only need Tier 1. The auth plugin uses Tier 1 plus Tier 2 (events f
 
 ### Virtual backends (planned)
 
-A virtual backend is a proxy-hosted "server" that speaks raw Minecraft packets directly to the client. Unlike a limbo handler, where the proxy manages the protocol for you, a virtual backend handles everything itself: JoinGame, chunks, KeepAlive responses. The `VirtualBackendHandler` trait and the `ServerPreConnectResult::VirtualBackend` arm both exist in `infrarust_api`:
+A virtual backend is a proxy-hosted "server" that speaks raw Minecraft packets directly to the client. Unlike a limbo handler, where the proxy manages the protocol for you, a virtual backend handles everything itself: JoinGame, chunks, KeepAlive responses. The `VirtualBackendHandler` trait exists in `infrarust_api`:
 
 ```rust
 pub trait VirtualBackendHandler: Send + Sync {
@@ -391,7 +486,7 @@ pub trait VirtualBackendHandler: Send + Sync {
 }
 ```
 
-The proxy core does not act on the `VirtualBackend` result yet. Returning it from an event handler is a no-op on the current release, so treat virtual backends as planned, not available. Use a limbo handler for proxy-hosted screens today.
+The proxy cannot route a player to a virtual backend yet, and no event result selects one: the `ServerPreConnectResult::VirtualBackend` arm was removed because the proxy never acted on it. Treat virtual backends as planned, not available, and use a limbo handler for proxy-hosted screens today.
 
 ::: info Planned
 Virtual backend routing is not implemented in the proxy on v2.0.0-beta.3. The trait is published so the API can stabilize ahead of the runtime support.
@@ -402,7 +497,8 @@ Virtual backend routing is not implemented in the proxy on v2.0.0-beta.3. The tr
 | You want to... | Use |
 |----------------|-----|
 | Block IPs, rate-limit connections | TransportFilter |
-| Inspect or rewrite raw TCP bytes | TransportFilter |
+| Track open connections (per-IP caps, connection logs) | TransportFilter |
+| Refuse a connection with a message | EventBus (`ConnectionHandshakeEvent`) |
 | Modify, drop, or inject Minecraft packets | CodecFilter |
 | React to player login, disconnect, chat | EventBus |
 | Redirect players between servers | EventBus (`ServerPreConnectEvent`) |

@@ -78,10 +78,6 @@ pub fn service_name() -> String {
     "infrarust".to_string()
 }
 
-pub fn telemetry_protocol() -> String {
-    "grpc".to_string()
-}
-
 pub const fn true_val() -> bool {
     true
 }
@@ -118,8 +114,8 @@ pub const fn ban_purge_interval() -> Duration {
     Duration::from_secs(300)
 }
 
-pub const fn ban_audit_log() -> bool {
-    true
+pub const fn ban_check_timeout() -> Duration {
+    Duration::from_secs(5)
 }
 
 pub fn docker_endpoint() -> String {
@@ -134,10 +130,122 @@ pub const fn docker_reconnect_delay() -> Duration {
     Duration::from_secs(5)
 }
 
-pub const fn announce_proxy_commands() -> bool {
-    true
-}
-
 pub fn session_url() -> String {
     "https://sessionserver.mojang.com/session/minecraft/hasJoined".to_string()
+}
+
+pub const fn event_handler_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn event_slow_handler_threshold() -> Duration {
+    Duration::from_secs(1)
+}
+
+pub const fn event_packet_handler_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn event_disconnect_deadline() -> Duration {
+    Duration::from_secs(15)
+}
+
+pub const fn event_transport_filter_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
+pub const fn wasm_epoch_tick() -> Duration {
+    Duration::from_millis(1)
+}
+
+pub const fn wasm_memory_limit_mb() -> u32 {
+    64
+}
+
+pub const fn wasm_cpu_budget() -> Duration {
+    Duration::from_secs(3)
+}
+
+pub const fn wasm_codec_cpu_budget() -> Duration {
+    Duration::from_millis(5)
+}
+
+pub const fn wasm_host_call_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+pub const fn wasm_max_call_duration() -> Duration {
+    Duration::from_secs(60)
+}
+
+pub const fn wasm_queue_capacity() -> usize {
+    1024
+}
+
+pub const fn wasm_instance_pool() -> u32 {
+    0
+}
+
+pub fn wasm_cache_dir() -> PathBuf {
+    PathBuf::from("./cache/wasm")
+}
+
+pub const fn wasm_quota_event_listeners() -> usize {
+    1024
+}
+
+pub const fn wasm_quota_commands() -> usize {
+    256
+}
+
+pub const fn wasm_quota_scheduled_tasks() -> usize {
+    1024
+}
+
+pub const fn wasm_quota_plugin_channels() -> usize {
+    128
+}
+
+pub const fn wasm_quota_codec_filters() -> usize {
+    32
+}
+
+pub const fn wasm_quota_limbo_handlers() -> usize {
+    64
+}
+
+pub const fn wasm_quota_permission_nodes() -> usize {
+    256
+}
+
+pub const fn wasm_recovery_max_restarts() -> u32 {
+    5
+}
+
+pub const fn wasm_recovery_window() -> Duration {
+    Duration::from_secs(300)
+}
+
+pub const fn wasm_recovery_backoff_initial() -> Duration {
+    Duration::from_secs(1)
+}
+
+pub const fn wasm_recovery_backoff_max() -> Duration {
+    Duration::from_secs(300)
+}
+
+pub const fn wasm_codec_quarantine_faults() -> u32 {
+    5
+}
+
+pub const fn wasm_codec_quarantine_window() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn wasm_codec_quarantine_backoff_initial() -> Duration {
+    Duration::from_secs(10)
+}
+
+pub const fn wasm_codec_quarantine_backoff_max() -> Duration {
+    Duration::from_secs(300)
 }

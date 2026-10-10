@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::codec::{McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::ProtocolVersion;
@@ -18,14 +20,15 @@ const HAS_DEATH_LOCATION: bool = false;
 const PORTAL_COOLDOWN: VarInt = VarInt(0);
 const SEA_LEVEL: i32 = 63;
 
-pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespawn {
+pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> ProtocolResult<CRespawn> {
     if version.no_less_than(ProtocolVersion::V1_20_2) {
         let (dim_id, level_name) = match dimension {
             DimensionInfo::Legacy(id) => (*id, "minecraft:overworld".to_string()),
             DimensionInfo::Named(name) => (0, name.clone()),
         };
-        return CRespawn {
+        return Ok(CRespawn {
             dimension: dim_id,
+            dimension_type: dimension_as_name(dimension),
             level_name,
             hashed_seed: HASHED_SEED,
             gamemode: GAMEMODE_SURVIVAL,
@@ -38,20 +41,19 @@ pub fn for_switch(dimension: &DimensionInfo, version: ProtocolVersion) -> CRespa
             portal_cooldown: PORTAL_COOLDOWN.0,
             sea_level: SEA_LEVEL,
             raw_payload: None,
-        };
+        });
     }
 
     let mut raw = Vec::with_capacity(64);
-    encode_switch_respawn(&mut raw, dimension, version)
-        .expect("respawn switch encoding should not fail with valid DimensionInfo");
-    CRespawn {
+    encode_switch_respawn(&mut raw, dimension, version)?;
+    Ok(CRespawn {
         raw_payload: Some(raw),
         ..Default::default()
-    }
+    })
 }
 
 fn encode_switch_respawn(
-    w: &mut Vec<u8>,
+    w: &mut (impl Write + ?Sized),
     dimension: &DimensionInfo,
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
@@ -116,11 +118,10 @@ fn dimension_as_name(dim: &DimensionInfo) -> String {
     }
 }
 
-fn write_minimal_dimension_nbt(w: &mut Vec<u8>) -> ProtocolResult<()> {
-    w.push(0x0A);
-    w.extend_from_slice(&0u16.to_be_bytes());
-    w.push(0x00);
-    Ok(())
+fn write_minimal_dimension_nbt(w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
+    w.write_u8(0x0A)?;
+    w.write_u16_be(0)?;
+    w.write_u8(0x00)
 }
 
 #[cfg(test)]
@@ -132,7 +133,7 @@ mod tests {
     #[test]
     fn test_for_switch_pre_1_14() {
         let dim = DimensionInfo::Legacy(0);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_8);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_8).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &0i32.to_be_bytes());
         assert_eq!(raw[4], 2);
@@ -142,7 +143,7 @@ mod tests {
     #[test]
     fn test_for_switch_pre_1_14_nether() {
         let dim = DimensionInfo::Legacy(-1);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_8);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_8).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &(-1i32).to_be_bytes());
     }
@@ -150,7 +151,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_14() {
         let dim = DimensionInfo::Legacy(0);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_14);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_14).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &0i32.to_be_bytes());
         assert_eq!(raw[4], 0);
@@ -159,7 +160,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_15() {
         let dim = DimensionInfo::Legacy(1);
-        let respawn = for_switch(&dim, ProtocolVersion::V1_15);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_15).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert_eq!(&raw[0..4], &1i32.to_be_bytes());
         assert_eq!(&raw[4..12], &0i64.to_be_bytes());
@@ -169,7 +170,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_16_2() {
         let dim = DimensionInfo::Named("minecraft:the_nether".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_16_2);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_16_2).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -177,7 +178,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_19() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_19);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_19).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -185,7 +186,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_19_3() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_19_3);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_19_3).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -193,7 +194,7 @@ mod tests {
     #[test]
     fn test_for_switch_1_19_4() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_19_4);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_19_4).unwrap();
         let raw = respawn.raw_payload.expect("should have raw_payload");
         assert!(!raw.is_empty());
     }
@@ -201,10 +202,43 @@ mod tests {
     #[test]
     fn test_for_switch_1_20_2() {
         let dim = DimensionInfo::Named("minecraft:overworld".to_string());
-        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2);
+        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2).unwrap();
         assert!(respawn.raw_payload.is_none());
         assert_eq!(respawn.level_name, "minecraft:overworld");
+        assert_eq!(respawn.dimension_type, "minecraft:overworld");
         assert_eq!(respawn.data_to_keep, 0x01);
+    }
+
+    #[test]
+    fn test_for_switch_1_20_2_keeps_the_target_dimension_type() {
+        let dim = DimensionInfo::Named("minecraft:the_nether".to_string());
+        let respawn = for_switch(&dim, ProtocolVersion::V1_20_2).unwrap();
+        assert_eq!(respawn.dimension_type, "minecraft:the_nether");
+        assert_eq!(respawn.level_name, "minecraft:the_nether");
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("closed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_switch_respawn_propagates_writer_errors() {
+        for version in [ProtocolVersion::V1_8, ProtocolVersion::V1_16] {
+            let err = encode_switch_respawn(&mut FailingWriter, &DimensionInfo::Legacy(0), version)
+                .unwrap_err();
+            assert!(
+                matches!(err, crate::error::ProtocolError::Io(_)),
+                "{version}: {err}"
+            );
+        }
     }
 
     #[test]
@@ -307,6 +341,11 @@ mod tests {
             "116d696e6563726166743a7468655f656e64116d696e6563726166743a7468655f656e64000000000000000000ff000001",
         ),
         (
+            ProtocolVersion::V1_17_1,
+            "146d696e6563726166743a7468655f6e6574686572146d696e6563726166743a7468655f6e6574686572000000000000000000ff000001",
+            "116d696e6563726166743a7468655f656e64116d696e6563726166743a7468655f656e64000000000000000000ff000001",
+        ),
+        (
             ProtocolVersion::V1_18,
             "146d696e6563726166743a7468655f6e6574686572146d696e6563726166743a7468655f6e6574686572000000000000000000ff000001",
             "116d696e6563726166743a7468655f656e64116d696e6563726166743a7468655f656e64000000000000000000ff000001",
@@ -403,6 +442,11 @@ mod tests {
         ),
         (
             ProtocolVersion::V26_2,
+            "146d696e6563726166743a7468655f6e6574686572146d696e6563726166743a7468655f6e6574686572000000000000000000ff0000010000",
+            "116d696e6563726166743a7468655f656e64116d696e6563726166743a7468655f656e64000000000000000000ff0000010000",
+        ),
+        (
+            ProtocolVersion::V26_3,
             "146d696e6563726166743a7468655f6e6574686572146d696e6563726166743a7468655f6e6574686572000000000000000000ff0000010000",
             "116d696e6563726166743a7468655f656e64116d696e6563726166743a7468655f656e64000000000000000000ff0000010000",
         ),

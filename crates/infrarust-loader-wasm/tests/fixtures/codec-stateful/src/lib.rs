@@ -1,7 +1,3 @@
-//! Codec fixture with per-connection state: counts the packets it sees and writes
-//! the running count into each payload. The host test drives the client-side and
-//! server-side instances separately to prove their state is independent.
-
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
@@ -26,7 +22,7 @@ impl CodecFilter for Counter {
 
 #[plugin(id = "codec-stateful", name = "Codec Stateful Fixture")]
 impl Plugin for CodecStateful {
-    fn on_enable(&self, _ctx: &Context) -> Result<(), String> {
+    fn on_enable(&self, _ctx: &Context) -> Result<(), PluginError> {
         Ok(())
     }
 

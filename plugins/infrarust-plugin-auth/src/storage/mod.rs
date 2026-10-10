@@ -9,15 +9,11 @@ use crate::account::{AuthAccount, PasswordHash, PremiumInfo, Username};
 use crate::error::AuthStorageError;
 
 pub trait AuthStorage: Send + Sync {
-    fn has_account<'a>(
-        &'a self,
-        username: &'a Username,
-    ) -> BoxFuture<'a, Result<bool, AuthStorageError>>;
+    fn has_account(&self, username: &Username) -> bool;
 
-    fn get_account<'a>(
-        &'a self,
-        username: &'a Username,
-    ) -> BoxFuture<'a, Result<Option<AuthAccount>, AuthStorageError>>;
+    fn get_account(&self, username: &Username) -> Result<Option<AuthAccount>, AuthStorageError>;
+
+    fn is_force_cracked(&self, username: &Username) -> bool;
 
     fn create_account<'a>(
         &'a self,
@@ -49,13 +45,4 @@ pub trait AuthStorage: Send + Sync {
     ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
 
     fn flush(&self) -> BoxFuture<'_, Result<(), AuthStorageError>>;
-
-    fn get_account_blocking(
-        &self,
-        username: &Username,
-    ) -> Result<Option<AuthAccount>, AuthStorageError>;
-
-    fn has_account_blocking(&self, username: &Username) -> bool;
-
-    fn is_force_cracked_blocking(&self, username: &Username) -> bool;
 }

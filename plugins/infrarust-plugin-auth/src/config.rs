@@ -259,6 +259,7 @@ pub async fn load_or_create_config(path: &Path) -> Result<AuthConfig, AuthError>
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

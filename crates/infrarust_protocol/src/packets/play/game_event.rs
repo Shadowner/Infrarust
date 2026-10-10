@@ -18,21 +18,23 @@ impl Packet for CGameEvent {
     const DIRECTION: Direction = Direction::Clientbound;
     const ENCODE_ONLY: bool = true;
     const IDS: &'static [PacketMapping] = ids![
-        V1_9    => 0x1B,
-        V1_13   => 0x1E,
-        V1_14   => 0x1D,
-        V1_15   => 0x1E,
-        V1_16   => 0x1D,
-        V1_16_2 => 0x1C,
-        V1_17   => 0x1D,
+        V1_9    => 0x1E,
+        V1_13   => 0x20,
+        V1_14   => 0x1E,
+        V1_15   => 0x1F,
+        V1_16   => 0x1E,
+        V1_16_2 => 0x1D,
+        V1_17   => 0x1E,
         V1_19   => 0x1B,
         V1_19_1 => 0x1D,
         V1_19_3 => 0x1C,
-        V1_19_4 => 0x20,
+        V1_19_4 => 0x1F,
+        V1_20_2 => 0x20,
         V1_20_5 => 0x22,
         V1_21_2 => 0x23,
         V1_21_5 => 0x22,
         V1_21_9 => 0x26,
+        V26_3   => 0x27,
     ];
 
     fn decode(r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
@@ -43,7 +45,7 @@ impl Packet for CGameEvent {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_u8(self.event)?;

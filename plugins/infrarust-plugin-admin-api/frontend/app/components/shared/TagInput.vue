@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { XMarkIcon, PlusIcon, PencilIcon } from '@heroicons/vue/24/outline';
 
-const modelValue = defineModel<string[]>({ default: [] });
+const modelValue = defineModel<string[]>({ default: () => [] });
 
 const props = withDefaults(defineProps<{
   placeholder?: string;

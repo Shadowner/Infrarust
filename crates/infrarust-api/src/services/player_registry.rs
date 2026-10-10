@@ -1,5 +1,6 @@
 //! Player registry service.
 
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use crate::player::Player;
@@ -12,9 +13,7 @@ pub mod private {
 
 /// Registry of all players connected to the proxy.
 ///
-/// Obtained via [`PluginContext::player_registry()`](crate::plugin::PluginContext::player_registry)
-/// or as an `Arc<dyn PlayerRegistry>` via
-/// [`PluginContext::player_registry_handle()`](crate::plugin::PluginContext::player_registry_handle).
+/// Obtained via [`PluginContext::player_registry()`](crate::plugin::PluginContext::player_registry).
 pub trait PlayerRegistry: Send + Sync + private::Sealed {
     /// Finds a player by username (case-insensitive).
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>>;
@@ -24,6 +23,8 @@ pub trait PlayerRegistry: Send + Sync + private::Sealed {
 
     /// Finds a player by their session ID.
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>>;
+
+    fn get_players_by_ip(&self, ip: IpAddr) -> Vec<Arc<dyn Player>>;
 
     /// Returns all players currently connected to a specific server.
     fn get_players_on_server(&self, server: &ServerId) -> Vec<Arc<dyn Player>>;

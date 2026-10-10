@@ -65,7 +65,7 @@ fn test_parse_proxy_telemetry() {
         .expect("telemetry should be present");
     assert!(!tc.enabled);
     assert_eq!(tc.endpoint.as_deref(), Some("http://localhost:4317"));
-    assert_eq!(tc.protocol, "grpc");
+    assert_eq!(tc.protocol, infrarust_config::OtlpProtocol::Grpc);
     assert_eq!(tc.resource.service_name, "infrarust");
     assert_eq!(tc.resource.service_version, "2.0.0");
 }
@@ -81,4 +81,63 @@ fn test_proxy_defaults_minimal_config() {
     assert_eq!(config.rate_limit.max_connections, 3);
     assert_eq!(config.status_cache.ttl, Duration::from_secs(5));
     assert!(config.default_motd.is_none());
+}
+
+#[test]
+fn test_parse_proxy_events_defaults() {
+    let config: ProxyConfig = toml::from_str("").unwrap();
+
+    assert_eq!(config.events.handler_timeout, Duration::from_secs(10));
+    assert_eq!(config.events.slow_handler_threshold, Duration::from_secs(1));
+    assert_eq!(
+        config.events.packet_handler_timeout,
+        Duration::from_secs(10)
+    );
+    assert_eq!(config.events.disconnect_deadline, Duration::from_secs(15));
+    assert_eq!(
+        config.events.transport_filter_timeout,
+        Duration::from_secs(5)
+    );
+}
+
+#[test]
+fn test_parse_proxy_events_section() {
+    let config: ProxyConfig = toml::from_str(
+        r#"
+        [events]
+        handler_timeout = "200ms"
+        slow_handler_threshold = "50ms"
+        packet_handler_timeout = "2s"
+        disconnect_deadline = "300ms"
+        transport_filter_timeout = "750ms"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(config.events.handler_timeout, Duration::from_millis(200));
+    assert_eq!(
+        config.events.slow_handler_threshold,
+        Duration::from_millis(50)
+    );
+    assert_eq!(config.events.packet_handler_timeout, Duration::from_secs(2));
+    assert_eq!(
+        config.events.disconnect_deadline,
+        Duration::from_millis(300)
+    );
+    assert_eq!(
+        config.events.transport_filter_timeout,
+        Duration::from_millis(750)
+    );
+}
+
+#[test]
+fn test_parse_proxy_events_rejects_unknown_keys() {
+    let parsed = toml::from_str::<ProxyConfig>(
+        r#"
+        [events]
+        handler_timeot = "1s"
+        "#,
+    );
+
+    assert!(parsed.is_err());
 }

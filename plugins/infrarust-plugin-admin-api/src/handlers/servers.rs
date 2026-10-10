@@ -21,22 +21,7 @@ use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::proxy_mode_str;
-
-fn server_state_str(state: &ServerState) -> &'static str {
-    match state {
-        ServerState::Online => "online",
-        ServerState::Offline => "offline",
-        ServerState::Starting => "starting",
-        ServerState::Stopping => "stopping",
-        ServerState::Sleeping => "sleeping",
-        ServerState::Crashed => "crashed",
-        other => {
-            tracing::warn!(?other, "Unknown ServerState variant");
-            "unknown"
-        }
-    }
-}
+use crate::util::{ProxyModeName, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
 
@@ -127,31 +112,29 @@ pub async fn list(
         .map(|(id, st)| (id.as_str().to_string(), st))
         .collect();
 
-    let mut servers: Vec<ServerResponse> = configs
-        .iter()
-        .map(|config| {
-            let id_str = config.id.as_str().to_string();
-            let server_state = states.get(&id_str);
-            let player_count = state.player_registry.online_count_on(&config.id);
-            let providers = sources.get(&id_str);
+    let mut servers = Vec::with_capacity(configs.len());
+    for config in &configs {
+        let id_str = config.id.as_str().to_string();
+        let server_state = states.get(&id_str);
+        let player_count = state.player_registry.online_count_on(&config.id);
+        let providers = sources.get(&id_str);
 
-            ServerResponse {
-                source: source_label(providers),
-                editable: is_editable(&state, &id_str, providers),
-                has_server_manager: config.has_server_manager,
-                id: id_str,
-                addresses: config
-                    .addresses
-                    .iter()
-                    .map(|a| format!("{}:{}", a.host, a.port))
-                    .collect(),
-                domains: config.domains.clone(),
-                proxy_mode: proxy_mode_str(config.proxy_mode).to_string(),
-                state: server_state.map(server_state_str).map(String::from),
-                player_count,
-            }
-        })
-        .collect();
+        servers.push(ServerResponse {
+            source: source_label(providers),
+            editable: is_editable(&state, &id_str, providers),
+            has_server_manager: config.has_server_manager,
+            id: id_str,
+            addresses: config
+                .addresses
+                .iter()
+                .map(|a| format!("{}:{}", a.host, a.port))
+                .collect(),
+            domains: config.domains.clone(),
+            proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
+            state: server_state.map(server_state_str).map(String::from),
+            player_count,
+        });
+    }
 
     servers.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -184,7 +167,7 @@ pub async fn get(
             .map(|a| format!("{}:{}", a.host, a.port))
             .collect(),
         domains: config.domains.clone(),
-        proxy_mode: proxy_mode_str(config.proxy_mode).to_string(),
+        proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
         limbo_handlers: config.limbo_handlers.clone(),
         state: server_state
             .as_ref()
@@ -274,7 +257,7 @@ fn settle_id(config: &mut ServerConfig, expected: &str) -> Result<DocumentId, Ap
              [a-z0-9._-], must not start with '.' and must not contain '..'"
         ))
     })?;
-    infrarust_config::validate_server_config(config)
+    let _ = infrarust_config::validate_server_config(config)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     Ok(document)
@@ -324,7 +307,7 @@ pub async fn create(
 
     let text = restore_secrets(&to_document_text(&config)?, None)?;
     let committed = state.server_dir.create(&document, text.clone()).await?;
-    let event = document_event(&committed, text, PluginProviderEvent::AddedDocument);
+    let event = document_event(&committed, text, PluginProviderEvent::Added);
     announce(&state, committed, event).await;
 
     tracing::info!(
@@ -352,6 +335,7 @@ pub async fn update(
     Path(id): Path<String>,
     Json(mut config): Json<ServerConfig>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let lock = state.server_dir.lock_writes().await;
     let document = ensure_editable(&state, &id)?;
     settle_id(&mut config, &id)?;
 
@@ -359,8 +343,8 @@ pub async fn update(
         &to_document_text(&config)?,
         state.server_dir.document_text(&id),
     )?;
-    let committed = state.server_dir.replace(&document, text.clone()).await?;
-    let event = document_event(&committed, text, PluginProviderEvent::UpdatedDocument);
+    let committed = lock.replace(&document, text.clone()).await?;
+    let event = document_event(&committed, text, PluginProviderEvent::Updated);
     announce(&state, committed, event).await;
 
     tracing::info!(
@@ -445,6 +429,7 @@ pub async fn update_raw(
     Path(id): Path<String>,
     text: String,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let lock = state.server_dir.lock_writes().await;
     let document = ensure_editable(&state, &id)?;
     let text = restore_secrets(&text, state.server_dir.document_text(&id))?;
 
@@ -452,8 +437,8 @@ pub async fn update_raw(
         toml::from_str(&text).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     settle_id(&mut config, &id)?;
 
-    let committed = state.server_dir.replace(&document, text.clone()).await?;
-    let event = document_event(&committed, text, PluginProviderEvent::UpdatedDocument);
+    let committed = lock.replace(&document, text.clone()).await?;
+    let event = document_event(&committed, text, PluginProviderEvent::Updated);
     announce(&state, committed, event).await;
 
     tracing::info!(
@@ -487,17 +472,18 @@ pub async fn validate(headers: HeaderMap, body: String) -> Json<ApiResponse<Vali
             errors: vec![e],
             warnings: vec![],
         },
-        Ok(config) => {
-            let errors = infrarust_config::validate_server_config(&config)
-                .err()
-                .map(|e| vec![e.to_string()])
-                .unwrap_or_default();
-            ValidationResponse {
-                valid: errors.is_empty(),
-                errors,
-                warnings: infrarust_config::balance_warnings(&config),
-            }
-        }
+        Ok(config) => match infrarust_config::validate_server_config(&config) {
+            Ok(warnings) => ValidationResponse {
+                valid: true,
+                errors: vec![],
+                warnings: warnings.into_vec(),
+            },
+            Err(e) => ValidationResponse {
+                valid: false,
+                errors: vec![e.to_string()],
+                warnings: vec![],
+            },
+        },
     };
 
     ok(response)
@@ -507,10 +493,10 @@ pub async fn delete(
     State(state): State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<MutationResult>>, ApiError> {
+    let lock = state.server_dir.lock_writes().await;
     let document = ensure_editable(&state, &id)?;
 
-    let removed = state
-        .server_dir
+    let removed = lock
         .remove(&document)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;

@@ -12,9 +12,7 @@ use infrarust_config::secrets::{PROXY_SECRETS, SERVER_SECRETS, redact, reinject,
 use toml_edit::DocumentMut;
 
 use crate::routing::DomainRouter;
-
-/// Provider types owned by a plugin are prefixed with `plugin:<id>:`.
-const PLUGIN_PROVIDER_PREFIX: &str = "plugin:";
+use crate::util::sync::lock;
 
 /// Wrapper around the proxy's configuration file and routing tables.
 pub struct ConfigServiceImpl {
@@ -71,25 +69,25 @@ impl ConfigServiceImpl {
 
     /// Converts an internal [`infrarust_config::ServerConfig`] to an API [`ServerConfig`].
     fn convert_config(id: &str, config: &infrarust_config::ServerConfig) -> ServerConfig {
-        ServerConfig::new(
-            ServerId::new(id),
-            config.network.clone(),
-            config
-                .addresses
-                .iter()
-                .map(|a| ServerAddress {
-                    host: a.address.host.clone(),
-                    port: a.address.port,
-                })
-                .collect(),
-            config.domains.clone(),
-            convert_proxy_mode(config.proxy_mode),
-            config.limbo_handlers.clone(),
-            config.max_players,
-            config.disconnect_message.clone(),
-            config.send_proxy_protocol,
-            config.server_manager.is_some(),
-        )
+        ServerConfig::new(ServerId::new(id))
+            .network(config.network.clone())
+            .addresses(
+                config
+                    .addresses
+                    .iter()
+                    .map(|a| ServerAddress {
+                        host: a.address.host.clone(),
+                        port: a.address.port,
+                    })
+                    .collect(),
+            )
+            .domains(config.domains.clone())
+            .proxy_mode(convert_proxy_mode(config.proxy_mode))
+            .limbo_handlers(config.limbo_handlers.clone())
+            .max_players(config.max_players)
+            .disconnect_message(config.disconnect_message.clone())
+            .send_proxy_protocol(config.send_proxy_protocol)
+            .has_server_manager(config.server_manager.is_some())
     }
 }
 
@@ -101,6 +99,12 @@ impl ConfigService for ConfigServiceImpl {
         self.router
             .find_by_server_id(server_id)
             .map(|cfg| Self::convert_config(server_id, &cfg))
+    }
+
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig> {
+        self.router
+            .resolve(domain)
+            .map(|(_, cfg)| Self::convert_config(&cfg.effective_id(), &cfg))
     }
 
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
@@ -138,9 +142,7 @@ impl ConfigService for ConfigServiceImpl {
             .map(|(provider_id, config)| ServerSource {
                 id: config.effective_id(),
                 provider_id: provider_id.to_string(),
-                editable: provider_id
-                    .provider_type
-                    .starts_with(PLUGIN_PROVIDER_PREFIX),
+                editable: provider_id.plugin_owner().is_some(),
                 provider_type: provider_id.provider_type,
             })
             .collect()
@@ -164,10 +166,7 @@ impl ConfigService for ConfigServiceImpl {
             .map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
 
         off_async_worker(move || {
-            let _guard = self
-                .write_lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let _guard = lock(&self.write_lock);
 
             reinject(&mut document, &self.current_document(), PROXY_SECRETS);
             let unrestored = still_redacted(&document, PROXY_SECRETS);
@@ -181,18 +180,33 @@ impl ConfigService for ConfigServiceImpl {
             let text = document.to_string();
             let config: ProxyConfig =
                 toml::from_str(&text).map_err(|e| ConfigWriteError::Parse(e.to_string()))?;
-            infrarust_config::validate_proxy_document(&config)
+            let warnings = infrarust_config::validate_proxy_document(&config)
                 .map_err(|e| ConfigWriteError::Validation(e.to_string()))?;
+            for warning in warnings {
+                tracing::warn!("{warning}");
+            }
 
             write_atomic(&self.config_path, &text).map_err(|e| ConfigWriteError::Io(e.to_string()))
         })
     }
 
-    /// Not implemented: this impl only holds routing tables, and the trait
-    /// is part of the frozen plugin surface, so it always returns `None` —
-    /// callers cannot distinguish "unimplemented" from "key absent".
-    fn get_value(&self, _key: &str) -> Option<String> {
-        None
+    fn get_value(&self, key: &str) -> Option<String> {
+        let document: toml::Table =
+            toml::from_str(&self.get_effective_proxy_config_document()).ok()?;
+        let mut path = key.split('.');
+        let mut value = document.get(path.next()?)?;
+        for segment in path {
+            value = value.as_table()?.get(segment)?;
+        }
+        Some(match value {
+            toml::Value::String(text) => text.clone(),
+            toml::Value::Integer(number) => number.to_string(),
+            toml::Value::Float(number) => number.to_string(),
+            toml::Value::Boolean(flag) => flag.to_string(),
+            toml::Value::Datetime(_) | toml::Value::Array(_) | toml::Value::Table(_) => {
+                value.to_string()
+            }
+        })
     }
 }
 
@@ -332,6 +346,10 @@ impl infrarust_api::services::config_service::private::Sealed for ReadOnlyConfig
 impl ConfigService for ReadOnlyConfigService {
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig> {
         self.0.get_server_config(server)
+    }
+
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig> {
+        self.0.get_server_config_by_domain(domain)
     }
 
     fn get_all_server_configs(&self) -> Vec<ServerConfig> {
@@ -609,6 +627,48 @@ api_key = \"super-secret-key-value\"
     }
 
     #[test]
+    fn a_domain_finds_the_server_the_proxy_routes_it_to() {
+        let root = tempfile::tempdir().unwrap();
+        let router = Arc::new(DomainRouter::new());
+        for (file, document) in [
+            (
+                "lobby.toml",
+                "id = \"lobby\"\naddresses = [\"10.0.0.1:25565\"]\ndomains = [\"*.example.com\"]\n",
+            ),
+            (
+                "survival.toml",
+                "id = \"survival\"\naddresses = [\"10.0.0.2:25565\"]\ndomains = [\"survival.example.com\"]\n",
+            ),
+        ] {
+            router.add(
+                crate::provider::ProviderId::new("file", file),
+                toml::from_str(document).unwrap(),
+            );
+        }
+        let service = ConfigServiceImpl::new(
+            router,
+            root.path().join("infrarust.toml"),
+            Arc::new(toml::from_str::<ProxyConfig>("").unwrap()),
+        );
+        let server = |domain: &str| {
+            service
+                .get_server_config_by_domain(domain)
+                .map(|config| config.id.as_str().to_string())
+        };
+
+        assert_eq!(server("survival.example.com").as_deref(), Some("survival"));
+        assert_eq!(server("Survival.Example.COM.").as_deref(), Some("survival"));
+        assert_eq!(server("hub.example.com").as_deref(), Some("lobby"));
+        assert_eq!(server("example.org"), None);
+        assert_eq!(
+            ReadOnlyConfigService::new(Arc::new(service))
+                .get_server_config_by_domain("hub.example.com")
+                .map(|config| config.id),
+            Some(ServerId::new("lobby"))
+        );
+    }
+
+    #[test]
     fn a_server_document_redacts_the_manager_api_key() {
         let root = tempfile::tempdir().unwrap();
         let router = Arc::new(DomainRouter::new());
@@ -655,6 +715,88 @@ api_key = \"super-secret-key-value\"
 
         assert_eq!(effective.servers_dir, elsewhere);
         assert_eq!(stored.servers_dir, root.path().join("servers"));
+    }
+
+    #[test]
+    fn a_value_is_read_by_its_dotted_path() {
+        let (service, _root) = service(SAMPLE);
+
+        assert_eq!(service.get_value("bind").as_deref(), Some("0.0.0.0:25565"));
+        assert_eq!(service.get_value("connect_timeout").as_deref(), Some("5s"));
+        assert_eq!(
+            service.get_value("web.bind").as_deref(),
+            Some("127.0.0.1:8080")
+        );
+        assert_eq!(service.get_value("keepalive.retries").as_deref(), Some("3"));
+        assert_eq!(
+            service.get_value("receive_proxy_protocol").as_deref(),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn a_missing_path_has_no_value() {
+        let (service, _root) = service(SAMPLE);
+
+        for key in [
+            "",
+            "bnid",
+            "web.nope",
+            "bind.port",
+            "keepalive..retries",
+            "web.",
+        ] {
+            assert_eq!(service.get_value(key), None, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn a_table_or_an_array_comes_back_as_inline_toml() {
+        let (service, _root) = service(&format!(
+            "{SAMPLE}\n[permissions]\nadmins = [\"Notch\", \"jeb_\"]\n"
+        ));
+
+        assert_eq!(
+            service.get_value("permissions.admins").as_deref(),
+            Some("[\"Notch\", \"jeb_\"]")
+        );
+
+        assert_eq!(
+            service.get_value("keepalive").as_deref(),
+            Some("{ interval = \"10s\", retries = 3, time = \"30s\" }")
+        );
+    }
+
+    #[test]
+    fn a_value_never_carries_a_secret() {
+        let (service, _root) = service(SAMPLE);
+
+        assert_eq!(
+            service.get_value("web.api_key").as_deref(),
+            Some(infrarust_config::secrets::REDACTED)
+        );
+        let web = service.get_value("web").unwrap();
+        assert!(!web.contains("super-secret-key-value"), "{web}");
+        assert!(web.contains(infrarust_config::secrets::REDACTED), "{web}");
+    }
+
+    #[test]
+    fn a_value_comes_from_the_running_config() {
+        let (service, root) = service(SAMPLE);
+        let elsewhere = root.path().join("elsewhere");
+        let mut running: ProxyConfig = toml::from_str("").unwrap();
+        running.servers_dir.clone_from(&elsewhere);
+        let service = ConfigServiceImpl::new(
+            Arc::new(DomainRouter::new()),
+            service.config_path.clone(),
+            Arc::new(running),
+        );
+
+        assert_eq!(
+            service.get_value("servers_dir"),
+            Some(elsewhere.display().to_string())
+        );
+        assert_eq!(service.get_value("web.bind"), None);
     }
 
     /// The proxy may have been started with `--servers-dir`, so the directory

@@ -72,6 +72,7 @@ impl HealthChecker {
             server_address: domain.to_string(),
             server_port: port,
             next_state: ConnectionState::Status,
+            transfer: false,
         };
         self.send_packet(&mut stream, 0x00, &handshake).await?;
 

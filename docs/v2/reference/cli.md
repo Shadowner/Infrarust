@@ -70,6 +70,10 @@ cargo build --release --features telemetry
 
 Once running, Infrarust drops you into an interactive console. Type `help` to see all commands. The full list is below, grouped by category.
 
+Replies that span several lines open with a `◆ Title` header and keep a `│` rail down the left edge, so they stay easy to tell apart from the log lines printed around them. Tables are plain aligned columns; on a narrow terminal the last column is cut with `…`. One-line replies start with `✓` (done), `!` (warning) or `✗` (error). A command typed with missing arguments prints its usage, and a mistyped command name suggests the closest one.
+
+Without colors (see [Colors](#colors)) the same replies use ASCII markers: `#` for the header, `|` for the rail, and `ok:`, `warn:` or `error:` in front of one-line replies, which keeps `docker logs` output easy to grep.
+
 #### Players
 
 | Command | Aliases | Usage | Description |
@@ -111,14 +115,29 @@ Once running, Infrarust drops you into an interactive console. Type `help` to se
 | Command | Aliases | Usage | Description |
 |---------|---------|-------|-------------|
 | `reload` | | `reload` | Reload configuration |
-| `config` | | `config [key]` | Show configuration |
+| `config` | | `config [key]` | List the servers, or print one value of the running configuration by its dotted path, such as `keepalive.retries` (secrets redacted) |
 
 #### Plugins
 
 | Command | Aliases | Usage | Description |
 |---------|---------|-------|-------------|
-| `plugins` | `pl` | `plugins` | List loaded plugins |
-| `plugin` | | `plugin <id>` | Show plugin details |
+| `plugins` | `pl` | `plugins` | List loaded plugins with their state; WASM plugins also get their health and queue wait |
+| `plugin` | | `plugin <id>` | Show plugin details, and for a WASM plugin its health, generation, restarts, last fault and call queue |
+
+When at least one WASM plugin is loaded, `plugins` adds two columns. `Health` is `healthy`, `recovering`, `quarantined` or `stopped`, followed by the time until the next attempt when one is scheduled (`quarantined 12s`). `Wait p99` is the queue wait that 99 % of the plugin's calls stayed under over the last minute. Native plugins show `-` in both.
+
+For a WASM plugin, `plugin <id>` adds these lines:
+
+```
+│ health        ✕ quarantined, next attempt in 12s
+│ generation    7
+│ restarts      2 of 2 in the last 5m
+│ last fault    the guest trapped: panicked at src/lib.rs:12:5: boom (4s ago, generation 7)
+│ queue         0 of 1024 waiting, at most 12 in the last 1m
+│ queue wait    p50 21µs, p99 1.2ms, max 3.4s over 1234 calls in the last 1m
+```
+
+A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../plugins/wasm/fault-model#watching-a-plugin-s-health) explains the health values and [Threading](../plugins/wasm/threading#watching-the-queue) the queue figures.
 
 #### System
 
@@ -130,6 +149,10 @@ Once running, Infrarust drops you into an interactive console. Type `help` to se
 | `stop` | `shutdown`, `exit`, `quit` | `stop` | Shut down the proxy |
 | `clear` | `cls` | `clear` | Clear the screen |
 | `gc` | | `gc` | Run garbage collection |
+
+#### Plugin commands
+
+A line that is not one of the console commands above runs as a proxy command: a plugin command by its name, an alias, or its `<plugin_id>:<name>` form, or the built-in `ir` command. A leading `/` is ignored. The console holds every permission, and plugin replies appear as log lines under the `infrarust::console` target. When a plugin command shares a name with a console command, use the `<plugin_id>:<name>` form. `help` lists the plugin commands at the end.
 
 ---
 
@@ -181,7 +204,7 @@ registry-extractor [OPTIONS] --server <ADDRESS>
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--server <ADDRESS>` | `-s` | *(required)* | Server address to connect to |
-| `--output <DIR>` | `-o` | `data/registry` | Output directory for registry files |
+| `--output <DIR>` | `-o` | `crates/infrarust-core/registry` | Output directory for registry files |
 | `--protocol-version <INT>` | `-p` | *(auto-detect)* | Protocol version to use |
 | `--username <NAME>` | `-u` | `RegExtractor` | Username for the connection |
 
@@ -273,3 +296,17 @@ The tool prints live stats every 5 seconds (successes, errors, connection failur
 | Variable | Description |
 |----------|-------------|
 | `RUST_LOG` | Overrides `--log-level`. Accepts [tracing directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) like `infrarust=debug,infrarust_core=trace`. |
+| `INFRARUST_COLOR` | `auto` (default), `always` or `never`. Takes priority over the variables below. See [Colors](#colors). |
+| `NO_COLOR` | Any non-empty value turns colors off. |
+| `FORCE_COLOR`, `CLICOLOR_FORCE` | Any value other than `0` turns colors on, even without a terminal. |
+| `COLORTERM` | `truecolor` or `24bit` enables 24-bit colors when colors are forced; otherwise the 256-color palette is used. |
+
+### Colors
+
+In `auto` mode Infrarust colors the console, the logs and the startup banner only when standard output is a terminal. Game panels such as Pterodactyl or Pelican display colors without giving the process a terminal, so set `INFRARUST_COLOR=always` there. Set `INFRARUST_COLOR=never` to keep plain ASCII output, for example when logs go to a file.
+
+When standard output is a terminal, log lines use a short local time, and fields that do not fit on the line wrap below the message. Otherwise each event stays on a single line with a full UTC timestamp, in `key=value` form:
+
+```
+2026-09-27T14:02:11Z INFO  player joined  player=Notch server=lobby span=session>login
+```

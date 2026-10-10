@@ -2,31 +2,68 @@
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
-use crate::error::ConfigError;
+use crate::error::{ConfigError, ProxyValidationError, ServerValidationError, WasmValidationError};
 use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
-use crate::types::BalanceStrategy;
+use crate::types::{
+    BalanceStrategy, ForwardingConfig, ForwardingMode, PluginWasmConfig, WasmCodecQuarantineConfig,
+    WasmLimits, WasmQuotasConfig, WasmRecoveryConfig,
+};
 
-/// Validates a single server configuration.
-///
-/// Checks:
-/// - Forwarding modes (Passthrough, ZeroCopy, ServerOnly) have at least one domain
-/// - Forwarding modes cannot belong to a network (no server switching support)
-/// - At least one address is defined
-/// - No empty domain strings
-/// - The effective id matches `[a-z0-9_.-]+` (used as ServerId in routing/telemetry)
-/// - `name` (if set) matches `[a-z0-9_-]+`
-/// - `network` (if set) matches `[a-z0-9_-]+`
-///
-/// # Errors
-///
-/// Returns [`ConfigError::NoDomains`] if a forwarding-mode server has no domains,
-/// [`ConfigError::NoAddresses`] if no addresses are defined, or
-/// [`ConfigError::Validation`] if any domain string is empty or id/name/network are invalid.
-pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
+/// Non-fatal findings of a validation that passed.
+#[must_use = "validation warnings must be reported"]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConfigWarnings(Vec<String>);
+
+impl ConfigWarnings {
+    pub fn into_vec(self) -> Vec<String> {
+        self.0
+    }
+}
+
+impl std::ops::Deref for ConfigWarnings {
+    type Target = [String];
+
+    fn deref(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl IntoIterator for ConfigWarnings {
+    type Item = String;
+    type IntoIter = std::vec::IntoIter<String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ConfigWarnings {
+    type Item = &'a String;
+    type IntoIter = std::slice::Iter<'a, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+fn server_error(id: &str, reason: ServerValidationError) -> ConfigError {
+    ConfigError::Server {
+        id: id.to_string(),
+        reason,
+    }
+}
+
+pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, ConfigError> {
     let id = config.effective_id();
     validate_effective_id(&id)?;
+
+    if config.proxy_mode == crate::types::ProxyMode::Full {
+        return Err(server_error(&id, ServerValidationError::FullModeReserved));
+    }
 
     if config.proxy_mode.is_forwarding() {
         if config.domains.is_empty() {
@@ -36,24 +73,31 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
             });
         }
         if config.network.is_some() {
-            return Err(ConfigError::Validation(format!(
-                "server '{id}' uses {:?} mode which cannot belong to a network \
-                 (forwarding modes don't support server switching)",
-                config.proxy_mode
-            )));
+            return Err(server_error(
+                &id,
+                ServerValidationError::ForwardingInNetwork {
+                    proxy_mode: config.proxy_mode,
+                },
+            ));
+        }
+        if config.bungeecord_channel {
+            return Err(server_error(
+                &id,
+                ServerValidationError::BungeecordChannelNotIntercepted {
+                    proxy_mode: config.proxy_mode,
+                },
+            ));
         }
     }
+
+    validate_server_forwarding(config, ForwardingMode::None)?;
 
     if config.addresses.is_empty() {
         return Err(ConfigError::NoAddresses { id });
     }
 
-    for domain in &config.domains {
-        if domain.trim().is_empty() {
-            return Err(ConfigError::Validation(format!(
-                "server config {id} has an empty domain"
-            )));
-        }
+    if config.domains.iter().any(|domain| domain.trim().is_empty()) {
+        return Err(server_error(&id, ServerValidationError::EmptyDomain));
     }
 
     if let Some(name) = &config.name {
@@ -65,30 +109,47 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> 
     }
 
     if !config.slow_start_aggression.is_finite() || config.slow_start_aggression <= 0.0 {
-        return Err(ConfigError::Validation(format!(
-            "server '{id}': slow_start_aggression must be a finite number > 0 (got {})",
-            config.slow_start_aggression
-        )));
+        return Err(server_error(
+            &id,
+            ServerValidationError::SlowStartAggression {
+                value: config.slow_start_aggression,
+            },
+        ));
     }
 
-    for warning in balance_warnings(config) {
-        tracing::warn!(server = %id, "{warning}");
-    }
+    #[allow(unused_mut)]
+    let mut warnings = balance_warnings(config);
 
     #[cfg(not(target_os = "linux"))]
     if config.proxy_mode == crate::types::ProxyMode::ZeroCopy {
-        tracing::warn!(
-            server = %id,
-            "proxy_mode = zero_copy is only supported on Linux"
-        );
+        warnings.push("proxy_mode = zero_copy is only supported on Linux".to_string());
     }
 
+    Ok(ConfigWarnings(warnings))
+}
+
+pub fn validate_server_forwarding(
+    config: &ServerConfig,
+    default_mode: ForwardingMode,
+) -> Result<(), ConfigError> {
+    let mode = config.forwarding_mode.as_ref().unwrap_or(&default_mode);
+    if config.proxy_mode.is_forwarding() && *mode == ForwardingMode::Velocity {
+        let source = if config.forwarding_mode.is_some() {
+            "its forwarding_mode"
+        } else {
+            "the proxy-wide [forwarding] mode"
+        };
+        return Err(server_error(
+            &config.effective_id(),
+            ServerValidationError::VelocityOnForwardingServer {
+                proxy_mode: config.proxy_mode,
+                mode_source: source,
+            },
+        ));
+    }
     Ok(())
 }
 
-/// Returns the load-balancing configuration warnings for a server config.
-///
-/// Pure so it can be unit-tested; `validate_server_config` logs each entry.
 pub fn balance_warnings(config: &ServerConfig) -> Vec<String> {
     let mut warnings = Vec::new();
 
@@ -119,7 +180,13 @@ pub fn balance_warnings(config: &ServerConfig) -> Vec<String> {
     warnings
 }
 
-fn validate_identifier(value: &str, field: &str, server_id: &str) -> Result<(), ConfigError> {
+pub(crate) const MAX_IDENTIFIER_LEN: usize = 64;
+
+fn validate_identifier(
+    value: &str,
+    field: &'static str,
+    server_id: &str,
+) -> Result<(), ConfigError> {
     validate_ident_chars(value, field, server_id, false)
 }
 
@@ -129,19 +196,21 @@ fn validate_effective_id(id: &str) -> Result<(), ConfigError> {
 
 fn validate_ident_chars(
     value: &str,
-    field: &str,
+    field: &'static str,
     server_id: &str,
     allow_dot: bool,
 ) -> Result<(), ConfigError> {
     if value.is_empty() {
-        return Err(ConfigError::Validation(format!(
-            "server '{server_id}': {field} must not be empty"
-        )));
+        return Err(server_error(
+            server_id,
+            ServerValidationError::EmptyIdentifier { field },
+        ));
     }
-    if value.len() > 64 {
-        return Err(ConfigError::Validation(format!(
-            "server '{server_id}': {field} must be at most 64 characters"
-        )));
+    if value.len() > MAX_IDENTIFIER_LEN {
+        return Err(server_error(
+            server_id,
+            ServerValidationError::IdentifierTooLong { field },
+        ));
     }
     if !value.bytes().all(|b| {
         b.is_ascii_lowercase()
@@ -155,23 +224,18 @@ fn validate_ident_chars(
         } else {
             "a-z, 0-9, _, -"
         };
-        return Err(ConfigError::Validation(format!(
-            "server '{server_id}': {field} '{value}' contains invalid characters (allowed: {allowed})"
-        )));
+        return Err(server_error(
+            server_id,
+            ServerValidationError::IdentifierChars {
+                field,
+                value: value.to_string(),
+                allowed,
+            },
+        ));
     }
     Ok(())
 }
 
-/// Validates a batch of server configurations for duplicate or invalid IDs.
-///
-/// Runs after providers assign filename-derived ids, so it also
-/// charset-validates ids that `validate_server_config` saw before assignment.
-///
-/// # Errors
-///
-/// Returns [`ConfigError::DuplicateId`] if two or more configs share the
-/// same `effective_id()`, or [`ConfigError::Validation`] if an effective id
-/// has an invalid charset.
 pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigError> {
     let mut seen = HashSet::with_capacity(configs.len());
     for config in configs {
@@ -184,127 +248,119 @@ pub fn validate_server_configs(configs: &[ServerConfig]) -> Result<(), ConfigErr
     Ok(())
 }
 
-/// Validates the global proxy configuration the proxy is about to run on.
-///
-/// Checks:
-/// - `servers_dir` exists on disk
-/// - `connect_timeout`, rate-limit windows and `docker.poll_interval` are non-zero
-/// - `telemetry.protocol` is `"grpc"` or `"http"`
-/// - `web.bind` is a parseable `host:port` and does not collide with `bind`
-/// - `web.api_key` is one [`WebConfig::resolve_api_key`](crate::WebConfig::resolve_api_key) accepts
-///
-/// Logs a warning when plugins are configured but `plugins_dir` is missing
-/// (not fatal: built-in plugins don't need the directory).
-///
-/// # Errors
-///
-/// Returns [`ConfigError::DirectoryNotFound`] if `servers_dir` does not
-/// exist or is not a directory, or [`ConfigError::Validation`] for any
-/// other failed check.
-pub fn validate_proxy_config(config: &ProxyConfig) -> Result<(), ConfigError> {
+pub fn validate_proxy_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
     if !config.servers_dir.is_dir() {
         return Err(ConfigError::DirectoryNotFound(config.servers_dir.clone()));
     }
 
-    validate_proxy_document(config)?;
+    let mut warnings = validate_proxy_document(config)?;
 
-    if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
-        tracing::warn!(
-            plugins_dir = %config.plugins_dir.display(),
-            "plugins are configured but plugins_dir does not exist \
-             (only built-in plugins will be available)"
+    if config
+        .forwarding
+        .as_ref()
+        .is_some_and(ForwardingConfig::has_moved_channel_keys)
+    {
+        warnings.push(
+            "[forwarding] bungeecord_channel and [forwarding.channel_permissions] are no longer \
+             read: use [plugin_messaging] bungeecord, [plugin_messaging.bungeecord_permissions] \
+             and bungeecord_channel = true in the server files"
+                .to_string(),
         );
     }
 
-    Ok(())
-}
-
-/// Validates everything in a proxy configuration document except where its
-/// directories point.
-///
-/// A running proxy may have been started with `--servers-dir` or
-/// `--plugins-dir`, so the paths a document carries do not decide whether it
-/// boots; [`validate_proxy_config`] checks them against the process that is
-/// about to use them.
-///
-/// # Errors
-///
-/// Returns [`ConfigError::Validation`] for any failed check.
-pub fn validate_proxy_document(config: &ProxyConfig) -> Result<(), ConfigError> {
-    if config.connect_timeout.is_zero() {
-        return Err(ConfigError::Validation(
-            "connect_timeout must be greater than zero".to_string(),
+    if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
+        warnings.push(format!(
+            "plugins are configured but plugins_dir {} does not exist \
+             (only built-in plugins will be available)",
+            config.plugins_dir.display()
         ));
     }
 
+    Ok(warnings)
+}
+
+fn zero_duration(key: &'static str) -> ConfigError {
+    ConfigError::Proxy(ProxyValidationError::ZeroDuration { key })
+}
+
+pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
+    for (key, value) in [
+        ("connect_timeout", config.connect_timeout),
+        ("events.handler_timeout", config.events.handler_timeout),
+        (
+            "events.slow_handler_threshold",
+            config.events.slow_handler_threshold,
+        ),
+        (
+            "events.packet_handler_timeout",
+            config.events.packet_handler_timeout,
+        ),
+        (
+            "events.disconnect_deadline",
+            config.events.disconnect_deadline,
+        ),
+        (
+            "events.transport_filter_timeout",
+            config.events.transport_filter_timeout,
+        ),
+        ("ban.check_timeout", config.ban.check_timeout),
+    ] {
+        if value.is_zero() {
+            return Err(zero_duration(key));
+        }
+    }
+
+    let warnings = validate_wasm_config(config)?;
+
     if config.rate_limit.enabled {
         if config.rate_limit.window.is_zero() {
-            return Err(ConfigError::Validation(
-                "rate_limit.window must be greater than zero".to_string(),
-            ));
+            return Err(zero_duration("rate_limit.window"));
         }
         if config.rate_limit.status_window.is_zero() {
-            return Err(ConfigError::Validation(
-                "rate_limit.status_window must be greater than zero".to_string(),
-            ));
+            return Err(zero_duration("rate_limit.status_window"));
         }
     }
 
     if let Some(docker) = &config.docker
         && docker.poll_interval.is_zero()
     {
-        return Err(ConfigError::Validation(
-            "docker.poll_interval must be greater than zero".to_string(),
-        ));
-    }
-
-    if let Some(telemetry) = &config.telemetry
-        && !matches!(telemetry.protocol.as_str(), "grpc" | "http")
-    {
-        return Err(ConfigError::Validation(format!(
-            "telemetry.protocol must be \"grpc\" or \"http\" (got '{}')",
-            telemetry.protocol
-        )));
+        return Err(zero_duration("docker.poll_interval"));
     }
 
     if let Some(web) = &config.web {
-        validate_web_bind(&web.bind, config.bind)?;
+        validate_web_bind(&web.bind, config.bind).map_err(ConfigError::Proxy)?;
         if web.enable_webui == Some(true) && !web.enable_api {
-            return Err(ConfigError::Validation(
-                "web.enable_webui requires web.enable_api: the dashboard is served by the \
-                 admin API and cannot run without it"
-                    .to_string(),
-            ));
+            return Err(ConfigError::Proxy(ProxyValidationError::WebUiWithoutApi));
         }
         if web.enable_api {
-            web.check_api_key().map_err(ConfigError::Validation)?;
+            web.check_api_key()
+                .map_err(|reason| ConfigError::Proxy(ProxyValidationError::WebApiKey(reason)))?;
         }
     }
 
-    Ok(())
+    Ok(warnings)
 }
 
-/// `web.bind` accepts a socket address or `hostname:port`
-/// (the hostname is resolved when the listener binds).
-fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ConfigError> {
+fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ProxyValidationError> {
     let (web_ip, port) = if let Ok(addr) = bind.parse::<SocketAddr>() {
         (Some(addr.ip()), addr.port())
     } else {
         let Some((host, port_str)) = bind.rsplit_once(':') else {
-            return Err(ConfigError::Validation(format!(
-                "web.bind '{bind}' is not a valid bind address (expected host:port)"
-            )));
+            return Err(ProxyValidationError::WebBindNotHostPort {
+                bind: bind.to_string(),
+            });
         };
         let Ok(port) = port_str.parse::<u16>() else {
-            return Err(ConfigError::Validation(format!(
-                "web.bind '{bind}' has an invalid port '{port_str}'"
-            )));
+            return Err(ProxyValidationError::WebBindInvalidPort {
+                bind: bind.to_string(),
+                port: port_str.to_string(),
+            });
         };
         let host = host.trim_matches(['[', ']']);
         if host.is_empty() || host.chars().any(char::is_whitespace) {
-            return Err(ConfigError::Validation(format!(
-                "web.bind '{bind}' has an invalid host"
-            )));
+            return Err(ProxyValidationError::WebBindInvalidHost {
+                bind: bind.to_string(),
+            });
         }
         let ip = host.parse::<IpAddr>().ok().or_else(|| {
             host.eq_ignore_ascii_case("localhost")
@@ -317,11 +373,294 @@ fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ConfigErr
         let collides = proxy_bind.ip().is_unspecified()
             || web_ip.is_some_and(|ip| ip.is_unspecified() || ip == proxy_bind.ip());
         if collides {
-            return Err(ConfigError::Validation(format!(
-                "web.bind '{bind}' collides with the proxy bind address '{proxy_bind}'"
-            )));
+            return Err(ProxyValidationError::WebBindCollision {
+                bind: bind.to_string(),
+                proxy_bind,
+            });
         }
     }
 
+    Ok(())
+}
+
+pub(crate) const WASM_MIN_EPOCH_TICK: Duration = Duration::from_millis(1);
+pub(crate) const WASM_MAX_EPOCH_TICK: Duration = Duration::from_secs(1);
+pub(crate) const WASM_MAX_DURATION: Duration = Duration::from_secs(3600);
+pub(crate) const WASM_MAX_MEMORY_MB: u32 = 4096;
+pub(crate) const WASM_MAX_QUEUE_CAPACITY: usize = 1 << 20;
+pub(crate) const WASM_MAX_INSTANCE_POOL: u32 = 32_768;
+pub(crate) const WASM_MAX_RESTARTS: u32 = 1000;
+pub(crate) const WASM_MAX_QUOTA: usize = 1 << 20;
+pub(crate) const WASM_MAX_CODEC_QUARANTINE_FAULTS: u32 = 1_000_000;
+const WASM_MAX_RECOVERY_DURATION: Duration = Duration::from_secs(86_400);
+
+pub fn validate_wasm_config(config: &ProxyConfig) -> Result<Vec<String>, ConfigError> {
+    validate_wasm(config).map_err(ConfigError::Wasm)?;
+    Ok(wasm_warnings(config))
+}
+
+fn validate_wasm(config: &ProxyConfig) -> Result<(), WasmValidationError> {
+    let tick = config.wasm.epoch_tick;
+    if !(WASM_MIN_EPOCH_TICK..=WASM_MAX_EPOCH_TICK).contains(&tick) {
+        return Err(WasmValidationError::EpochTickOutOfRange { tick });
+    }
+    if config.wasm.instance_pool > WASM_MAX_INSTANCE_POOL {
+        return Err(WasmValidationError::InstancePoolTooLarge {
+            value: config.wasm.instance_pool,
+        });
+    }
+    validate_wasm_cache_dir(&config.wasm.cache_dir, &config.plugins_dir)?;
+    for (scope, plugin, limits) in wasm_scopes(config) {
+        validate_wasm_limits(&scope, &limits, tick)?;
+        if let Some(plugin) = plugin {
+            validate_wasm_mounts(&format!("{scope}.mounts"), plugin)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_wasm_cache_dir(
+    cache_dir: &Path,
+    plugins_dir: &Path,
+) -> Result<(), WasmValidationError> {
+    if cache_dir.as_os_str().is_empty() {
+        return Err(WasmValidationError::CacheDirEmpty);
+    }
+    if lexically_within(cache_dir, plugins_dir) {
+        return Err(WasmValidationError::CacheDirInPluginsDir {
+            cache_dir: cache_dir.to_path_buf(),
+            plugins_dir: plugins_dir.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+fn lexically_within(inner: &Path, outer: &Path) -> bool {
+    match (std::path::absolute(inner), std::path::absolute(outer)) {
+        (Ok(inner), Ok(outer)) => normalized(&inner).starts_with(normalized(&outer)),
+        _ => false,
+    }
+}
+
+fn normalized(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+fn wasm_scopes(
+    config: &ProxyConfig,
+) -> impl Iterator<Item = (String, Option<&PluginWasmConfig>, WasmLimits)> {
+    let mut ids: Vec<&String> = config.plugins.keys().collect();
+    ids.sort();
+    std::iter::once(("wasm".to_string(), None, config.wasm.limits())).chain(
+        ids.into_iter().filter_map(move |id| {
+            let plugin = config.plugins[id].wasm.as_ref()?;
+            Some((
+                format!("plugins.{id}.wasm"),
+                Some(plugin),
+                config.wasm.limits_for(Some(plugin)),
+            ))
+        }),
+    )
+}
+
+pub fn wasm_warnings(config: &ProxyConfig) -> Vec<String> {
+    let tick = config.wasm.epoch_tick;
+    let mut warnings = Vec::new();
+    for (scope, _, limits) in wasm_scopes(config) {
+        if limits.cpu_budget > limits.max_call_duration {
+            warnings.push(format!(
+                "{scope}: cpu_budget ({}) is longer than max_call_duration ({}); \
+                 max_call_duration stops a busy guest call first",
+                humantime::format_duration(limits.cpu_budget),
+                humantime::format_duration(limits.max_call_duration)
+            ));
+        }
+        if limits.codec_cpu_budget < tick {
+            warnings.push(format!(
+                "{scope}: codec_cpu_budget ({}) is shorter than wasm.epoch_tick ({}); \
+                 a codec filter call gets one tick",
+                humantime::format_duration(limits.codec_cpu_budget),
+                humantime::format_duration(tick)
+            ));
+        }
+    }
+    warnings
+}
+
+fn validate_wasm_limits(
+    scope: &str,
+    limits: &WasmLimits,
+    tick: Duration,
+) -> Result<(), WasmValidationError> {
+    if !(1..=WASM_MAX_MEMORY_MB).contains(&limits.memory_limit_mb) {
+        return Err(WasmValidationError::MemoryLimitOutOfRange {
+            scope: scope.to_string(),
+            value: limits.memory_limit_mb,
+        });
+    }
+    if limits.cpu_budget < tick || limits.cpu_budget > WASM_MAX_DURATION {
+        return Err(WasmValidationError::CpuBudgetOutOfRange {
+            scope: scope.to_string(),
+            key: "cpu_budget",
+            tick,
+            value: limits.cpu_budget,
+        });
+    }
+    for (key, value) in [
+        ("codec_cpu_budget", limits.codec_cpu_budget),
+        ("host_call_timeout", limits.host_call_timeout),
+        ("max_call_duration", limits.max_call_duration),
+    ] {
+        if value.is_zero() || value > WASM_MAX_DURATION {
+            return Err(WasmValidationError::DurationOutOfRange {
+                scope: scope.to_string(),
+                key,
+                max: WASM_MAX_DURATION,
+                value,
+            });
+        }
+    }
+    if !(1..=WASM_MAX_QUEUE_CAPACITY).contains(&limits.queue_capacity) {
+        return Err(WasmValidationError::QueueCapacityOutOfRange {
+            scope: scope.to_string(),
+            value: limits.queue_capacity,
+        });
+    }
+    validate_wasm_recovery(scope, &limits.recovery)?;
+    validate_wasm_codec_quarantine(scope, &limits.codec_quarantine)?;
+    validate_wasm_quotas(scope, &limits.quotas)
+}
+
+fn validate_wasm_codec_quarantine(
+    scope: &str,
+    quarantine: &WasmCodecQuarantineConfig,
+) -> Result<(), WasmValidationError> {
+    if quarantine.faults > WASM_MAX_CODEC_QUARANTINE_FAULTS {
+        return Err(WasmValidationError::CodecQuarantineFaultsTooLarge {
+            scope: scope.to_string(),
+            value: quarantine.faults,
+        });
+    }
+    for (key, value) in [
+        ("codec_quarantine.window", quarantine.window),
+        (
+            "codec_quarantine.backoff_initial",
+            quarantine.backoff_initial,
+        ),
+        ("codec_quarantine.backoff_max", quarantine.backoff_max),
+    ] {
+        if value.is_zero() || value > WASM_MAX_RECOVERY_DURATION {
+            return Err(WasmValidationError::DurationOutOfRange {
+                scope: scope.to_string(),
+                key,
+                max: WASM_MAX_RECOVERY_DURATION,
+                value,
+            });
+        }
+    }
+    if quarantine.backoff_initial > quarantine.backoff_max {
+        return Err(WasmValidationError::CodecQuarantineBackoffExceedsMax {
+            scope: scope.to_string(),
+            initial: quarantine.backoff_initial,
+            max: quarantine.backoff_max,
+        });
+    }
+    Ok(())
+}
+
+fn validate_wasm_quotas(scope: &str, quotas: &WasmQuotasConfig) -> Result<(), WasmValidationError> {
+    for (key, value) in quotas.entries() {
+        if !(1..=WASM_MAX_QUOTA).contains(&value) {
+            return Err(WasmValidationError::QuotaOutOfRange {
+                scope: scope.to_string(),
+                key,
+                value,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_wasm_mounts(scope: &str, plugin: &PluginWasmConfig) -> Result<(), WasmValidationError> {
+    let mut guests: Vec<String> = Vec::with_capacity(plugin.mounts.len());
+    for mount in &plugin.mounts {
+        if mount.host.as_os_str().is_empty() {
+            return Err(WasmValidationError::MountHostEmpty {
+                scope: scope.to_string(),
+                guest: mount.guest.clone(),
+            });
+        }
+        let guest = mount
+            .guest_path()
+            .map_err(|reason| WasmValidationError::MountGuestPath {
+                scope: scope.to_string(),
+                reason,
+            })?;
+        for other in &guests {
+            let (short, long) = if other.len() <= guest.len() {
+                (other.as_str(), guest.as_str())
+            } else {
+                (guest.as_str(), other.as_str())
+            };
+            if short == long {
+                return Err(WasmValidationError::MountDuplicate {
+                    scope: scope.to_string(),
+                    guest,
+                });
+            }
+            if long.starts_with(short) && long.as_bytes()[short.len()] == b'/' {
+                return Err(WasmValidationError::MountOverlap {
+                    scope: scope.to_string(),
+                    short: short.to_string(),
+                    long: long.to_string(),
+                });
+            }
+        }
+        guests.push(guest);
+    }
+    Ok(())
+}
+
+fn validate_wasm_recovery(
+    scope: &str,
+    recovery: &WasmRecoveryConfig,
+) -> Result<(), WasmValidationError> {
+    if recovery.max_restarts > WASM_MAX_RESTARTS {
+        return Err(WasmValidationError::MaxRestartsTooLarge {
+            scope: scope.to_string(),
+            value: recovery.max_restarts,
+        });
+    }
+    for (key, value) in [
+        ("recovery.window", recovery.window),
+        ("recovery.backoff_initial", recovery.backoff_initial),
+        ("recovery.backoff_max", recovery.backoff_max),
+    ] {
+        if value.is_zero() || value > WASM_MAX_RECOVERY_DURATION {
+            return Err(WasmValidationError::DurationOutOfRange {
+                scope: scope.to_string(),
+                key,
+                max: WASM_MAX_RECOVERY_DURATION,
+                value,
+            });
+        }
+    }
+    if recovery.backoff_initial > recovery.backoff_max {
+        return Err(WasmValidationError::BackoffInitialExceedsMax {
+            scope: scope.to_string(),
+            initial: recovery.backoff_initial,
+            max: recovery.backoff_max,
+        });
+    }
     Ok(())
 }

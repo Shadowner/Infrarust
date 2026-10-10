@@ -1,36 +1,34 @@
 //! Shared helpers for connection handlers.
 
+#[cfg(feature = "telemetry")]
 use std::sync::Arc;
 
-use infrarust_api::types::{PlayerId, ServerId};
+use infrarust_api::events::lifecycle::DisconnectCause;
+use infrarust_api::types::{Component, LEGACY_SECTION};
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use infrarust_protocol::io::PacketEncoder;
+use infrarust_protocol::legacy::build_legacy_kick;
 use infrarust_protocol::packets::login::CLoginDisconnect;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_protocol::{Packet, PacketRegistry};
 
 use crate::error::CoreError;
-use crate::event_bus::EventBusImpl;
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
-/// Fires a `DisconnectEvent` on the event bus.
-///
-/// Called by all handlers at session teardown. Fire-and-return (not fire-and-forget)
-/// because we want to ensure the event is processed before session cleanup.
-pub(crate) async fn fire_disconnect_event(
-    event_bus: &Arc<EventBusImpl>,
-    player_id: PlayerId,
-    username: String,
-    last_server: Option<ServerId>,
-) {
-    let disconnect = infrarust_api::events::lifecycle::DisconnectEvent {
-        player_id,
-        username,
-        last_server,
-    };
-    let _ = event_bus.fire(disconnect).await;
+pub(crate) const MAX_KICK_REDIRECTS: usize = 3;
+
+pub(crate) fn cancelled_cause(
+    shutdown: &CancellationToken,
+    reason: Option<Component>,
+) -> DisconnectCause {
+    if shutdown.is_cancelled() {
+        DisconnectCause::Shutdown
+    } else {
+        DisconnectCause::Kicked { reason }
+    }
 }
 
 /// Logs the outcome of a proxy loop session with consistent formatting.
@@ -55,8 +53,21 @@ pub(crate) fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutco
                 tracing::warn!(session = %session_id, error = %e, "session error");
             }
         }
-        ProxyLoopOutcome::SwitchRequested { target } => {
+        ProxyLoopOutcome::SwitchRequested { target, .. } => {
             tracing::info!(session = %session_id, %target, "server switch requested");
+        }
+        ProxyLoopOutcome::Kicked { reason } => {
+            tracing::info!(session = %session_id, reason = %reason.to_plain(), "player kicked");
+        }
+        ProxyLoopOutcome::BackendKick(kick) => {
+            tracing::info!(session = %session_id, reason = %kick, "backend kicked the player");
+        }
+        ProxyLoopOutcome::BackendClosed { reason } => {
+            tracing::info!(
+                session = %session_id,
+                reason = reason.as_ref().map(Component::to_plain),
+                "backend dropped the player"
+            );
         }
     }
 }
@@ -64,13 +75,12 @@ pub(crate) fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutco
 /// Sends a login disconnect (kick) packet to a raw TCP stream.
 pub(crate) async fn send_login_disconnect(
     stream: &mut tokio::net::TcpStream,
-    reason: &str,
+    reason: &Component,
     version: ProtocolVersion,
     packet_registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let json_reason = serde_json::json!({"text": reason}).to_string();
     let packet = CLoginDisconnect {
-        reason: json_reason,
+        reason: crate::util::text::json_for(reason, version),
     };
 
     let packet_id = packet_registry
@@ -90,6 +100,16 @@ pub(crate) async fn send_login_disconnect(
     encoder.append_raw(packet_id, &payload)?;
     let bytes = encoder.take();
 
+    stream.write_all(&bytes).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+pub(crate) async fn send_legacy_kick(
+    stream: &mut tokio::net::TcpStream,
+    reason: &Component,
+) -> Result<(), CoreError> {
+    let bytes = build_legacy_kick(&reason.to_legacy(LEGACY_SECTION))?;
     stream.write_all(&bytes).await?;
     stream.flush().await?;
     Ok(())
@@ -122,10 +142,60 @@ pub(crate) fn record_session_end(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use infrarust_api::types::{ClickEvent, NamedColor};
     use infrarust_protocol::{McBufReadExt, build_default_registry};
     use tokio::io::AsyncReadExt;
 
-    use super::{ProtocolVersion, send_login_disconnect};
+    use super::{Component, ProtocolVersion, send_login_disconnect};
+
+    async fn kick_payload(reason: &Component, version: ProtocolVersion) -> String {
+        let registry = build_default_registry();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut server, _) = listener.accept().await.unwrap();
+
+        send_login_disconnect(&mut server, reason, version, &registry)
+            .await
+            .unwrap_or_else(|e| panic!("no kick for protocol {}: {e}", version.0));
+        drop(server);
+
+        let mut bytes = Vec::new();
+        client.read_to_end(&mut bytes).await.unwrap();
+        let mut frame = bytes.as_slice();
+        let len = frame.read_var_int().unwrap().0 as usize;
+        assert_eq!(len, frame.len());
+        assert_eq!(frame.read_var_int().unwrap().0, 0x00);
+        frame.read_string().unwrap()
+    }
+
+    #[tokio::test]
+    async fn kick_reason_is_serialised_once_for_the_peer_version() {
+        let reason = Component::text("No entry")
+            .color(NamedColor::Red)
+            .click(ClickEvent::OpenUrl("https://example.com".into()));
+        let old: serde_json::Value =
+            serde_json::from_str(&kick_payload(&reason, ProtocolVersion::V1_21_4).await).unwrap();
+        assert_eq!(
+            old,
+            serde_json::json!({
+                "text": "No entry",
+                "color": "red",
+                "clickEvent": {"action": "open_url", "value": "https://example.com"}
+            })
+        );
+        let new: serde_json::Value =
+            serde_json::from_str(&kick_payload(&reason, ProtocolVersion::V1_21_11).await).unwrap();
+        assert_eq!(
+            new,
+            serde_json::json!({
+                "text": "No entry",
+                "color": "red",
+                "click_event": {"action": "open_url", "url": "https://example.com"}
+            })
+        );
+    }
 
     #[tokio::test]
     async fn kick_reaches_peers_below_the_first_mapping() {
@@ -142,7 +212,7 @@ mod tests {
             let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
             let (mut server, _) = listener.accept().await.unwrap();
 
-            send_login_disconnect(&mut server, "Banned", version, &registry)
+            send_login_disconnect(&mut server, &Component::text("Banned"), version, &registry)
                 .await
                 .unwrap_or_else(|e| panic!("no kick for protocol {}: {e}", version.0));
             drop(server);

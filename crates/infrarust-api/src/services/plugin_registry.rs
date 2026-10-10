@@ -1,28 +1,30 @@
 //! Plugin registry trait — read-only view of loaded plugins.
 
+use crate::plugin::{PluginMetadata, PluginRuntimeStatus, PluginState};
+
 pub mod private {
     pub trait Sealed {}
 }
 
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub authors: Vec<String>,
-    pub description: Option<String>,
-    pub state: String,
-    pub dependencies: Vec<PluginDependencyInfo>,
+    pub metadata: PluginMetadata,
+    pub state: PluginState,
+    pub runtime: Option<PluginRuntimeStatus>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PluginDependencyInfo {
-    pub id: String,
-    pub optional: bool,
+impl PluginInfo {
+    pub fn id(&self) -> &str {
+        &self.metadata.id
+    }
 }
 
 /// Read-only view of all loaded plugins.
 pub trait PluginRegistry: Send + Sync + private::Sealed {
     fn list_plugin_info(&self) -> Vec<PluginInfo>;
     fn plugin_info(&self, id: &str) -> Option<PluginInfo>;
+
+    fn is_loaded(&self, id: &str) -> bool {
+        self.plugin_info(id).is_some()
+    }
 }

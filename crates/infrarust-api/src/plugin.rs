@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -14,18 +15,31 @@ use crate::error::PluginError;
 use crate::event::BoxFuture;
 use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
-use crate::limbo::LimboHandler;
+use crate::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
+use crate::permissions::{
+    PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
+};
 use crate::services::{
-    ban_service::BanService, config_service::ConfigService, load_balancer::LoadBalancerService,
-    player_registry::PlayerRegistry, plugin_registry::PluginRegistry, proxy_info::ProxyInfo,
-    scheduler::Scheduler, server_manager::ServerManager,
+    ban_service::{BanProvider, BanService},
+    config_service::ConfigService,
+    load_balancer::LoadBalancerService,
+    player_registry::PlayerRegistry,
+    plugin_registry::PluginRegistry,
+    providers::ProviderRejected,
+    proxy_info::ProxyInfo,
+    scheduler::Scheduler,
+    server_manager::ServerManager,
+    service_registry::ServiceRegistry,
 };
 
 /// Metadata describing a plugin.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct PluginMetadata {
-    /// Unique `snake_case` identifier (e.g. `"my_plugin"`).
+    /// Unique identifier (e.g. `"my_plugin"` or `"admin-api"`): lowercase ASCII
+    /// letters, digits, `-` and `_`, starting with a letter or a digit, at most
+    /// [`MAX_PLUGIN_ID_LEN`](infrarust_plugin_common::MAX_PLUGIN_ID_LEN) bytes.
+    /// See [`validate_plugin_id`](infrarust_plugin_common::validate_plugin_id).
     pub id: String,
     /// Human-readable name.
     pub name: String,
@@ -39,13 +53,204 @@ pub struct PluginMetadata {
     pub dependencies: Vec<PluginDependency>,
 }
 
+/// Tracks the lifecycle state of a plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PluginState {
+    /// The plugin is being loaded (`on_enable` in progress).
+    Loading,
+    /// The plugin is active.
+    Enabled,
+    /// The plugin has been disabled.
+    Disabled,
+    /// The plugin encountered an error during initialization.
+    Error(String),
+}
+
+impl PluginState {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Loading => "loading",
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+            Self::Error(_) => "error",
+        }
+    }
+}
+
+/// Whether a plugin that runs in a supervised runtime (a WASM plugin) has a
+/// live instance, as reported by [`Plugin::runtime_status`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PluginHealth {
+    /// A live instance is serving the plugin.
+    Healthy,
+    /// The last instance faulted and a fresh one is being started.
+    /// `retry_in` is the time until that start when one is scheduled.
+    Recovering { retry_in: Option<Duration> },
+    /// The plugin faulted too often and has no instance until `retry_in`
+    /// has passed.
+    Quarantined { retry_in: Duration },
+    /// The plugin has no instance and will not be restarted.
+    Stopped,
+}
+
+impl PluginHealth {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Recovering { .. } => "recovering",
+            Self::Quarantined { .. } => "quarantined",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    pub const fn retry_in(&self) -> Option<Duration> {
+        match self {
+            Self::Recovering { retry_in } => *retry_in,
+            Self::Quarantined { retry_in } => Some(*retry_in),
+            Self::Healthy | Self::Stopped => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct QueueWindow {
+    pub span: Duration,
+    pub taken: u64,
+    pub peak_depth: usize,
+    pub wait_p50: Duration,
+    pub wait_p99: Duration,
+    pub wait_max: Duration,
+}
+
+impl QueueWindow {
+    pub const fn new(span: Duration, taken: u64, peak_depth: usize) -> Self {
+        Self {
+            span,
+            taken,
+            peak_depth,
+            wait_p50: Duration::ZERO,
+            wait_p99: Duration::ZERO,
+            wait_max: Duration::ZERO,
+        }
+    }
+
+    #[must_use]
+    pub const fn waits(mut self, p50: Duration, p99: Duration, max: Duration) -> Self {
+        self.wait_p50 = p50;
+        self.wait_p99 = p99;
+        self.wait_max = max;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginQueueStats {
+    pub depth: usize,
+    pub capacity: usize,
+    pub recent: QueueWindow,
+}
+
+impl PluginQueueStats {
+    pub const fn new(depth: usize, capacity: usize, recent: QueueWindow) -> Self {
+        Self {
+            depth,
+            capacity,
+            recent,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginRestarts {
+    pub in_window: u32,
+    pub max: u32,
+    pub window: Duration,
+}
+
+impl PluginRestarts {
+    pub const fn new(in_window: u32, max: u32, window: Duration) -> Self {
+        Self {
+            in_window,
+            max,
+            window,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginFault {
+    pub cause: String,
+    pub ago: Duration,
+    pub generation: u64,
+}
+
+impl PluginFault {
+    pub fn new(cause: impl Into<String>, ago: Duration, generation: u64) -> Self {
+        Self {
+            cause: cause.into(),
+            ago,
+            generation,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PluginRuntimeStatus {
+    pub health: PluginHealth,
+    pub generation: u64,
+    pub queue: PluginQueueStats,
+    pub restarts: PluginRestarts,
+    pub last_fault: Option<PluginFault>,
+}
+
+impl PluginRuntimeStatus {
+    pub const fn new(health: PluginHealth, generation: u64, queue: PluginQueueStats) -> Self {
+        Self {
+            health,
+            generation,
+            queue,
+            restarts: PluginRestarts::new(0, 0, Duration::ZERO),
+            last_fault: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_restarts(mut self, restarts: PluginRestarts) -> Self {
+        self.restarts = restarts;
+        self
+    }
+
+    #[must_use]
+    pub fn with_last_fault(mut self, fault: PluginFault) -> Self {
+        self.last_fault = Some(fault);
+        self
+    }
+}
+
 /// A dependency on another plugin.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PluginDependency {
     /// The ID of the required plugin.
     pub id: String,
     /// If `true`, the plugin can function without this dependency.
     pub optional: bool,
+}
+
+impl PluginDependency {
+    pub fn new(id: impl Into<String>, optional: bool) -> Self {
+        Self {
+            id: id.into(),
+            optional,
+        }
+    }
 }
 
 /// The main trait that all Infrarust plugins implement.
@@ -90,6 +295,13 @@ pub trait Plugin: Send + Sync {
     fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
         Box::pin(async { Ok(()) })
     }
+
+    /// Health, queue and restart figures of a plugin that runs in a supervised
+    /// runtime. The WASM loader reports them for its plugins; native plugins
+    /// keep the default, `None`.
+    fn runtime_status(&self) -> Option<PluginRuntimeStatus> {
+        None
+    }
 }
 
 impl PluginMetadata {
@@ -118,19 +330,13 @@ impl PluginMetadata {
 
     /// Adds a required dependency.
     pub fn depends_on(mut self, id: impl Into<String>) -> Self {
-        self.dependencies.push(PluginDependency {
-            id: id.into(),
-            optional: false,
-        });
+        self.dependencies.push(PluginDependency::new(id, false));
         self
     }
 
     /// Adds an optional dependency.
     pub fn optional_dependency(mut self, id: impl Into<String>) -> Self {
-        self.dependencies.push(PluginDependency {
-            id: id.into(),
-            optional: true,
-        });
+        self.dependencies.push(PluginDependency::new(id, true));
         self
     }
 }
@@ -145,44 +351,46 @@ pub mod private {
 /// Gives access to all proxy services and registration methods.
 /// The proxy is the sole implementor.
 pub trait PluginContext: Send + Sync + private::Sealed {
-    /// Used internally by the plugin manager for cleanup via downcast.
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn event_bus(&self) -> Arc<dyn EventBus>;
 
-    fn event_bus(&self) -> &dyn EventBus;
+    fn player_registry(&self) -> Arc<dyn PlayerRegistry>;
 
-    fn player_registry(&self) -> &dyn PlayerRegistry;
+    fn server_manager(&self) -> Arc<dyn ServerManager>;
 
-    /// Returns an `Arc` handle to the player registry, suitable for
-    /// capturing in closures and event handlers.
-    fn player_registry_handle(&self) -> Arc<dyn PlayerRegistry>;
+    fn ban_service(&self) -> Arc<dyn BanService>;
 
-    fn server_manager(&self) -> &dyn ServerManager;
+    fn register_ban_provider(&self, provider: Arc<dyn BanProvider>)
+    -> Result<(), ProviderRejected>;
 
-    fn server_manager_handle(&self) -> Arc<dyn ServerManager>;
+    fn register_permission_provider(
+        &self,
+        provider: Arc<dyn PermissionProvider>,
+    ) -> Result<(), ProviderRejected>;
 
-    fn ban_service(&self) -> &dyn BanService;
+    fn register_permission_node(&self, node: PermissionNode) -> Result<(), PermissionNodeError>;
 
-    fn ban_service_handle(&self) -> Arc<dyn BanService>;
+    fn permission_node(&self, name: &str) -> Option<PermissionNodeInfo>;
 
-    fn config_service(&self) -> &dyn ConfigService;
+    fn permission_nodes(&self) -> Vec<PermissionNodeInfo>;
 
-    fn config_service_handle(&self) -> Arc<dyn ConfigService>;
+    fn config_service(&self) -> Arc<dyn ConfigService>;
 
-    fn load_balancer_service(&self) -> &dyn LoadBalancerService;
+    fn load_balancer_service(&self) -> Arc<dyn LoadBalancerService>;
 
-    fn load_balancer_service_handle(&self) -> Arc<dyn LoadBalancerService>;
+    fn command_manager(&self) -> Arc<dyn CommandManager>;
 
-    fn command_manager(&self) -> &dyn CommandManager;
+    fn scheduler(&self) -> Arc<dyn Scheduler>;
 
-    fn scheduler(&self) -> &dyn Scheduler;
-
-    fn event_bus_handle(&self) -> Arc<dyn EventBus>;
+    fn services(&self) -> Arc<dyn ServiceRegistry>;
 
     /// Registers a limbo handler for this plugin.
     ///
     /// The handler's [`name()`](LimboHandler::name) must match the name
     /// referenced in server configuration `limbo_handlers` lists.
-    fn register_limbo_handler(&self, handler: Box<dyn LimboHandler>);
+    fn register_limbo_handler(
+        &self,
+        handler: Box<dyn LimboHandler>,
+    ) -> Result<LimboHandlerRegistration, LimboHandlerError>;
 
     /// Returns the codec filter registry for registering packet-level filters.
     ///
@@ -199,9 +407,7 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     /// [`Capability::TransportFilter`]: crate::permissions::Capability::TransportFilter
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
 
-    fn plugin_registry(&self) -> &dyn PluginRegistry;
-
-    fn plugin_registry_handle(&self) -> Arc<dyn PluginRegistry>;
+    fn plugin_registry(&self) -> Arc<dyn PluginRegistry>;
 
     fn register_config_provider(&self, provider: Box<dyn crate::provider::PluginConfigProvider>);
 
@@ -215,6 +421,10 @@ pub trait PluginContext: Send + Sync + private::Sealed {
 
     /// Capabilities granted to this plugin (source: Infrarust config).
     fn capabilities(&self) -> &crate::permissions::CapabilitySet;
+
+    fn channel_registrar(&self) -> &dyn crate::messaging::ChannelRegistrar;
+
+    fn server_messenger(&self) -> Arc<dyn crate::messaging::ServerMessenger>;
 }
 
 #[cfg(test)]

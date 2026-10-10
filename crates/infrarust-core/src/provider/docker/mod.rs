@@ -27,8 +27,6 @@ use crate::error::CoreError;
 use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
 
 /// Default Minecraft port.
-const DEFAULT_MC_PORT: u16 = 25565;
-
 /// Docker provider that auto-discovers containers with `infrarust.*` labels.
 pub struct DockerProvider {
     config: DockerProviderConfig,
@@ -37,11 +35,11 @@ pub struct DockerProvider {
 }
 
 impl DockerProvider {
-    pub fn new(config: &DockerProviderConfig) -> Result<Self, CoreError> {
-        Ok(Self {
+    pub fn new(config: &DockerProviderConfig) -> Self {
+        Self {
             config: config.clone(),
             known: Mutex::new(HashMap::new()),
-        })
+        }
     }
 
     /// Connects to the Docker daemon.
@@ -132,19 +130,25 @@ impl DockerProvider {
         let port = labels
             .get("infrarust.port")
             .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_MC_PORT);
+            .unwrap_or(infrarust_config::DEFAULT_MC_PORT);
 
         let address = resolve_container_address(&info, self.config.network.as_deref(), port);
 
         let config = labels_to_server_config(container_name, labels, &address);
 
-        if let Err(e) = infrarust_config::validate_server_config(&config) {
-            tracing::warn!(
-                container = %container_name,
-                error = %e,
-                "skipping container with invalid config"
-            );
-            return Ok(None);
+        let warnings = match infrarust_config::validate_server_config(&config) {
+            Ok(warnings) => warnings,
+            Err(e) => {
+                tracing::warn!(
+                    container = %container_name,
+                    error = %e,
+                    "skipping container with invalid config"
+                );
+                return Ok(None);
+            }
+        };
+        for warning in warnings {
+            tracing::warn!(container = %container_name, "{warning}");
         }
 
         Ok(Some(ProviderConfig {

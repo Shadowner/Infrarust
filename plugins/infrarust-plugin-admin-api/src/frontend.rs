@@ -3,7 +3,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "frontend/.output/public/"]
+#[folder = "$INFRARUST_ADMIN_FRONTEND_DIR"]
 struct FrontendAssets;
 
 pub async fn spa_handler(uri: Uri) -> Response {

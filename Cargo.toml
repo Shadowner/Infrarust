@@ -7,10 +7,12 @@ members = [
     "crates/infrarust-core",
     "crates/infrarust_server_manager",
     "crates/infrarust-transport",
+    "crates/infrarust-plugin-common",
     "crates/infrarust-plugin-wit",
     "crates/infrarust-loader-wasm",
     "crates/infrarust-plugin-sdk",
     "crates/infrarust-plugin-macros",
+    "crates/infrarust-test-harness",
     "crates/infrarust",
     "plugins/infrarust-plugin-auth",
     "plugins/infrarust-plugin-hello",
@@ -29,100 +31,98 @@ exclude = [
 ]
 
 [workspace.dependencies]
-tokio = { version = "1.51.0", features = ["net", "io-util", "sync", "time", "macros", "rt"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-tokio-stream = "0.1.18"
+tokio = { version = "1.53.1", features = ["net", "io-util", "sync", "time", "macros", "rt"] }
+tokio-util = { version = "0.7.19", features = ["codec"] }
+tokio-stream = "0.1.19"
 
 # Serialization
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 serde_yml = "0.0.13"
-toml = "0.9.8"
-toml_edit = "0.25.13"
-fastnbt = "2.6.1"
+toml = "1.1.6"
+toml_edit = "0.25.15"
+fastnbt = "2.6.3"
 
 # Data types
-bytes = "1.11.1"
-uuid = { version = "1.23.3", features = ["v3", "v4", "serde"] }
+bytes = "1.12.1"
+uuid = { version = "1.26.1", features = ["v3", "v4", "serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
-humantime = "2.3.0"
+humantime = "2.4.0"
 humantime-serde = "1.1.1"
-ipnet = { version = "2.12.0", features = ["serde"] }
+ipnet = { version = "2.12.2", features = ["serde"] }
 
 # Error handling
-thiserror = "2.0.18"
-anyhow = "1.0.102"
+thiserror = "2.0.21"
+anyhow = "1.0.104"
 
 # Logging / Tracing
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"] }
 
 # Telemetry (OpenTelemetry)
-opentelemetry = { version = "0.32.0" }
-opentelemetry_sdk = { version = "0.32.1" }
-opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic", "http-proto"] }
-tracing-opentelemetry = { version = "0.33.0" }
+opentelemetry = { version = "0.33.0" }
+opentelemetry_sdk = { version = "0.33.0" }
+opentelemetry-otlp = { version = "0.33.0", features = ["grpc-tonic", "http-proto"] }
+tracing-opentelemetry = { version = "0.34.0" }
 
 # CLI
-clap = { version = "4.6.1", features = ["derive"] }
-comfy-table = { version = "7.2.2", features = ["tty"] }
-console = "0.16.3"
+clap = { version = "4.6.7", features = ["derive"] }
+comfy-table = { version = "8.0.1", features = ["tty"] }
+console = "0.16.6"
 dialoguer = "0.12.0"
 
 # Networking
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls","query", "json"] }
-socket2 = { version = "0.6.4", features = ["all"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls","query", "json"] }
+socket2 = { version = "0.6.5", features = ["all"] }
 ppp = "2.3.0"
 
 # Concurrency / State
-smallvec = "1.15.1"
+smallvec = "1.16.2"
 dashmap = "6.2.1"
 governor = "0.10.4"
 notify = "8.2.0"
-futures-util = "0.3.32"
+futures-util = "0.3.34"
 async-stream = "0.3.6"
 
 # Compression
-flate2 = "1.1.9"
-libdeflater = "1.25.2"
+flate2 = "1.1.10"
+libdeflater = "1.26.1"
 
 # Crypto (protocol)
-aes = "0.9.1"
+aes = "0.9.3"
 cfb8 = "0.9.1"
 cipher = "0.5.2"
-rsa = { version = "0.9.10", features = ["sha1", "sha2"] }
+rsa = { version = "0.9.10", features = ["sha1", "sha2", "getrandom"] }
+md-5 = "0.11.0"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
 hmac = "0.13.0"
-# Pinned to 0.8 to match rsa 0.9.x's rand_core 0.6 generation (RSA key gen in
-# auth/mojang.rs). Bumping requires rsa 0.10 (currently pre-release only).
-rand = "0.8.5"
-num-bigint = "0.4.6"
-base64 = "0.22.1"
+rand = "0.10.3"
+num-bigint = "0.5.1"
+base64 = "0.23.1"
 
 # Crypto (auth plugin)
-argon2 = { version = "0.5.3", features = ["std"] }
-bcrypt = "0.19.1"
-rand_core = { version = "0.9.5", features = ["os_rng"] }
+argon2 = "0.6.0"
+bcrypt = "0.19.3"
 
 # Web (admin API)
 axum = "0.8.9"
 tower = { version = "0.5.3", features = ["limit"] }
-tower-http = { version = "0.6.8", features = ["cors", "compression-gzip", "trace", "timeout"] }
+tower-http = { version = "0.7.1", features = ["cors", "compression-gzip", "trace", "timeout"] }
 subtle = "2.6.1"
-time = { version = "0.3.47", features = ["formatting", "macros"] }
-rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+time = { version = "0.3.55", features = ["formatting", "macros"] }
+rust-embed = { version = "8.12.0", features = ["interpolate-folder-path"] }
 mime_guess = "2.0.5"
-http-body-util = "0.1.3"
+http-body-util = "0.1.5"
 
 # Docker
-bollard = "0.21.0"
+bollard = "0.21.1"
 
 # Pattern matching
 wildmatch = "2.6.1"
 
 # Platform-specific
-nix = { version = "0.31", features = ["fs", "net", "zerocopy"] }
+nix = { version = "0.31.3", features = ["fs", "net", "zerocopy"] }
 listenfd = "1.0.2"
 mimalloc = "0.1.52"
 
@@ -132,19 +132,52 @@ command-fds = "0.3.3"
 rusty-fork = "0.3.1"
 
 # Benchmarking / load testing
-divan = "0.1"
-hdrhistogram = { version = "7", default-features = false }
-quanta = "0.12"
+divan = "0.1.21"
+hdrhistogram = { version = "7.6.0", default-features = false }
+quanta = "0.12.6"
 
 # WASM plugin loader (host). Pinned >= 43.0.1 (post-RUSTSEC-2026-0096).
-wasmtime = { version = "45.0.1", features = ["component-model", "async", "cranelift", "cache"] }
-wasmtime-wasi = { version = "45.0.1" }
+wasmtime = { version = "49.0.1", default-features = false, features = [
+    "addr2line",
+    "anyhow",
+    "async",
+    "backtrace",
+    "cache",
+    "compile-time-builtins",
+    "component-model",
+    "component-model-async",
+    "coredump",
+    "cranelift",
+    "debug",
+    "debug-builtins",
+    "demangle",
+    "gc",
+    "gc-copying",
+    "gc-drc",
+    "gc-null",
+    "parallel-compilation",
+    "pooling-allocator",
+    "profiling",
+    "runtime",
+    "stack-switching",
+    "std",
+    "threads",
+    "wit-parser",
+] }
+wasmtime-wasi = { version = "49.0.1" }
+wasmtime-wasi-http = { version = "49.0.1", default-features = false, features = ["p2"] }
+hyper = { version = "1.11.1", default-features = false, features = ["client", "http1"] }
+http = "1.5.0"
+rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["aws_lc_rs", "tls12"] }
+rustls-platform-verifier = "0.7.1"
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
 
 # WASM plugin SDK (guest) + proc-macros
-wit-bindgen = "0.58.0"
-syn = { version = "2", features = ["full"] }
-quote = "1"
-proc-macro2 = "1"
+wit-bindgen = "0.62.0"
+syn = { version = "3.0.6", features = ["full"] }
+quote = "1.0.47"
+proc-macro2 = "1.0.107"
 
 # Internal crates
 infrarust_protocol = { path = "crates/infrarust_protocol", version = "2.0.0-beta.3" }
@@ -153,6 +186,7 @@ infrarust_config = { path = "crates/infrarust_config", version = "2.0.0-beta.3" 
 infrarust-transport = { path = "crates/infrarust-transport", version = "2.0.0-beta.3" }
 infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-beta.3" }
 infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-beta.3" }
+infrarust-plugin-common = { path = "crates/infrarust-plugin-common", version = "2.0.0-beta.3" }
 infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-beta.3" }
 infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-beta.3" }
 infrarust-plugin-macros = { path = "crates/infrarust-plugin-macros", version = "2.0.0-beta.3" }
@@ -170,6 +204,8 @@ all = { level = "warn", priority = -1 }
 await_holding_lock = "warn"
 dbg_macro = "warn"
 todo = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
 
 [workspace.lints.rust]
 unsafe_code = "warn"
@@ -178,7 +214,7 @@ unused_qualifications = "warn"
 [workspace.package]
 version = "2.0.0-beta.3"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.99"
 license-file = "LICENSE"
 repository = "https://github.com/Shadowner/Infrarust"
 
@@ -193,5 +229,6 @@ libdeflater = { opt-level = 2 }
 aes = { opt-level = 2 }
 cfb8 = { opt-level = 2 }
 rsa = { opt-level = 2 }
+num-bigint-dig = { opt-level = 2 }
 sha1 = { opt-level = 2 }
 sha2 = { opt-level = 2 }

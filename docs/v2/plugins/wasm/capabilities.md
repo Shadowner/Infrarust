@@ -1,14 +1,14 @@
 ---
 title: Capabilities & Sandbox
-description: The capability model, the baseline-vs-opt-in matrix, and the CPU, memory, and filesystem sandbox enforced on every WASM plugin.
+description: The capability model, the baseline-vs-opt-in matrix, revoking capabilities with deny, and the CPU, memory, call-queue, filesystem and network sandbox enforced on every WASM plugin.
 outline: [2, 3]
 ---
 
 # Capabilities & Sandbox
 
-A WASM plugin starts with no access to the host. It receives a fixed baseline of capabilities, and the proxy operator grants anything beyond that in config. Each capability maps to one host interface. If the capability is absent, the interface is omitted from the linker, and any plugin that imports it fails to instantiate.
+A WASM plugin starts with no access to the host. It receives a fixed baseline of capabilities, and the proxy operator grants anything beyond that in config. Each capability gates one host interface, or a few methods of one. Every interface is linked for every plugin: the host checks the capability each time a gated function is called and refuses the call when it is missing. At load time the host logs which imports will be refused, and `strict_capabilities = true` turns that report into a load failure.
 
-This page covers the capability enum, the baseline-vs-opt-in split, how granting works, and the CPU, memory, and filesystem limits the runtime enforces.
+This page covers the capability enum, the baseline-vs-opt-in split, how granting and revoking work, what a refused call returns, and the CPU, memory, call-queue, filesystem and network limits the runtime enforces.
 
 ## The capability model
 
@@ -26,6 +26,7 @@ pub enum Capability {
     Command,
     Scheduler,
     ConfigRead,
+    ConfigWrite,
     CodecFilter,
     TransportFilter,
     Limbo,
@@ -33,6 +34,9 @@ pub enum Capability {
     PermissionProvider,
     FilesystemExtended,
     Network,
+    ChatIntercept,
+    BanProvider,
+    PluginMessaging,
 }
 ```
 
@@ -42,27 +46,26 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 
 | Capability | Config string | Grants | Baseline |
 |------------|---------------|--------|----------|
-| `EventBus` | `event-bus` | Subscribe to domain events (lifecycle, connection, proxy, chat) | Yes |
+| `EventBus` | `event-bus` | Subscribe to domain events (lifecycle, connection, proxy) | Yes |
 | `PlayerRead` | `player-read` | Read the player registry and player state | Yes |
 | `PlayerWrite` | `player-write` | Act on a player (message, title, kick, switch-server) | Yes |
 | `Command` | `command` | Register commands | Yes |
 | `Scheduler` | `scheduler` | Schedule tasks | Yes |
-| `ConfigRead` | `config-read` | Read the proxy configuration | Yes |
-| `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` (no host binding yet, see below) | No |
-| `RawPacket` | `raw-packet` | Emit raw packets and gate `player.send-packet` | No |
-| `ServerManage` | `server-manage` | Start/stop servers and read their state | No |
+| `ConfigRead` | `config-read` | Read the proxy configuration, without the other plugins' `[plugins.<id>]` blocks (see [`config-read` sees only the plugin's own block](#config-read-sees-only-the-plugin-s-own-block)) | Yes |
+| `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` with `config-service.write-proxy-config-document` | No |
+| `RawPacket` | `raw-packet` | Send raw packets with `players.send-packet` and receive them with `event-bus.subscribe-packets` | No |
+| `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message` and `command-execute`: read, deny and rewrite what players type | No |
+| `PluginMessaging` | `plugin-messaging` | Register plugin channels, send plugin messages, and subscribe to `plugin-message` | No |
+| `ServerManage` | `server-manage` | Start/stop servers and read their state; drain and reset load-balanced backends | No |
 | `Ban` | `ban` | Use the ban service | No |
+| `BanProvider` | `ban-provider` | Become the ban provider named by `[ban] provider` (`providers.register-ban-provider`, see [Bans](./bans)) | No |
 | `CodecFilter` | `codec-filter` | Register codec filters | No |
 | `Limbo` | `limbo` | Provide limbo handlers | No |
 | `TransportFilter` | `transport-filter` | Register transport filters (never grantable via config) | No |
 | `VirtualBackend` | `virtual-backend` | Provide virtual backends (planned, not implemented) | No |
-| `PermissionProvider` | `permission-provider` | Provide a custom permission checker | No |
-| `FilesystemExtended` | `filesystem-extended` | Filesystem access beyond the per-plugin data directory (deferred) | No |
-| `Network` | `network` | Outbound network access (deferred) | No |
-
-::: warning config-write has no WASM binding
-`config-write` parses and can be granted, but the WIT contract exposes no write function, so a WASM plugin holding it still cannot rewrite `infrarust.toml`. The capability gates the native path: `ConfigService::write_proxy_config_document` is served by a read-only wrapper unless the plugin holds it.
-:::
+| `PermissionProvider` | `permission-provider` | Become the permission provider named by `[permissions] provider`, and replace or clear a player's permission snapshot (`providers.register-permission-provider`, `permissions.*`, see [Permissions](./permissions)) | No |
+| `FilesystemExtended` | `filesystem-extended` | Mount the host folders listed in `[[plugins.<id>.wasm.mounts]]`, see [Network & Extra Folders](./network) | No |
+| `Network` | `network` | TCP, UDP, name lookups and HTTP, limited to the addresses in `[plugins.<id>.wasm.network] allow`, see [Network & Extra Folders](./network) | No |
 
 ::: warning transport-filter is host-only
 `transport-filter` is a valid capability string, but `from_config_strings` puts it in the rejected list rather than granting it. A WASM plugin cannot register transport filters. The capability exists for native plugins, which receive it through `native_trusted`.
@@ -84,7 +87,7 @@ pub fn baseline() -> Self {
 }
 ```
 
-Native plugins call `native_trusted`, which inserts all 16 capabilities. WASM plugins never use that path.
+Native plugins call `native_trusted`, which inserts every capability, `chat-intercept` included. WASM plugins never use that path.
 
 ```rust
 pub fn native_trusted() -> Self {
@@ -122,136 +125,285 @@ pub fn from_config_strings(strings: &[String]) -> (Self, Vec<String>) {
 
 You do not list the baseline capabilities; they are always present. List only the opt-ins. See [Deploying](./deploying) for where this block lives and how rejected strings are reported.
 
+## Revoking capabilities
+
+`deny` takes capabilities away. It is applied after the baseline and the grants, so it can remove a baseline capability, and a capability that appears in both `permissions` and `deny` ends up denied.
+
+```toml
+[plugins.my-plugin]
+permissions = ["ban"]
+deny = ["player-write", "scheduler"]
+```
+
+`CapabilitySet::from_config` builds the set in that order, and the context factory uses it for every WASM plugin:
+
+```rust
+pub fn from_config(grants: &[String], denies: &[String]) -> (Self, Vec<String>) {
+    let (mut set, mut rejected) = Self::from_config_strings(grants);
+    rejected.extend(set.revoke_config_strings(denies));
+    (set, rejected)
+}
+```
+
+Unknown names in `deny` are reported with the same warning as unknown grants. `deny` also applies to compiled-in plugins: they start from every capability and lose the ones listed.
+
+A denied capability behaves exactly like one that was never granted: the plugin still loads, and every call that needs the capability is refused (see [Refused calls](#refused-calls)). Denying `config-read`, for example, makes `get-value` return a `permission-denied` error even for a key the proxy has.
+
 ## What a missing capability does
 
-The linker decides which host interfaces a plugin can import. `build_linker` always links `log` and `limbo`, then conditionally links the rest based on the granted set:
+Every host interface is linked for every plugin, whatever it was granted. A plugin that imports `ban-service` but only calls it when the operator granted `ban` loads either way. The check happens when a gated function is called: without the capability the host does not run the call and returns a `host-error` of kind `permission-denied` whose message names the capability. The SDK surfaces it as an `Error` with kind `ErrorKind::PermissionDenied`.
+
+### Refused calls
+
+| Interface | Function | Needs | Answer when refused |
+|-----------|----------|-------|---------------------|
+| `ban-service` | `ban`, `unban`, `get`, `list` | `ban` | `permission-denied: "missing capability: ban"` |
+| `server-manager` | `get-state`, `start`, `stop`, `list` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
+| `config-service` | `get-value`, `get-server`, `get-server-by-domain`, `list-servers`, `get-server-document`, `list-server-sources`, `get-proxy-config-document`, `get-effective-proxy-config-document` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `config-service` | `write-proxy-config-document` | `config-write` | `permission-denied: "missing capability: config-write"` |
+| `load-balancer` | `strategy`, `backends` | `config-read` | `permission-denied: "missing capability: config-read"` |
+| `load-balancer` | `set-drained`, `reset-backend` | `server-manage` | `permission-denied: "missing capability: server-manage"` |
+| `messaging` | `register-channel`, `unregister-channel`, `channels`, `send-to-player`, `send-to-backend`, `send-to-server` | `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
+| `players` | `get`, `get-by-name`, `get-by-uuid` | `player-read` | `none` |
+| `players` | `list`, `get-by-ip` | `player-read` | empty list |
+| `players` | `count` | `player-read` | `0` |
+| `players` | `has-permission` | `player-read` | `permission-denied: "missing capability: player-read"` |
+| `players` | `send-message`, `send-title`, `send-action-bar`, `disconnect`, `switch-server`, `connect`, `set-player-list-header-footer`, `clear-title`, `show-boss-bar`, `update-boss-bar`, `hide-boss-bar`, `send-resource-pack`, `remove-resource-pack`, `transfer`, `store-cookie`, `request-cookie`, `refresh-permissions` | `player-write` | `permission-denied: "missing capability: player-write"` |
+| `players` | `send-packet` | `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
+| `event-bus` | `subscribe`, `unsubscribe`, `subscribe-named`, `fire-named` | `event-bus` | `permission-denied: "missing capability: event-bus"` |
+| `event-bus` | `subscribe` with kind `chat-message` or `command-execute` | `event-bus` and `chat-intercept` | `permission-denied: "missing capability: chat-intercept"`: the plugin never sees a chat message or command |
+| `event-bus` | `subscribe` with kind `plugin-message` | `event-bus` and `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
+| `event-bus` | `subscribe-packets`, and `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
+| `command-manager` | `register`, `unregister`, `get`, `get-by-name`, `get-by-alias`, `contains`, `list`, `list-owned` | `command` | `permission-denied: "missing capability: command"` |
+| `scheduler` | `delay`, `interval`, `cancel` | `scheduler` | `permission-denied: "missing capability: scheduler"` |
+| `codec-registry` | `register-codec-filter`, `unregister-codec-filter` | `codec-filter` | `permission-denied: "missing capability: codec-filter"` |
+| `limbo` | `register-limbo-handler` | `limbo` | `permission-denied: "missing capability: limbo"` |
+| `providers` | `register-ban-provider` | `ban-provider` | `permission-denied: "missing capability: ban-provider"` |
+| `providers` | `register-permission-provider` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
+| `permissions` | `set-snapshot`, `release` | `permission-provider` | `permission-denied: "missing capability: permission-provider"` |
+
+The six player reads are the contract's infallible reads: they have no error channel and answer a neutral value instead. The limbo session resources only reach a plugin through a handler it registered, which needs `limbo`. `log`, `text`, `types`, `events`, `proxy-info`, `plugin-registry` and `permission-nodes` are never gated: `proxy-info.granted-capabilities` is how a plugin learns what it holds, and any plugin may register the [permission nodes](./permissions#permission-nodes) of its own namespace and read every registered node.
+
+The host also logs every refusal, naming the plugin, the call (`call="ban-service.get"`) and the missing capability. It logs at `warn`, and at `error` for `register-limbo-handler`, whose refusal means a server that points at the handler holds nobody. The log is rate-limited to one line per capability per minute for each plugin instance; the `suppressed` field counts the refusals skipped since the previous line.
+
+The `capability-denied` test fixture calls `ban-service` without the `ban` capability and records the answer:
 
 ```rust
-// crates/infrarust-loader-wasm/src/linker.rs
-link!(linker, plugin_id, log); // always available
-link!(linker, plugin_id, limbo);
-
-if caps.has(Capability::EventBus) {
-    link!(linker, plugin_id, event_bus);
-}
-// ...
-if caps.has(Capability::Ban) {
-    link!(linker, plugin_id, ban_service);
-}
-if caps.has(Capability::CodecFilter) {
-    link!(linker, plugin_id, codec_registry);
+match ban_service::get(&BanTarget::Username("nobody".to_string())) {
+    Ok(entry) => format!("ok: {}", entry.is_some()),
+    Err(error) => format!("{}: {}", kind(error.kind), error.message),
 }
 ```
 
-If a plugin imports an interface that was not linked, instantiation fails. The `capability-denied` test fixture imports and calls `ban-service` without the `ban` capability:
+It loads, runs its `on_enable`, and records `permission-denied: missing capability: ban`.
 
-```rust
-// tests/fixtures/capability-denied/src/lib.rs
-on_enable: {
-    let _ = ban_service::is_banned(&BanTarget::Username("nobody".to_string()));
-    Ok(())
-}
+### The load-time report
+
+Before it instantiates a plugin, the host reads the component's import list, which names every host function the plugin can call. For each gated interface the plugin imports without the matching grant, it logs one warning:
+
+```
+WARN plugin my-plugin imports ban-service but lacks the `ban` capability; calls will be refused
 ```
 
-Because the host omits `ban-service` from the linker, `load()` returns `Err`. The failure surfaces at instantiation, not at the call site, so a plugin missing a capability never enters its `on_enable`.
+The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `players` is reported against `player-write` only when the plugin imports a function that acts on a player, and against `raw-packet` only when it imports `send-packet`; `event-bus` is reported against both `event-bus` and `raw-packet` when the plugin imports `subscribe-packets`, since the call checks both, and `config-service` against `config-write` when it imports `write-proxy-config-document`.
 
-### Method-level gating
+The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `chat-message`, `command-execute` or `plugin-message` subscription without its capability is only reported when the call is refused.
 
-Some methods inside a linked interface need an extra capability. `player.send-packet` requires `raw-packet` even though `player-read` and `player-write` are baseline. The interface is present, so the call resolves; without `raw-packet` the host returns a `player-error` (`send-failed: "missing capability: raw-packet"`) rather than sending.
+### Chat needs `chat-intercept`
+
+A chat listener sees every message players type, including private messages, and can drop or rewrite them. Subscribing to `chat-message` therefore needs the opt-in `chat-intercept` capability on top of `event-bus`. Earlier versions accepted the subscription with `event-bus` alone, so a plugin that moderates or logs chat needs a new grant after upgrading:
+
+```toml
+[plugins.chat-filter]
+permissions = ["chat-intercept"]
+```
+
+Without it the plugin still loads, but `subscribe` returns a `permission-denied` error (`ctx.on::<ChatMessageEvent>` returns it as an `Error`), no chat message reaches the plugin, and the host logs the refusal with `call="event-bus.subscribe(chat-message)"` and `capability="chat-intercept"`. Compiled-in plugins hold the capability unless their config denies it. The same capability covers `command-execute`, which sees every command a player types.
+
+### Plugin messages need `plugin-messaging`
+
+Plugin channels carry whatever mods and backend plugins exchange with the client, including the BungeeCord channel that moves players between servers. `plugin-messaging` gates the whole `messaging` interface (registering channels, sending to a client, a backend or a server) and the `plugin-message` event:
+
+```toml
+[plugins.mod-bridge]
+permissions = ["plugin-messaging"]
+```
+
+Without it `Messaging::register` and the send functions return `permission-denied`, `ctx.on::<PluginMessageEvent>` is refused, and the host logs the refusal with `capability="plugin-messaging"`. Compiled-in plugins hold it unless their config denies it.
+
+### `config-read` sees only the plugin's own block
+
+`config-read` is baseline, so every WASM plugin reads the proxy configuration. It does not read the other plugins' configuration:
+
+- `get-proxy-config-document` and `get-effective-proxy-config-document` leave out every `[plugins.<id>]` block except the caller's own, with its subtables (`[plugins.<id>.wasm]` and below). A removed block takes its keys, the comments between them and the comments above its header. A comment written after a block's last key belongs to the next header in the TOML model, so it stays when that header stays.
+- `get-value` refuses a key under another plugin, `plugins.<other-id>` or anything below it, with `permission-denied`, whether or not that plugin exists. `get-value("plugins")` answers an inline table that holds the caller's own entry only.
+- `write-proxy-config-document` (which needs `config-write`) puts the other plugins' blocks back from the file as it stands before handing the document to the proxy, so a document read with `get-proxy-config-document`, edited and written back keeps them. A document that carries a block for another plugin is refused with `permission-denied` and nothing is written.
+
+Everything else stays readable: the backends, `[web]` and the other sections (with the secret fields redacted as for every reader, see [Services](./services#config)), and the plugin's own `[plugins.<id>]` block. The layout of a block does not matter: `[plugins.<id>]` tables, dotted keys (`plugins.<id>.enabled = false`) and inline tables are all hidden. When the host cannot parse the document the config service hands it, the call answers `internal` instead of the unfiltered text. Compiled-in plugins read the whole document.
+
+### Strict mode
+
+`strict_capabilities = true` refuses to load a plugin the report would warn about, which was the behaviour of earlier versions for every plugin:
+
+```toml
+[plugins.my-plugin]
+permissions = ["ban"]
+strict_capabilities = true
+```
+
+The load fails with a capability error that lists each interface, the capability it needs and the functions involved:
+
+```
+plugin 'my-plugin' imports a host interface it lacks the capability for: infrarust:plugin/config-service needs `config-read` (get-value); refused because strict_capabilities = true
+```
+
+Use it for a plugin that cannot do its job without the capabilities it imports, so a missing grant or a `deny` stops it at startup instead of leaving it running with calls refused. The default is `false`. Strict mode only reads the import list; the calls are checked the same way either way.
 
 ## The sandbox
 
-Every WASM plugin runs under three limits enforced by the wasmtime runtime: a CPU budget, a linear-memory cap, and a filesystem view. The numbers are hardcoded today; wiring them to `ProxyConfig` is a TODO (`consts.rs` carries the `TODO(config)` markers).
+Every WASM plugin runs under limits enforced by the wasmtime runtime and the host: a CPU budget, a linear-memory cap, a wall-clock limit per call, a bounded call queue, registration quotas, a filesystem view and a network allow-list. The numbers come from the `[wasm]` table of `infrarust.toml`, and `[plugins.<id>.wasm]` overrides them for one plugin. The defaults:
+
+| Key | Default | Applies to |
+|-----|---------|------------|
+| `epoch_tick` | `1ms` | The whole proxy: how often the epoch thread ticks |
+| `cpu_budget` | `3s` | CPU time per guest call before an `Interrupt` trap |
+| `codec_cpu_budget` | `5ms` | CPU time per codec filter call before a trap |
+| `memory_limit_mb` | `64` | Linear memory per plugin instance |
+| `host_call_timeout` | `30s` | One host call that waits on the proxy: server-manager `start` and `stop`, ban-service calls, `connect`, `transfer`, `request-cookie`, `refresh-permissions`, `fire-named`, `set-snapshot`, `release`, and HTTP request timeouts. `switch-server` has its own 250 ms cap |
+| `max_call_duration` | `60s` | Wall-clock time of one guest call, host calls included |
+| `queue_capacity` | `1024` | Calls waiting for a busy plugin |
+| `[wasm.quotas]` | see below | Registrations one plugin holds at once |
+| `[wasm.codec_quarantine]` | 5 traps in `10s` | Traps of one codec filter from one client address before the filter is quarantined for that address (`10s`, doubling up to `5m`) |
+
+```toml
+[wasm]
+cpu_budget = "2s"
+
+[plugins.heavy-plugin.wasm]
+memory_limit_mb = 256
+queue_capacity = 4096
+```
+
+The ranges accepted at startup are listed in [Global Settings](../../configuration/global#wasm-plugin-sandbox).
 
 ```mermaid
 flowchart LR
     G[Guest call] --> E{Epoch tick}
-    E -->|under budget| Y[Yield, re-grant ticks]
-    E -->|over budget| T[Interrupt trap]
+    E -->|under cpu_budget| Y[Yield, re-grant a tick]
+    E -->|over cpu_budget| T[Interrupt trap]
     G --> M{memory.grow}
-    M -->|under 64 MB| OK[Allocate]
-    M -->|over 64 MB| MT[Trap on grow]
-    T --> P[Poison instance]
+    M -->|under memory_limit_mb| OK[Allocate]
+    M -->|over memory_limit_mb| MT[Trap on grow]
+    G --> W{Wall clock}
+    W -->|past max_call_duration| A[Call abandoned]
+    T --> P[Fresh instance or quarantine]
     MT --> P
+    A --> P
 ```
 
 ### CPU budget (epoch interruption)
 
-A dedicated OS thread bumps the engine epoch on a fixed interval. Each store is given a deadline measured in those ticks; when the deadline fires, the callback either re-grants ticks (a cooperative yield) or interrupts the guest with a hard trap.
+A dedicated OS thread bumps the engine epoch every `epoch_tick`. Each guest call is armed for one tick when it starts; at each tick the guest is still running, the deadline callback either re-grants a tick (a cooperative yield: the actor task goes behind the tasks already waiting and the worker checks the network before resuming it) or, once the call has used `cpu_budget` worth of ticks, interrupts the guest with a hard trap. The budget is converted to ticks by rounding up, so the defaults give 3000 yields of 1 ms. A stretch during which the thread was preempted by the operating system counts as one tick.
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `EPOCH_TICK_INTERVAL` | `50 ms` | How often the epoch thread ticks |
-| `EPOCH_DEADLINE_TICKS` | `1` | Ticks granted before the deadline callback first fires, re-granted on each yield |
-| `MAX_EPOCH_YIELDS_BEFORE_TRAP` | `60` | Yields tolerated per call before the hard `Interrupt` trap (about 3 s of pure spin) |
+A plugin that spins past the budget is interrupted and its instance is replaced by a fresh one (see [Fault model](./fault-model)). The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
 
-```rust
-// crates/infrarust-loader-wasm/src/store_state.rs
-store.epoch_deadline_callback(|mut ctx| {
-    let state = ctx.data_mut();
-    state.epoch_yields += 1;
-    if state.epoch_yields > MAX_EPOCH_YIELDS_BEFORE_TRAP {
-        Ok(UpdateDeadline::Interrupt)
-    } else {
-        Ok(UpdateDeadline::Yield(EPOCH_DEADLINE_TICKS))
-    }
-});
-```
-
-A plugin that spins without yielding past the budget is interrupted and its instance is poisoned. The yield counter resets at the start of each call, so well-behaved plugins that return promptly never approach the limit.
-
-Codec filters run on a separate, tighter per-call budget, since each filter call is synchronous and must complete in microseconds:
-
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `CODEC_EPOCH_DEADLINE_TICKS` | `16` | Ticks granted to a single synchronous codec call before a hard trap |
-
-The 16-tick headroom is reset before every `create`/`filter`/lifecycle call. A normal per-packet filter finishes in microseconds, so only a runaway filter can exhaust it. See [Codec Filters](./codec-filters) for the filter contract.
+Codec filters run on their own budget, `codec_cpu_budget`, since each filter call is synchronous, holds a network worker thread and normally finishes in microseconds. It is counted the same way, in ticks of running time, and re-armed before every `create`/`filter`/lifecycle call; with the defaults that is 5 ticks of 1 ms. A codec call does not yield, so it traps at the end of its budget. A filter that keeps trapping for one client address is quarantined for that address (`[wasm.codec_quarantine]`). See [Codec Filters](./codec-filters#hot-path-and-the-cpu-budget) for the filter contract.
 
 ::: info Host calls have their own timeout
-Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start). Each async host call is wrapped in a 30 s `HOST_CALL_TIMEOUT`; on expiry the guest sees a `service-error` instead of hanging.
+Epoch interruption cannot preempt a guest parked inside a host `.await` (such as a ban lookup or a server start), and that waiting time does not count against `cpu_budget`. Each such host call is wrapped in `host_call_timeout`, and cut shorter when the deadline of the guest call that made it is closer; on expiry the guest sees a `timeout` host error instead of hanging. See [Lifecycle](./lifecycle#deadlines).
 :::
 
 ### Memory cap
 
-Each instance is built with a `StoreLimits` that caps linear memory and traps on a growth that would exceed it:
+Each instance is built with a `StoreLimits` that caps linear memory at `memory_limit_mb` and traps on a growth that would exceed it. The cap also applies to the memory a component declares up front, so a limit smaller than the component's initial memory makes it fail to load. Codec filter instances get the same cap as their plugin.
 
-```rust
-// crates/infrarust-loader-wasm/src/store_state.rs
-fn default_limits() -> StoreLimits {
-    StoreLimitsBuilder::new()
-        .memory_size(MEMORY_LIMIT)    // 64 MB
-        .trap_on_grow_failure(true)
-        .build()
-}
+Only memory growth is bounded: the proxy does not cap how many instances exist. Each instance reserves about 4 GiB of virtual address space, which limits a proxy to about 32 000 live instances, fewer under a virtual memory limit; past that, a codec filter side passes packets through unfiltered and a plugin cannot be loaded or restarted. With `[wasm] instance_pool` set, that many instance slots are reserved up front, a connection whose codec filter instance finds no free slot passes through unfiltered, and a plugin whose function table has more than 512 entries cannot be loaded. See [Global Settings](../../configuration/global#instance-memory-and-address-space).
+
+### One call at a time
+
+Each plugin instance is owned by its own task. Every call into the guest (events, commands, tab completion, scheduled tasks, limbo callbacks, `on_enable` and `on_disable`) is sent to that task as a job and runs until it returns or reaches its deadline before the next one starts.
+
+- Each job carries a deadline: `[events] handler_timeout` minus a margin for events, `max_call_duration` after it was queued for commands, tab completion, scheduled tasks and limbo callbacks. Host calls made during the job return an error shortly before it, so a handler waiting on a slow service still answers in time. A job still running at its deadline is cut off, counted as a fault, and the instance is replaced; an access event it served is denied. See [Lifecycle](./lifecycle#deadlines).
+- A job whose caller has already given up, or whose deadline has passed, by the time it reaches the front of the queue is skipped; the guest never sees it.
+- At most `queue_capacity` jobs wait. When the queue is full, a new call is refused immediately rather than waiting: an event gets no answer from the plugin, a command does nothing, a tab completion returns no suggestions. A warning naming the plugin and the operation is logged, at most once every 5 seconds per plugin.
+- `max_call_duration` is the safety net for a call that never returns, for instance an `on_enable` that makes many slow host calls in a row (lifecycle calls carry no deadline). The call is abandoned and the instance is replaced by a fresh one, because wasmtime cannot re-enter a component whose call was cut off.
+- `on_disable` is the last job: jobs queued behind it are dropped, and the task stops once it has run. Unloading a plugin stops its task the same way and drops the instance.
+- A scheduled task waits for its run to finish. An interval puts at most one run in the queue, and its next run comes one period after that run returns or is cut at its deadline, so an interval slower than its period does not fill the queue.
+
+### Registration quotas
+
+A plugin cannot grow the host's tables without bound. `[wasm.quotas]` caps what one plugin holds at the same time:
+
+| Key | Default | Counts |
+|-----|---------|--------|
+| `event_listeners` | `1024` | Event and named-event subscriptions, plus one per packet filter of each packet subscription |
+| `commands` | `256` | Registered commands |
+| `scheduled_tasks` | `1024` | Delays not yet run and intervals not cancelled |
+| `plugin_channels` | `128` | Registered plugin messaging channels |
+| `codec_filters` | `32` | Registered codec filter ids |
+| `limbo_handlers` | `64` | Registered limbo handler names |
+| `permission_nodes` | `256` | Registered permission nodes |
+
+```toml
+[wasm.quotas]
+commands = 128
+
+[plugins.warps.wasm.quotas]
+commands = 1024
 ```
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `MEMORY_LIMIT` | `64 MB` (`64 * 1024 * 1024`) | Linear-memory cap per plugin instance |
-
-A `memory.grow` that crosses 64 MB traps. Instance, table, and memory *counts* keep wasmtime's defaults; only memory growth is bounded.
+The count is of what the plugin holds now: unregistering, unsubscribing or cancelling frees room, and a delay stops counting once it has run. Registering a command, channel, codec filter, limbo handler name or permission node the plugin already holds takes no more room. A registration past the quota is refused with a `host-error` of kind `limit-exceeded` (`ErrorKind::LimitExceeded` in the SDK), and the host logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance. A plugin that returns such an error from `on_enable` with `?` fails to enable. After a fault the fresh instance starts from what it registers again, except plugin channels, codec filters and permission nodes, which are kept across a recovery. A permission node is removed only when the plugin is disabled or unloaded, since there is no call to unregister one. The accepted ranges are in [Global Settings](../../configuration/global#registration-quotas).
 
 ### Filesystem and WASI
 
 The WASI context grants one preopened directory per plugin, mounted at `/` inside the guest and backed by the plugin's data directory on the host. The directory is created on load if it does not exist.
 
 ```rust
-// crates/infrarust-loader-wasm/src/store_state.rs
+// crates/infrarust-loader-wasm/src/imp/store_state.rs
 builder
-    .preopened_dir(data_dir, "/", DirPerms::all(), FilePerms::all())?;
+    .preopened_dir(data_dir, "/", FsPerms::ReadWrite)?;
 ```
 
-There is no network access, no inherited stdio, and no second preopen. Outbound network (`network`) and access outside the data directory (`filesystem-extended`) are deferred; the capabilities are defined but the WASI context does not yet widen for them.
+There is no inherited stdio. With `filesystem-extended`, each entry of `[[plugins.<id>.wasm.mounts]]` adds one more preopen at its `guest` path: `FsPerms::ReadOnly` for a read-only mount (the default), `FsPerms::ReadWrite` otherwise. A host directory that does not exist fails that plugin's load. Without the capability the mounts are ignored with one warning, and the plugin sees only its data directory. `..` cannot climb out of a preopen, and a symbolic link that points outside it is refused.
 
-## Trap, poison, fail-closed
+### Disk use and hard links
 
-A trap from any of the limits above does not just abort the current call. The runtime marks the instance poisoned, and every later call into that plugin returns an error instead of running guest code. This is the fail-closed rule: a misbehaving plugin is fenced off rather than retried into the same fault. The full state machine is on [Lifecycle](./lifecycle).
+The filesystem sandbox controls which paths a plugin can open. Two things it does not control are left to the operator.
+
+**No disk quota.** The proxy does not count what a plugin writes. It can write to its data directory, and to every writable mount, until the filesystem that holds them is full, in bytes or in inodes. If the proxy's own files (logs, the AOT cache, config) live on the same filesystem, they stop being written too. To bound a plugin, put its data directory (`plugins_dir/<plugin-id>`), or all of `plugins_dir`, on storage that has a limit of its own: a filesystem project or user quota, a separate partition, a `tmpfs` mounted with `size=`, or a container volume with a size cap.
+
+**Hard links are not checked.** The checks on `..` and symbolic links look at the path the guest opens. A hard link is not a path to somewhere else: it is a second name for the same file. If another program or user creates a hard link inside a plugin's data directory or mount to a file elsewhere on the host, the plugin reads that file through the link, and can change it when the folder is writable and the proxy user may write the file. The plugin cannot create such a link itself, because it cannot name a file outside its folders. Keep each data directory owned by the proxy user and writable by it alone, and do not let other programs write into a plugin's data directory or into a writable mount.
+
+### Network
+
+Without `network`, the WASI context refuses every socket address, name lookups are off and every `wasi:http` request fails with `HTTP-request-denied`. The `wasi:sockets` and `wasi:http` interfaces are still linked, so a plugin that imports them loads and gets a refusal instead of a link error.
+
+With `network`, the plugin reaches only what `[plugins.<id>.wasm.network] allow` lists:
+
+- Each TCP connect, UDP connect and UDP datagram sent goes through an address check. An address matches an IP or range rule, or an address the proxy resolved from a hostname rule (re-resolved at most every 30 seconds per name when a connection misses).
+- Incoming traffic goes through the same rules. A received UDP datagram whose source address and port match no rule is dropped before the guest sees it, and so is a TCP connection accepted from a peer that matches no rule. Hostname rules count only the addresses the proxy already resolved; a received datagram never causes a lookup.
+- Listening is refused unless a rule names the exact bind address. Ranges and hostnames never allow a bind, so even `0.0.0.0/0:*` does not let a plugin open a server socket. A socket may bind the unspecified address on port `0`, which is the implicit bind of a TCP connect or a UDP send; that bind alone does not allow listening.
+- Name lookups from the guest are on only when `dns` is (by default, when the list has a hostname rule). A lookup can carry data out even when the connection that follows is refused; keep `dns` off unless the plugin connects by name through a socket.
+- HTTP requests are checked by authority. The proxy resolves hostnames itself, verifies HTTPS certificates against the system trust store and caps the request timeouts at `host_call_timeout`.
+- An empty allow list refuses everything; config present without the capability is ignored. Each case logs one warning at load, and each refused call logs a rate-limited warning naming the plugin, the destination and the reason.
+
+Codec filter instances get none of this: sockets and HTTP trap inside a filter whatever the plugin is granted. The full rules, the config keys and a working example are on [Network & Extra Folders](./network).
+
+Codec filter instances get a narrower host than this: clocks, randomness, an empty environment and discarded stdio, with no filesystem at all. See [Codec Filters](./codec-filters#what-a-filter-can-call).
+
+## Traps and recovery
+
+A trap from any of the limits above does not just abort the current call. The host never runs guest code in that instance again: it discards the instance, removes the listeners and tasks it registered, releases the players it held in limbo, and starts a fresh instance that runs `on_enable` again. A call that never finished (cut off by `max_call_duration`, or interrupted by a panic in a host function) is handled the same way. The call that faulted gets no answer from the plugin, and a limbo entry fails closed.
+
+Restarts are budgeted by `[wasm.recovery]`. A plugin that keeps faulting is quarantined with an exponential backoff: calls to it are answered at once without running guest code until the proxy tries a fresh instance again. A caller that merely stopped waiting is not a fault. The full model is on [Fault model](./fault-model).
 
 ## See also
 
-- [Deploying](./deploying): where the `permissions` config block lives and how rejected strings surface.
-- [Lifecycle](./lifecycle): trap, poison, and fail-closed semantics in full.
+- [Deploying](./deploying): where the `permissions` and `deny` config keys live and how rejected strings surface.
+- [Network & Extra Folders](./network): the `network` allow-list and the `filesystem-extended` mounts in full.
+- [Global Settings](../../configuration/global#wasm-plugin-sandbox): the `[wasm]` table and its accepted ranges.
+- [Fault model](./fault-model): recovery, restart budget and quarantine in full.
+- [Lifecycle](./lifecycle): the stages from discovery to disable.
 - [Architecture](./architecture): how the linker, store, and engine fit together.
 - [Services](./services): the host interfaces each capability unlocks.
 - [Codec Filters](./codec-filters): the `codec-filter` capability and the per-call budget.

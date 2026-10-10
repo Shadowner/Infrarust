@@ -5,13 +5,16 @@ use std::time::Duration;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use serde::Serialize;
 use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 use tokio_stream::Stream;
 
 use crate::error::ApiError;
 use crate::log_layer::LogEntry;
 use crate::response::{ApiResponse, ok};
-use crate::state::ApiState;
+use crate::state::{ApiEvent, ApiState};
 
 use super::auth::verify_sse_auth;
 use super::types::{EventStreamFilter, LogHistoryFilter, LogStreamFilter};
@@ -29,44 +32,14 @@ pub async fn event_stream(
         .types
         .map(|t| t.split(',').map(|s| s.trim().to_lowercase()).collect());
 
-    let mut receiver = state.event_tx.subscribe();
-
-    let stream = async_stream::stream! {
-        loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    if let Some(ref allowed) = type_filter
-                        && !allowed.contains(event.event_type())
-                    {
-                        continue;
-                    }
-
-                    match serde_json::to_string(&event) {
-                        Ok(json) => {
-                            yield Ok(Event::default()
-                                .event(event.event_type())
-                                .data(json));
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "Failed to serialize SSE event");
-                        }
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    let data = serde_json::json!({"missed": n}).to_string();
-                    yield Ok(Event::default()
-                        .event("lagged")
-                        .data(data));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    };
-
-    Ok(Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive"),
+    Ok(broadcast_sse(
+        state.event_tx.subscribe(),
+        move |event: &ApiEvent| {
+            type_filter
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(event.event_type()))
+        },
+        ApiEvent::event_type,
     ))
 }
 
@@ -79,57 +52,62 @@ pub async fn log_stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     verify_sse_auth(&state, &filter.token)?;
 
-    let log_tx = state.log_tx.as_ref().ok_or_else(|| {
-        ApiError::ServiceUnavailable(
-            "Log streaming is not available (BroadcastLogLayer not installed)".into(),
-        )
-    })?;
+    let logs = state.logs.as_ref().ok_or_else(logs_off)?;
 
     let min_level = parse_level(&filter.level);
     let target_prefix = filter.target.clone();
 
-    let mut receiver = log_tx.subscribe();
+    Ok(broadcast_sse(
+        logs.tx.subscribe(),
+        move |entry: &LogEntry| {
+            level_matches(&entry.level, min_level)
+                && target_prefix
+                    .as_ref()
+                    .is_none_or(|prefix| entry.target.starts_with(prefix.as_str()))
+        },
+        |_| "log",
+    ))
+}
 
+fn broadcast_sse<T, K, N>(
+    mut receiver: broadcast::Receiver<T>,
+    mut keep: K,
+    event_name: N,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
+where
+    T: Clone + Serialize + Send + 'static,
+    K: FnMut(&T) -> bool + Send + 'static,
+    N: Fn(&T) -> &'static str + Send + 'static,
+{
     let stream = async_stream::stream! {
         loop {
             match receiver.recv().await {
-                Ok(entry) => {
-                    if !level_matches(&entry.level, min_level) {
+                Ok(item) => {
+                    if !keep(&item) {
                         continue;
                     }
-                    if let Some(ref prefix) = target_prefix
-                        && !entry.target.starts_with(prefix.as_str())
-                    {
-                        continue;
-                    }
-
-                    match serde_json::to_string(&entry) {
-                        Ok(json) => {
-                            yield Ok(Event::default()
-                                .event("log")
-                                .data(json));
-                        }
+                    let name = event_name(&item);
+                    match serde_json::to_string(&item) {
+                        Ok(json) => yield Ok(Event::default().event(name).data(json)),
                         Err(e) => {
-                            tracing::warn!(error = %e, "Failed to serialize log entry");
+                            tracing::warn!(event = name, error = %e, "Failed to serialize SSE event");
                         }
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                Err(RecvError::Lagged(n)) => {
                     let data = serde_json::json!({"missed": n}).to_string();
-                    yield Ok(Event::default()
-                        .event("lagged")
-                        .data(data));
+                    yield Ok(Event::default().event("lagged").data(data));
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(RecvError::Closed) => break,
             }
         }
     };
 
-    Ok(Sse::new(stream).keep_alive(
+    Sse::new(stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("keep-alive"),
-    ))
+    )
 }
 
 /// REST endpoint for log history from the ring buffer.
@@ -139,15 +117,13 @@ pub async fn log_history(
     State(state): State<Arc<ApiState>>,
     Query(filter): Query<LogHistoryFilter>,
 ) -> Result<Json<ApiResponse<Vec<LogEntry>>>, ApiError> {
-    let history = state
-        .log_history
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Log history is not available".into()))?;
+    let logs = state.logs.as_ref().ok_or_else(logs_off)?;
 
     let min_level = parse_level(&filter.level);
     let n = filter.n.unwrap_or(100).min(1000);
 
-    let history_guard = history
+    let history_guard = logs
+        .history
         .lock()
         .map_err(|_| ApiError::Internal("Log history lock poisoned".into()))?;
 
@@ -167,6 +143,10 @@ pub async fn log_history(
         .collect();
 
     Ok(ok(entries))
+}
+
+fn logs_off() -> ApiError {
+    ApiError::NotFound("Log streaming is not enabled on this proxy".into())
 }
 
 /// Maps a level string to a numeric value for comparison.

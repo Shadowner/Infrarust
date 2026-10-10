@@ -23,7 +23,7 @@ impl VarInt {
         }
     }
 
-    pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    pub fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         let x = self.0 as u64;
         let stage1 = (x & 0x7f)
             | ((x & 0x3f80) << 1)
@@ -78,7 +78,7 @@ impl VarInt {
 }
 
 impl Encode for VarInt {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         Self::encode(self, w)
     }
 }

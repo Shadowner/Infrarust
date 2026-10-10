@@ -94,6 +94,8 @@ Recovery probing is on by default and costs nothing while everything is healthy,
 
 The `tcp` probe opens a connection and closes it, which is exactly what the proxy does when it dials a backend, so it cannot disagree with reality. The `status_ping` probe runs the full Minecraft status exchange and proves the server actually answers.
 
+Probes dial a backend the way a player connection does: a server with `send_proxy_protocol = true` gets a PROXY protocol v2 header on every probe, carrying the proxy's own bind address as the source, so a backend that rejects connections without the header is not marked unhealthy by the prober. Probe outcomes are recorded by the prober alone; they do not go through the per-connection attempt accounting.
+
 Any server can override the whole block with its own `[active_health]` table, and each address is probed on its own server's cadence. `enabled` is part of that block, so a server can turn probing on for itself while the proxy-wide block leaves it off, and the other way round. One task drives every server: it wakes on the shortest interval configured anywhere, probes only the addresses whose own interval has elapsed, and never wakes more than once a second whatever you set.
 
 `max_concurrent` is the exception. It caps how many probes are in flight across the whole sweep, so it is read from the global block and a per-server override of that one key does nothing.

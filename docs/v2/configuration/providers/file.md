@@ -144,7 +144,7 @@ The server's effective identity (used for display and server switching) follows 
 
 ## Hot reload
 
-The file provider watches the `servers_dir` directory using OS-level file notifications. When a file changes, Infrarust waits 200ms to batch rapid edits, then computes a diff against its in-memory state.
+The file provider watches the `servers_dir` directory using OS-level file notifications. When a file changes, Infrarust waits until no change has happened for 300ms (at most 2s after the first one) to batch rapid edits and skip half-written files, then computes a diff against its in-memory state. A file that cannot be parsed keeps its previous version, and a directory that cannot be listed leaves every server as it was.
 
 Three types of changes are detected:
 

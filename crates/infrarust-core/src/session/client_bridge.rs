@@ -20,6 +20,8 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::player::packets::encode_for_state;
+use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;
 
@@ -36,6 +38,7 @@ pub struct ClientBridge {
     /// The client's protocol version.
     pub protocol_version: ProtocolVersion,
     state: ConnectionState,
+    awaiting_config_ack: bool,
 }
 
 impl ClientBridge {
@@ -60,6 +63,7 @@ impl ClientBridge {
             decrypt_cipher: None,
             protocol_version,
             state: ConnectionState::Login,
+            awaiting_config_ack: false,
         }
     }
 
@@ -165,45 +169,32 @@ impl ClientBridge {
         self.state
     }
 
-    /// Encodes and sends a typed packet to the client.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if packet ID lookup fails or I/O errors occur.
+    pub const fn begin_reconfiguration(&mut self) {
+        self.state = ConnectionState::Config;
+        self.awaiting_config_ack = true;
+    }
+
+    pub const fn reconfiguration_acknowledged(&mut self) {
+        self.awaiting_config_ack = false;
+    }
+
+    pub const fn awaits_config_ack(&self) -> bool {
+        self.awaiting_config_ack
+    }
+
     pub async fn send_packet<P: Packet>(
         &mut self,
         packet: &P,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        if self.state != P::STATE {
-            return Err(CoreError::Auth(format!(
-                "cannot send {} ({}) while the bridge is in {}",
-                P::NAME,
-                P::STATE,
-                self.state
-            )));
-        }
+        let frame = encode_for_state(packet, self.state, self.protocol_version, registry)?;
+        self.write_frame(&frame).await
+    }
 
-        let packet_id = registry
-            .get_packet_id::<P>(self.protocol_version)
-            .ok_or_else(|| {
-                CoreError::Auth(format!(
-                    "no packet ID for {} in {}/{:?}",
-                    P::NAME,
-                    P::STATE,
-                    self.protocol_version
-                ))
-            })?;
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, self.protocol_version)?;
-
-        self.encoder.append_raw(packet_id, &payload)?;
-        let mut data = self.encoder.take();
-        if let Some(cipher) = &mut self.encrypt_cipher {
-            cipher.encrypt(&mut data);
-        }
-        self.stream.write_all(&data).await?;
-        Ok(())
+    pub async fn close_with(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        let written = self.write_frame(frame).await;
+        self.stream.shutdown().await.ok();
+        written
     }
 
     /// Sends a disconnect packet and shuts down the connection.
@@ -217,40 +208,31 @@ impl ClientBridge {
     /// Returns `CoreError` on encoding or I/O errors.
     pub async fn disconnect(
         &mut self,
-        reason: &str,
+        reason: &Component,
         registry: &PacketRegistry,
     ) -> Result<(), CoreError> {
-        let json = serde_json::json!({"text": reason}).to_string();
+        let version = self.protocol_version;
         match self.state {
             ConnectionState::Login => {
-                let pkt = CLoginDisconnect { reason: json };
+                let pkt = CLoginDisconnect {
+                    reason: text::json_for(reason, version),
+                };
                 self.send_packet(&pkt, registry).await.ok();
             }
             ConnectionState::Config => {
-                let reason_bytes = if self.protocol_version.less_than(ProtocolVersion::V1_20_3) {
-                    // 1.20.2: Chat component as VarInt-prefixed JSON string
-                    let mut buf = Vec::new();
-                    buf.write_string(&json)?;
-                    buf
+                let reason = if text::uses_nbt(version, ConnectionState::Config) {
+                    text::nbt_for(reason, version)
                 } else {
-                    // 1.20.3+: Network NBT text component
-                    Component::text(reason).to_nbt_network()
+                    let mut buf = Vec::new();
+                    buf.write_string(&text::json_for(reason, version))?;
+                    buf
                 };
-                let pkt = CConfigDisconnect {
-                    reason: reason_bytes,
-                };
+                let pkt = CConfigDisconnect { reason };
                 self.send_packet(&pkt, registry).await.ok();
             }
             ConnectionState::Play => {
-                let reason_bytes = if self.protocol_version.less_than(ProtocolVersion::V1_20_3) {
-                    // JSON bytes — CDisconnect.encode() adds the VarInt length prefix
-                    json.into_bytes()
-                } else {
-                    // 1.20.3+: Network NBT text component
-                    Component::text(reason).to_nbt_network()
-                };
                 let pkt = CDisconnect {
-                    reason: reason_bytes,
+                    reason: text::encode_text_component(reason, version, ConnectionState::Play),
                 };
                 self.send_packet(&pkt, registry).await.ok();
             }

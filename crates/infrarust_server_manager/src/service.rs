@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -56,6 +56,9 @@ pub(crate) struct ServerEntry {
     pub(crate) last_player_seen: Option<Instant>,
     /// Waiters: connections waiting for the server to become Online.
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
+    /// Set by a start request until the provider reports it starting or running:
+    /// before this deadline a `Stopped` poll means the panel has not caught up yet.
+    pub(crate) unconfirmed_start_until: Option<Instant>,
 }
 
 impl ServerEntry {
@@ -63,6 +66,17 @@ impl ServerEntry {
     pub(crate) fn set_state(&mut self, new_state: ServerState) {
         self.generation += 1;
         self.state = new_state;
+        self.unconfirmed_start_until = None;
+    }
+
+    pub(crate) fn begin_start(&mut self) {
+        self.set_state(ServerState::Starting);
+        self.unconfirmed_start_until = Some(Instant::now() + self.start_timeout);
+    }
+
+    fn is_unconfirmed_start(&self) -> bool {
+        self.unconfirmed_start_until
+            .is_some_and(|deadline| Instant::now() < deadline)
     }
 }
 
@@ -89,7 +103,7 @@ impl ServerManagerService {
                     Arc::new(LocalProvider::new(cfg.clone())),
                     cfg.shutdown_after,
                     cfg.start_timeout,
-                    Duration::from_secs(5),
+                    cfg.poll_interval,
                 ),
                 ServerManagerConfig::Pterodactyl(cfg) => (
                     Arc::new(PterodactylProvider::new(cfg, http_client.clone())),
@@ -116,6 +130,7 @@ impl ServerManagerService {
                     poll_interval,
                     last_player_seen: None,
                     waiters: Vec::new(),
+                    unconfirmed_start_until: None,
                 },
             );
 
@@ -149,6 +164,7 @@ impl ServerManagerService {
                 poll_interval,
                 last_player_seen: None,
                 waiters: Vec::new(),
+                unconfirmed_start_until: None,
             },
         );
     }
@@ -171,20 +187,20 @@ impl ServerManagerService {
     /// The callback receives `(server_id, old_state, new_state)`.
     pub fn add_on_state_change(&self, callback: StateChangeCallback) -> u64 {
         let id = self.next_listener_id.fetch_add(1, Ordering::Relaxed);
-        let mut listeners = self.listeners.write().expect("lock poisoned");
+        let mut listeners = self
+            .listeners
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         listeners.push((id, callback));
         id
     }
 
-    /// Removes a previously registered state change listener.
-    pub fn remove_on_state_change(&self, listener_id: u64) {
-        let mut listeners = self.listeners.write().expect("lock poisoned");
-        listeners.retain(|(id, _)| *id != listener_id);
-    }
-
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
         let snapshot = {
-            let listeners = self.listeners.read().expect("lock poisoned");
+            let listeners = self
+                .listeners
+                .read()
+                .unwrap_or_else(PoisonError::into_inner);
             listeners.clone()
         };
         for (_, callback) in &snapshot {
@@ -275,84 +291,38 @@ impl ServerManagerService {
                         action: "connect".to_string(),
                     });
                 }
-                ServerState::Sleeping | ServerState::Crashed => {
-                    // Need to start the server
-                    let provider = Arc::clone(&entry.provider);
-                    let old_state = entry.state;
-                    entry.set_state(ServerState::Starting);
-
-                    // Drop the lock before calling provider.start()
-                    let start_timeout = entry.start_timeout;
-                    let (tx, rx) = oneshot::channel();
-                    entry.waiters.push(tx);
-                    drop(entry);
-
-                    self.fire_state_change(server_id, old_state, ServerState::Starting);
-
-                    // Call start on the provider (lock-free)
-                    if let Err(e) = provider.start().await {
-                        tracing::error!(server = %server_id, "provider start failed: {e}");
-                        // Reset state
-                        if let Some(mut entry) = self.entries.get_mut(server_id) {
-                            entry.set_state(ServerState::Crashed);
-                            // Notify waiters of failure
-                            let waiters = std::mem::take(&mut entry.waiters);
-                            drop(entry);
-                            self.fire_state_change(
-                                server_id,
-                                ServerState::Starting,
-                                ServerState::Crashed,
-                            );
-                            for tx in waiters {
-                                let _ = tx.send(Err(ServerManagerError::Provider {
-                                    server_id: server_id.to_string(),
-                                    message: "start failed".to_string(),
-                                }));
-                            }
-                        }
-                        return Err(e);
-                    }
-
-                    (rx, start_timeout)
-                }
                 ServerState::Starting => {
-                    // Already starting — just add a waiter
                     let (tx, rx) = oneshot::channel();
                     let start_timeout = entry.start_timeout;
                     entry.waiters.push(tx);
                     (rx, start_timeout)
                 }
-                _ => {
-                    // Unknown — try to start
+                ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
-                    entry.set_state(ServerState::Starting);
+                    entry.begin_start();
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
                     entry.waiters.push(tx);
                     drop(entry);
 
                     self.fire_state_change(server_id, old_state, ServerState::Starting);
+
                     if let Err(e) = provider.start().await {
                         tracing::error!(server = %server_id, "provider start failed: {e}");
                         if let Some(mut entry) = self.entries.get_mut(server_id) {
                             entry.set_state(ServerState::Crashed);
-                            let waiters = std::mem::take(&mut entry.waiters);
                             drop(entry);
                             self.fire_state_change(
                                 server_id,
                                 ServerState::Starting,
                                 ServerState::Crashed,
                             );
-                            for tx in waiters {
-                                let _ = tx.send(Err(ServerManagerError::Provider {
-                                    server_id: server_id.to_string(),
-                                    message: "start failed".to_string(),
-                                }));
-                            }
                         }
+                        self.notify_waiters(server_id, &Err(e.clone()));
                         return Err(e);
                     }
+
                     (rx, start_timeout)
                 }
             }
@@ -399,7 +369,7 @@ impl ServerManagerService {
             }
 
             let old = entry.state;
-            entry.set_state(ServerState::Starting);
+            entry.begin_start();
             (Arc::clone(&entry.provider), old)
         };
 
@@ -514,6 +484,14 @@ impl ServerManagerService {
                 return None;
             }
 
+            match new_status {
+                ProviderStatus::Starting | ProviderStatus::Running => {
+                    entry.unconfirmed_start_until = None;
+                }
+                ProviderStatus::Stopped if entry.is_unconfirmed_start() => return None,
+                _ => {}
+            }
+
             let new_state = ServerState::from(new_status);
             let old_state = entry.state;
 
@@ -550,13 +528,7 @@ impl ServerManagerService {
                 tracing::debug!(server = %server_id, count, "notifying waiters");
             }
             for tx in waiters {
-                let _ = match result {
-                    Ok(()) => tx.send(Ok(())),
-                    Err(_) => tx.send(Err(ServerManagerError::Provider {
-                        server_id: server_id.to_string(),
-                        message: "server failed to start".to_string(),
-                    })),
-                };
+                let _ = tx.send(result.clone());
             }
         }
     }
@@ -570,7 +542,9 @@ impl ServerManagerService {
     pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)
-            .map_or(Duration::from_secs(5), |e| e.poll_interval)
+            .map_or_else(infrarust_config::defaults::poll_interval, |e| {
+                e.poll_interval
+            })
     }
 }
 
@@ -652,5 +626,46 @@ mod tests {
         let generation = service.generation("s").unwrap();
         let applied = service.update_state("s", ProviderStatus::Crashed, generation);
         assert_eq!(applied, Some((ServerState::Online, ServerState::Crashed)));
+    }
+
+    #[tokio::test]
+    async fn stopped_poll_during_unconfirmed_start_keeps_waiting() {
+        let service = service_with_online_server("s");
+        service.stop_server("s").await.unwrap();
+        service.start_server("s").await.unwrap();
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            None
+        );
+        assert_eq!(service.get_state("s"), Some(ServerState::Starting));
+
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Starting, generation),
+            None
+        );
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            Some((ServerState::Starting, ServerState::Sleeping))
+        );
+    }
+
+    #[tokio::test]
+    async fn stopped_poll_after_start_deadline_goes_to_sleep() {
+        let service = service_with_online_server("s");
+        service.stop_server("s").await.unwrap();
+        service.start_server("s").await.unwrap();
+        service
+            .entries
+            .get_mut("s")
+            .unwrap()
+            .unconfirmed_start_until = Some(Instant::now());
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            Some((ServerState::Starting, ServerState::Sleeping))
+        );
     }
 }

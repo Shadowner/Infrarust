@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::sync::LazyLock;
 
 use crate::codec::McBufWriteExt;
 use crate::codec::varint::VarInt;
@@ -37,6 +38,8 @@ impl Packet for CChunkData {
         V1_21_2 => 0x28,
         V1_21_5 => 0x27,
         V1_21_9 => 0x2C,
+        V26_1   => 0x2D,
+        V26_3   => 0x2E,
     ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {
@@ -47,41 +50,46 @@ impl Packet for CChunkData {
 
     fn encode(
         &self,
-        mut w: &mut (impl Write + ?Sized),
+        w: &mut (impl Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_i32_be(self.chunk_x)?;
         w.write_i32_be(self.chunk_z)?;
 
         if version.less_than(ProtocolVersion::V1_14) {
-            return encode_pre_1_14_empty_chunk(&mut w, version);
+            return encode_pre_1_14_empty_chunk(w, version);
         }
 
         let sections = encode_empty_chunk_sections(self.num_sections, version)?;
-        encode_empty_heightmaps(&mut w, version)?;
+        encode_empty_heightmaps(w, version)?;
         #[allow(clippy::cast_possible_truncation)]
         w.write_var_int(&VarInt(sections.len() as i32))?;
         w.write_all(&sections)?;
         w.write_var_int(&VarInt(0))?;
 
         if version.no_less_than(ProtocolVersion::V1_18) {
-            encode_light_data(&mut w, self.num_sections)?;
+            encode_light_data(w, self.num_sections, version)?;
         }
 
         Ok(())
     }
 }
 
-fn encode_pre_1_14_empty_chunk(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_pre_1_14_empty_chunk(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     w.write_u8(1)?;
 
     if version.less_than(ProtocolVersion::V1_8) {
         w.write_u16_be(0)?;
         w.write_u16_be(0)?;
-        let compressed = zlib_compress(&[0u8; 256]);
+        let compressed = EMPTY_CHUNK_1_7
+            .as_deref()
+            .ok_or_else(|| ProtocolError::invalid("could not compress the empty 1.7 chunk"))?;
         #[allow(clippy::cast_possible_truncation)]
         w.write_i32_be(compressed.len() as i32)?;
-        w.write_all(&compressed)?;
+        w.write_all(compressed)?;
     } else if version.less_than(ProtocolVersion::V1_9) {
         w.write_u16_be(0)?;
         w.write_var_int(&VarInt(256))?;
@@ -96,15 +104,16 @@ fn encode_pre_1_14_empty_chunk(w: &mut impl Write, version: ProtocolVersion) -> 
     Ok(())
 }
 
-fn zlib_compress(data: &[u8]) -> Vec<u8> {
+static EMPTY_CHUNK_1_7: LazyLock<Option<Vec<u8>>> =
+    LazyLock::new(|| zlib_compress(&[0u8; 256]).ok());
+
+fn zlib_compress(data: &[u8]) -> ProtocolResult<Vec<u8>> {
     use crate::io::compression::new_compressor;
 
-    let mut compressor = new_compressor(6);
+    let mut compressor = new_compressor(6)?;
     let mut out = Vec::new();
-    compressor
-        .compress(data, &mut out)
-        .expect("zlib compression should not fail");
-    out
+    compressor.compress(data, &mut out)?;
+    Ok(out)
 }
 
 fn encode_empty_chunk_sections(
@@ -118,7 +127,10 @@ fn encode_empty_chunk_sections(
     Ok(buf)
 }
 
-fn encode_empty_section(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_empty_section(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     let needs_data_length = version.less_than(ProtocolVersion::V1_21_5);
 
     w.write_i16_be(0)?;
@@ -137,7 +149,10 @@ fn encode_empty_section(w: &mut impl Write, version: ProtocolVersion) -> Protoco
     Ok(())
 }
 
-fn encode_empty_heightmaps(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_empty_heightmaps(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     if version.less_than(ProtocolVersion::V1_21_5) {
         encode_empty_heightmaps_nbt(w, version)
     } else {
@@ -145,7 +160,10 @@ fn encode_empty_heightmaps(w: &mut impl Write, version: ProtocolVersion) -> Prot
     }
 }
 
-fn encode_empty_heightmaps_nbt(w: &mut impl Write, version: ProtocolVersion) -> ProtocolResult<()> {
+fn encode_empty_heightmaps_nbt(
+    w: &mut (impl Write + ?Sized),
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     w.write_u8(0x0A)?;
     if version.less_than(ProtocolVersion::V1_20_2) {
         w.write_u16_be(0)?;
@@ -156,7 +174,7 @@ fn encode_empty_heightmaps_nbt(w: &mut impl Write, version: ProtocolVersion) -> 
     Ok(())
 }
 
-fn encode_empty_heightmaps_map(w: &mut impl Write) -> ProtocolResult<()> {
+fn encode_empty_heightmaps_map(w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
     w.write_var_int(&VarInt(3))?;
     for index in [1, 4, 5] {
         w.write_var_int(&VarInt(index))?;
@@ -168,7 +186,11 @@ fn encode_empty_heightmaps_map(w: &mut impl Write) -> ProtocolResult<()> {
     Ok(())
 }
 
-fn encode_nbt_long_array(w: &mut impl Write, name: &str, count: i32) -> ProtocolResult<()> {
+fn encode_nbt_long_array(
+    w: &mut (impl Write + ?Sized),
+    name: &str,
+    count: i32,
+) -> ProtocolResult<()> {
     w.write_u8(0x0C)?;
     let name_bytes = name.as_bytes();
     #[allow(clippy::cast_possible_truncation)]
@@ -181,8 +203,26 @@ fn encode_nbt_long_array(w: &mut impl Write, name: &str, count: i32) -> Protocol
     Ok(())
 }
 
-fn encode_light_data(w: &mut impl Write, num_sections: usize) -> ProtocolResult<()> {
+fn encode_light_data(
+    w: &mut (impl Write + ?Sized),
+    num_sections: usize,
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
     let total_bits = num_sections + 2;
+    if version.no_less_than(ProtocolVersion::V26_3) {
+        encode_light_masks_as_bytes(w, total_bits)?;
+    } else {
+        encode_light_masks_as_longs(w, total_bits)?;
+    }
+    w.write_var_int(&VarInt(0))?;
+    w.write_var_int(&VarInt(0))?;
+    Ok(())
+}
+
+fn encode_light_masks_as_longs(
+    w: &mut (impl Write + ?Sized),
+    total_bits: usize,
+) -> ProtocolResult<()> {
     let num_longs: usize = total_bits.div_ceil(64);
     let all_set: u64 = if total_bits >= 64 {
         u64::MAX
@@ -206,9 +246,28 @@ fn encode_light_data(w: &mut impl Write, num_sections: usize) -> ProtocolResult<
             w.write_u64_be(0)?;
         }
     }
+    Ok(())
+}
 
-    w.write_var_int(&VarInt(0))?;
-    w.write_var_int(&VarInt(0))?;
+fn encode_light_masks_as_bytes(
+    w: &mut (impl Write + ?Sized),
+    total_bits: usize,
+) -> ProtocolResult<()> {
+    let mut all_set = vec![0xFF_u8; total_bits.div_ceil(8)];
+    if let Some(last) = all_set.last_mut()
+        && !total_bits.is_multiple_of(8)
+    {
+        *last = (1_u8 << (total_bits % 8)) - 1;
+    }
+
+    for _ in 0..2 {
+        w.write_var_int(&VarInt(0))?;
+    }
+    for _ in 0..2 {
+        #[allow(clippy::cast_possible_truncation)]
+        w.write_var_int(&VarInt(all_set.len() as i32))?;
+        w.write_all(&all_set)?;
+    }
     Ok(())
 }
 
@@ -239,6 +298,44 @@ mod tests {
         build_default_registry()
             .get_packet_id::<CChunkData>(version)
             .unwrap()
+    }
+
+    #[test]
+    fn light_masks_are_long_arrays_before_26_3() {
+        let mut buf = Vec::new();
+        encode_light_data(&mut buf, 24, ProtocolVersion::V26_2).unwrap();
+        let mut expected = Vec::new();
+        for _ in 0..2 {
+            expected.push(0x01);
+            expected.extend_from_slice(&[0; 8]);
+        }
+        for _ in 0..2 {
+            expected.push(0x01);
+            expected.extend_from_slice(&0x03FF_FFFF_u64.to_be_bytes());
+        }
+        expected.extend_from_slice(&[0x00, 0x00]);
+        assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn light_masks_are_little_endian_bytes_from_26_3() {
+        let mut buf = Vec::new();
+        encode_light_data(&mut buf, 24, ProtocolVersion::V26_3).unwrap();
+        assert_eq!(
+            buf,
+            [
+                0x00, 0x00, 0x04, 0xFF, 0xFF, 0xFF, 0x03, 0x04, 0xFF, 0xFF, 0xFF, 0x03, 0x00, 0x00
+            ]
+        );
+
+        let mut whole_bytes = Vec::new();
+        encode_light_data(&mut whole_bytes, 22, ProtocolVersion::V26_3).unwrap();
+        assert_eq!(
+            whole_bytes,
+            [
+                0x00, 0x00, 0x03, 0xFF, 0xFF, 0xFF, 0x03, 0xFF, 0xFF, 0xFF, 0x00, 0x00
+            ]
+        );
     }
 
     #[test]

@@ -25,7 +25,7 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | `connect_max_attempts` | integer | `3` | Backend addresses tried before giving up. 0 = try them all |
 | `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream |
 | `servers_dir` | string | `"./servers"` | Path to the directory containing server TOML files |
-| `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files |
+| `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files. Only the files directly in it are loaded; subdirectories are not scanned |
 | `worker_threads` | integer | `0` | Number of tokio worker threads. 0 = auto (one per CPU core) |
 | `so_reuseport` | boolean | `false` | Enable `SO_REUSEPORT` socket option (Linux only) |
 | `unknown_domain_behavior` | string | `"default_motd"` | What to do when a player connects with an unknown domain. `"default_motd"` shows the default MOTD, `"drop"` silently closes the connection |
@@ -93,15 +93,42 @@ interval = "10s"
 retries = 3
 ```
 
+### `[active_health]`
+
+Background probing of backend addresses. Recovery probing brings ejected addresses back; probing healthy addresses is opt-in. Any server can replace the whole block with its own `active_health` table. See [Load balancing](../configuration/load-balancing#active-probing).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | boolean | `true` | Probe ejected addresses so they can recover |
+| `kind` | string | `"tcp"` | `"tcp"` (connect, then close) or `"status_ping"` (full Minecraft status exchange) |
+| `unhealthy_interval` | duration | `"10s"` | How often ejected addresses are checked |
+| `probe_healthy` | boolean | `false` | Also probe addresses that are currently healthy |
+| `interval` | duration | `"30s"` | Sweep interval when `probe_healthy` is set |
+| `timeout` | duration | `"3s"` | Timeout of one probe |
+| `max_concurrent` | integer | `8` | Probes in flight at once across the whole sweep. Read from the global block only |
+
+```toml
+[active_health]
+enabled = true
+kind = "tcp"
+unhealthy_interval = "10s"
+probe_healthy = false
+interval = "30s"
+timeout = "3s"
+max_concurrent = 8
+```
+
 ### `[ban]`
 
 Persistent ban system with automatic expiration.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `file` | string | `"bans.json"` | Path to the JSON file storing active bans |
+| `provider` | string | `"builtin"` | `"builtin"`, `"none"` (no ban checks) or the id of the plugin that provides bans |
+| `file` | string | `"bans.json"` | Path to the JSON file storing active bans (built-in provider) |
 | `purge_interval` | duration | `"300s"` | How often expired bans are purged from the file |
 | `enable_audit_log` | boolean | `true` | Log ban/unban operations |
+| `check_timeout` | duration | `"5s"` | How long a ban check may take. A login whose check runs out is refused; a ping is answered. Must be greater than zero |
 
 ```toml
 [ban]
@@ -112,10 +139,10 @@ enable_audit_log = true
 
 ### `[default_motd]`
 
-MOTD shown when a player pings a domain that doesn't match any server. Uses the same `[motd]` format described in the server config section below.
+MOTD shown when a player pings a domain that doesn't match any server. Uses the same `[motd]` format described in the server config section below. The unknown-domain response uses the `online` entry; `unreachable` is the fallback for a server that is unreachable and has neither its own `unreachable` entry nor a cached status. The other states are accepted but not used here.
 
 ```toml
-[default_motd.offline]
+[default_motd.online]
 text = "§cNo server found for this domain"
 version_name = "Infrarust"
 max_players = 0
@@ -206,9 +233,8 @@ Player info forwarding to the backend, the same mechanism Velocity and BungeeCor
 |--------|------|---------|-------------|
 | `mode` | string | `"none"` | Forwarding scheme: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"` |
 | `secret_file` | string | `"forwarding.secret"` | Path to the shared secret file for `velocity` and `bungee_guard`. Created automatically if absent |
-| `bungeecord_channel` | boolean | `true` | Handle BungeeCord plugin messaging channel requests |
 
-`mode` accepts two aliases for backward compatibility: `"legacy"` maps to `bungee_cord` and `"modern"` maps to `velocity`. A `[forwarding.channel_permissions]` sub-table controls which BungeeCord channel subchannels are answered (Connect, IP, PlayerCount, and similar); most are enabled by default while `ConnectOther`, `Message`, `MessageRaw`, `KickPlayer`, and `KickPlayerRaw` are off. See [Proxy forwarding](../configuration/proxy-forwarding) for the protocol details.
+`mode` accepts two aliases for backward compatibility: `"legacy"` maps to `bungee_cord` and `"modern"` maps to `velocity`. See [Proxy forwarding](../configuration/proxy-forwarding) for the protocol details. The former `bungeecord_channel` key and `[forwarding.channel_permissions]` sub-table still load but are ignored, with a warning: the BungeeCord plugin messaging channel moved to [`[plugin_messaging]`](#plugin-messaging).
 
 ```toml
 [forwarding]
@@ -244,12 +270,14 @@ Do not expose the web API on a non-loopback address without a strong `api_key`. 
 
 ### `[permissions]`
 
-Maps players to the admin permission level and grants Player-level access to specific `/ir` subcommands. The model has two levels only, Player and Admin, with Player < Admin.
+Chooses who answers permission questions and configures the built-in provider: admins hold every permission node, and `player_commands` opens chosen `/ir` subcommands to everyone. Read at startup; changes need a restart. See [Permissions](../configuration/security/permissions).
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `admins` | array of strings | `[]` | Players granted the Admin level (by name or UUID) |
-| `player_commands` | array of strings | `[]` | `/ir` subcommands made available to all players, not just admins |
+| `provider` | string | `"builtin"` | `"builtin"`, or the id of the plugin that provides permissions |
+| `admins` | array of strings | `[]` | Players holding `infrarust.admin` and every other node (by name or UUID) |
+| `player_commands` | array of strings | `[]` | `/ir` subcommands made available to all players, not just admins; `"*"` for every one that may be opened |
+| `trust_offline_admins` | bool | `false` | Let players who did not authenticate with Mojang be admins |
 
 ```toml
 [permissions]
@@ -257,21 +285,239 @@ admins = ["Notch", "00000000-0000-0000-0000-000000000000"]
 player_commands = ["list", "find"]
 ```
 
-### `[plugins.<id>]`
+### `[events]`
 
-Per-plugin configuration, keyed by plugin ID. Plugins are WASM components; if `path` is omitted the plugin is discovered from `plugins_dir`.
+Limits on plugin event listeners and transport filters. A listener that panics is skipped and the event continues with the next listener; a transport filter that panics or times out rejects its connection.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `path` | string | none | Explicit path to the plugin `.wasm` file. Omit to load it from `plugins_dir` |
-| `permissions` | array of strings | `[]` | Permissions granted to this plugin |
-| `enabled` | boolean | none | Whether the plugin is enabled. Treated as enabled when unset |
+| `handler_timeout` | duration | `"10s"` | Longest an async listener may run for a regular event before it is cancelled |
+| `slow_handler_threshold` | duration | `"1s"` | Listeners running longer than this are logged as slow |
+| `packet_handler_timeout` | duration | `"10s"` | Longest an async raw packet listener may run before it is cancelled |
+| `disconnect_deadline` | duration | `"15s"` | Longest the `DisconnectEvent` dispatch for one player may take, all listeners included. The player is removed from the registry when it ends or at the deadline. Also bounds how long a duplicate login waits for the previous session to end |
+| `transport_filter_timeout` | duration | `"5s"` | Longest a native transport filter's `on_accept` may run for one connection. A filter that runs out of time, or panics, rejects that connection |
+
+All five must be greater than zero. Synchronous listeners can't be cancelled; one that overruns is reported as slow.
+
+```toml
+[events]
+handler_timeout = "10s"
+slow_handler_threshold = "1s"
+packet_handler_timeout = "10s"
+disconnect_deadline = "15s"
+transport_filter_timeout = "5s"
+```
+
+### `[plugin_messaging]`
+
+The `BungeeCord` plugin messaging channel (`bungeecord:main` since 1.13) that backend plugins use to ask the proxy things. See [Plugin messaging](../plugins/dev/messaging#the-bungeecord-channel).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `bungeecord` | boolean | `false` | Answer BungeeCord channel requests from the servers that set `bungeecord_channel = true` |
+| `bungeecord_permissions` | table | see below | Which subchannels are answered |
+
+`bungeecord_permissions` has one boolean per subchannel: `connect`, `connect_other`, `ip`, `ip_other`, `player_count`, `player_list`, `get_servers`, `get_server`, `get_player_server`, `forward`, `forward_to_player`, `uuid`, `uuid_other`, `server_ip`, `message`, `message_raw`, `kick_player`, `kick_player_raw` (the subchannel names such as `KickPlayer` are accepted too). All are `true` except `connect_other`, `message`, `message_raw`, `kick_player` and `kick_player_raw`.
+
+```toml
+[plugin_messaging]
+bungeecord = true
+
+[plugin_messaging.bungeecord_permissions]
+connect_other = true
+```
+
+### `[auth]`
+
+Player authentication and identity.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `session_url` | string | `"https://sessionserver.mojang.com/session/minecraft/hasJoined"` | Session server `client_only` mode verifies joining players against. Any Yggdrasil-compatible `hasJoined` endpoint works |
+| `offline_uuid` | string | `"offline"` | UUID of players the session server does not verify (offline and passthrough servers, `ForceOffline`). `"offline"`: always the name-based offline UUID. `"client"`: the UUID from the client's login start packet when it sends one (1.19.1+), otherwise the name-based offline UUID. Never random |
+
+```toml
+[auth]
+session_url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+offline_uuid = "offline"
+```
+
+### `[wasm]`
+
+Sandbox limits for every WASM plugin. Each plugin handles one call at a time; its calls wait in a queue of `queue_capacity` entries.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `epoch_tick` | duration | `"1ms"` | How often the sandbox clock ticks. CPU budgets are counted in ticks during which the guest runs, rounded up, and a guest that runs past a tick yields its worker thread. Proxy-wide only |
+| `memory_limit_mb` | integer | `64` | Linear-memory cap per plugin, in MiB. Growing past it traps the plugin |
+| `cpu_budget` | duration | `"3s"` | CPU time one call into a plugin may use before it traps. Waiting on a host call does not count |
+| `codec_cpu_budget` | duration | `"5ms"` | CPU time for one codec filter call (`create`, `filter`, connection hooks, final drop) before it traps. A filter call holds a network worker thread, so this bounds what one call costs the other connections |
+| `host_call_timeout` | duration | `"30s"` | Longest a host call that waits on the proxy may take: server-manager `start` and `stop`, every ban-service call, `connect`, `transfer`, `request-cookie` and `refresh-permissions` on `players`, `fire-named`, `set-snapshot` and `release` on `permissions`, and the timeouts of each HTTP request. On expiry the plugin receives a `host-error` of kind `timeout`. `switch-server` has its own 250 ms cap |
+| `max_call_duration` | duration | `"60s"` | Wall-clock limit on one call into a plugin, host calls included. Past it the call is abandoned and the plugin's instance is replaced by a fresh one |
+| `queue_capacity` | integer | `1024` | Calls that may wait for a busy plugin. A call arriving at a full queue is refused immediately and logged as a rate-limited warning |
+| `cache_dir` | string | `"./cache/wasm"` | Directory of the AOT cache of compiled plugins, resolved from the working directory. Must not be `plugins_dir` or inside it. When it cannot be written, plugins are compiled in memory at each start with one warning. Proxy-wide only. See [AOT compilation and caching](../plugins/wasm/lifecycle#aot-compilation-and-caching) |
+
+Validation: `epoch_tick` must be between `1ms` and `1s`; `memory_limit_mb` between 1 and 4096; `cpu_budget` at least one `epoch_tick` and at most `1h`; `codec_cpu_budget`, `host_call_timeout` and `max_call_duration` greater than zero and at most `1h`; `queue_capacity` between 1 and 1048576; `cache_dir` not empty and outside `plugins_dir`. A `cpu_budget` longer than `max_call_duration`, and a `codec_cpu_budget` shorter than `epoch_tick` (a codec call then gets one tick), are accepted with a warning.
+
+A call still running at its deadline (`[events] handler_timeout` minus a margin for an event, `max_call_duration` after it was queued for a callback) is cut off and counts as a fault; an access event it served is denied. A call still queued at its deadline is skipped. See [WASM events](../plugins/wasm/events#a-listener-that-does-not-answer).
+
+```toml
+[wasm]
+epoch_tick = "1ms"
+memory_limit_mb = 64
+cpu_budget = "3s"
+codec_cpu_budget = "5ms"
+host_call_timeout = "30s"
+max_call_duration = "60s"
+queue_capacity = 1024
+cache_dir = "./cache/wasm"
+```
+
+#### `[wasm.recovery]`
+
+How the proxy recovers a WASM plugin after a fault (a trap, a call cut off by `max_call_duration`, or a panic in a host function during a call). The faulty instance is discarded and a fresh one is created from the compiled component, which runs `on_enable` again. See [Fault model](../plugins/wasm/fault-model).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `max_restarts` | integer | `5` | Fresh instances the proxy starts straight away within `window`. One more fault quarantines the plugin |
+| `window` | duration | `"5m"` | Sliding window over which restarts are counted |
+| `backoff_initial` | duration | `"1s"` | How long the first quarantine lasts. Each quarantine in a row doubles it. Also the pause between two attempts that could not create an instance |
+| `backoff_max` | duration | `"5m"` | Longest a quarantine lasts |
+
+While a plugin is quarantined every call to it is answered at once without running guest code: events keep their result, commands do nothing, limbo handlers deny the player. When the backoff has passed the proxy tries a fresh instance again.
+
+Validation: `max_restarts` at most 1000 (0 quarantines on the first fault); `window`, `backoff_initial` and `backoff_max` greater than zero and at most `24h`; `backoff_initial` no longer than `backoff_max`.
+
+```toml
+[wasm.recovery]
+max_restarts = 5
+window = "5m"
+backoff_initial = "1s"
+backoff_max = "5m"
+```
+
+#### `[wasm.codec_quarantine]`
+
+When a codec filter traps (a panic, running past `codec_cpu_budget`, running out of memory) for connections from one client address, the proxy counts it against that address and that filter. At `faults` traps within `window`, the filter is quarantined for the address: its live instances on that address's connections stop filtering and its new connections get no instance of the filter for the backoff. Their packets pass through unfiltered, or the connection is closed or refused for a filter the plugin declared required. Other addresses keep the filter. Each quarantine is logged as a warning with the plugin, the filter, the address, the time until retry and the cause. See [Codec filters](../plugins/wasm/codec-filters#quarantine).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `faults` | integer | `5` | Traps of one filter from one address that trigger a quarantine. `0` turns the quarantine off |
+| `window` | duration | `"10s"` | Sliding window over which the traps are counted |
+| `backoff_initial` | duration | `"10s"` | Length of the first quarantine of an address. A quarantine that follows a fault within `window` of the previous one ending doubles it |
+| `backoff_max` | duration | `"5m"` | Longest a quarantine lasts |
+
+Validation: `faults` at most 1000000; `window`, `backoff_initial` and `backoff_max` greater than zero and at most `24h`; `backoff_initial` no longer than `backoff_max`.
+
+```toml
+[wasm.codec_quarantine]
+faults = 5
+window = "10s"
+backoff_initial = "10s"
+backoff_max = "5m"
+```
+
+#### `[wasm.quotas]`
+
+How many registrations of each kind one WASM plugin may hold at the same time. A quota counts what the plugin holds now: unregistering, unsubscribing, cancelling, or a delay that has run frees room. A registration past a quota answers the guest a `host-error` of kind `limit-exceeded` and logs a warning naming the plugin and the quota, at most once a minute per quota for each plugin instance.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `event_listeners` | integer | `1024` | Event and named-event subscriptions, plus one per packet filter of each packet subscription |
+| `commands` | integer | `256` | Commands. Registering a held name again replaces it and takes no more room |
+| `scheduled_tasks` | integer | `1024` | Delays not yet run and intervals not cancelled |
+| `plugin_channels` | integer | `128` | Plugin messaging channels |
+| `codec_filters` | integer | `32` | Codec filter ids |
+| `limbo_handlers` | integer | `64` | Limbo handler names |
+| `permission_nodes` | integer | `256` | Permission nodes. Registering an owned node again updates it and takes no more room |
+
+After a fault, what the discarded instance held of listeners, tasks, commands and limbo handlers does not count against the fresh instance. Plugin channels, codec filters and permission nodes are kept across a recovery and keep counting.
+
+Validation: each quota between 1 and 1048576.
+
+```toml
+[wasm.quotas]
+event_listeners = 1024
+commands = 256
+scheduled_tasks = 1024
+plugin_channels = 128
+codec_filters = 32
+limbo_handlers = 64
+permission_nodes = 256
+```
+
+### `[plugins.<id>]`
+
+Per-plugin configuration, keyed by plugin ID. WASM plugins are discovered from `plugins_dir`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `path` | string | none | Accepted for compatibility. WASM plugins are always loaded from `plugins_dir` |
+| `permissions` | array of strings | `[]` | Capabilities granted on top of the baseline |
+| `deny` | array of strings | `[]` | Capabilities removed after the baseline and `permissions` are applied. A capability in both lists is denied. Also applies to compiled-in plugins |
+| `strict_capabilities` | boolean | `false` | WASM plugins: refuse to load the plugin when it imports a host function whose capability it lacks, instead of loading it with those calls refused |
+| `enabled` | boolean | `true` | Set to `false` to skip the plugin |
+
+Capability names are kebab-case (`player-write`, `codec-filter`, ...); unknown names in either list are ignored with a warning. See [Capabilities & Sandbox](../plugins/wasm/capabilities#capability-matrix).
 
 ```toml
 [plugins.auth]
-path = "./plugins/auth.wasm"
 permissions = ["limbo", "command"]
+deny = ["player-write"]
 enabled = true
+```
+
+#### `[plugins.<id>.wasm]`
+
+Overrides the `[wasm]` limits for one plugin. Accepts `memory_limit_mb`, `cpu_budget`, `codec_cpu_budget`, `host_call_timeout`, `max_call_duration` and `queue_capacity` (not `epoch_tick`, `instance_pool` or `cache_dir`, which are proxy-wide), a `recovery` table with any of the `[wasm.recovery]` keys, a `quotas` table with any of the `[wasm.quotas]` keys, and a `codec_quarantine` table with any of the `[wasm.codec_quarantine]` keys. A key left out keeps the `[wasm]` value. The same validation applies to the resulting limits.
+
+```toml
+[plugins.auth.wasm]
+memory_limit_mb = 128
+max_call_duration = "10s"
+
+[plugins.auth.wasm.recovery]
+max_restarts = 2
+
+[plugins.auth.wasm.quotas]
+commands = 512
+
+[plugins.auth.wasm.codec_quarantine]
+faults = 3
+```
+
+#### `[plugins.<id>.wasm.network]`
+
+Network access for a WASM plugin that has the `network` capability. Without the capability the table is ignored with a warning; with the capability and no rules, everything is refused. See [Network & Extra Folders](../plugins/wasm/network).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `allow` | array of strings | `[]` | `host:port` rules, checked against every address the plugin connects or sends to and every source it receives a UDP datagram or accepts a TCP connection from. Host: IPv4 address, `[IPv6]` address, IPv4 range `a.b.c.d/n`, IPv6 range `[x::/n]`, hostname, or `*.suffix` (HTTP only, subdomains only). Port: number, `a-b`, or `*`. A bare `*` host is rejected; write `0.0.0.0/0:*` or `[::/0]:*`. Parsed at load; a bad rule is a config error |
+| `dns` | boolean | `true` if `allow` has a hostname rule, else `false` | Let the guest resolve names (`wasi:sockets/ip-name-lookup`) |
+| `http` | boolean | `true` | Let the guest send requests with `wasi:http/outgoing-handler`, filtered by `allow` |
+
+```toml
+[plugins.libertybans.wasm.network]
+allow = ["127.0.0.1:5432", "10.0.0.0/8:3306", "[::1]:*", "db.internal:5432", "*.example.org:443", "10.1.2.3:8000-8100"]
+dns = true
+http = true
+```
+
+#### `[[plugins.<id>.wasm.mounts]]`
+
+Host folders mounted into a WASM plugin that has the `filesystem-extended` capability. Without the capability nothing is mounted and a warning is logged.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `host` | path | **required** | Host directory. Canonicalised when the plugin loads; a missing directory fails that plugin's load |
+| `guest` | string | **required** | Absolute path inside the guest. Must not be `/`, contain `.` or `..`, or equal or contain another mount's path |
+| `read_only` | boolean | `true` | Set to `false` to let the plugin write |
+
+```toml
+[[plugins.libertybans.wasm.mounts]]
+host = "/srv/libertybans/shared"
+guest = "/shared"
+read_only = true
 ```
 
 ---
@@ -287,7 +533,7 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `id` | string | from filename | Server identifier. Overridden by `name` if set |
 | `name` | string | none | Human-readable name. Becomes the server ID if set. Must match `[a-z0-9_-]+` |
 | `network` | string | none | Network group for server switching. Only servers in the same network can switch between each other. Omit to isolate the server |
-| `domains` | array of strings | `[]` | Domains that route to this server. Supports wildcards like `"*.mc.example.com"`. Empty means the server is only reachable via server switching |
+| `domains` | array of strings | `[]` | Domains that route to this server. Supports wildcards like `"*.mc.example.com"`. Required on `passthrough`, `zero_copy` and `server_only`, where an empty list fails validation. On `client_only` and `offline` an empty list means the server is only reachable via server switching, so it needs a `network` |
 | `addresses` | array | **required** | Backend addresses, each either `"host:port"` or `{ address = "host:port", weight = 3 }`. Port defaults to 25565 if omitted. Ordered by `balance` |
 | `balance` | string | `"first_available"` | Address selection strategy: `"first_available"`, `"round_robin"`, or `"least_conn"` |
 | `slow_start` | duration | none | Ramp a freshly healthy address up to full weight over this window, e.g. `"45s"` |
@@ -300,6 +546,7 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `max_players` | integer | `0` | Maximum players on this server. 0 = unlimited |
 | `disconnect_message` | string | `"Server is currently unreachable. Please try again later."` | Message sent to the player when the backend is unreachable |
 | `limbo_handlers` | array of strings | `[]` | Plugin IDs for limbo handler chain, executed in order |
+| `bungeecord_channel` | boolean | `false` | Answer this server's BungeeCord channel requests when `[plugin_messaging] bungeecord` is on. Only for `offline` and `client_only` |
 
 Minimal example:
 
@@ -332,6 +579,7 @@ limbo_handlers = ["server_wake"]
 | Client Only | `"client_only"` | Proxy handles Mojang authentication. Backend runs in `online_mode=false` |
 | Offline | `"offline"` | No authentication. Transparent relay with packet parsing |
 | Server Only | `"server_only"` | Authentication handled entirely by the backend |
+| Full | `"full"` | Accepted but not implemented: connections fall back to passthrough, with a warning logged for each one |
 
 ::: tip
 `passthrough`, `zero_copy`, and `server_only` forward raw bytes after the handshake. The proxy cannot inspect or modify packets in these modes.
@@ -359,7 +607,7 @@ Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unre
 text = "§aServer Online §7— Welcome"
 favicon = "./icon.png"
 
-[motd.offline]
+[motd.unreachable]
 text = "§cServer Offline"
 version_name = "Maintenance"
 max_players = 0
@@ -376,14 +624,12 @@ Server-specific timeout overrides. If omitted, the global `connect_timeout` appl
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `connect` | duration | `"5s"` | Backend connection timeout |
-| `read` | duration | `"30s"` | Read timeout on the backend socket |
-| `write` | duration | `"30s"` | Write timeout on the backend socket |
+| `read` | duration | `"30s"` | Accepted but has no effect: no read timeout is applied to the backend socket |
+| `write` | duration | `"30s"` | Accepted but has no effect: no write timeout is applied to the backend socket |
 
 ```toml
 [timeouts]
 connect = "10s"
-read = "60s"
-write = "60s"
 ```
 
 ### `[ip_filter]`
@@ -425,6 +671,7 @@ Launches a local process (typically `java` or `docker`).
 | `shutdown_timeout` | duration | `"30s"` | Time to wait for graceful shutdown |
 | `shutdown_after` | duration | none | Shut down the server after this idle duration. Omit to disable |
 | `start_timeout` | duration | `"60s"` | Maximum time to wait for the server to become ready |
+| `poll_interval` | duration | `"5s"` | How often to check the process state |
 
 ```toml
 [server_manager]
@@ -487,7 +734,7 @@ shutdown_after = "15m"
 
 ## Full example
 
-A complete `infrarust.toml` with all sections:
+A complete `infrarust.toml` with the main sections:
 
 ```toml
 bind = "0.0.0.0:25565"
@@ -522,7 +769,30 @@ file = "bans.json"
 purge_interval = "300s"
 enable_audit_log = true
 
-[default_motd.offline]
+[events]
+handler_timeout = "10s"
+slow_handler_threshold = "1s"
+packet_handler_timeout = "10s"
+disconnect_deadline = "15s"
+transport_filter_timeout = "5s"
+
+[wasm]
+memory_limit_mb = 64
+cpu_budget = "3s"
+max_call_duration = "60s"
+queue_capacity = 1024
+
+[wasm.recovery]
+max_restarts = 5
+window = "5m"
+backoff_initial = "1s"
+backoff_max = "5m"
+
+[wasm.quotas]
+commands = 256
+scheduled_tasks = 1024
+
+[default_motd.online]
 text = "§cNo server found for this domain"
 version_name = "Infrarust"
 max_players = 0
@@ -563,9 +833,12 @@ admins = ["Notch"]
 player_commands = ["list", "find"]
 
 [plugins.auth]
-path = "./plugins/auth.wasm"
 permissions = ["limbo", "command"]
+deny = ["player-write"]
 enabled = true
+
+[plugins.auth.wasm]
+memory_limit_mb = 128
 ```
 
 A server file (`servers/survival.toml`) using most options:
@@ -590,8 +863,6 @@ version_name = "Sleeping"
 
 [timeouts]
 connect = "10s"
-read = "60s"
-write = "60s"
 
 [ip_filter]
 blacklist = ["203.0.113.0/24"]

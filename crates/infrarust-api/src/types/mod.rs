@@ -6,25 +6,30 @@
 
 mod component;
 mod extensions;
+pub mod namespaced_key;
 mod player_id;
 mod protocol_version;
 mod raw_packet;
+mod revocation;
 mod server_id;
 
 pub use component::{
-    ClickEvent, Component, ComponentParseError, HoverEvent, TitleData, format_placeholders,
+    ClickEvent, Component, ComponentParseError, Content, Decoration, HoverEvent, IntoTextColor,
+    LEGACY_AMPERSAND, LEGACY_SECTION, MAX_COMPONENT_DEPTH, MAX_NBT_DEPTH, NamedColor, NbtSource,
+    ObjectContent, Style, TextColor, TitleData, format_placeholders,
 };
 pub use extensions::Extensions;
 pub use player_id::PlayerId;
 pub use protocol_version::ProtocolVersion;
 pub use raw_packet::RawPacket;
+pub use revocation::Revocation;
 pub use server_id::{ServerAddress, ServerId};
 
 /// A player's Mojang game profile.
 ///
 /// Contains the UUID, username, and profile properties (typically skin data)
 /// as received during the login handshake.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameProfile {
     /// The player's Mojang UUID.
     pub uuid: uuid::Uuid,
@@ -47,7 +52,7 @@ impl GameProfile {
 /// A single property on a [`GameProfile`].
 ///
 /// Typically contains skin texture data signed by Mojang.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileProperty {
     /// Property name (e.g. `"textures"`).
     pub name: String,

@@ -16,7 +16,7 @@ use crate::config::ApiConfig;
 use crate::drain_store::DrainStore;
 use crate::health_cache::HealthCache;
 use crate::health_checker::HealthChecker;
-use crate::log_layer::LogEntry;
+use crate::log_layer::LogBroadcast;
 use crate::rate_limit::RateLimiter;
 use crate::server_dir::{ProviderSenderSlot, ServerDir};
 
@@ -34,10 +34,7 @@ pub struct ApiState {
     pub event_tx: broadcast::Sender<ApiEvent>,
     pub shutdown: CancellationToken,
     pub proxy_shutdown: CancellationToken,
-    /// Log broadcast sender. `None` if `BroadcastLogLayer` is not installed.
-    pub log_tx: Option<broadcast::Sender<LogEntry>>,
-    /// Ring buffer of recent log entries. `None` if `BroadcastLogLayer` is not installed.
-    pub log_history: Option<Arc<Mutex<VecDeque<LogEntry>>>>,
+    pub logs: Option<LogBroadcast>,
     /// TOML documents for API-managed servers, under `<data_dir>/servers/`.
     pub server_dir: Arc<ServerDir>,
     /// Sender for emitting config provider events (Added/Updated/Removed).
@@ -76,6 +73,8 @@ pub enum ApiEvent {
         player_id: u64,
         username: String,
         last_server: Option<String>,
+        cause: String,
+        reason: Option<String>,
         timestamp: String,
     },
     PlayerSwitch {
@@ -92,6 +91,10 @@ pub enum ApiEvent {
         timestamp: String,
     },
     ConfigReload {
+        provider: String,
+        added: Vec<String>,
+        removed: Vec<String>,
+        updated: Vec<String>,
         timestamp: String,
     },
     BanCreated {
@@ -139,96 +142,62 @@ impl ApiEvent {
         }
     }
 
+    pub fn timestamp(&self) -> &str {
+        match self {
+            ApiEvent::PlayerJoin { timestamp, .. }
+            | ApiEvent::PlayerLeave { timestamp, .. }
+            | ApiEvent::PlayerSwitch { timestamp, .. }
+            | ApiEvent::ServerStateChange { timestamp, .. }
+            | ApiEvent::ConfigReload { timestamp, .. }
+            | ApiEvent::BanCreated { timestamp, .. }
+            | ApiEvent::BanRemoved { timestamp, .. }
+            | ApiEvent::BackendHealthChange { timestamp, .. }
+            | ApiEvent::StatsTick { timestamp, .. } => timestamp,
+        }
+    }
+
     /// Convert to a summarized event for the activity feed.
     /// Returns `None` for events that shouldn't appear in the feed (e.g. stats ticks).
     pub fn to_recent(&self) -> Option<RecentEvent> {
-        let (event_type, summary, timestamp) = match self {
+        let summary = match self {
             ApiEvent::PlayerJoin {
-                username,
-                server,
-                timestamp,
-                ..
+                username, server, ..
             } => {
                 let srv = if server.is_empty() {
                     String::new()
                 } else {
                     format!(" {server}")
                 };
-                (
-                    "player.join",
-                    format!("{username} joined{srv}"),
-                    timestamp.clone(),
-                )
+                format!("{username} joined{srv}")
             }
-            ApiEvent::PlayerLeave {
-                username,
-                timestamp,
-                ..
-            } => (
-                "player.leave",
-                format!("{username} disconnected"),
-                timestamp.clone(),
-            ),
+            ApiEvent::PlayerLeave { username, .. } => format!("{username} disconnected"),
             ApiEvent::PlayerSwitch {
                 username,
                 to_server,
-                timestamp,
                 ..
-            } => (
-                "player.switch",
-                format!("{username} switched to {to_server}"),
-                timestamp.clone(),
-            ),
+            } => format!("{username} switched to {to_server}"),
             ApiEvent::ServerStateChange {
                 server_id,
                 old_state,
                 new_state,
-                timestamp,
-            } => (
-                "server.state_change",
-                format!("{server_id}: {old_state} → {new_state}"),
-                timestamp.clone(),
-            ),
-            ApiEvent::ConfigReload { timestamp } => (
-                "config.reload",
-                "Config reloaded".to_string(),
-                timestamp.clone(),
-            ),
+                ..
+            } => format!("{server_id}: {old_state} → {new_state}"),
+            ApiEvent::ConfigReload { .. } => "Config reloaded".to_string(),
             ApiEvent::BanCreated {
                 target_type,
                 target_value,
-                timestamp,
                 ..
-            } => (
-                "ban.created",
-                format!("Banned {target_value} ({target_type})"),
-                timestamp.clone(),
-            ),
-            ApiEvent::BanRemoved {
-                target_type: _,
-                target_value,
-                timestamp,
-            } => (
-                "ban.removed",
-                format!("Unbanned {target_value}"),
-                timestamp.clone(),
-            ),
-            ApiEvent::BackendHealthChange {
-                address,
-                state,
-                timestamp,
-                ..
-            } => (
-                "backend.health_change",
-                format!("Backend {address} is {state}"),
-                timestamp.clone(),
-            ),
-            ApiEvent::StatsTick { .. } => return None, // Too noisy for activity feed
+            } => format!("Banned {target_value} ({target_type})"),
+            ApiEvent::BanRemoved { target_value, .. } => format!("Unbanned {target_value}"),
+            ApiEvent::BackendHealthChange { address, state, .. } => {
+                format!("Backend {address} is {state}")
+            }
+            ApiEvent::StatsTick { .. } => return None,
         };
         Some(RecentEvent {
-            event_type: event_type.to_string(),
+            event_type: self.event_type().to_string(),
             summary,
-            timestamp,
+            timestamp: self.timestamp().to_string(),
         })
     }
 }

@@ -9,7 +9,7 @@ fn decode_plugin_message(r: &mut &[u8]) -> ProtocolResult<(String, Vec<u8>)> {
 }
 
 fn encode_plugin_message(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     channel: &str,
     data: &[u8],
 ) -> ProtocolResult<()> {

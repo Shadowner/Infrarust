@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
-ARG RUST_VERSION=1.94
-ARG ALPINE_VERSION=3.21
-ARG NODE_VERSION=22
+ARG RUST_VERSION=1.99.0
+ARG ALPINE_VERSION=3.24
+ARG NODE_VERSION=24.21.0
 
 # Stage 1: Build the admin frontend
-FROM docker.io/library/node:${NODE_VERSION}-alpine AS frontend-builder
+FROM docker.io/library/node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS frontend-builder
 
 WORKDIR /frontend
 COPY plugins/infrarust-plugin-admin-api/frontend/ ./
@@ -28,7 +28,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY plugins/ ./plugins/
 COPY tools/ ./tools/
-COPY data/ ./data/
 
 COPY --from=frontend-builder /frontend/.output/public/ \
      ./plugins/infrarust-plugin-admin-api/frontend/.output/public/
@@ -60,11 +59,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp "target/$TARGET/release/infrarust" /usr/local/bin/infrarust && \
     echo "Build completed successfully"
 
+RUN mkdir -p /image-root/app/cache/wasm && \
+    chown -R 65532:65532 /image-root/app/cache && \
+    chmod 0700 /image-root/app/cache /image-root/app/cache/wasm
+
 # Stage 3: Runtime
 FROM scratch AS runtime
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/local/bin/infrarust /sbin/infrarust
+COPY --from=builder /image-root/app /app
 
 WORKDIR /app
 VOLUME ["/app/config"]

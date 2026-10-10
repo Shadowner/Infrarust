@@ -37,6 +37,7 @@ pub enum DrainStoreError {
 pub struct DrainStore {
     path: PathBuf,
     drained: Mutex<Drained>,
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 /// Rewrites every key the way [`format_address`] renders it, so that two
@@ -79,6 +80,7 @@ impl DrainStore {
         Self {
             path,
             drained: Mutex::new(canonicalize(drained)),
+            write_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -90,6 +92,7 @@ impl DrainStore {
         drained: bool,
     ) -> Result<(), DrainStoreError> {
         let key = format_address(address);
+        let _guard = self.write_lock.lock().await;
         let snapshot = {
             let mut entries = self.drained.lock().unwrap_or_else(|p| p.into_inner());
             if drained {
@@ -107,6 +110,7 @@ impl DrainStore {
     }
 
     pub async fn forget(&self, server: &str) -> Result<(), DrainStoreError> {
+        let _guard = self.write_lock.lock().await;
         let snapshot = {
             let mut entries = self.drained.lock().unwrap_or_else(|p| p.into_inner());
             if entries.remove(server).is_none() {
@@ -174,6 +178,7 @@ pub async fn reapply(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn addr(raw: &str) -> ServerAddress {
@@ -292,6 +297,29 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_drains_all_reach_the_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(DrainStore::open(dir.path()));
+
+        let writers: Vec<_> = (1..=32)
+            .map(|i| {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    store
+                        .set("lobby", &addr(&format!("10.0.0.{i}:25565")), true)
+                        .await
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.await.unwrap().unwrap();
+        }
+
+        assert_eq!(DrainStore::open(dir.path()).entries().len(), 32);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

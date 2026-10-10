@@ -22,6 +22,7 @@ pub struct CJoinGame {
     pub is_debug: bool,
     pub is_flat: bool,
     pub dimension: i32,
+    pub dimension_type: String,
     pub portal_cooldown: i32,
     pub sea_level: i32,
     pub enforces_secure_chat: bool,
@@ -50,6 +51,7 @@ impl Default for CJoinGame {
             is_debug: false,
             is_flat: false,
             dimension: 0,
+            dimension_type: String::new(),
             portal_cooldown: 0,
             sea_level: 63,
             enforces_secure_chat: false,
@@ -84,6 +86,7 @@ impl Packet for CJoinGame {
         V1_21_5 => 0x2B,
         V1_21_9 => 0x30,
         V26_1   => 0x31,
+        V26_3   => 0x32,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
@@ -103,7 +106,7 @@ impl Packet for CJoinGame {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_i32_be(self.entity_id)?;
@@ -124,7 +127,7 @@ fn decode_1_20_2_up(
 ) -> ProtocolResult<CJoinGame> {
     let is_hardcore = r.read_bool()?;
 
-    let level_count = r.read_var_int()?.0 as usize;
+    let level_count = r.read_count("level count")?;
     let mut level_names = Vec::with_capacity(level_count.min(64));
     for _ in 0..level_count {
         level_names.push(r.read_string()?);
@@ -137,17 +140,15 @@ fn decode_1_20_2_up(
     let enable_respawn_screen = r.read_bool()?;
     let do_limited_crafting = r.read_bool()?;
 
-    let dimension = if version.no_less_than(ProtocolVersion::V1_21_2) {
-        r.read_var_int()?.0
+    let (dimension, dimension_type) = if version.no_less_than(ProtocolVersion::V1_21_2) {
+        (r.read_var_int()?.0, String::new())
     } else {
-        let _dim_key = r.read_string()?;
-        0
+        (0, r.read_string()?)
     };
 
     let level_name = r.read_string()?;
     let hashed_seed = r.read_i64_be()?;
-    let gamemode = r.read_u8()?;
-    let previous_gamemode = r.read_i8()?;
+    let (gamemode, previous_gamemode) = super::common::decode_game_modes(r, version)?;
     let is_debug = r.read_bool()?;
     let is_flat = r.read_bool()?;
 
@@ -177,6 +178,7 @@ fn decode_1_20_2_up(
         is_debug,
         is_flat,
         dimension,
+        dimension_type,
         portal_cooldown,
         sea_level,
         enforces_secure_chat,
@@ -188,7 +190,7 @@ fn decode_1_20_2_up(
 
 fn encode_1_20_2_up(
     pkt: &CJoinGame,
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
     w.write_bool(pkt.is_hardcore)?;
@@ -208,13 +210,12 @@ fn encode_1_20_2_up(
     if version.no_less_than(ProtocolVersion::V1_21_2) {
         w.write_var_int(&VarInt(pkt.dimension))?;
     } else {
-        w.write_string(&pkt.level_name)?;
+        w.write_string(&pkt.dimension_type)?;
     }
 
     w.write_string(&pkt.level_name)?;
     w.write_i64_be(pkt.hashed_seed)?;
-    w.write_u8(pkt.gamemode)?;
-    w.write_i8(pkt.previous_gamemode)?;
+    super::common::encode_game_modes(w, pkt.gamemode, pkt.previous_gamemode, version)?;
     w.write_bool(pkt.is_debug)?;
     w.write_bool(pkt.is_flat)?;
 
@@ -232,16 +233,10 @@ fn encode_1_20_2_up(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::packets::round_trip;
 
-    fn round_trip_version(packet: &CJoinGame, version: ProtocolVersion) -> CJoinGame {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        CJoinGame::decode(&mut buf.as_slice(), version).unwrap()
-    }
-
-    #[test]
-    fn test_join_game_round_trip_modern() {
-        let pkt = CJoinGame {
+    fn modern_fixture() -> CJoinGame {
+        CJoinGame {
             entity_id: 42,
             is_hardcore: true,
             gamemode: 1,
@@ -261,74 +256,41 @@ mod tests {
             is_debug: false,
             is_flat: false,
             dimension: 0,
+            dimension_type: "minecraft:overworld".to_string(),
             portal_cooldown: 20,
             sea_level: 63,
             enforces_secure_chat: true,
             death_dimension: None,
             death_position: None,
             raw_payload: None,
-        };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21);
-        assert_eq!(decoded.entity_id, 42);
-        assert!(decoded.is_hardcore);
-        assert_eq!(decoded.gamemode, 1);
-        assert_eq!(decoded.previous_gamemode, 0);
-        assert_eq!(decoded.max_players, 100);
-        assert_eq!(decoded.view_distance, 16);
-        assert_eq!(decoded.simulation_distance, 12);
-        assert!(decoded.enable_respawn_screen);
-        assert_eq!(decoded.level_names.len(), 2);
-        assert_eq!(decoded.level_name, "minecraft:overworld");
-        assert_eq!(decoded.hashed_seed, 123_456_789);
-        assert_eq!(decoded.portal_cooldown, 20);
-        assert!(decoded.enforces_secure_chat);
-        assert!(decoded.raw_payload.is_none());
+        }
     }
 
     #[test]
-    fn test_join_game_round_trip_1_20_2() {
-        let pkt = CJoinGame {
-            entity_id: 42,
-            is_hardcore: true,
-            gamemode: 1,
-            previous_gamemode: 0,
-            max_players: 100,
-            view_distance: 16,
-            simulation_distance: 12,
-            reduced_debug_info: false,
-            enable_respawn_screen: true,
-            do_limited_crafting: false,
-            level_names: vec![
-                "minecraft:overworld".to_string(),
-                "minecraft:the_nether".to_string(),
-            ],
-            level_name: "minecraft:overworld".to_string(),
-            hashed_seed: 123_456_789,
-            is_debug: false,
-            is_flat: false,
-            dimension: 0,
-            portal_cooldown: 20,
-            sea_level: 63,
-            enforces_secure_chat: true,
-            death_dimension: None,
-            death_position: None,
-            raw_payload: None,
-        };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_2);
-        assert_eq!(decoded.entity_id, 42);
-        assert!(decoded.is_hardcore);
-        assert_eq!(decoded.gamemode, 1);
-        assert_eq!(decoded.previous_gamemode, 0);
-        assert_eq!(decoded.max_players, 100);
-        assert_eq!(decoded.view_distance, 16);
-        assert_eq!(decoded.simulation_distance, 12);
-        assert!(decoded.enable_respawn_screen);
-        assert_eq!(decoded.level_names.len(), 2);
-        assert_eq!(decoded.level_name, "minecraft:overworld");
-        assert_eq!(decoded.hashed_seed, 123_456_789);
-        assert_eq!(decoded.portal_cooldown, 20);
-        assert!(!decoded.enforces_secure_chat);
-        assert!(decoded.raw_payload.is_none());
+    fn test_join_game_round_trip_1_20_2_and_up() {
+        for (version, enforces_secure_chat) in [
+            (ProtocolVersion::V1_20_2, false),
+            (ProtocolVersion::V1_21, true),
+        ] {
+            let decoded = round_trip(&modern_fixture(), version);
+            assert_eq!(decoded.entity_id, 42, "{version}");
+            assert!(decoded.is_hardcore, "{version}");
+            assert_eq!(decoded.gamemode, 1, "{version}");
+            assert_eq!(decoded.previous_gamemode, 0, "{version}");
+            assert_eq!(decoded.max_players, 100, "{version}");
+            assert_eq!(decoded.view_distance, 16, "{version}");
+            assert_eq!(decoded.simulation_distance, 12, "{version}");
+            assert!(decoded.enable_respawn_screen, "{version}");
+            assert_eq!(decoded.level_names.len(), 2, "{version}");
+            assert_eq!(decoded.level_name, "minecraft:overworld", "{version}");
+            assert_eq!(decoded.hashed_seed, 123_456_789, "{version}");
+            assert_eq!(decoded.portal_cooldown, 20, "{version}");
+            assert_eq!(
+                decoded.enforces_secure_chat, enforces_secure_chat,
+                "{version}"
+            );
+            assert!(decoded.raw_payload.is_none(), "{version}");
+        }
     }
 
     #[test]
@@ -337,7 +299,7 @@ mod tests {
             entity_id: -12345,
             ..Default::default()
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(decoded.entity_id, -12345);
     }
 
@@ -367,7 +329,7 @@ mod tests {
             level_name: "minecraft:overworld".to_string(),
             ..Default::default()
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(
             decoded.death_dimension.as_deref(),
             Some("minecraft:the_nether")
@@ -384,7 +346,41 @@ mod tests {
             level_name: "minecraft:overworld".to_string(),
             ..Default::default()
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21_2);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_21_2);
         assert_eq!(decoded.sea_level, 128);
+    }
+
+    #[test]
+    fn test_join_game_keeps_custom_dimension_type_below_1_21_2() {
+        let pkt = CJoinGame {
+            entity_id: 7,
+            level_names: vec!["world_nether".to_string()],
+            level_name: "world_nether".to_string(),
+            dimension_type: "minecraft:the_nether".to_string(),
+            ..Default::default()
+        };
+        let version = ProtocolVersion::V1_20_2;
+        let mut first = Vec::new();
+        pkt.encode(&mut first, version).unwrap();
+        let decoded = CJoinGame::decode(&mut first.as_slice(), version).unwrap();
+        assert_eq!(decoded.dimension_type, "minecraft:the_nether");
+        assert_eq!(decoded.level_name, "world_nether");
+        let mut second = Vec::new();
+        decoded.encode(&mut second, version).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_join_game_rejects_negative_level_count() {
+        let mut buf = Vec::new();
+        buf.write_i32_be(1).unwrap();
+        buf.write_bool(false).unwrap();
+        buf.write_var_int(&VarInt(-1)).unwrap();
+        buf.extend_from_slice(&[0u8; 64]);
+        let err = CJoinGame::decode(&mut buf.as_slice(), ProtocolVersion::V1_20_2).unwrap_err();
+        assert!(
+            matches!(&err, crate::error::ProtocolError::Invalid { context } if context.contains("negative")),
+            "{err}"
+        );
     }
 }

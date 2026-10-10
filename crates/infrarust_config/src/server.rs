@@ -100,6 +100,9 @@ pub struct ServerConfig {
     /// Limbo handler chain for this server (plugin IDs, executed in order).
     #[serde(default)]
     pub limbo_handlers: Vec<String>,
+
+    #[serde(default)]
+    pub bungeecord_channel: bool,
 }
 
 impl ServerConfig {

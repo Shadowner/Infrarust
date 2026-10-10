@@ -6,7 +6,7 @@ const { supportedVersions } = nmpVersion;
 export const INFRARUST_SUPPORTED = [
   4, 5, 47, 107, 109, 110, 335, 338, 340, 393, 477, 573, 735, 751, 754, 755, 757,
   758, 759, 760, 761, 762, 763, 764, 765, 766, 767, 768, 769, 770, 771, 772, 773,
-  774, 775, 776,
+  774, 775, 776, 777,
 ];
 
 export function allVersions() {

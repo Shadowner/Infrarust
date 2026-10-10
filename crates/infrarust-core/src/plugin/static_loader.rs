@@ -9,46 +9,29 @@ use infrarust_api::plugin::{Plugin, PluginMetadata};
 
 use super::context_factory::PluginContextFactory;
 use super::loader::{LoaderError, PluginLoader};
+use crate::util::sync::{read, write};
 
-pub trait PluginFactory: Send + Sync {
-    fn metadata(&self) -> PluginMetadata;
-    fn create(&self) -> Box<dyn Plugin>;
-}
+type PluginConstructor = Box<dyn Fn() -> Box<dyn Plugin> + Send + Sync>;
 
-/// A [`PluginFactory`] backed by a closure.
-struct FnPluginFactory<F>
-where
-    F: Fn() -> Box<dyn Plugin> + Send + Sync,
-{
+struct StaticPlugin {
     metadata: PluginMetadata,
-    factory: F,
+    construct: PluginConstructor,
 }
 
-impl<F> PluginFactory for FnPluginFactory<F>
-where
-    F: Fn() -> Box<dyn Plugin> + Send + Sync,
-{
-    fn metadata(&self) -> PluginMetadata {
-        self.metadata.clone()
-    }
-
-    fn create(&self) -> Box<dyn Plugin> {
-        (self.factory)()
-    }
+#[derive(Default)]
+struct Registered {
+    in_order: Vec<StaticPlugin>,
+    by_id: HashMap<String, usize>,
 }
 
-/// Plugin loader for statically compiled plugins (Cargo features).
-///
-/// Plugins are registered explicitly via [`register()`](Self::register).
-/// The `plugin_dir` argument in [`discover()`](PluginLoader::discover) is ignored.
 pub struct StaticPluginLoader {
-    factories: RwLock<HashMap<String, Box<dyn PluginFactory>>>,
+    plugins: RwLock<Registered>,
 }
 
 impl StaticPluginLoader {
     pub fn new() -> Self {
         Self {
-            factories: RwLock::new(HashMap::new()),
+            plugins: RwLock::new(Registered::default()),
         }
     }
 
@@ -59,26 +42,29 @@ impl StaticPluginLoader {
         F: Fn() -> Box<dyn Plugin> + Send + Sync + 'static,
     {
         let id = metadata.id.clone();
-        let plugin_factory = FnPluginFactory { metadata, factory };
-
-        let mut factories = self.factories.write().expect("lock poisoned");
-        if factories.contains_key(&id) {
-            panic!("Duplicate static plugin id: {id}");
-        }
-        factories.insert(id, Box::new(plugin_factory));
+        let mut plugins = write(&self.plugins);
+        assert!(
+            !plugins.by_id.contains_key(&id),
+            "Duplicate static plugin id: {id}"
+        );
+        let index = plugins.in_order.len();
+        plugins.by_id.insert(id, index);
+        plugins.in_order.push(StaticPlugin {
+            metadata,
+            construct: Box::new(factory),
+        });
     }
 
     pub fn registered_count(&self) -> usize {
-        self.factories.read().expect("lock poisoned").len()
+        read(&self.plugins).in_order.len()
     }
 
     #[must_use]
     pub fn registered_ids(&self) -> Vec<String> {
-        self.factories
-            .read()
-            .expect("lock poisoned")
-            .keys()
-            .cloned()
+        read(&self.plugins)
+            .in_order
+            .iter()
+            .map(|plugin| plugin.metadata.id.clone())
             .collect()
     }
 }
@@ -99,9 +85,11 @@ impl PluginLoader for StaticPluginLoader {
         _plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>> {
         Box::pin(async {
-            let factories = self.factories.read().expect("lock poisoned");
-            let metadatas = factories.values().map(|f| f.metadata()).collect();
-            Ok(metadatas)
+            Ok(read(&self.plugins)
+                .in_order
+                .iter()
+                .map(|plugin| plugin.metadata.clone())
+                .collect())
         })
     }
 
@@ -111,13 +99,15 @@ impl PluginLoader for StaticPluginLoader {
         _context_factory: &'a dyn PluginContextFactory,
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
-            let factories = self.factories.read().expect("lock poisoned");
-            let factory = factories
+            let plugins = read(&self.plugins);
+            let plugin = plugins
+                .by_id
                 .get(plugin_id)
+                .and_then(|&index| plugins.in_order.get(index))
                 .ok_or_else(|| LoaderError::PluginNotFound {
                     plugin_id: plugin_id.to_string(),
                 })?;
-            Ok(factory.create())
+            Ok((plugin.construct)())
         })
     }
 
@@ -130,183 +120,18 @@ impl PluginLoader for StaticPluginLoader {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use infrarust_api::error::PluginError;
-    use infrarust_api::plugin::PluginContext;
+    use crate::test_support::{MockPluginContextFactory, TestPlugin};
 
     use super::*;
-
-    struct TestPlugin {
-        id: String,
-        enabled: Arc<AtomicBool>,
-    }
-
-    impl Plugin for TestPlugin {
-        fn metadata(&self) -> PluginMetadata {
-            PluginMetadata::new(&self.id, &self.id, "0.1.0")
-        }
-
-        fn on_enable<'a>(
-            &'a self,
-            _ctx: &'a dyn PluginContext,
-        ) -> BoxFuture<'a, Result<(), PluginError>> {
-            self.enabled.store(true, Ordering::Relaxed);
-            Box::pin(async { Ok(()) })
-        }
-
-        fn on_disable(&self) -> BoxFuture<'_, Result<(), PluginError>> {
-            self.enabled.store(false, Ordering::Relaxed);
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    struct MockPluginContext {
-        plugin_id: String,
-        capabilities: infrarust_api::permissions::CapabilitySet,
-    }
-
-    impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
-
-    impl PluginContext for MockPluginContext {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
-        fn event_bus(&self) -> &dyn infrarust_api::event::bus::EventBus {
-            unimplemented!("mock")
-        }
-
-        fn player_registry(&self) -> &dyn infrarust_api::services::player_registry::PlayerRegistry {
-            unimplemented!("mock")
-        }
-
-        fn player_registry_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::player_registry::PlayerRegistry> {
-            unimplemented!("mock")
-        }
-
-        fn server_manager(&self) -> &dyn infrarust_api::services::server_manager::ServerManager {
-            unimplemented!("mock")
-        }
-
-        fn ban_service(&self) -> &dyn infrarust_api::services::ban_service::BanService {
-            unimplemented!("mock")
-        }
-
-        fn config_service(&self) -> &dyn infrarust_api::services::config_service::ConfigService {
-            unimplemented!("mock")
-        }
-
-        fn command_manager(&self) -> &dyn infrarust_api::command::CommandManager {
-            unimplemented!("mock")
-        }
-
-        fn scheduler(&self) -> &dyn infrarust_api::services::scheduler::Scheduler {
-            unimplemented!("mock")
-        }
-
-        fn register_limbo_handler(&self, _handler: Box<dyn infrarust_api::limbo::LimboHandler>) {
-            unimplemented!("mock")
-        }
-
-        fn register_config_provider(
-            &self,
-            _provider: Box<dyn infrarust_api::provider::PluginConfigProvider>,
-        ) {
-            // no-op for tests
-        }
-
-        fn codec_filters(
-            &self,
-        ) -> Option<&dyn infrarust_api::filter::registry::CodecFilterRegistry> {
-            None
-        }
-
-        fn transport_filters(
-            &self,
-        ) -> Option<&dyn infrarust_api::filter::registry::TransportFilterRegistry> {
-            None
-        }
-
-        fn plugin_id(&self) -> &str {
-            &self.plugin_id
-        }
-        fn data_dir(&self) -> std::path::PathBuf {
-            std::path::PathBuf::from("plugins").join(&self.plugin_id)
-        }
-        fn plugin_registry(&self) -> &dyn infrarust_api::services::plugin_registry::PluginRegistry {
-            unimplemented!("mock")
-        }
-        fn plugin_registry_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::plugin_registry::PluginRegistry> {
-            unimplemented!("mock")
-        }
-        fn server_manager_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::server_manager::ServerManager> {
-            unimplemented!("mock")
-        }
-        fn ban_service_handle(&self) -> Arc<dyn infrarust_api::services::ban_service::BanService> {
-            unimplemented!("mock")
-        }
-        fn config_service_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::config_service::ConfigService> {
-            unimplemented!("mock")
-        }
-        fn load_balancer_service(
-            &self,
-        ) -> &dyn infrarust_api::services::load_balancer::LoadBalancerService {
-            unimplemented!("mock")
-        }
-        fn load_balancer_service_handle(
-            &self,
-        ) -> Arc<dyn infrarust_api::services::load_balancer::LoadBalancerService> {
-            unimplemented!("mock")
-        }
-        fn event_bus_handle(&self) -> Arc<dyn infrarust_api::event::bus::EventBus> {
-            unimplemented!("mock")
-        }
-        fn proxy_shutdown(&self) -> tokio_util::sync::CancellationToken {
-            tokio_util::sync::CancellationToken::new()
-        }
-        fn proxy_info(&self) -> &infrarust_api::services::proxy_info::ProxyInfo {
-            unimplemented!("mock")
-        }
-        fn capabilities(&self) -> &infrarust_api::permissions::CapabilitySet {
-            &self.capabilities
-        }
-    }
-
-    struct MockPluginContextFactory;
-
-    impl PluginContextFactory for MockPluginContextFactory {
-        fn create_context(&self, plugin_id: &str) -> Arc<dyn PluginContext> {
-            Arc::new(MockPluginContext {
-                plugin_id: plugin_id.to_string(),
-                capabilities: infrarust_api::permissions::CapabilitySet::native_trusted(),
-            })
-        }
-    }
 
     #[tokio::test]
     async fn test_static_loader_discover_returns_registered_plugins() {
         let loader = StaticPluginLoader::new();
         loader.register(PluginMetadata::new("test_a", "Test A", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "test_a".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("test_a"))
         });
         loader.register(PluginMetadata::new("test_b", "Test B", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "test_b".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("test_b"))
         });
 
         let discovered = loader.discover(Path::new("ignored")).await.unwrap();
@@ -321,14 +146,8 @@ mod tests {
     #[tokio::test]
     async fn test_static_loader_load_creates_plugin() {
         let loader = StaticPluginLoader::new();
-        let enabled = Arc::new(AtomicBool::new(false));
-        let enabled_clone = enabled.clone();
-
-        loader.register(PluginMetadata::new("test", "Test", "1.0.0"), move || {
-            Box::new(TestPlugin {
-                id: "test".into(),
-                enabled: enabled_clone.clone(),
-            })
+        loader.register(PluginMetadata::new("test", "Test", "1.0.0"), || {
+            Box::new(TestPlugin::new("test"))
         });
 
         let mock_factory = MockPluginContextFactory;
@@ -350,16 +169,10 @@ mod tests {
     fn test_static_loader_duplicate_id_panics() {
         let loader = StaticPluginLoader::new();
         loader.register(PluginMetadata::new("dup", "Dup", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "dup".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("dup"))
         });
         loader.register(PluginMetadata::new("dup", "Dup Again", "2.0.0"), || {
-            Box::new(TestPlugin {
-                id: "dup".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("dup"))
         });
     }
 
@@ -376,10 +189,7 @@ mod tests {
         assert_eq!(loader.registered_count(), 0);
 
         loader.register(PluginMetadata::new("a", "A", "1.0.0"), || {
-            Box::new(TestPlugin {
-                id: "a".into(),
-                enabled: Arc::new(AtomicBool::new(false)),
-            })
+            Box::new(TestPlugin::new("a"))
         });
         assert_eq!(loader.registered_count(), 1);
     }

@@ -1,28 +1,37 @@
 //! Unified handler for `ClientOnly` and `Offline` intercepted proxy modes.
 
-mod auth;
-mod initial_connect;
-mod session_loop;
+pub(crate) mod auth;
 
 use std::sync::Arc;
 
-use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::lifecycle::{PermissionsSetupEvent, PermissionsSetupResult};
-use infrarust_api::permissions::PermissionChecker;
+use infrarust_api::__private::session_task;
+use infrarust_api::events::lifecycle::DisconnectCause;
+use infrarust_api::player::Player;
+use infrarust_api::types::{Component, PlayerId, ServerId};
+use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
 
+use super::helpers::cancelled_cause;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::player::PlayerSession;
+use crate::player::commands::CommandInbox;
+use crate::player::{SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
+use crate::session::admission::{Admission, Admitted, Arrival, admit};
 use crate::session::client_bridge::ClientBridge;
+use crate::session::client_login::complete_login;
+use crate::session::proxy_loop::ProxyLoopOutcome;
 
-use auth::AuthStrategy;
-use initial_connect::InitialMode;
+use crate::session::context::{SessionContext, SessionIo};
+use crate::session::initial_connect::{
+    ConnectionMode, InitialMode, LoginProgress, resolve_initial_mode,
+};
+use crate::session::session_loop::run_session_loop;
+use auth::{AuthStrategy, Authenticated};
 
 pub struct InterceptedHandler {
     backend_connector: Arc<BackendConnector>,
@@ -72,197 +81,224 @@ impl InterceptedHandler {
     #[tracing::instrument(name = "proxy.session", skip_all, fields(mode = self.auth_strategy.mode_label()))]
     pub async fn handle(
         &self,
-        mut ctx: ConnectionContext,
+        ctx: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
-        let handshake = ctx
+        let player = PlayerId::new(ctx.connection_id);
+        session_task::scope(Some(player), self.serve(ctx, shutdown)).await
+    }
+
+    async fn serve(
+        &self,
+        mut conn: ConnectionContext,
+        shutdown: CancellationToken,
+    ) -> Result<(), CoreError> {
+        let routing = conn
+            .require_extension::<RoutingData>("RoutingData")?
+            .clone();
+        let handshake = conn
             .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
-        let login_data = ctx.extensions.get::<LoginData>().cloned();
-        let backend_targets = ctx
+        let login_data = conn.extensions.get::<LoginData>().cloned();
+        let backend_targets = conn
             .extensions
             .get::<crate::middleware::backend_selection::BackendTargets>()
             .cloned();
 
         let version = handshake.protocol_version;
-        let peer_addr = ctx.peer_addr;
-        let connection_info = ctx.connection_info();
+        let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
+        let peer_addr = conn.peer_addr;
+        let remote_addr = conn.client_addr();
+        let connection_info = conn.connection_info();
+        let registry = &self.services.packet_registry;
 
-        let mut client = ClientBridge::new(ctx.take_stream(), ctx.buffered_data.split(), version);
+        let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
 
-        let auth_result = self
+        let (profile, online_mode) = match self
             .auth_strategy
             .authenticate(
                 &mut client,
                 login_data.as_ref(),
                 &self.services,
                 version,
-                peer_addr,
+                remote_addr,
                 &handshake.domain,
-            )
-            .await?;
-
-        if let Some(ban_entry) = self
-            .services
-            .ban_manager
-            .check_player(
-                &ctx.client_ip,
-                &auth_result.username,
-                Some(&auth_result.player_uuid),
             )
             .await?
         {
-            tracing::info!(
-                ip = %ctx.client_ip,
-                username = %auth_result.username,
-                uuid = %auth_result.player_uuid,
-                ban_type = ban_entry.target.display_type(),
-                "connection rejected post-auth: player is banned"
-            );
-            client
-                .disconnect(&ban_entry.kick_message(), &self.services.packet_registry)
-                .await
-                .ok();
+            Authenticated::Denied(reason) => {
+                client.disconnect(&reason, registry).await.ok();
+                return Ok(());
+            }
+            Authenticated::Player {
+                profile,
+                online_mode,
+            } => (profile, online_mode),
+        };
+
+        let arrival = Arrival {
+            profile,
+            protocol_version: api_version,
+            domain: handshake.domain.clone(),
+            origin: ServerId::new(routing.config_id.clone()),
+        };
+        let kind = SessionKind::Intercepted { online_mode };
+        let Admitted {
+            session: player,
+            lifecycle,
+            commands: cmd_rx,
+            token: session_token,
+            rewritten,
+        } = match admit(&self.services, &conn, &shutdown, arrival, kind).await {
+            Admission::Admitted(admitted) => admitted,
+            Admission::Refused(reason) => {
+                client.disconnect(&reason, registry).await.ok();
+                return Ok(());
+            }
+        };
+        let profile = player.game_profile().clone();
+
+        let mut login_completed = false;
+        if online_mode {
+            if let Err(e) = complete_login(&mut client, &profile, version, registry).await {
+                lifecycle.end(DisconnectCause::Error).await;
+                return Err(e);
+            }
+            login_completed = true;
+        }
+
+        let commands =
+            CommandInbox::new(cmd_rx).with_presentation(Arc::clone(player.presentation()));
+        let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
+            &self.services.codec_filter_registry,
+            api_version,
+            player.id().as_u64(),
+            peer_addr,
+            Some(conn.client_ip),
+        );
+        let mut io = SessionIo {
+            client,
+            commands,
+            client_codec,
+            server_codec,
+        };
+        let refused = io
+            .client_codec
+            .close_reason()
+            .or_else(|| io.server_codec.close_reason())
+            .map(str::to_owned);
+        if let Some(refused) = refused {
+            tracing::warn!(reason = %refused, "a required codec filter refused the connection");
+            let reason = Component::text(crate::filter::codec_chain::CODEC_FILTER_UNAVAILABLE);
+            io.client.disconnect(&reason, registry).await.ok();
+            io.close();
+            lifecycle
+                .end(DisconnectCause::Kicked {
+                    reason: Some(reason),
+                })
+                .await;
+            return Ok(());
+        }
+        let ctx = SessionContext {
+            services: &self.services,
+            backend_connector: &self.backend_connector,
+            session: Arc::clone(&player),
+            handshake,
+            connection_info,
+            token: session_token,
+        };
+
+        if let Some(reason) = io.commands.take_kick(&mut io.client, registry, false) {
+            io.client.disconnect(&reason, registry).await.ok();
+            io.close();
+            lifecycle
+                .end(DisconnectCause::Kicked {
+                    reason: Some(reason),
+                })
+                .await;
+            return Ok(());
+        }
+        if ctx.token.is_cancelled() {
+            let cause = cancelled_cause(&shutdown, None);
+            announce_shutdown(&mut io.client, &cause, registry).await;
+            io.close();
+            lifecycle.end(cause).await;
             return Ok(());
         }
 
-        let mut login_completed = auth_result.login_completed;
-
-        let mut pending_ticket = ctx
+        let mut progress = LoginProgress {
+            completed: login_completed,
+            rewritten,
+        };
+        let mut pending_ticket = conn
             .extensions
             .remove::<crate::loadbalancer::PendingTicket>();
 
-        let initial = initial_connect::resolve_initial_mode(
-            &mut client,
-            &auth_result,
-            &mut login_completed,
+        let initial = match resolve_initial_mode(
+            &ctx,
+            &mut io,
             &routing,
-            &handshake,
             backend_targets.as_ref(),
             &mut pending_ticket,
-            version,
-            &self.services,
-            &self.backend_connector,
-            &connection_info,
+            &mut progress,
         )
-        .await?;
-
-        let (initial_mode, target_server_id) = match initial {
-            InitialMode::Connected { mode, server_id } => (*mode, server_id),
-            InitialMode::Denied => return Ok(()),
+        .await
+        {
+            Ok(InitialMode::Connected(initial)) => *initial,
+            Ok(InitialMode::Denied(cause)) => {
+                io.close();
+                lifecycle.end(cause).await;
+                return Ok(());
+            }
+            Err(e) => {
+                io.close();
+                lifecycle.end(DisconnectCause::Error).await;
+                return Err(e);
+            }
         };
 
-        let default_checker: Arc<dyn PermissionChecker> = if auth_result.online_mode {
-            Arc::new(
-                self.services
-                    .permission_service
-                    .build_checker(auth_result.player_uuid),
-            )
-        } else {
-            crate::permissions::default_checker()
-        };
-
-        let perm_event = PermissionsSetupEvent::new(
-            auth_result.player_id,
-            auth_result.api_profile.clone(),
-            auth_result.online_mode,
-        );
-        let perm_event = self.services.event_bus.fire(perm_event).await;
-        let permission_checker =
-            if let PermissionsSetupResult::Custom(checker) = perm_event.result() {
-                checker.clone()
-            } else {
-                default_checker
-            };
-
-        let session_token = shutdown.child_token();
-        let (cmd_tx, cmd_rx) = PlayerSession::channel();
-
-        let player_session = Arc::new(PlayerSession::new(
-            auth_result.player_id,
-            auth_result.api_profile.clone(),
-            infrarust_api::types::ProtocolVersion::new(version.0),
-            ctx.peer_addr,
-            Some(target_server_id.clone()),
-            true, // active: intercepted modes support packet injection
-            auth_result.online_mode,
-            cmd_tx,
-            session_token.clone(),
-            permission_checker,
-            Arc::clone(&self.services.backend_load),
-        ));
-
-        if let initial_connect::ConnectionMode::Backend(ref backend) = initial_mode {
-            player_session.set_connected_address(backend.server_address().cloned());
+        player.set_pending_server(initial.server.clone());
+        if let ConnectionMode::Backend(ref backend) = initial.mode {
+            player.set_connected_address(backend.server_address().cloned());
         }
-        // The session now owns the accounting for this address.
         drop(pending_ticket);
 
-        let session_guard = self.services.connection_registry.register(player_session);
-        let session_id = session_guard.uuid();
-
+        let session_id = ctx.profile().uuid;
         let mode_label = self.auth_strategy.mode_label();
         tracing::info!(
             session = %session_id,
-            server = %target_server_id,
-            username = %auth_result.username,
+            server = %initial.server,
+            username = %ctx.username(),
             mode = mode_label,
             "session started"
         );
 
         #[cfg(feature = "telemetry")]
-        super::helpers::record_session_start(&self.metrics, target_server_id.as_str(), mode_label);
+        super::helpers::record_session_start(&self.metrics, initial.server.as_str(), mode_label);
+        #[cfg(feature = "telemetry")]
+        let session_server = initial.server.clone();
 
-        let (mut client_codec_chain, mut server_codec_chain) =
-            crate::filter::codec_chain::build_codec_chains(
-                &self.services.codec_filter_registry,
-                infrarust_api::types::ProtocolVersion::new(version.0),
-                auth_result.player_id.as_u64(),
-                ctx.peer_addr,
-                Some(ctx.client_ip),
-            );
+        let outcome = run_session_loop(&ctx, &mut io, initial).await;
+        player.end_commands().await;
 
-        let session_server = target_server_id.clone();
-        let mut cmd_rx = cmd_rx;
-        let outcome = session_loop::run_session_loop(
-            &mut client,
-            initial_mode,
-            auth_result.player_id,
-            &auth_result.api_profile,
-            &auth_result.username,
-            &handshake,
-            version,
-            peer_addr,
-            Some(ctx.client_ip),
-            target_server_id,
-            &session_id,
-            &self.services,
-            &self.backend_connector,
-            session_token,
-            &mut cmd_rx,
-            &mut client_codec_chain,
-            &mut server_codec_chain,
-        )
-        .await;
+        let cause = match io.commands.take_kick(&mut io.client, registry, false) {
+            Some(reason) => {
+                io.client.disconnect(&reason, registry).await.ok();
+                DisconnectCause::Kicked {
+                    reason: Some(reason),
+                }
+            }
+            None => disconnect_cause(&outcome, &shutdown),
+        };
+        announce_shutdown(&mut io.client, &cause, registry).await;
+        io.close();
 
-        client_codec_chain.close();
-        server_codec_chain.close();
-
-        super::helpers::fire_disconnect_event(
-            &self.services.event_bus,
-            auth_result.player_id,
-            auth_result.username.clone(),
-            Some(session_server.clone()),
-        )
-        .await;
-
-        drop(session_guard);
+        lifecycle.end(cause).await;
 
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_end(
             &self.metrics,
-            ctx.connection_duration(),
+            conn.connection_duration(),
             session_server.as_str(),
             mode_label,
         );
@@ -270,5 +306,40 @@ impl InterceptedHandler {
         super::helpers::log_proxy_loop_outcome(&session_id, &outcome);
 
         Ok(())
+    }
+}
+
+async fn announce_shutdown(
+    client: &mut ClientBridge,
+    cause: &DisconnectCause,
+    registry: &PacketRegistry,
+) {
+    if matches!(cause, DisconnectCause::Shutdown) {
+        client
+            .disconnect(&Component::text(SHUTDOWN_REASON), registry)
+            .await
+            .ok();
+    }
+}
+
+fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) -> DisconnectCause {
+    match outcome {
+        ProxyLoopOutcome::ClientDisconnected => DisconnectCause::ClientQuit,
+        ProxyLoopOutcome::Kicked { reason } => DisconnectCause::Kicked {
+            reason: Some(reason.clone()),
+        },
+        ProxyLoopOutcome::BackendClosed { reason } => DisconnectCause::BackendClosed {
+            reason: reason.clone(),
+        },
+        ProxyLoopOutcome::BackendKick(kick) => DisconnectCause::BackendClosed {
+            reason: Some(kick.reason.clone()),
+        },
+        ProxyLoopOutcome::BackendDisconnected { .. } => {
+            DisconnectCause::BackendClosed { reason: None }
+        }
+        ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown, None),
+        ProxyLoopOutcome::Error(_) | ProxyLoopOutcome::SwitchRequested { .. } => {
+            DisconnectCause::Error
+        }
     }
 }

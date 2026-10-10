@@ -6,6 +6,7 @@ use crate::version::{ConnectionState, Direction, ProtocolVersion};
 #[derive(Debug, Clone)]
 pub struct CRespawn {
     pub dimension: i32,
+    pub dimension_type: String,
     pub level_name: String,
     pub hashed_seed: i64,
     pub gamemode: u8,
@@ -24,6 +25,7 @@ impl Default for CRespawn {
     fn default() -> Self {
         Self {
             dimension: 0,
+            dimension_type: String::new(),
             level_name: String::new(),
             hashed_seed: 0,
 
@@ -69,6 +71,7 @@ impl Packet for CRespawn {
         V1_21_5 => 0x4B,
         V1_21_9 => 0x50,
         V26_1   => 0x52,
+        V26_3   => 0x54,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
@@ -97,17 +100,15 @@ impl Packet for CRespawn {
 }
 
 fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<CRespawn> {
-    let dimension = if version.no_less_than(ProtocolVersion::V1_20_5) {
-        r.read_var_int()?.0
+    let (dimension, dimension_type) = if version.no_less_than(ProtocolVersion::V1_20_5) {
+        (r.read_var_int()?.0, String::new())
     } else {
-        let _dim_key = r.read_string()?;
-        0
+        (0, r.read_string()?)
     };
 
     let level_name = r.read_string()?;
     let hashed_seed = r.read_i64_be()?;
-    let gamemode = r.read_u8()?;
-    let previous_gamemode = r.read_i8()?;
+    let (gamemode, previous_gamemode) = super::common::decode_game_modes(r, version)?;
     let is_debug = r.read_bool()?;
     let is_flat = r.read_bool()?;
 
@@ -118,6 +119,7 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
 
     Ok(CRespawn {
         dimension,
+        dimension_type,
         level_name,
         hashed_seed,
         gamemode,
@@ -135,19 +137,18 @@ fn decode_1_20_2_up(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<C
 
 fn encode_1_20_2_up(
     pkt: &CRespawn,
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     version: ProtocolVersion,
 ) -> ProtocolResult<()> {
     if version.no_less_than(ProtocolVersion::V1_20_5) {
         w.write_var_int(&VarInt(pkt.dimension))?;
     } else {
-        w.write_string("minecraft:overworld")?;
+        w.write_string(&pkt.dimension_type)?;
     }
 
     w.write_string(&pkt.level_name)?;
     w.write_i64_be(pkt.hashed_seed)?;
-    w.write_u8(pkt.gamemode)?;
-    w.write_i8(pkt.previous_gamemode)?;
+    super::common::encode_game_modes(w, pkt.gamemode, pkt.previous_gamemode, version)?;
     w.write_bool(pkt.is_debug)?;
     w.write_bool(pkt.is_flat)?;
 
@@ -163,17 +164,13 @@ fn encode_1_20_2_up(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    fn round_trip_version(packet: &CRespawn, version: ProtocolVersion) -> CRespawn {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, version).unwrap();
-        CRespawn::decode(&mut buf.as_slice(), version).unwrap()
-    }
+    use crate::packets::round_trip;
 
     #[test]
     fn test_respawn_round_trip() {
         let pkt = CRespawn {
             dimension: 1,
+            dimension_type: "minecraft:the_nether".to_string(),
             level_name: "minecraft:the_nether".to_string(),
             hashed_seed: 987_654_321,
             gamemode: 0,
@@ -187,7 +184,7 @@ mod tests {
             sea_level: 63,
             raw_payload: None,
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_21);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.dimension, 1);
         assert_eq!(decoded.level_name, "minecraft:the_nether");
         assert_eq!(decoded.hashed_seed, 987_654_321);
@@ -200,6 +197,7 @@ mod tests {
     fn test_respawn_with_death_location() {
         let pkt = CRespawn {
             dimension: 0,
+            dimension_type: "minecraft:overworld".to_string(),
             level_name: "minecraft:overworld".to_string(),
             hashed_seed: 0,
             gamemode: 0,
@@ -213,7 +211,7 @@ mod tests {
             sea_level: 63,
             raw_payload: None,
         };
-        let decoded = round_trip_version(&pkt, ProtocolVersion::V1_20_5);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_5);
         assert_eq!(
             decoded.death_dimension.as_deref(),
             Some("minecraft:overworld")
@@ -234,5 +232,24 @@ mod tests {
         pkt.encode(&mut buf, ProtocolVersion::V1_19).unwrap();
         let decoded = CRespawn::decode(&mut buf.as_slice(), ProtocolVersion::V1_19).unwrap();
         assert_eq!(decoded.raw_payload, Some(raw));
+    }
+
+    #[test]
+    fn test_respawn_keeps_custom_dimension_type_below_1_20_5() {
+        for version in [ProtocolVersion::V1_20_2, ProtocolVersion::V1_20_3] {
+            let pkt = CRespawn {
+                level_name: "world_nether".to_string(),
+                dimension_type: "minecraft:the_nether".to_string(),
+                ..Default::default()
+            };
+            let mut first = Vec::new();
+            pkt.encode(&mut first, version).unwrap();
+            let decoded = CRespawn::decode(&mut first.as_slice(), version).unwrap();
+            assert_eq!(decoded.dimension_type, "minecraft:the_nether", "{version}");
+            assert_eq!(decoded.level_name, "world_nether", "{version}");
+            let mut second = Vec::new();
+            decoded.encode(&mut second, version).unwrap();
+            assert_eq!(first, second, "{version}");
+        }
     }
 }

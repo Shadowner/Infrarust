@@ -38,6 +38,8 @@ Once a proxy protocol header is decoded, the client's real IP and port are store
 
 The decoder reads up to 536 bytes from the start of the connection. It checks for the v2 binary signature first (the 12-byte magic), then falls back to the v1 text prefix (`PROXY `). Both IPv4 and IPv6 addresses are supported in either version. If neither signature matches after 16 bytes, the connection is closed with an error. The whole header must arrive within 5 seconds, otherwise the read times out and the connection is dropped.
 
+The header is read in the connection's own task, after the listener has accepted it and before transport filters or the handshake parser run. A client that opens a connection and stays silent, or trickles its header in, delays only that connection, never the listener. While it waits for its header, the connection counts toward `max_connections`, and it gives its slot back when it is dropped.
+
 A v1 `PROXY UNKNOWN` header is accepted (HAProxy sends it for health checks) but carries no address, so no real client IP is recorded for that connection. Address families other than TCP over IPv4 or IPv6, such as Unix sockets, are rejected.
 
 ## Sending proxy protocol

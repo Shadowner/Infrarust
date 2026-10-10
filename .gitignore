@@ -18,4 +18,5 @@ target/
 /server/
 bans.audit.json
 bans.json
-data/registry/*.json
+crates/infrarust-core/registry/*.json
+/cache/

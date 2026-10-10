@@ -19,6 +19,7 @@ impl Packet for CStartConfiguration {
         V1_21_5 => 0x6F,
         V1_21_9 => 0x74,
         V26_1   => 0x76,
+        V26_3   => 0x78,
     ];
 
     fn decode(_r: &mut &[u8], _version: ProtocolVersion) -> ProtocolResult<Self> {

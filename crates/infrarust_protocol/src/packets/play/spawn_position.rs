@@ -44,13 +44,13 @@ impl Packet for CSetDefaultSpawnPosition {
     const IDS: &'static [PacketMapping] = ids![
         V1_7_2  => 0x05,
         V1_9    => 0x43,
-        V1_12   => 0x46,
+        V1_12   => 0x45,
+        V1_12_1 => 0x46,
         V1_13   => 0x49,
         V1_14   => 0x4D,
         V1_15   => 0x4E,
         V1_16   => 0x42,
         V1_17   => 0x4B,
-        V1_18   => 0x4C,
         V1_19   => 0x4A,
         V1_19_1 => 0x4D,
         V1_19_3 => 0x4C,
@@ -61,6 +61,8 @@ impl Packet for CSetDefaultSpawnPosition {
         V1_21_2 => 0x5B,
         V1_21_5 => 0x5A,
         V1_21_9 => 0x5F,
+        V26_1   => 0x61,
+        V26_3   => 0x63,
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
@@ -86,7 +88,7 @@ impl Packet for CSetDefaultSpawnPosition {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.no_less_than(ProtocolVersion::V1_21_9) {

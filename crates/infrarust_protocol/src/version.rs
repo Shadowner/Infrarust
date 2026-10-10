@@ -3,6 +3,57 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProtocolVersion(pub i32);
 
+const TABLE: &[(ProtocolVersion, &str)] = &[
+    (ProtocolVersion::V1_7_2, "1.7.2"),
+    (ProtocolVersion::V1_7_6, "1.7.6"),
+    (ProtocolVersion::V1_8, "1.8"),
+    (ProtocolVersion::V1_9, "1.9"),
+    (ProtocolVersion::V1_9_2, "1.9.2"),
+    (ProtocolVersion::V1_9_4, "1.9.4"),
+    (ProtocolVersion::V1_12, "1.12"),
+    (ProtocolVersion::V1_12_1, "1.12.1"),
+    (ProtocolVersion::V1_12_2, "1.12.2"),
+    (ProtocolVersion::V1_13, "1.13"),
+    (ProtocolVersion::V1_14, "1.14"),
+    (ProtocolVersion::V1_15, "1.15"),
+    (ProtocolVersion::V1_16, "1.16"),
+    (ProtocolVersion::V1_16_2, "1.16.2"),
+    (ProtocolVersion::V1_16_4, "1.16.4"),
+    (ProtocolVersion::V1_17, "1.17"),
+    (ProtocolVersion::V1_17_1, "1.17.1"),
+    (ProtocolVersion::V1_18, "1.18"),
+    (ProtocolVersion::V1_18_2, "1.18.2"),
+    (ProtocolVersion::V1_19, "1.19"),
+    (ProtocolVersion::V1_19_1, "1.19.1"),
+    (ProtocolVersion::V1_19_3, "1.19.3"),
+    (ProtocolVersion::V1_19_4, "1.19.4"),
+    (ProtocolVersion::V1_20, "1.20"),
+    (ProtocolVersion::V1_20_2, "1.20.2"),
+    (ProtocolVersion::V1_20_3, "1.20.3"),
+    (ProtocolVersion::V1_20_5, "1.20.5"),
+    (ProtocolVersion::V1_21, "1.21"),
+    (ProtocolVersion::V1_21_2, "1.21.2"),
+    (ProtocolVersion::V1_21_4, "1.21.4"),
+    (ProtocolVersion::V1_21_5, "1.21.5"),
+    (ProtocolVersion::V1_21_6, "1.21.6"),
+    (ProtocolVersion::V1_21_7, "1.21.7"),
+    (ProtocolVersion::V1_21_9, "1.21.9"),
+    (ProtocolVersion::V1_21_11, "1.21.11"),
+    (ProtocolVersion::V26_1, "26.1"),
+    (ProtocolVersion::V26_2, "26.2"),
+    (ProtocolVersion::V26_3, "26.3"),
+];
+
+const SUPPORTED_VERSIONS: [ProtocolVersion; TABLE.len()] = {
+    let mut versions = [ProtocolVersion::UNKNOWN; TABLE.len()];
+    let mut i = 0;
+    while i < TABLE.len() {
+        versions[i] = TABLE[i].0;
+        i += 1;
+    }
+    versions
+};
+
 impl ProtocolVersion {
     pub const UNKNOWN: Self = Self(-1);
     pub const LEGACY: Self = Self(0);
@@ -22,6 +73,7 @@ impl ProtocolVersion {
     pub const V1_16_2: Self = Self(751);
     pub const V1_16_4: Self = Self(754);
     pub const V1_17: Self = Self(755);
+    pub const V1_17_1: Self = Self(756);
     pub const V1_18: Self = Self(757);
     pub const V1_18_2: Self = Self(758);
     pub const V1_19: Self = Self(759);
@@ -42,60 +94,29 @@ impl ProtocolVersion {
     pub const V1_21_11: Self = Self(774);
     pub const V26_1: Self = Self(775);
     pub const V26_2: Self = Self(776);
+    pub const V26_3: Self = Self(777);
 
-    pub const SUPPORTED: &[Self] = &[
-        Self::V1_7_2,
-        Self::V1_7_6,
-        Self::V1_8,
-        Self::V1_9,
-        Self::V1_9_2,
-        Self::V1_9_4,
-        Self::V1_12,
-        Self::V1_12_1,
-        Self::V1_12_2,
-        Self::V1_13,
-        Self::V1_14,
-        Self::V1_15,
-        Self::V1_16,
-        Self::V1_16_2,
-        Self::V1_16_4,
-        Self::V1_17,
-        Self::V1_18,
-        Self::V1_18_2,
-        Self::V1_19,
-        Self::V1_19_1,
-        Self::V1_19_3,
-        Self::V1_19_4,
-        Self::V1_20,
-        Self::V1_20_2,
-        Self::V1_20_3,
-        Self::V1_20_5,
-        Self::V1_21,
-        Self::V1_21_2,
-        Self::V1_21_4,
-        Self::V1_21_5,
-        Self::V1_21_6,
-        Self::V1_21_7,
-        Self::V1_21_9,
-        Self::V1_21_11,
-        Self::V26_1,
-        Self::V26_2,
-    ];
+    pub const SUPPORTED: &[Self] = &SUPPORTED_VERSIONS;
 
-    pub const HIGHEST_KNOWN: Self = Self::V26_2;
+    pub const HIGHEST_KNOWN: Self = TABLE[TABLE.len() - 1].0;
+
+    pub const CURRENT: Self = Self::HIGHEST_KNOWN;
 
     pub const fn is_known(self) -> bool {
         self.0 <= Self::HIGHEST_KNOWN.0
     }
 
+    #[inline]
     pub fn no_less_than(self, other: Self) -> bool {
         self >= other
     }
 
+    #[inline]
     pub fn no_greater_than(self, other: Self) -> bool {
         self <= other
     }
 
+    #[inline]
     pub fn less_than(self, other: Self) -> bool {
         self < other
     }
@@ -105,46 +126,18 @@ impl ProtocolVersion {
     }
 
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::LEGACY => "legacy",
-            Self::V1_7_2 => "1.7.2",
-            Self::V1_7_6 => "1.7.6",
-            Self::V1_8 => "1.8",
-            Self::V1_9 => "1.9",
-            Self::V1_9_2 => "1.9.2",
-            Self::V1_9_4 => "1.9.4",
-            Self::V1_12 => "1.12",
-            Self::V1_12_1 => "1.12.1",
-            Self::V1_12_2 => "1.12.2",
-            Self::V1_13 => "1.13",
-            Self::V1_14 => "1.14",
-            Self::V1_15 => "1.15",
-            Self::V1_16 => "1.16",
-            Self::V1_16_2 => "1.16.2",
-            Self::V1_16_4 => "1.16.4",
-            Self::V1_17 => "1.17",
-            Self::V1_18 => "1.18",
-            Self::V1_18_2 => "1.18.2",
-            Self::V1_19 => "1.19",
-            Self::V1_19_1 => "1.19.1",
-            Self::V1_19_3 => "1.19.3",
-            Self::V1_19_4 => "1.19.4",
-            Self::V1_20 => "1.20",
-            Self::V1_20_2 => "1.20.2",
-            Self::V1_20_3 => "1.20.3",
-            Self::V1_20_5 => "1.20.5",
-            Self::V1_21 => "1.21",
-            Self::V1_21_2 => "1.21.2",
-            Self::V1_21_4 => "1.21.4",
-            Self::V1_21_5 => "1.21.5",
-            Self::V1_21_6 => "1.21.6",
-            Self::V1_21_7 => "1.21.7",
-            Self::V1_21_9 => "1.21.9",
-            Self::V1_21_11 => "1.21.11",
-            Self::V26_1 => "26.1",
-            Self::V26_2 => "26.2",
-            _ => "unknown",
+        if self.0 == Self::LEGACY.0 {
+            return "legacy";
         }
+        let mut i = 0;
+        while i < TABLE.len() {
+            let (version, name) = TABLE[i];
+            if version.0 == self.0 {
+                return name;
+            }
+            i += 1;
+        }
+        "unknown"
     }
 
     pub fn range(from: Self, to: Self) -> impl Iterator<Item = Self> {
@@ -349,6 +342,13 @@ mod tests {
     }
 
     #[test]
+    fn test_current_is_the_highest_known_version_with_a_name() {
+        assert_eq!(ProtocolVersion::CURRENT, ProtocolVersion::HIGHEST_KNOWN);
+        assert!(!ProtocolVersion::CURRENT.name().is_empty());
+        assert_ne!(ProtocolVersion::CURRENT.name(), "legacy");
+    }
+
+    #[test]
     fn test_highest_known_is_last_supported() {
         assert_eq!(
             Some(&ProtocolVersion::HIGHEST_KNOWN),
@@ -361,7 +361,7 @@ mod tests {
         assert!(ProtocolVersion::V1_7_2.is_known());
         assert!(ProtocolVersion::HIGHEST_KNOWN.is_known());
         assert!(ProtocolVersion(108).is_known());
-        assert!(!ProtocolVersion(777).is_known());
+        assert!(!ProtocolVersion(ProtocolVersion::HIGHEST_KNOWN.0 + 1).is_known());
     }
 
     #[test]
@@ -388,6 +388,23 @@ mod tests {
     #[test]
     fn test_supported_is_sorted() {
         assert!(ProtocolVersion::SUPPORTED.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn test_every_supported_version_has_a_name_and_the_table_ascends() {
+        assert_eq!(TABLE.len(), ProtocolVersion::SUPPORTED.len());
+        for (entry, supported) in TABLE.iter().zip(ProtocolVersion::SUPPORTED) {
+            assert_eq!(entry.0, *supported);
+            assert_eq!(supported.name(), entry.1);
+            assert!(!supported.name().is_empty());
+            assert_ne!(supported.name(), "unknown", "{supported:?} has no name");
+            assert_ne!(supported.name(), "legacy", "{supported:?}");
+        }
+        assert!(
+            TABLE.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "the version table must be strictly ascending"
+        );
+        assert_eq!(ProtocolVersion::HIGHEST_KNOWN, ProtocolVersion::V26_3);
     }
 
     #[test]

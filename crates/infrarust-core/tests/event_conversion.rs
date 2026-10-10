@@ -2,11 +2,9 @@
 //! Tests for core ↔ API ping response conversion.
 
 use infrarust_api::events::proxy::PingResponse;
-use infrarust_api::types::{Component, ProtocolVersion};
+use infrarust_api::types::{ClickEvent, Component, HoverEvent, NamedColor, ProtocolVersion};
 
-use infrarust_core::event_bus::conversion::{
-    apply_api_to_core, component_to_json_value, core_to_api_ping_response, json_value_to_component,
-};
+use infrarust_core::event_bus::conversion::{apply_api_to_core, core_to_api_ping_response};
 use infrarust_core::status::response::{
     PingPlayerSample, PingPlayers, PingVersion, ServerPingResponse,
 };
@@ -36,8 +34,8 @@ fn test_core_to_api_full_response() {
     let core = make_core_response();
     let api = core_to_api_ping_response(&core);
 
-    assert_eq!(api.description.text, "A Minecraft Server");
-    assert_eq!(api.description.color.as_deref(), Some("gold"));
+    assert_eq!(api.description.as_text(), Some("A Minecraft Server"));
+    assert_eq!(api.description.style.color, Some(NamedColor::Gold.into()));
     assert_eq!(api.max_players, 100);
     assert_eq!(api.online_players, 42);
     assert_eq!(api.protocol_version.raw(), 769);
@@ -63,7 +61,7 @@ fn test_core_to_api_minimal_response() {
     };
 
     let api = core_to_api_ping_response(&core);
-    assert_eq!(api.description.text, "");
+    assert_eq!(api.description.as_text(), Some(""));
     assert_eq!(api.max_players, 0);
     assert!(api.favicon.is_none());
 }
@@ -89,7 +87,7 @@ fn test_apply_api_preserves_extra() {
         Some("data:image/png;base64,new".to_string()),
     );
 
-    apply_api_to_core(&mut core, &api);
+    apply_api_to_core(&mut core, &api, ProtocolVersion::MINECRAFT_1_20_2);
 
     // Modified fields
     assert_eq!(core.description["text"].as_str().unwrap(), "Modified MOTD");
@@ -121,8 +119,8 @@ fn test_core_to_api_string_description() {
     };
 
     let api = core_to_api_ping_response(&core);
-    assert_eq!(api.description.text, "Plain text MOTD");
-    assert!(api.description.color.is_none());
+    assert_eq!(api.description.as_text(), Some("Plain text MOTD"));
+    assert!(api.description.style.color.is_none());
 }
 
 #[test]
@@ -148,28 +146,42 @@ fn test_core_to_api_object_description() {
     };
 
     let api = core_to_api_ping_response(&core);
-    assert_eq!(api.description.text, "Hello");
-    assert_eq!(api.description.color.as_deref(), Some("green"));
-    assert_eq!(api.description.bold, Some(true));
-    assert_eq!(api.description.extra.len(), 1);
-    assert_eq!(api.description.extra[0].text, " World");
-    assert_eq!(api.description.extra[0].color.as_deref(), Some("white"));
+    assert_eq!(api.description.as_text(), Some("Hello"));
+    assert_eq!(api.description.style.color, Some(NamedColor::Green.into()));
+    assert_eq!(api.description.style.bold, Some(true));
+    assert_eq!(api.description.children.len(), 1);
+    assert_eq!(api.description.children[0].as_text(), Some(" World"));
+    assert_eq!(
+        api.description.children[0].style.color,
+        Some(NamedColor::White.into())
+    );
 }
 
 #[test]
-fn test_component_to_json_roundtrip() {
+fn test_description_round_trips_through_the_core_response() {
     let original = Component::text("Hello")
         .color("gold")
         .bold()
+        .click(ClickEvent::OpenUrl("https://example.com".into()))
+        .hover(HoverEvent::show_text(Component::text("tip").italic()))
         .append(Component::text(" World").color("white"));
+    let api = PingResponse::new(
+        original.clone(),
+        1,
+        0,
+        ProtocolVersion::new(769),
+        "1.21.4".to_string(),
+        None,
+    );
 
-    let json = component_to_json_value(&original);
-    let back = json_value_to_component(&json);
-
-    assert_eq!(back.text, "Hello");
-    assert_eq!(back.color.as_deref(), Some("gold"));
-    assert_eq!(back.bold, Some(true));
-    assert_eq!(back.extra.len(), 1);
-    assert_eq!(back.extra[0].text, " World");
-    assert_eq!(back.extra[0].color.as_deref(), Some("white"));
+    for client in [
+        ProtocolVersion::MINECRAFT_1_8,
+        ProtocolVersion::MINECRAFT_1_21_4,
+        ProtocolVersion::MINECRAFT_1_21_11,
+    ] {
+        let mut core = make_core_response();
+        apply_api_to_core(&mut core, &api, client);
+        let back = core_to_api_ping_response(&core);
+        assert_eq!(back.description, original, "{client}");
+    }
 }

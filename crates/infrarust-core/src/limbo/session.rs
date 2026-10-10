@@ -4,15 +4,16 @@
 //! and an mpsc channel that the limbo engine loop drains.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handle::SessionHandle;
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::limbo::session::{LimboSession, private};
 use infrarust_api::types::{Component, GameProfile, PlayerId, TitleData};
 use infrarust_protocol::io::PacketFrame;
@@ -20,6 +21,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::player::packets;
+use crate::util::sync::lock;
 
 /// Concrete implementation of [`LimboSession`] used by the limbo engine.
 ///
@@ -31,11 +33,11 @@ pub(crate) struct LimboSessionImpl {
     protocol_version: ProtocolVersion,
     entry_context: LimboEntryContext,
     client_sender: mpsc::Sender<PacketFrame>,
-    complete_slot: Mutex<Option<oneshot::Sender<HandlerResult>>>,
+    complete_slot: Mutex<Option<oneshot::Sender<LimboOutcome>>>,
     limbo_token: CancellationToken,
     hold_seq: AtomicU64,
     packet_registry: Arc<PacketRegistry>,
-    self_ref: OnceLock<Weak<Self>>,
+    self_ref: Weak<Self>,
 }
 
 impl LimboSessionImpl {
@@ -47,8 +49,8 @@ impl LimboSessionImpl {
         client_sender: mpsc::Sender<PacketFrame>,
         limbo_token: CancellationToken,
         packet_registry: Arc<PacketRegistry>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|self_ref| Self {
             player_id,
             profile,
             protocol_version,
@@ -58,15 +60,11 @@ impl LimboSessionImpl {
             limbo_token,
             hold_seq: AtomicU64::new(0),
             packet_registry,
-            self_ref: OnceLock::new(),
-        }
+            self_ref: Weak::clone(self_ref),
+        })
     }
 
-    pub(crate) fn set_self_ref(&self, weak: Weak<Self>) {
-        let _ = self.self_ref.set(weak);
-    }
-
-    pub(crate) fn begin_handler(&self) -> oneshot::Receiver<HandlerResult> {
+    pub(crate) fn begin_handler(&self) -> oneshot::Receiver<LimboOutcome> {
         let (tx, rx) = oneshot::channel();
         let mut slot = self.lock_slot();
         self.hold_seq.fetch_add(1, Ordering::SeqCst);
@@ -78,10 +76,15 @@ impl LimboSessionImpl {
         self.hold_seq.load(Ordering::SeqCst)
     }
 
-    fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<HandlerResult>>> {
-        self.complete_slot
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn lock_slot(&self) -> MutexGuard<'_, Option<oneshot::Sender<LimboOutcome>>> {
+        lock(&self.complete_slot)
+    }
+
+    fn push(&self, frame: PacketFrame) -> Result<(), PlayerError> {
+        self.client_sender.try_send(frame).map_err(|e| match e {
+            TrySendError::Closed(_) => PlayerError::Disconnected,
+            TrySendError::Full(_) => PlayerError::SendFailed(e.to_string()),
+        })
     }
 }
 
@@ -108,9 +111,7 @@ impl LimboSession for LimboSessionImpl {
         )
         .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
-        self.client_sender
-            .try_send(frame)
-            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+        self.push(frame)
     }
 
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
@@ -119,9 +120,7 @@ impl LimboSession for LimboSessionImpl {
                 .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
         for frame in frames {
-            self.client_sender
-                .try_send(frame)
-                .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
+            self.push(frame)?;
         }
         Ok(())
     }
@@ -131,30 +130,26 @@ impl LimboSession for LimboSessionImpl {
             packets::build_action_bar(&message, self.protocol_version, &self.packet_registry)
                 .map_err(|e| PlayerError::SendFailed(e.to_string()))?;
 
-        self.client_sender
-            .try_send(frame)
-            .map_err(|e| PlayerError::SendFailed(e.to_string()))
+        self.push(frame)
     }
 
-    fn complete(&self, result: HandlerResult) {
-        self.complete_scoped(self.current_hold_id(), result);
+    fn complete(&self, outcome: LimboOutcome) {
+        self.complete_scoped(self.current_hold_id(), outcome);
     }
 
-    fn complete_scoped(&self, hold_id: u64, result: HandlerResult) {
+    fn complete_scoped(&self, hold_id: u64, outcome: LimboOutcome) {
         let mut slot = self.lock_slot();
         if hold_id == self.current_hold_id()
             && let Some(tx) = slot.take()
         {
-            let _ = tx.send(result);
+            let _ = tx.send(outcome);
         }
     }
 
+    #[allow(clippy::expect_used)]
     fn handle(&self) -> SessionHandle {
-        let weak = self
+        let arc = self
             .self_ref
-            .get()
-            .expect("LimboSessionImpl::set_self_ref must be called before handle()");
-        let arc = weak
             .upgrade()
             .expect("session Arc must be alive while session is in use");
         SessionHandle::new(arc as Arc<dyn LimboSession>, self.current_hold_id())
@@ -171,11 +166,10 @@ mod tests {
 
     use super::super::test_helpers::test_profile;
     use super::*;
-    use infrarust_api::limbo::handler::HandlerResult;
     use infrarust_api::types::PlayerId;
     use infrarust_protocol::version::ProtocolVersion;
 
-    fn make_session() -> (LimboSessionImpl, mpsc::Receiver<PacketFrame>) {
+    fn make_session() -> (Arc<LimboSessionImpl>, mpsc::Receiver<PacketFrame>) {
         let (tx, rx) = mpsc::channel(64);
         let registry = Arc::new(infrarust_protocol::registry::build_default_registry());
 
@@ -237,10 +231,10 @@ mod tests {
         let (session, _rx) = make_session();
         let mut complete_rx = session.begin_handler();
 
-        session.complete(HandlerResult::Accept);
+        session.complete(LimboOutcome::Accept);
 
         match complete_rx.try_recv() {
-            Ok(HandlerResult::Accept) => {}
+            Ok(LimboOutcome::Accept) => {}
             other => panic!("expected latched Accept, got {other:?}"),
         }
     }
@@ -250,11 +244,11 @@ mod tests {
         let (session, _rx) = make_session();
         let mut complete_rx = session.begin_handler();
 
-        session.complete(HandlerResult::Accept);
-        session.complete(HandlerResult::Deny(Component::text("late")));
+        session.complete(LimboOutcome::Accept);
+        session.complete(LimboOutcome::Deny(Component::text("late")));
 
         match complete_rx.try_recv() {
-            Ok(HandlerResult::Accept) => {}
+            Ok(LimboOutcome::Accept) => {}
             other => panic!("expected first Accept to win, got {other:?}"),
         }
     }
@@ -263,7 +257,7 @@ mod tests {
     fn unconsumed_completion_is_dropped_when_next_handler_begins() {
         let (session, _rx) = make_session();
         let _rx1 = session.begin_handler();
-        session.complete(HandlerResult::Accept); // latched, never consumed
+        session.complete(LimboOutcome::Accept); // latched, never consumed
 
         let mut rx2 = session.begin_handler();
         assert!(
@@ -275,18 +269,16 @@ mod tests {
     #[test]
     fn stale_handle_cannot_complete_a_later_hold() {
         let (session, _rx) = make_session();
-        let session = Arc::new(session);
-        session.set_self_ref(Arc::downgrade(&session));
 
         let _rx1 = session.begin_handler(); // generation 1
         let stale = session.handle(); // captures generation 1
         let mut rx2 = session.begin_handler(); // advance to generation 2 (a later handler)
 
-        stale.complete(HandlerResult::Accept);
+        stale.complete(LimboOutcome::Accept);
         assert!(rx2.try_recv().is_err(), "stale handle should be a no-op");
 
         let current = session.handle(); // captures generation 2
-        current.complete(HandlerResult::Accept);
+        current.complete(LimboOutcome::Accept);
         assert!(
             rx2.try_recv().is_ok(),
             "current-generation handle should complete the Hold"
@@ -312,6 +304,42 @@ mod tests {
         drop(rx);
 
         let result = session.send_message(Component::text("should fail"));
-        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(PlayerError::Disconnected)),
+            "{result:?}"
+        );
+        assert!(matches!(
+            session.send_action_bar(Component::text("gone")),
+            Err(PlayerError::Disconnected)
+        ));
+        assert!(matches!(
+            session
+                .handle()
+                .send_title(TitleData::new(Component::text("gone"), Component::text(""))),
+            Err(PlayerError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn a_full_client_queue_is_a_send_failure_not_a_departure() {
+        let (tx, _rx) = mpsc::channel(1);
+        let registry = Arc::new(infrarust_protocol::registry::build_default_registry());
+        let session = LimboSessionImpl::new(
+            PlayerId::new(3),
+            test_profile(),
+            ProtocolVersion::V1_21,
+            LimboEntryContext::PluginRedirect { from_server: None },
+            tx,
+            CancellationToken::new(),
+            registry,
+        );
+        session
+            .send_message(Component::text("fills the queue"))
+            .unwrap();
+        let result = session.send_message(Component::text("no room"));
+        assert!(
+            matches!(result, Err(PlayerError::SendFailed(_))),
+            "{result:?}"
+        );
     }
 }

@@ -85,12 +85,7 @@ pub struct KeepaliveInfo {
     pub retries: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum UnknownDomainBehavior {
-    DefaultMotd,
-    Drop,
-}
+pub use infrarust_plugin_common::enums::UnknownDomainBehavior;
 
 impl Default for ProxyInfo {
     fn default() -> Self {

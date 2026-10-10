@@ -1,5 +1,9 @@
 //! Proxy-level events.
 
+use std::net::SocketAddr;
+
+use uuid::Uuid;
+
 use crate::event::Event;
 use crate::services::load_balancer::BackendState;
 use crate::services::server_manager::ServerState;
@@ -9,21 +13,44 @@ use crate::types::{Component, ProtocolVersion, ServerAddress, ServerId};
 ///
 /// Listeners can modify the response to customize the MOTD,
 /// player count, protocol version, and favicon.
+#[non_exhaustive]
 pub struct ProxyPingEvent {
     /// The remote address of the pinging client.
-    pub remote_addr: std::net::SocketAddr,
+    pub remote_addr: SocketAddr,
+    pub server: Option<ServerId>,
+    pub virtual_host: Option<String>,
+    pub protocol_version: ProtocolVersion,
+    pub legacy: bool,
     /// The mutable ping response that will be sent back.
     pub response: PingResponse,
 }
 
 impl ProxyPingEvent {
+    pub const fn new(
+        remote_addr: SocketAddr,
+        server: Option<ServerId>,
+        virtual_host: Option<String>,
+        protocol_version: ProtocolVersion,
+        legacy: bool,
+        response: PingResponse,
+    ) -> Self {
+        Self {
+            remote_addr,
+            server,
+            virtual_host,
+            protocol_version,
+            legacy,
+            response,
+        }
+    }
+
     pub const fn response_mut(&mut self) -> &mut PingResponse {
         &mut self.response
     }
 }
 
 /// The server list ping response data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PingResponse {
     /// The MOTD description shown in the server list.
@@ -38,10 +65,11 @@ pub struct PingResponse {
     pub version_name: String,
     /// Base64-encoded 64x64 PNG favicon, if any.
     pub favicon: Option<String>,
+    pub player_sample: Vec<(String, Uuid)>,
 }
 
 impl PingResponse {
-    pub fn new(
+    pub const fn new(
         description: Component,
         max_players: i32,
         online_players: i32,
@@ -56,6 +84,7 @@ impl PingResponse {
             protocol_version,
             version_name,
             favicon,
+            player_sample: Vec::new(),
         }
     }
 }
@@ -66,7 +95,15 @@ impl Event for ProxyPingEvent {}
 ///
 /// Plugins can use this to perform post-startup setup that depends on
 /// all other plugins being loaded.
+#[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ProxyInitializeEvent;
+
+impl ProxyInitializeEvent {
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Event for ProxyInitializeEvent {}
 
@@ -74,31 +111,85 @@ impl Event for ProxyInitializeEvent {}
 ///
 /// Plugins should use this (or [`Plugin::on_disable`](crate::plugin::Plugin::on_disable))
 /// to clean up resources.
+#[derive(Debug, Default)]
+#[non_exhaustive]
 pub struct ProxyShutdownEvent;
+
+impl ProxyShutdownEvent {
+    pub const fn new() -> Self {
+        Self
+    }
+}
 
 impl Event for ProxyShutdownEvent {}
 
-/// Fired when the proxy configuration is hot-reloaded.
-///
-/// Plugins can re-read their configuration in response.
-pub struct ConfigReloadEvent;
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ConfigReloadEvent {
+    pub provider: String,
+    pub added: Vec<ServerId>,
+    pub removed: Vec<ServerId>,
+    pub updated: Vec<ServerId>,
+}
+
+impl ConfigReloadEvent {
+    pub fn new(
+        provider: impl Into<String>,
+        added: Vec<ServerId>,
+        removed: Vec<ServerId>,
+        updated: Vec<ServerId>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            added,
+            removed,
+            updated,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty() && self.updated.is_empty()
+    }
+}
 
 impl Event for ConfigReloadEvent {}
 
+#[non_exhaustive]
 pub struct BackendHealthEvent {
     pub address: ServerAddress,
     pub servers: Vec<ServerId>,
     pub state: BackendState,
 }
 
+impl BackendHealthEvent {
+    pub const fn new(address: ServerAddress, servers: Vec<ServerId>, state: BackendState) -> Self {
+        Self {
+            address,
+            servers,
+            state,
+        }
+    }
+}
+
 impl Event for BackendHealthEvent {}
 
 /// Fired when a backend server changes state.
+#[non_exhaustive]
 pub struct ServerStateChangeEvent {
     /// The server whose state changed.
     pub server: ServerId,
     pub old_state: ServerState,
     pub new_state: ServerState,
+}
+
+impl ServerStateChangeEvent {
+    pub const fn new(server: ServerId, old_state: ServerState, new_state: ServerState) -> Self {
+        Self {
+            server,
+            old_state,
+            new_state,
+        }
+    }
 }
 
 impl Event for ServerStateChangeEvent {}
@@ -110,9 +201,13 @@ mod tests {
 
     #[test]
     fn ping_response_mutation() {
-        let mut event = ProxyPingEvent {
-            remote_addr: "127.0.0.1:12345".parse().unwrap(),
-            response: PingResponse::new(
+        let mut event = ProxyPingEvent::new(
+            "127.0.0.1:12345".parse().unwrap(),
+            Some(ServerId::new("lobby")),
+            Some("play.example.com".into()),
+            ProtocolVersion::MINECRAFT_1_21,
+            false,
+            PingResponse::new(
                 Component::text("Hello"),
                 100,
                 42,
@@ -120,10 +215,17 @@ mod tests {
                 "Infrarust 2.0".into(),
                 None,
             ),
-        };
+        );
+        assert!(event.response.player_sample.is_empty());
 
         event.response_mut().online_players = 99;
         event.response_mut().description = Component::text("Updated MOTD").color("gold");
+        event
+            .response_mut()
+            .player_sample
+            .push(("Notch".into(), Uuid::nil()));
         assert_eq!(event.response.online_players, 99);
+        assert_eq!(event.response.player_sample.len(), 1);
+        assert_eq!(event.server, Some(ServerId::new("lobby")));
     }
 }

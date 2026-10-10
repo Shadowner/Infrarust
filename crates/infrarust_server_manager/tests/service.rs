@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use infrarust_server_manager::{
@@ -13,15 +13,29 @@ use tokio_util::sync::CancellationToken;
 struct MockProvider {
     start_called: AtomicBool,
     stop_called: AtomicBool,
+    polls: AtomicUsize,
     status: tokio::sync::Mutex<ProviderStatus>,
+    status_after_start: ProviderStatus,
 }
 
 impl MockProvider {
     fn new(initial: ProviderStatus) -> Self {
+        Self::with_status_after_start(initial, ProviderStatus::Starting)
+    }
+
+    fn with_status_after_start(initial: ProviderStatus, after_start: ProviderStatus) -> Self {
         Self {
             start_called: AtomicBool::new(false),
             stop_called: AtomicBool::new(false),
+            polls: AtomicUsize::new(0),
             status: tokio::sync::Mutex::new(initial),
+            status_after_start: after_start,
+        }
+    }
+
+    async fn wait_for_polls(&self, count: usize) {
+        while self.polls.load(Ordering::Acquire) < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 }
@@ -30,7 +44,7 @@ impl ServerProvider for MockProvider {
     fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             self.start_called.store(true, Ordering::Release);
-            *self.status.lock().await = ProviderStatus::Starting;
+            *self.status.lock().await = self.status_after_start;
             Ok(())
         })
     }
@@ -46,7 +60,11 @@ impl ServerProvider for MockProvider {
     fn check_status(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
-        Box::pin(async move { Ok(*self.status.lock().await) })
+        Box::pin(async move {
+            let status = *self.status.lock().await;
+            self.polls.fetch_add(1, Ordering::AcqRel);
+            Ok(status)
+        })
     }
 
     fn provider_type(&self) -> &'static str {
@@ -302,4 +320,166 @@ async fn test_manual_start_stop() {
     service.stop_server("test").await.unwrap();
     assert!(provider.stop_called.load(Ordering::Acquire));
     assert_eq!(service.get_state("test"), Some(ServerState::Sleeping));
+}
+
+struct FailingStartProvider {
+    release: tokio::sync::Notify,
+}
+
+impl ServerProvider for FailingStartProvider {
+    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            self.release.notified().await;
+            Err(ServerManagerError::Provider {
+                server_id: "test".to_string(),
+                message: "docker daemon unreachable".to_string(),
+            })
+        })
+    }
+
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn check_status(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+        Box::pin(async { Ok(ProviderStatus::Stopped) })
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "failing"
+    }
+}
+
+fn provider_message(result: &Result<(), ServerManagerError>) -> Option<&str> {
+    match result {
+        Err(ServerManagerError::Provider { message, .. }) => Some(message.as_str()),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn test_joined_waiter_receives_the_provider_start_error() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(FailingStartProvider {
+        release: tokio::sync::Notify::new(),
+    });
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+    );
+
+    let svc = Arc::clone(&service);
+    let first = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    let svc = Arc::clone(&service);
+    let second = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    provider.release.notify_one();
+
+    let first = tokio::time::timeout(Duration::from_secs(5), first)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+    let second = tokio::time::timeout(Duration::from_secs(5), second)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+
+    assert_eq!(provider_message(&first), Some("docker daemon unreachable"));
+    assert_eq!(
+        provider_message(&second),
+        Some("docker daemon unreachable"),
+        "joined waiter got {second:?}"
+    );
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+}
+
+#[tokio::test]
+async fn test_waiter_learns_the_server_went_back_to_sleep() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(MockProvider::new(ProviderStatus::Stopped));
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_millis(100),
+    );
+
+    let shutdown = CancellationToken::new();
+    let counter = Arc::new(MockPlayerCounter);
+    let _handles = service.start_monitoring(counter, shutdown.clone());
+
+    let svc = Arc::clone(&service);
+    let handle = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(provider.start_called.load(Ordering::Acquire));
+    provider.wait_for_polls(1).await;
+
+    *provider.status.lock().await = ProviderStatus::Stopped;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+
+    assert!(
+        matches!(result, Err(ServerManagerError::WentToSleep { ref server_id }) if server_id == "test"),
+        "got {result:?}"
+    );
+    assert_eq!(service.get_state("test"), Some(ServerState::Sleeping));
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn test_stopped_polls_during_start_keep_the_waiter_waiting() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(MockProvider::with_status_after_start(
+        ProviderStatus::Stopped,
+        ProviderStatus::Stopped,
+    ));
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_millis(20),
+    );
+
+    let shutdown = CancellationToken::new();
+    let counter = Arc::new(MockPlayerCounter);
+    let _handles = service.start_monitoring(counter, shutdown.clone());
+
+    let svc = Arc::clone(&service);
+    let handle = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(provider.start_called.load(Ordering::Acquire));
+
+    let polls = provider.polls.load(Ordering::Acquire);
+    provider.wait_for_polls(polls + 2).await;
+    assert!(!handle.is_finished(), "waiter failed on a Stopped poll");
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    *provider.status.lock().await = ProviderStatus::Running;
+
+    let result = tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+    assert!(result.is_ok(), "got {result:?}");
+    assert_eq!(service.get_state("test"), Some(ServerState::Online));
+
+    shutdown.cancel();
 }

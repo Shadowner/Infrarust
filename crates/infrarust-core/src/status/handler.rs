@@ -4,38 +4,38 @@
 //! full decision tree: server manager states → relay → cache → stale
 //! fallback → synthetic MOTDs.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex as TokioMutex;
 
 use infrarust_api::events::proxy::ProxyPingEvent;
+use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
-use infrarust_protocol::io::{PacketDecoder, PacketEncoder};
+use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
-use infrarust_protocol::{CURRENT_MC_PROTOCOL, Packet};
 
 use infrarust_server_manager::{ServerManagerService, ServerState};
 
 use super::STATUS_PROTOCOL_VERSION;
+
+const STATUS_READ_TIMEOUT: Duration = Duration::from_secs(5);
 use super::cache::StatusCache;
 use super::favicon::FaviconCache;
-use super::relay::StatusRelayClient;
+use super::motd::{DEFAULT_PROXY_MOTD, state_max_players, state_motd};
+use super::relay::{StatusRelayClient, read_frame_within, send_packet};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::conversion::{
-    component_to_json_value, core_to_api_ping_response, merge_ping_event,
-};
+use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::registry::ConnectionRegistry;
+use crate::session::connection_registry::ConnectionRegistry;
+use crate::util::text::api_version;
 
 /// Handles modern (1.7+) status pings with relay, cache, and contextual MOTDs.
 pub struct StatusHandler {
@@ -113,7 +113,7 @@ impl StatusHandler {
         let routing = ctx.extensions.get::<RoutingData>().cloned();
         let handshake = ctx.extensions.get::<HandshakeData>().cloned();
 
-        self.read_status_request(ctx).await?;
+        let mut decoder = self.read_status_request(ctx).await?;
 
         let mut response = self
             .resolve_response(
@@ -124,26 +124,39 @@ impl StatusHandler {
             )
             .await;
 
-        let api_response = core_to_api_ping_response(&response);
-        let sent_description = component_to_json_value(&api_response.description);
-        let remote_addr = SocketAddr::new(ctx.client_ip, ctx.peer_addr.port());
-        let event = ProxyPingEvent {
-            remote_addr,
-            response: api_response,
-        };
+        let client_version = handshake
+            .as_ref()
+            .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
+        let sent = core_to_api_ping_response(&response);
+        let event = ProxyPingEvent::new(
+            ctx.client_addr(),
+            routing.as_ref().map(|r| ServerId::new(r.config_id.clone())),
+            handshake.as_ref().map(|h| h.domain.clone()),
+            api_version(client_version),
+            false,
+            sent.clone(),
+        );
         let event = self.event_bus.fire(event).await;
-        merge_ping_event(&mut response, &sent_description, &event.response);
+        merge_ping_event(
+            &mut response,
+            &sent,
+            &event.response,
+            api_version(client_version),
+        );
 
-        let json = response
-            .to_json()
-            .map_err(|e| CoreError::Other(format!("failed to serialize status JSON: {e}")))?;
+        let json = response.to_json()?;
         let status_resp = CStatusResponse {
             json_response: json,
         };
-        self.send_packet(ctx, &status_resp, STATUS_PROTOCOL_VERSION)
-            .await?;
+        send_packet(
+            &self.registry,
+            ctx.stream_mut(),
+            &status_resp,
+            STATUS_PROTOCOL_VERSION,
+        )
+        .await?;
 
-        self.handle_ping_pong(ctx).await?;
+        self.handle_ping_pong(ctx, &mut decoder).await?;
 
         Ok(())
     }
@@ -157,7 +170,9 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         let Some(routing) = routing else {
-            return self.build_default_motd_response();
+            let mut response = self.build_default_motd_response();
+            response.favicon = self.favicon_cache.default_favicon();
+            return response;
         };
 
         let config = &routing.server_config;
@@ -220,8 +235,7 @@ impl StatusHandler {
         }
 
         let domain = handshake.map_or("localhost", |h| h.domain.as_str());
-        let protocol_version =
-            handshake.map_or(ProtocolVersion(CURRENT_MC_PROTOCOL), |h| h.protocol_version);
+        let protocol_version = handshake.map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
         let client_info = ctx.connection_info();
 
         match self
@@ -266,44 +280,30 @@ impl StatusHandler {
         self.get_unreachable_motd(config, connection_registry, config_id)
     }
 
-    /// Builds a synthetic MOTD for the given server manager state.
-    fn build_state_motd(config: &ServerConfig, state: ServerState) -> ServerPingResponse {
-        let (motd_entry, default_text) = match state {
-            ServerState::Sleeping => (
-                config.motd.sleeping.as_ref(),
-                "\u{00a7}7Server sleeping \u{2014} \u{00a7}aConnect to wake up!",
-            ),
-            ServerState::Starting => (
-                config.motd.starting.as_ref(),
-                "\u{00a7}eServer is starting...",
-            ),
-            ServerState::Crashed => (config.motd.crashed.as_ref(), "\u{00a7}cServer unavailable"),
-            ServerState::Stopping => (
-                config.motd.stopping.as_ref(),
-                "\u{00a7}6Server is stopping...",
-            ),
-            _ => (None, "A Minecraft Server"),
-        };
-
-        motd_entry.map_or_else(
-            || ServerPingResponse::synthetic(default_text, None, None, None),
+    pub(crate) fn build_state_motd(
+        config: &ServerConfig,
+        state: ServerState,
+    ) -> ServerPingResponse {
+        let (entry, default_text) = state_motd(&config.motd, state);
+        let max_players = Some(state_max_players(entry, config));
+        entry.map_or_else(
+            || ServerPingResponse::synthetic(default_text, None, None, max_players),
             |entry| {
                 ServerPingResponse::synthetic(
                     &entry.text,
                     entry.favicon.as_deref(),
                     entry.version_name.as_deref(),
-                    entry.max_players.map(u32::cast_signed),
+                    max_players,
                 )
             },
         )
     }
 
-    /// Builds a response from the global `default_motd` (unknown domain).
     fn build_default_motd_response(&self) -> ServerPingResponse {
         let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
 
         entry.map_or_else(
-            || ServerPingResponse::synthetic("An Infrarust Proxy", None, None, None),
+            || ServerPingResponse::synthetic(DEFAULT_PROXY_MOTD, None, None, None),
             |entry| {
                 ServerPingResponse::synthetic(
                     &entry.text,
@@ -377,49 +377,37 @@ impl StatusHandler {
         }
     }
 
-    /// Reads the `SStatusRequest` frame from the client (with timeout).
-    async fn read_status_request(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        tokio::time::timeout(Duration::from_secs(5), async {
-            let mut decoder = PacketDecoder::new();
-            if !ctx.buffered_data.is_empty() {
-                decoder.queue_bytes(&ctx.buffered_data);
-                ctx.buffered_data.clear();
-            }
-            loop {
-                if decoder.try_next_frame()?.is_some() {
-                    return Ok(());
-                }
-                let mut buf = [0u8; 512];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
-                }
-                decoder.queue_bytes(&buf[..n]);
-            }
-        })
-        .await
-        .map_err(|_| CoreError::Timeout("status request read timed out".into()))?
+    async fn read_status_request(
+        &self,
+        ctx: &mut ConnectionContext,
+    ) -> Result<PacketDecoder, CoreError> {
+        let mut decoder = PacketDecoder::new();
+        if !ctx.buffered_data.is_empty() {
+            decoder.queue_bytes(&ctx.buffered_data);
+            ctx.buffered_data.clear();
+        }
+        read_frame_within(
+            ctx.stream_mut(),
+            &mut decoder,
+            STATUS_READ_TIMEOUT,
+            "status request",
+        )
+        .await?;
+        Ok(decoder)
     }
 
-    /// Handles the ping/pong exchange after status response.
-    #[allow(clippy::similar_names)] // decoder vs decoded are contextually different
-    async fn handle_ping_pong(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        let frame = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut decoder = PacketDecoder::new();
-            loop {
-                if let Some(frame) = decoder.try_next_frame()? {
-                    return Ok(frame);
-                }
-                let mut buf = [0u8; 512];
-                let n = ctx.stream_mut().read(&mut buf).await?;
-                if n == 0 {
-                    return Err(CoreError::ConnectionClosed);
-                }
-                decoder.queue_bytes(&buf[..n]);
-            }
-        })
-        .await
-        .map_err(|_| CoreError::Timeout("ping request read timed out".into()))??;
+    async fn handle_ping_pong(
+        &self,
+        ctx: &mut ConnectionContext,
+        decoder: &mut PacketDecoder,
+    ) -> Result<(), CoreError> {
+        let frame = read_frame_within(
+            ctx.stream_mut(),
+            decoder,
+            STATUS_READ_TIMEOUT,
+            "ping request",
+        )
+        .await?;
 
         let decoded = self.registry.decode_frame(
             &frame,
@@ -437,33 +425,12 @@ impl StatusHandler {
         };
 
         let pong = CPingResponse { payload };
-        self.send_packet(ctx, &pong, STATUS_PROTOCOL_VERSION).await
-    }
-
-    /// Encodes and sends a typed packet to the client stream.
-    async fn send_packet<P: Packet>(
-        &self,
-        ctx: &mut ConnectionContext,
-        packet: &P,
-        version: ProtocolVersion,
-    ) -> Result<(), CoreError> {
-        let packet_id = self.registry.get_packet_id::<P>(version).ok_or_else(|| {
-            CoreError::Other(format!(
-                "no packet id for {} at protocol {}",
-                P::NAME,
-                version.0
-            ))
-        })?;
-
-        let mut payload = Vec::new();
-        packet.encode(&mut payload, version)?;
-
-        let mut encoder = PacketEncoder::new();
-        encoder.append_raw(packet_id, &payload)?;
-        let bytes = encoder.take();
-
-        ctx.stream_mut().write_all(&bytes).await?;
-        ctx.stream_mut().flush().await?;
-        Ok(())
+        send_packet(
+            &self.registry,
+            ctx.stream_mut(),
+            &pong,
+            STATUS_PROTOCOL_VERSION,
+        )
+        .await
     }
 }

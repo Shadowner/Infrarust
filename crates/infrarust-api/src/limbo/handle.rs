@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::PlayerError;
 use crate::types::{Component, PlayerId, TitleData};
 
-use super::handler::HandlerResult;
+use super::handler::LimboOutcome;
 use super::session::LimboSession;
 
 /// A cloneable, `'static` handle to a limbo session.
@@ -43,8 +43,8 @@ impl SessionHandle {
         self.inner.send_action_bar(message)
     }
 
-    pub fn complete(&self, result: HandlerResult) {
-        self.inner.complete_scoped(self.hold_id, result);
+    pub fn complete(&self, outcome: LimboOutcome) {
+        self.inner.complete_scoped(self.hold_id, outcome);
     }
 
     /// The session's cancellation token, cancelled when the limbo session ends.

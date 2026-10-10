@@ -1,4 +1,4 @@
-use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
+use crate::codec::{McBufReadExt, McBufWriteExt, VarInt, count_from_signed};
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
@@ -12,15 +12,12 @@ pub struct Property {
 }
 
 fn read_byte_array_short(r: &mut &[u8]) -> ProtocolResult<Vec<u8>> {
-    let len = r.read_i16_be()?;
-    if len < 0 {
-        return Err(ProtocolError::invalid("negative byte array length"));
-    }
-    r.read_byte_array_bounded(len as usize)
+    let len = count_from_signed(r.read_i16_be()?, "byte array length")?;
+    r.read_byte_array_bounded(len)
 }
 
 fn write_byte_array_short(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     data: &[u8],
 ) -> ProtocolResult<()> {
     if data.len() > i16::MAX as usize {
@@ -45,7 +42,7 @@ fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
 }
 
 fn write_uuid_int_array(
-    mut w: &mut (impl std::io::Write + ?Sized),
+    w: &mut (impl std::io::Write + ?Sized),
     uuid: &uuid::Uuid,
 ) -> ProtocolResult<()> {
     let val = uuid.as_u128();
@@ -120,7 +117,7 @@ impl Packet for SLoginStart {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.name)?;
@@ -200,7 +197,7 @@ impl Packet for CEncryptionRequest {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.server_id)?;
@@ -279,7 +276,7 @@ impl Packet for SEncryptionResponse {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         let signed_band = version.no_less_than(ProtocolVersion::V1_19)
@@ -341,7 +338,7 @@ impl Packet for CSetCompression {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.threshold)?;
@@ -385,11 +382,8 @@ impl Packet for CLoginSuccess {
         let username = r.read_string_bounded(16)?;
 
         let properties = if version.no_less_than(ProtocolVersion::V1_19) {
-            let count = r.read_var_int()?.0;
-            if count < 0 {
-                return Err(ProtocolError::invalid("negative property count"));
-            }
-            let mut props = Vec::with_capacity((count as usize).min(64));
+            let count = r.read_count("property count")?;
+            let mut props = Vec::with_capacity(count.min(64));
             for _ in 0..count {
                 let name = r.read_string()?;
                 let value = r.read_string()?;
@@ -433,7 +427,7 @@ impl Packet for CLoginSuccess {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         if version.no_less_than(ProtocolVersion::V1_19) {
@@ -498,7 +492,7 @@ impl Packet for CLoginDisconnect {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_string(&self.reason)?;
@@ -535,7 +529,7 @@ impl Packet for CLoginPluginRequest {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.message_id)?;
@@ -574,7 +568,7 @@ impl Packet for SLoginPluginResponse {
 
     fn encode(
         &self,
-        mut w: &mut (impl std::io::Write + ?Sized),
+        w: &mut (impl std::io::Write + ?Sized),
         _version: ProtocolVersion,
     ) -> ProtocolResult<()> {
         w.write_var_int(&self.message_id)?;

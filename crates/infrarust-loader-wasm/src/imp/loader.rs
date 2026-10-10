@@ -1,47 +1,161 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::loader::{LoaderError, PluginContextFactory, PluginLoader};
 use infrarust_api::permissions::Capability;
 use infrarust_api::plugin::{Plugin, PluginMetadata};
-use wasmtime::component::Component;
-use wasmtime::{Engine, Store};
+use wasmtime::Engine;
+use wasmtime::component::{Component, Linker};
 
-use crate::bindings::Plugin as PluginBindings;
+use crate::actor::PluginActor;
 use crate::cache::AotCache;
-use crate::consts::CACHE_SUBDIR;
+use crate::config::WasmLoaderConfig;
+use crate::consts::LEGACY_CACHE_SUBDIR;
+use crate::contract::check as check_contract;
 use crate::epoch::EpochTicker;
-use crate::error::WasmLoaderError;
+use crate::error::{WasmLoaderError, bounded};
+use crate::gates::check_imports;
+use crate::instance::InstanceFactory;
 use crate::linker::build_linker;
 use crate::metadata::extract_metadata;
 use crate::plugin::WasmPlugin;
-use crate::store_state::{PluginStoreState, build_load_state, install_epoch_control};
+use crate::registrations::Registrations;
+use crate::store_state::{PluginSetup, PluginStoreState};
+use crate::sync::{lock, read, write};
 
 pub struct WasmPluginLoader {
     engine: Engine,
+    linker: Linker<PluginStoreState>,
+    config: WasmLoaderConfig,
+    cache: AotCache,
+    legacy_cache_noted: AtomicBool,
     discovered: RwLock<HashMap<String, DiscoveredWasm>>,
-    // RAII guard: never read, but its `Drop` stops the epoch-ticker thread.
-    #[allow(dead_code)]
-    ticker: EpochTicker,
+    actors: Mutex<HashMap<String, Weak<PluginActor>>>,
+    _ticker: EpochTicker,
 }
 
 #[derive(Clone)]
 struct DiscoveredWasm {
     metadata: PluginMetadata,
     component: Component,
+    path: PathBuf,
 }
 
 impl WasmPluginLoader {
-    pub fn new(engine: Engine) -> Self {
-        let ticker = EpochTicker::spawn(engine.clone());
-        Self {
+    pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
+        let linker = build_linker(&engine, "host").map_err(std::io::Error::other)?;
+        let ticker = EpochTicker::spawn(&engine, config.epoch_tick())?;
+        let cache = AotCache::new(&engine, config.cache_dir().map(Path::to_path_buf));
+        Ok(Self {
             engine,
+            linker,
+            config,
+            cache,
+            legacy_cache_noted: AtomicBool::new(false),
             discovered: RwLock::new(HashMap::new()),
-            ticker,
+            actors: Mutex::new(HashMap::new()),
+            _ticker: ticker,
+        })
+    }
+
+    fn note_legacy_cache(&self, plugin_dir: &Path) {
+        let legacy = plugin_dir.join(LEGACY_CACHE_SUBDIR);
+        if self.cache.dir() == Some(legacy.as_path()) || !legacy.is_dir() {
+            return;
+        }
+        if !self.legacy_cache_noted.swap(true, Ordering::Relaxed) {
+            tracing::info!(
+                path = %legacy.display(),
+                cache_dir = ?self.cache.dir().map(Path::display),
+                "this directory holds the AOT cache of an earlier version; it is no longer read and can be deleted"
+            );
         }
     }
+
+    async fn probe(
+        &self,
+        path: &Path,
+        live: &mut HashSet<String>,
+    ) -> Result<DiscoveredWasm, WasmLoaderError> {
+        let component = {
+            let engine = self.engine.clone();
+            let cache = self.cache.clone();
+            let owned = path.to_path_buf();
+            let dispatch = tracing::dispatcher::get_default(Clone::clone);
+            let span = tracing::Span::current();
+            let (key, component) = tokio::task::spawn_blocking(move || {
+                tracing::dispatcher::with_default(&dispatch, || {
+                    span.in_scope(|| match cache.read_source(&owned) {
+                        Ok(source) => (
+                            Some(source.key().to_owned()),
+                            cache.compile_or_load(&engine, &owned, &source),
+                        ),
+                        Err(error) => (None, Err(error)),
+                    })
+                })
+            })
+            .await
+            .map_err(|join_err| WasmLoaderError::Precompile {
+                path: path.to_path_buf(),
+                reason: format!("compile task failed: {join_err}"),
+            })?;
+            live.extend(key);
+            component?
+        };
+        check_contract(&self.engine, &component, path)?;
+        let metadata = extract_metadata(
+            &self.engine,
+            &self.linker,
+            &component,
+            path,
+            &self.config.default_sandbox(),
+        )
+        .await?;
+        Ok(DiscoveredWasm {
+            metadata,
+            component,
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+fn without_duplicate_ids(
+    probed: Vec<DiscoveredWasm>,
+) -> (Vec<PluginMetadata>, HashMap<String, DiscoveredWasm>) {
+    let mut ids = Vec::new();
+    let mut files_of: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in &probed {
+        let files = files_of.entry(entry.metadata.id.clone()).or_default();
+        if files.is_empty() {
+            ids.push(entry.metadata.id.clone());
+        }
+        files.push(entry.path.display().to_string());
+    }
+    for id in &ids {
+        if let Some(files) = files_of.get(id).filter(|files| files.len() > 1) {
+            tracing::error!(
+                plugin = %id,
+                files = %files.join(", "),
+                "WASM plugins refused: several files declare the same plugin id, keep only one of them"
+            );
+        }
+    }
+
+    let mut metadatas = Vec::new();
+    let mut discovered = HashMap::new();
+    for entry in probed {
+        let id = entry.metadata.id.clone();
+        if files_of.get(&id).is_some_and(|files| files.len() > 1) {
+            continue;
+        }
+        tracing::debug!(plugin = %id, path = %entry.path.display(), "wasm plugin discovered");
+        metadatas.push(entry.metadata.clone());
+        discovered.insert(id, entry);
+    }
+    (metadatas, discovered)
 }
 
 impl PluginLoader for WasmPluginLoader {
@@ -57,45 +171,36 @@ impl PluginLoader for WasmPluginLoader {
             if !plugin_dir.exists() {
                 return Ok(Vec::new());
             }
-            let cache = AotCache::new(plugin_dir.join(CACHE_SUBDIR));
+            self.note_legacy_cache(plugin_dir);
             let wasm_files = scan_wasm_files(plugin_dir)?;
 
-            let mut metadatas = Vec::new();
-            let mut discovered = HashMap::new();
+            let mut probed = Vec::new();
+            let mut live = HashSet::new();
             for path in wasm_files {
-                let label = path_label(&path);
-
-                let component = {
-                    let engine = self.engine.clone();
-                    let cache = cache.clone();
-                    let path = path.clone();
-                    tokio::task::spawn_blocking(move || cache.compile_or_load(&engine, &path))
-                        .await
-                        .map_err(|join_err| LoaderError::LoadFailed {
-                            plugin_id: label.clone(),
-                            reason: format!("compile task failed: {join_err}"),
-                            source: None,
-                        })?
-                        .map_err(|e| e.into_loader_error(&label))?
-                };
-
-                let metadata = extract_metadata(&self.engine, &component, &path)
-                    .await
-                    .map_err(|e| e.into_loader_error(&label))?;
-
-                metadatas.push(metadata.clone());
-                discovered.insert(
-                    metadata.id.clone(),
-                    DiscoveredWasm {
-                        metadata,
-                        component,
-                    },
-                );
+                match self.probe(&path, &mut live).await {
+                    Ok(entry) => probed.push(entry),
+                    Err(error) => {
+                        tracing::error!(
+                            path = %path.display(),
+                            error = %bounded(&error),
+                            "WASM plugin refused"
+                        );
+                    }
+                }
             }
 
-            *self.discovered.write().expect("discovered lock poisoned") = discovered;
+            self.cache.sweep(&live);
+
+            let (metadatas, discovered) = without_duplicate_ids(probed);
+            *write(&self.discovered) = discovered;
             Ok(metadatas)
         })
+    }
+
+    fn plugin_source(&self, plugin_id: &str) -> Option<PathBuf> {
+        read(&self.discovered)
+            .get(plugin_id)
+            .map(|entry| entry.path.clone())
     }
 
     fn load<'a>(
@@ -104,10 +209,7 @@ impl PluginLoader for WasmPluginLoader {
         context_factory: &'a dyn PluginContextFactory,
     ) -> BoxFuture<'a, Result<Box<dyn Plugin>, LoaderError>> {
         Box::pin(async move {
-            let entry = self
-                .discovered
-                .read()
-                .expect("discovered lock poisoned")
+            let entry = read(&self.discovered)
                 .get(plugin_id)
                 .cloned()
                 .ok_or_else(|| LoaderError::PluginNotFound {
@@ -117,15 +219,35 @@ impl PluginLoader for WasmPluginLoader {
             let ctx = context_factory.create_context(plugin_id);
             let capabilities = ctx.capabilities().clone();
             let data_dir = ctx.data_dir();
+            let sandbox = self.config.sandbox_for(plugin_id);
+            let network = crate::network::policy_for(
+                plugin_id,
+                self.config.network_for(plugin_id),
+                &capabilities,
+                sandbox.host_call_timeout,
+            );
+            let mounts = crate::mounts::resolve_mounts(
+                plugin_id,
+                self.config.mounts_for(plugin_id),
+                &capabilities,
+            )
+            .map_err(|e| e.into_loader_error(plugin_id))?;
 
-            let linker = build_linker(&self.engine, plugin_id, &capabilities)
-                .map_err(|e| e.into_loader_error(plugin_id))?;
+            check_imports(
+                &self.engine,
+                &entry.component,
+                plugin_id,
+                &capabilities,
+                self.config.strict_capabilities(plugin_id),
+            )
+            .map_err(|e| e.into_loader_error(plugin_id))?;
 
             let codec = if capabilities.has(Capability::CodecFilter) {
                 let instantiator = crate::codec::CodecInstantiator::new(
                     self.engine.clone(),
                     &entry.component,
                     plugin_id.to_owned(),
+                    &sandbox,
                 )
                 .map_err(|e| e.into_loader_error(plugin_id))?;
                 Some(Arc::new(instantiator))
@@ -133,75 +255,92 @@ impl PluginLoader for WasmPluginLoader {
                 None
             };
 
-            let state = build_load_state(plugin_id.to_owned(), ctx, capabilities, &data_dir, codec)
-                .map_err(|e| e.into_loader_error(plugin_id))?;
-            let mut store = Store::new(&self.engine, state);
-            install_epoch_control(&mut store);
-            store.limiter(|s: &mut PluginStoreState| {
-                s.limits_mut() as &mut dyn wasmtime::ResourceLimiter
-            });
-
-            let bindings = PluginBindings::instantiate_async(&mut store, &entry.component, &linker)
+            let shutdown = ctx.proxy_shutdown();
+            let shutting_down = Box::new(move || shutdown.is_cancelled());
+            let setup = PluginSetup {
+                plugin_id: plugin_id.to_owned(),
+                ctx,
+                capabilities,
+                data_dir,
+                codec,
+                sandbox,
+                registrations: Arc::new(Registrations::default()),
+                network,
+                mounts: mounts.into(),
+            };
+            let factory =
+                InstanceFactory::new(self.engine.clone(), &entry.component, &self.linker, setup)
+                    .map_err(|e| e.into_loader_error(plugin_id))?;
+            let actor = PluginActor::start(factory)
                 .await
-                .map_err(|e| map_instantiate_error(plugin_id, &e).into_loader_error(plugin_id))?;
-
-            Ok(Box::new(WasmPlugin::new(entry.metadata, store, bindings)) as Box<dyn Plugin>)
+                .map_err(|e| e.into_loader_error(plugin_id))?;
+            lock(&self.actors).insert(plugin_id.to_owned(), Arc::downgrade(&actor));
+            Ok(Box::new(WasmPlugin::new(entry.metadata, actor, shutting_down)) as Box<dyn Plugin>)
         })
     }
 
     fn unload<'a>(&'a self, plugin_id: &'a str) -> BoxFuture<'a, Result<(), LoaderError>> {
         Box::pin(async move {
+            let actor = lock(&self.actors)
+                .remove(plugin_id)
+                .and_then(|actor| actor.upgrade());
+            if let Some(actor) = actor {
+                actor.shutdown().await;
+            }
             tracing::debug!(plugin = %plugin_id, "wasm plugin unloaded");
             Ok(())
         })
     }
 }
 
-fn map_instantiate_error(plugin_id: &str, e: &wasmtime::Error) -> WasmLoaderError {
-    let reason = e.to_string();
-    if reason.contains("infrarust:plugin/") {
-        WasmLoaderError::CapabilityDenied {
-            plugin_id: plugin_id.to_owned(),
-            reason,
-        }
-    } else {
-        WasmLoaderError::Instantiate {
-            plugin_id: plugin_id.to_owned(),
-            reason,
-        }
-    }
-}
-
 fn scan_wasm_files(dir: &Path) -> Result<Vec<PathBuf>, LoaderError> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let entries =
-            std::fs::read_dir(&current).map_err(|source| LoaderError::DirectoryNotAccessible {
-                path: current.clone(),
-                source,
-            })?;
-        for entry in entries {
-            let entry = entry.map_err(|source| LoaderError::DirectoryNotAccessible {
-                path: current.clone(),
-                source,
-            })?;
-            let path = entry.path();
-            if path.is_dir() {
-                if path.file_name().and_then(|n| n.to_str()) != Some(CACHE_SUBDIR) {
-                    stack.push(path);
-                }
-            } else if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
-                out.push(path);
+    let mut entries = std::fs::read_dir(dir)
+        .and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<_>>>()
+        })
+        .map_err(|source| LoaderError::DirectoryNotAccessible {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+    entries.sort();
+
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+    for path in entries {
+        if path.extension().and_then(|e| e.to_str()) != Some("wasm") {
+            continue;
+        }
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {}
+            Ok(metadata) if metadata.is_dir() => continue,
+            Ok(_) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = "not a regular file",
+                    "WASM plugin refused"
+                );
+                continue;
+            }
+            Err(error) => {
+                tracing::error!(
+                    path = %path.display(),
+                    error = %error,
+                    "WASM plugin refused"
+                );
+                continue;
             }
         }
+        let identity = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if seen.insert(identity) {
+            files.push(path);
+        } else {
+            tracing::debug!(
+                path = %path.display(),
+                "plugin file already found through another link, skipped"
+            );
+        }
     }
-    Ok(out)
-}
-
-fn path_label(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("<unknown>")
-        .to_owned()
+    Ok(files)
 }

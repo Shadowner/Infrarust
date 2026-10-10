@@ -1,15 +1,19 @@
-//! Player commands: list, find, kick, kick-ip, send, send-all, msg, broadcast.
-
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
-use comfy_table::Cell;
+use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{Component, ServerId};
+use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
+use crate::commands::actions::{broadcast, find_player, kick_player, send_player};
 use crate::console::ConsoleServices;
+use crate::console::commands::{args, usage};
 use crate::console::dispatcher::ConsoleCommand;
-use crate::console::output::{CommandCategory, CommandOutput, OutputLine};
+use crate::console::output::{
+    Block, CommandCategory, CommandOutput, Fields, Line, OutputLine, Span, Table,
+};
 
 pub struct ListPlayersCommand;
 
@@ -40,45 +44,14 @@ impl ConsoleCommand for ListPlayersCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let players = if let Some(server) = args.first() {
-                services
+            let filter = args.first().copied();
+            let players = match filter {
+                Some(server) => services
                     .player_registry
-                    .get_players_on_server(&ServerId::new(*server))
-            } else {
-                services.player_registry.get_all_players()
+                    .get_players_on_server(&ServerId::new(server)),
+                None => services.player_registry.get_all_players(),
             };
-
-            if players.is_empty() {
-                return CommandOutput::Success("No players online".to_string());
-            }
-
-            let renderer = crate::console::output::OutputRenderer::new();
-            let mut table = renderer.create_table();
-            table.set_header(vec!["Player", "IP", "Server", "Mode", "Protocol"]);
-
-            for player in &players {
-                let server = player
-                    .current_server()
-                    .map(|s| s.as_str().to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                let mode = if player.is_active() {
-                    "active"
-                } else {
-                    "passthrough"
-                };
-                table.add_row(vec![
-                    Cell::new(player.profile().username.as_str()),
-                    Cell::new(player.remote_addr().ip().to_string()),
-                    Cell::new(server),
-                    Cell::new(mode),
-                    Cell::new(player.protocol_version().to_string()),
-                ]);
-            }
-
-            CommandOutput::Table {
-                table,
-                footer: Some(format!(" {} player(s) online", players.len())),
-            }
+            players_output(&players, filter)
         })
     }
 }
@@ -108,33 +81,13 @@ impl ConsoleCommand for FindPlayerCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let name = match args.first() {
-                Some(n) => *n,
-                None => return CommandOutput::Error("Usage: find <player>".to_string()),
+            let Some(name) = args.first() else {
+                return usage(self);
             };
 
-            match services.player_registry.get_player(name) {
-                Some(player) => {
-                    let server = player
-                        .current_server()
-                        .map(|s| s.as_str().to_string())
-                        .unwrap_or_else(|| "-".to_string());
-                    let mode = if player.is_active() {
-                        "active"
-                    } else {
-                        "passthrough"
-                    };
-                    CommandOutput::Lines(vec![
-                        OutputLine::Info(format!("  Player: {}", player.profile().username)),
-                        OutputLine::Info(format!("  UUID: {}", player.profile().uuid)),
-                        OutputLine::Info(format!("  IP: {}", player.remote_addr())),
-                        OutputLine::Info(format!("  Server: {server}")),
-                        OutputLine::Info(format!("  Mode: {mode}")),
-                        OutputLine::Info(format!("  Protocol: {}", player.protocol_version())),
-                        OutputLine::Info(format!("  Connected: {}", player.is_connected())),
-                    ])
-                }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+            match find_player(&*services.player_registry, name) {
+                Ok(player) => player_block(&*player).into(),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -165,36 +118,16 @@ impl ConsoleCommand for KickCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let name = match args.first() {
-                Some(n) => *n,
-                None => {
-                    return CommandOutput::Error("Usage: kick <player> [reason...]".to_string());
-                }
+            let Some((name, reason)) = args.split_first() else {
+                return usage(self);
             };
+            let reason = args::rest(reason);
 
-            let reason = if args.len() > 1 {
-                args[1..].join(" ")
-            } else {
-                "Kicked by administrator".to_string()
-            };
-
-            match services.player_registry.get_player(name) {
-                Some(player) => {
-                    let server = player
-                        .current_server()
-                        .map(|s| s.as_str().to_string())
-                        .unwrap_or_default();
-                    tracing::info!(
-                        target: "console",
-                        player = name,
-                        reason = %reason,
-                        server = %server,
-                        "Player kicked from console"
-                    );
-                    player.disconnect(Component::text(&reason)).await;
-                    CommandOutput::Success(format!("Kicked {name} (reason: {reason})"))
+            match kick_player(&*services.player_registry, name, reason).await {
+                Ok(kicked) => {
+                    CommandOutput::Success(format!("Kicked {} ({})", kicked.player, kicked.reason))
                 }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -229,19 +162,18 @@ impl ConsoleCommand for KickIpCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let ip_str = match args.first() {
-                Some(ip) => *ip,
-                None => return CommandOutput::Error("Usage: kick-ip <ip>".to_string()),
+            let Some(ip_str) = args.first() else {
+                return usage(self);
             };
 
             let ip: std::net::IpAddr = match ip_str.parse() {
                 Ok(ip) => ip,
-                Err(_) => return CommandOutput::Error(format!("Invalid IP address: '{ip_str}'")),
+                Err(_) => return CommandOutput::error(format!("Invalid IP address: '{ip_str}'")),
             };
 
             let sessions = services.connection_registry.find_by_ip(&ip);
             if sessions.is_empty() {
-                return CommandOutput::Error(format!("No players connected from {ip}"));
+                return CommandOutput::error(format!("No players connected from {ip}"));
             }
 
             let count = sessions.len();
@@ -256,7 +188,7 @@ impl ConsoleCommand for KickIpCommand {
                 "Players kicked by IP from console"
             );
 
-            CommandOutput::Success(format!("Kicked {count} player(s) from IP {ip}"))
+            CommandOutput::Success(format!("Kicked {count} player(s) from {ip}"))
         })
     }
 }
@@ -286,36 +218,22 @@ impl ConsoleCommand for SendCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            if args.len() < 2 {
-                return CommandOutput::Error("Usage: send <player> <server>".to_string());
-            }
+            let [name, server, ..] = args else {
+                return usage(self);
+            };
 
-            let name = args[0];
-            let server = args[1];
-
-            match services.player_registry.get_player(name) {
-                Some(player) => {
-                    if !player.is_active() {
-                        return CommandOutput::Error(format!(
-                            "Player '{name}' is on a passive proxy path and cannot be transferred"
-                        ));
-                    }
-                    match player.switch_server(ServerId::new(server)).await {
-                        Ok(()) => {
-                            tracing::info!(
-                                target: "console",
-                                player = name,
-                                server = server,
-                                "Player transferred from console"
-                            );
-                            CommandOutput::Success(format!("Sent {name} to {server}"))
-                        }
-                        Err(e) => {
-                            CommandOutput::Error(format!("Failed to send {name} to {server}: {e}"))
-                        }
-                    }
+            match send_player(
+                &*services.player_registry,
+                &*services.config_service,
+                name,
+                server,
+            )
+            .await
+            {
+                Ok(sent) => {
+                    CommandOutput::Success(format!("Sent {} to {}", sent.player, sent.server))
                 }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
         })
     }
@@ -350,13 +268,12 @@ impl ConsoleCommand for SendAllCommand {
         services: &'a ConsoleServices,
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
-            let server = match args.first() {
-                Some(s) => *s,
-                None => return CommandOutput::Error("Usage: send-all <server>".to_string()),
+            let Some(server) = args.first() else {
+                return usage(self);
             };
 
             let players = services.player_registry.get_all_players();
-            let target = ServerId::new(server);
+            let target = ServerId::new(*server);
             let mut sent = 0usize;
             let mut errors = 0usize;
 
@@ -378,13 +295,14 @@ impl ConsoleCommand for SendAllCommand {
                 "All players transferred from console"
             );
 
+            let summary = format!("Sent {sent} player(s) to {server}");
             if errors > 0 {
                 CommandOutput::Lines(vec![
-                    OutputLine::Success(format!("Sent {sent} player(s) to {server}")),
+                    OutputLine::Success(summary),
                     OutputLine::Warning(format!("{errors} transfer(s) failed")),
                 ])
             } else {
-                CommandOutput::Success(format!("Sent {sent} player(s) to {server}"))
+                CommandOutput::Success(summary)
             }
         })
     }
@@ -420,7 +338,7 @@ impl ConsoleCommand for MsgCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             if args.len() < 2 {
-                return CommandOutput::Error("Usage: msg <player> <message...>".to_string());
+                return usage(self);
             }
 
             let name = args[0];
@@ -429,18 +347,18 @@ impl ConsoleCommand for MsgCommand {
             match services.player_registry.get_player(name) {
                 Some(player) => {
                     if !player.is_active() {
-                        return CommandOutput::Error(format!(
+                        return CommandOutput::error(format!(
                             "Player '{name}' is on a passive proxy path and cannot receive messages"
                         ));
                     }
                     match player.send_message(Component::text(&message)) {
                         Ok(()) => CommandOutput::Success(format!("Message sent to {name}")),
                         Err(e) => {
-                            CommandOutput::Error(format!("Failed to send message to {name}: {e}"))
+                            CommandOutput::error(format!("Failed to send message to {name}: {e}"))
                         }
                     }
                 }
-                None => CommandOutput::Error(format!("Player '{name}' not found")),
+                None => CommandOutput::error(format!("Player '{name}' not found")),
             }
         })
     }
@@ -476,31 +394,320 @@ impl ConsoleCommand for BroadcastCommand {
     ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
         Box::pin(async move {
             if args.is_empty() {
-                return CommandOutput::Error("Usage: broadcast <message...>".to_string());
+                return usage(self);
             }
 
-            let message = args.join(" ");
-            let component = Component::text(&message);
-            let players = services.player_registry.get_all_players();
-            let mut sent = 0usize;
-
-            for player in &players {
-                if !player.is_active() {
-                    continue;
-                }
-                if player.send_message(component.clone()).is_ok() {
-                    sent += 1;
-                }
+            match broadcast(
+                &*services.player_registry,
+                &*services.config_service,
+                None,
+                &args.join(" "),
+            ) {
+                Ok(sent) => CommandOutput::Success(format!(
+                    "Broadcast sent to {} player(s)",
+                    sent.recipients
+                )),
+                Err(error) => CommandOutput::error(error.to_string()),
             }
-
-            tracing::info!(
-                target: "console",
-                message = %message,
-                recipients = sent,
-                "Broadcast sent from console"
-            );
-
-            CommandOutput::Success(format!("Broadcast sent to {sent} player(s)"))
         })
+    }
+}
+
+fn players_output(players: &[Arc<dyn Player>], filter: Option<&str>) -> CommandOutput {
+    if players.is_empty() {
+        return CommandOutput::Note(match filter {
+            Some(server) => format!("No players on {server}"),
+            None => "No players online".to_string(),
+        });
+    }
+
+    let mut table = Table::new(&["Player", "Server", "Mode", "Version", "Address"]);
+    for player in players {
+        table.row([
+            Span::entity(player.profile().username.as_str()).into(),
+            server_cell(&**player),
+            Line::from(mode_of(&**player)),
+            Line::from(version_name(player.protocol_version())),
+            Span::muted(player.remote_addr().ip().to_string()).into(),
+        ]);
+    }
+
+    Block::new("Players")
+        .meta(list_meta(players, filter))
+        .table(table)
+        .into()
+}
+
+fn list_meta(players: &[Arc<dyn Player>], filter: Option<&str>) -> String {
+    let online = format!("{} online", players.len());
+    if let Some(server) = filter {
+        return format!("{online} on {server}");
+    }
+    let servers: HashSet<ServerId> = players
+        .iter()
+        .filter_map(|player| player.current_server())
+        .collect();
+    match servers.len() {
+        0 => online,
+        1 => format!("{online} on 1 server"),
+        count => format!("{online} on {count} servers"),
+    }
+}
+
+fn player_block(player: &dyn Player) -> Block {
+    let server = player.current_server();
+    let meta = match &server {
+        Some(server) => format!("online on {}", server.as_str()),
+        None => "online".to_string(),
+    };
+    Block::new(player.profile().username.as_str())
+        .meta(meta)
+        .fields(
+            Fields::new()
+                .field("uuid", player.profile().uuid.to_string())
+                .field("address", player.remote_addr().to_string())
+                .field("server", server_cell(player))
+                .field("mode", mode_of(player))
+                .field("version", version_name(player.protocol_version())),
+        )
+}
+
+fn server_cell(player: &dyn Player) -> Line {
+    player
+        .current_server()
+        .map_or_else(|| Span::muted("-").into(), |server| server.as_str().into())
+}
+
+fn mode_of(player: &dyn Player) -> &'static str {
+    if player.is_active() {
+        "intercepted"
+    } else {
+        "passthrough"
+    }
+}
+
+fn version_name(version: ProtocolVersion) -> String {
+    match infrarust_protocol::version::ProtocolVersion(version.raw()).name() {
+        "unknown" | "legacy" => version.raw().to_string(),
+        name => name.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use infrarust_api::command::CommandContext;
+    use infrarust_api::test_util::{MockPlayer, player_source};
+    use infrarust_config::PermissionsConfig;
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::ban::manager::BanManager;
+    use crate::commands::{CommandServices, SubcommandHandler, subcommands};
+    use crate::console::render::Renderer;
+    use crate::event_bus::EventBusImpl;
+    use crate::permissions::PermissionService;
+    use crate::player::registry::PlayerRegistryImpl;
+    use crate::player::{PlayerCommand, PlayerSession};
+    use crate::plugin::PluginRegistryImpl;
+    use crate::plugin::manager::PluginManager;
+    use crate::provider::ProviderId;
+    use crate::routing::DomainRouter;
+    use crate::services::command_manager::CommandManagerImpl;
+    use crate::services::config_service::ConfigServiceImpl;
+    use crate::session::connection_registry::{ConnectionRegistry, SessionGuard};
+
+    struct Surfaces {
+        console: ConsoleServices,
+        ir: CommandServices,
+        session: Arc<PlayerSession>,
+        _guard: SessionGuard,
+        _commands: mpsc::Receiver<PlayerCommand>,
+    }
+
+    fn surfaces(active: bool) -> Surfaces {
+        let connection_registry = Arc::new(ConnectionRegistry::new());
+        let (session, commands) = PlayerSession::new_test(active);
+        let guard = connection_registry.register(Arc::clone(&session));
+        let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry)));
+        let domain_router = Arc::new(DomainRouter::new());
+        domain_router.add(
+            ProviderId::file("lobby"),
+            toml::from_str(
+                "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25566\"]\n",
+            )
+            .unwrap(),
+        );
+        let config_service = Arc::new(ConfigServiceImpl::new(
+            domain_router,
+            PathBuf::from("infrarust.toml"),
+            Arc::new(toml::from_str("").unwrap()),
+        ));
+        let permission_service =
+            Arc::new(PermissionService::new_sync(&PermissionsConfig::default()));
+        let command_manager = Arc::new(CommandManagerImpl::new());
+        let console = ConsoleServices::new(
+            Arc::clone(&player_registry),
+            Arc::clone(&connection_registry),
+            Arc::new(BanManager::disabled(
+                Arc::clone(&connection_registry),
+                Arc::new(EventBusImpl::new()),
+            )),
+            None,
+            Arc::clone(&config_service),
+            Arc::new(tokio::sync::RwLock::new(PluginManager::new(Vec::new()))),
+            Arc::clone(&permission_service),
+            Arc::clone(&command_manager),
+            CancellationToken::new(),
+            Instant::now(),
+        );
+        let ir = CommandServices {
+            player_registry,
+            config_service,
+            server_manager: None,
+            plugin_registry: Arc::new(PluginRegistryImpl::new()),
+            command_manager,
+            permission_service,
+            start_time: Instant::now(),
+        };
+        Surfaces {
+            console,
+            ir,
+            session,
+            _guard: guard,
+            _commands: commands,
+        }
+    }
+
+    async fn ir_reply(
+        services: &CommandServices,
+        sub: &dyn SubcommandHandler,
+        args: &[&str],
+    ) -> String {
+        let admin = MockPlayer::new(9, "Admin")
+            .with_all_permissions()
+            .into_arc();
+        let ctx = CommandContext::new(player_source(&admin), "ir", args.join(" "));
+        let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
+        sub.execute(&ctx, &args, services).await;
+        admin.sent_text()
+    }
+
+    fn error_text(output: CommandOutput) -> String {
+        match output {
+            CommandOutput::Error(failure) => failure.message,
+            CommandOutput::Success(text) => panic!("expected an error, got success: {text}"),
+            _ => panic!("expected an error line"),
+        }
+    }
+
+    #[tokio::test]
+    async fn send_rejects_an_unknown_server_the_same_way_on_both_surfaces() {
+        let world = surfaces(true);
+        let console = error_text(
+            SendCommand
+                .execute(&["TestPlayer", "nowhere"], &world.console)
+                .await,
+        );
+        let ir = ir_reply(
+            &world.ir,
+            &subcommands::send::SendSubcommand,
+            &["TestPlayer", "nowhere"],
+        )
+        .await;
+        assert!(console.contains("nowhere"), "{console}");
+        assert!(ir.contains(&console), "console: {console}\n/ir: {ir}");
+    }
+
+    #[tokio::test]
+    async fn send_rejects_a_passive_player_the_same_way_on_both_surfaces() {
+        let world = surfaces(false);
+        let console = error_text(
+            SendCommand
+                .execute(&["TestPlayer", "lobby"], &world.console)
+                .await,
+        );
+        let ir = ir_reply(
+            &world.ir,
+            &subcommands::send::SendSubcommand,
+            &["TestPlayer", "lobby"],
+        )
+        .await;
+        assert!(console.contains("TestPlayer"), "{console}");
+        assert!(ir.contains(&console), "console: {console}\n/ir: {ir}");
+    }
+
+    fn plain(output: &CommandOutput) -> String {
+        Renderer::new(false, None).render(output)
+    }
+
+    #[tokio::test]
+    async fn list_shows_each_player_with_version_and_address() {
+        let world = surfaces(true);
+        world.session.set_current_server(ServerId::new("lobby"));
+        let output = ListPlayersCommand.execute(&[], &world.console).await;
+        assert_eq!(
+            plain(&output),
+            "# Players - 1 online on 1 server\n\
+             | PLAYER       SERVER   MODE          VERSION   ADDRESS\n\
+             | TestPlayer   lobby    intercepted   1.21      127.0.0.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_filtered_by_server_names_the_server() {
+        let world = surfaces(false);
+        world.session.set_current_server(ServerId::new("lobby"));
+        let output = ListPlayersCommand.execute(&["lobby"], &world.console).await;
+        assert_eq!(
+            plain(&output),
+            "# Players - 1 online on lobby\n\
+             | PLAYER       SERVER   MODE          VERSION   ADDRESS\n\
+             | TestPlayer   lobby    passthrough   1.21      127.0.0.1"
+        );
+        let empty = ListPlayersCommand
+            .execute(&["survival"], &world.console)
+            .await;
+        assert_eq!(plain(&empty), "- No players on survival");
+    }
+
+    #[tokio::test]
+    async fn find_describes_the_player_as_fields() {
+        let world = surfaces(true);
+        let uuid = world.session.profile().uuid;
+        let output = FindPlayerCommand
+            .execute(&["TestPlayer"], &world.console)
+            .await;
+        assert_eq!(
+            plain(&output),
+            format!(
+                "# TestPlayer - online\n\
+                 | uuid     {uuid}\n\
+                 | address  127.0.0.1:12345\n\
+                 | server   -\n\
+                 | mode     intercepted\n\
+                 | version  1.21"
+            )
+        );
+    }
+
+    #[test]
+    fn unnamed_protocol_versions_show_their_number() {
+        assert_eq!(version_name(ProtocolVersion::new(767)), "1.21");
+        assert_eq!(version_name(ProtocolVersion::new(99999)), "99999");
+        assert_eq!(
+            version_name(ProtocolVersion::new(
+                infrarust_protocol::version::ProtocolVersion::LEGACY.0
+            )),
+            infrarust_protocol::version::ProtocolVersion::LEGACY
+                .0
+                .to_string()
+        );
     }
 }

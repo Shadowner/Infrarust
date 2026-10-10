@@ -3,10 +3,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
-use infrarust_api::event::{BoxFuture, Event, EventPriority, ResultedEvent};
+use infrarust_api::event::{BoxFuture, Event, EventPriority};
 
 use infrarust_core::event_bus::EventBusImpl;
 
@@ -54,8 +53,9 @@ async fn test_fire_async_handler_modifies() {
 }
 
 #[tokio::test]
-async fn test_fire_and_forget_executes() {
+async fn test_posted_event_executes() {
     let bus = Arc::new(EventBusImpl::new());
+    bus.start_dispatcher();
     let flag = Arc::new(AtomicBool::new(false));
     let flag_clone = Arc::clone(&flag);
 
@@ -64,10 +64,9 @@ async fn test_fire_and_forget_executes() {
         flag_clone.store(true, Ordering::SeqCst);
     });
 
-    bus.fire_and_forget_arc(TestEvent { value: 0 });
+    bus.post(TestEvent { value: 0 });
+    bus.flush().await;
 
-    // Give the spawned task time to run
-    tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(flag.load(Ordering::SeqCst));
 }
 
@@ -441,7 +440,7 @@ async fn test_raw_packet_result_drop() {
 #[tokio::test]
 async fn test_lifecycle_events_flow() {
     use infrarust_api::events::lifecycle::PostLoginEvent;
-    use infrarust_api::types::{GameProfile, ProtocolVersion};
+    use infrarust_core::player::PlayerSession;
     use std::sync::atomic::AtomicU32;
 
     let bus = EventBusImpl::new();
@@ -453,15 +452,8 @@ async fn test_lifecycle_events_flow() {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    let event = PostLoginEvent {
-        profile: GameProfile {
-            uuid: uuid::Uuid::nil(),
-            username: "TestPlayer".into(),
-            properties: vec![],
-        },
-        player_id: PlayerId::new(1),
-        protocol_version: ProtocolVersion::MINECRAFT_1_21,
-    };
+    let (player, _commands) = PlayerSession::new_test(true);
+    let event = PostLoginEvent::new(player);
 
     let _ = bus.fire(event).await;
 

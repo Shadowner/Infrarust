@@ -1,17 +1,8 @@
 //! Raw packet events (Tier 3).
 
-use crate::event::{Event, ResultedEvent};
 use crate::types::{PlayerId, RawPacket};
 
-/// Direction of packet flow relative to the proxy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PacketDirection {
-    /// Client → Server (through proxy).
-    Serverbound,
-    /// Server → Client (through proxy).
-    Clientbound,
-}
+pub use crate::event::PacketDirection;
 
 /// Fired when a raw packet passes through the proxy.
 ///
@@ -33,6 +24,14 @@ impl RawPacketEvent {
             packet,
             result: RawPacketResult::default(),
         }
+    }
+
+    pub const fn result(&self) -> &RawPacketResult {
+        &self.result
+    }
+
+    pub fn set_result(&mut self, result: RawPacketResult) {
+        self.result = result;
     }
 
     /// Shortcut: drop the packet.
@@ -59,23 +58,11 @@ pub enum RawPacketResult {
     Drop,
 }
 
-impl Event for RawPacketEvent {}
-impl ResultedEvent for RawPacketEvent {
-    type Result = RawPacketResult;
-
-    fn result(&self) -> &Self::Result {
-        &self.result
-    }
-
-    fn set_result(&mut self, result: Self::Result) {
-        self.result = result;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::event::Event;
 
     #[test]
     fn default_passes() {
@@ -96,6 +83,18 @@ mod tests {
         );
         event.drop_packet();
         assert!(matches!(event.result(), RawPacketResult::Drop));
+    }
+
+    #[test]
+    fn raw_packets_are_not_bus_events() {
+        trait AmbiguousIfEvent<Marker> {
+            fn probe() {}
+        }
+        impl<T: ?Sized> AmbiguousIfEvent<()> for T {}
+        struct ImplementsEvent;
+        impl<T: ?Sized + Event> AmbiguousIfEvent<ImplementsEvent> for T {}
+
+        <RawPacketEvent as AmbiguousIfEvent<_>>::probe();
     }
 
     #[test]

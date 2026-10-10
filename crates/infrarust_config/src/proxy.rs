@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults;
 use crate::types::{
-    ActiveHealthConfig, AuthConfig, BanConfig, DockerProviderConfig, ForwardingConfig,
-    IpFilterConfig, KeepaliveConfig, MotdConfig, PermissionsConfig, RateLimitConfig,
-    StatusCacheConfig, TelemetryConfig, WebConfig,
+    ActiveHealthConfig, AuthConfig, BanConfig, DockerProviderConfig, EventsConfig,
+    ForwardingConfig, IpFilterConfig, KeepaliveConfig, MotdConfig, PermissionsConfig,
+    PluginMessagingConfig, PluginWasmConfig, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
+    WasmConfig, WebConfig,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,7 +99,7 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub unknown_domain_behavior: UnknownDomainBehavior,
 
-    #[serde(default = "defaults::announce_proxy_commands")]
+    #[serde(default = "defaults::true_val")]
     pub announce_proxy_commands: bool,
 
     #[serde(default)]
@@ -118,6 +119,15 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub active_health: ActiveHealthConfig,
 
+    #[serde(default)]
+    pub events: EventsConfig,
+
+    #[serde(default)]
+    pub plugin_messaging: PluginMessagingConfig,
+
+    #[serde(default)]
+    pub wasm: WasmConfig,
+
     /// Plugin configurations keyed by plugin ID.
     #[serde(default)]
     pub plugins: HashMap<String, PluginConfig>,
@@ -134,11 +144,16 @@ pub struct PluginConfig {
     #[serde(default)]
     pub permissions: Vec<String>,
 
-    /// Whether the plugin is enabled (default: true).
-    #[serde(default = "default_plugin_enabled")]
-    pub enabled: bool,
-}
+    #[serde(default)]
+    pub deny: Vec<String>,
 
-fn default_plugin_enabled() -> bool {
-    true
+    #[serde(default)]
+    pub strict_capabilities: bool,
+
+    #[serde(default)]
+    pub wasm: Option<PluginWasmConfig>,
+
+    /// Whether the plugin is enabled (default: true).
+    #[serde(default = "defaults::true_val")]
+    pub enabled: bool,
 }

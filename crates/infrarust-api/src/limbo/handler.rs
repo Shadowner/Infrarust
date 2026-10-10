@@ -1,5 +1,6 @@
 //! Limbo handler trait.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::event::BoxFuture;
@@ -23,34 +24,54 @@ pub enum HandlerResult {
     SendToLimbo(Vec<String>),
     /// Hold, but auto-complete with `on_timeout` if [`LimboSession::complete`] is
     /// not called within `after`. The engine owns the timer, so the deadline holds
-    /// even if the handler's own tasks die. `on_timeout` must be terminal
-    /// (`Accept`/`Deny`/`Redirect`/`SendToLimbo`); a nested hold is treated as
-    /// `Accept` to avoid re-arming forever.
+    /// even if the handler's own tasks die.
     HoldWithTimeout {
         /// How long to wait before auto-completing.
         after: Duration,
-        /// The result to apply when the deadline elapses.
-        on_timeout: Box<HandlerResult>,
+        /// The outcome to apply when the deadline elapses.
+        on_timeout: LimboOutcome,
     },
 }
 
-/// Why a player's limbo session ended. Passed to [`LimboHandler::on_session_end`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A terminal outcome that ends a hold, passed to [`LimboSession::complete`] or
+/// applied when a [`HandlerResult::HoldWithTimeout`] deadline elapses.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum SessionEndReason {
-    /// The client disconnected while in limbo.
-    Disconnected,
-    /// A handler completed the chain, the player is released to the backend.
-    Released,
-    /// A handler denied the player (kick).
-    Kicked,
-    /// A handler redirected the player to another server.
-    Redirected,
-    /// The keepalive liveness check timed out.
-    TimedOut,
-    /// The proxy is shutting down.
-    Shutdown,
+pub enum LimboOutcome {
+    Accept,
+    Deny(Component),
+    Redirect(ServerId),
+    SendToLimbo(Vec<String>),
 }
+
+impl From<LimboOutcome> for HandlerResult {
+    fn from(outcome: LimboOutcome) -> Self {
+        match outcome {
+            LimboOutcome::Accept => Self::Accept,
+            LimboOutcome::Deny(reason) => Self::Deny(reason),
+            LimboOutcome::Redirect(server) => Self::Redirect(server),
+            LimboOutcome::SendToLimbo(handlers) => Self::SendToLimbo(handlers),
+        }
+    }
+}
+
+pub const HANDLER_UNAVAILABLE: &str = "Limbo handler unavailable";
+
+impl LimboOutcome {
+    #[must_use]
+    pub fn unavailable() -> Self {
+        Self::Deny(Component::text(HANDLER_UNAVAILABLE))
+    }
+}
+
+impl HandlerResult {
+    #[must_use]
+    pub fn unavailable() -> Self {
+        LimboOutcome::unavailable().into()
+    }
+}
+
+pub use infrarust_plugin_common::enums::SessionEndReason;
 
 /// A handler for a limbo stage (Tier 2).
 ///
@@ -116,6 +137,16 @@ pub trait LimboHandler: Send + Sync {
         Box::pin(async {})
     }
 
+    /// Whether proxy commands typed by a player this handler holds run as usual.
+    ///
+    /// Return `false` when the player is not trusted yet (an authentication
+    /// gate, for example): every command then goes to
+    /// [`on_command`](Self::on_command) and none reaches the proxy's command
+    /// manager. The default is `true`.
+    fn allows_proxy_commands(&self) -> bool {
+        true
+    }
+
     /// Called when the player disconnects while in this limbo stage.
     ///
     /// The default implementation does nothing.
@@ -134,5 +165,158 @@ pub trait LimboHandler: Send + Sync {
     /// The default implementation does nothing.
     fn on_session_end(&self, _player_id: PlayerId, _reason: SessionEndReason) -> BoxFuture<'_, ()> {
         Box::pin(async {})
+    }
+}
+
+impl<T: LimboHandler + ?Sized> LimboHandler for Arc<T> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+
+    fn on_player_enter<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+    ) -> BoxFuture<'a, HandlerResult> {
+        (**self).on_player_enter(session)
+    }
+
+    fn on_command<'a>(
+        &'a self,
+        session: &'a dyn LimboSession,
+        command: &'a str,
+        args: &'a [&'a str],
+    ) -> BoxFuture<'a, ()> {
+        (**self).on_command(session, command, args)
+    }
+
+    fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
+        (**self).on_chat(session, message)
+    }
+
+    fn allows_proxy_commands(&self) -> bool {
+        (**self).allows_proxy_commands()
+    }
+
+    fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
+        (**self).on_disconnect(player_id)
+    }
+
+    fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
+        (**self).on_session_end(player_id, reason)
+    }
+}
+
+#[cfg(all(test, feature = "test-util"))]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::sync::Mutex;
+
+    use super::super::context::LimboEntryContext;
+    use super::*;
+    use crate::test_util::RecordingLimboSession;
+    use crate::types::GameProfile;
+
+    #[derive(Default)]
+    struct Recording {
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl Recording {
+        fn record(&self, call: impl Into<String>) {
+            self.calls.lock().unwrap().push(call.into());
+        }
+    }
+
+    impl LimboHandler for Recording {
+        fn name(&self) -> &str {
+            "recording"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
+            self.record(format!("enter {}", session.player_id().as_u64()));
+            Box::pin(async { HandlerResult::Accept })
+        }
+
+        fn on_command<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+            command: &'a str,
+            args: &'a [&'a str],
+        ) -> BoxFuture<'a, ()> {
+            self.record(format!("command {command} {}", args.join(",")));
+            Box::pin(async {})
+        }
+
+        fn on_chat<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+            message: &'a str,
+        ) -> BoxFuture<'a, ()> {
+            self.record(format!("chat {message}"));
+            Box::pin(async {})
+        }
+
+        fn allows_proxy_commands(&self) -> bool {
+            false
+        }
+
+        fn on_disconnect(&self, player_id: PlayerId) -> BoxFuture<'_, ()> {
+            self.record(format!("disconnect {}", player_id.as_u64()));
+            Box::pin(async {})
+        }
+
+        fn on_session_end(
+            &self,
+            player_id: PlayerId,
+            reason: SessionEndReason,
+        ) -> BoxFuture<'_, ()> {
+            self.record(format!("end {} {reason:?}", player_id.as_u64()));
+            Box::pin(async {})
+        }
+    }
+
+    #[tokio::test]
+    async fn a_shared_handler_forwards_every_callback_to_the_handler_it_wraps() {
+        let inner = Arc::new(Recording::default());
+        let shared: Box<dyn LimboHandler> = Box::new(Arc::clone(&inner));
+        let session = RecordingLimboSession::new(
+            PlayerId::new(7),
+            GameProfile {
+                uuid: uuid::Uuid::nil(),
+                username: "Steve".to_string(),
+                properties: Vec::new(),
+            },
+            LimboEntryContext::InitialConnection {
+                target_server: ServerId::new("hub"),
+            },
+        );
+
+        assert_eq!(shared.name(), "recording");
+        assert!(!shared.allows_proxy_commands());
+        assert!(matches!(
+            shared.on_player_enter(&*session).await,
+            HandlerResult::Accept
+        ));
+        shared.on_command(&*session, "login", &["pw"]).await;
+        shared.on_chat(&*session, "hello").await;
+        shared.on_disconnect(PlayerId::new(7)).await;
+        shared
+            .on_session_end(PlayerId::new(7), SessionEndReason::Disconnected)
+            .await;
+
+        assert_eq!(
+            *inner.calls.lock().unwrap(),
+            [
+                "enter 7",
+                "command login pw",
+                "chat hello",
+                "disconnect 7",
+                "end 7 Disconnected"
+            ]
+        );
     }
 }

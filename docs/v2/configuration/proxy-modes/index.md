@@ -41,7 +41,7 @@ Here is a side-by-side breakdown of all five modes.
 | Minecraft version support | All (1.7+) | All (1.7+) | All (1.7+) | Supported versions | Supported versions |
 
 ::: tip
-Forwarding modes work with every Minecraft version because they only read the handshake packet. Intercepted modes depend on Infrarust's protocol implementation (currently 1.7.2 through 1.21.11, 34 protocol versions).
+Forwarding modes work with every Minecraft version because they only read the handshake packet. Intercepted modes depend on Infrarust's protocol implementation (currently 1.7.2 through 26.3, 37 protocol versions).
 :::
 
 ## Forwarding modes
@@ -60,7 +60,7 @@ All three share the same constraints: you must define at least one domain, the s
 
 Intercepted modes parse the Minecraft protocol. The proxy terminates the player's connection, handles the login sequence, then opens a separate connection to the backend. This gives the proxy full control over the session: it can read and modify packets, move the player to a different backend, and let plugins interact with the player.
 
-The tradeoff is that intercepted modes depend on Infrarust's protocol support. They work with the Minecraft versions that the proxy knows how to parse (currently 1.7.2 through 1.21.11).
+The tradeoff is that intercepted modes depend on Infrarust's protocol support. They work with the Minecraft versions that the proxy knows how to parse (currently 1.7.2 through 26.3).
 
 - [Client-only](./client-only.md) performs Mojang authentication at the proxy. The backend must run with `online-mode=false`. This is the mode you need for server networks where players switch between backends without reconnecting.
 - [Offline](./offline.md) skips authentication entirely. The proxy still parses packets and supports server switching, but any username can connect. Use this for cracked servers or local development.

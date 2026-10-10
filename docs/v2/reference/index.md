@@ -27,7 +27,7 @@ The CLI reference also documents the interactive console commands (for the opera
 
 [In-game commands](./commands) covers the `/infrarust` command (alias `/ir`) that players and admins type in Minecraft chat. The proxy intercepts these messages and never forwards them to the backend.
 
-There are eleven subcommands grouped by permission level. Player-level subcommands (`help`, `version`, `list`, `find`, `server`) are visible to all players by default. Admin-only subcommands (`broadcast`, `kick`, `send`, `reload`, `plugin`, `plugins`) are hidden from players and require the `infrarust.admin` permission. Admins are listed under `[permissions]` in `infrarust.toml`.
+There are eleven subcommands, each guarded by the node `infrarust.command.<name>`. Five of them (`help`, `version`, `list`, `find`, `server`) can be opened to every player with `[permissions].player_commands`. The other six (`broadcast`, `kick`, `send`, `reload`, `plugin`, `plugins`) are admin-only unless a permission plugin grants their node. Admins hold `infrarust.admin` and are listed under `[permissions]` in `infrarust.toml`.
 
 ## Error codes
 

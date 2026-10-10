@@ -102,29 +102,17 @@ Capability::VirtualBackend => "virtual-backend",
 
 Three pieces are missing before a WASM plugin can host a backend:
 
-- Enforcement: nothing in the host checks `virtual-backend`. The WASM linker (`crates/infrarust-loader-wasm/src/linker.rs`) conditionally links a host interface only for `event-bus`, `player-read`, `command`, `scheduler`, `config-read`, `server-manage`, `ban`, and `codec-filter`. There is no branch for `virtual-backend`.
+- Enforcement: nothing in the host checks `virtual-backend`. The WASM host functions check `event-bus`, `player-read`, `player-write`, `raw-packet`, `command`, `scheduler`, `config-read`, `config-write`, `server-manage`, `ban`, `codec-filter`, `limbo`, `plugin-messaging`, `chat-intercept`, `permission-provider` and `ban-provider` when they are called (`crates/infrarust-loader-wasm/src/imp/gates.rs` maps each import to its capability). No host function needs `virtual-backend`.
 - Dispatch: the proxy has no path that routes a player's connection to a registered `VirtualBackendHandler`.
 - WASM bridge: there is no host wrapper that forwards `on_session_start`, `on_packet_received`, and `on_session_end` to guest exports.
 
-The WIT contract (`infrarust:plugin@0.2.3`) reflects this. The world header in `crates/infrarust-plugin-wit/wit/world.wit` states the scope of v0.2 and defers virtual backend to a later minor, and the `guest` interface in `guest.wit` repeats it next to the event types:
-
-```wit
-// world.wit
-// Versioned and frozen. v0.2 adds raw-packet events, codec filters, limbo, and
-// custom permission checkers; virtual backend stays deferred to a later minor.
-
-// guest.wit
-// ServerPreConnectResult::VirtualBackend stays deferred to a later minor and is
-// absent from event-outcome.
-```
-
-The `server-pre-connect-result` variant in `guest.wit` has exactly four arms (`allowed`, `connect-to`, `send-to-limbo`, `denied`); there is no `virtual-backend` arm, so a guest has no way to return the marker the dispatch would need.
+The WIT contract (`infrarust:plugin@0.3.0`) reflects this: the `server-pre-connect-result` variant in `events.wit` has exactly four arms (`allowed`, `connect-to`, `send-to-limbo`, `denied`); there is no `virtual-backend` arm, so a guest has no way to return the marker the dispatch would need. The native `ServerPreConnectResult` has no such arm either: it was removed because the proxy never acted on it.
 
 ## The planned approach
 
-When Virtual Backend reaches WASM, the likely shape reuses the marker-plus-proxy pattern that already drives Limbo and custom permission checkers. Nothing below is implemented; it is the intended design, not current behavior.
+When Virtual Backend reaches WASM, the likely shape reuses the marker-plus-proxy pattern that already drives Limbo, commands and codec filters. Nothing below is implemented; it is the intended design, not current behavior.
 
-In that pattern (see [Architecture](./architecture)), a guest registers a `handler-id`, the host wraps that id in a small native struct, and each native callback is forwarded to a guest export keyed by the id. Limbo does this today with `WasmLimboHandler` (`crates/infrarust-loader-wasm/src/limbo.rs`), which implements the native `LimboHandler` trait and calls back into `limbo-on-player-enter`, `limbo-on-command`, and the rest.
+In that pattern (see [Architecture](./architecture)), a guest registers a `handler-id`, the host wraps that id in a small native struct, and each native callback is forwarded to a guest export keyed by the id. Limbo does this today with `WasmLimboHandler` (`crates/infrarust-loader-wasm/src/imp/limbo.rs`), which implements the native `LimboHandler` trait and calls back into `limbo-on-player-enter`, `limbo-on-command`, and the rest.
 
 A Virtual Backend bridge would follow the same outline:
 
@@ -150,9 +138,9 @@ For this to work, two contract changes are needed that do not exist today: a `vi
 
 ## Until then
 
-Use [Limbo](./limbo) to hold a player without a backend. The Limbo path is exposed to WASM through `infrarust:plugin@0.2.3` (`register-limbo-handler`, `hold-with-timeout`, `on-session-end`), covers idle worlds and queue screens, and runs today.
+Use [Limbo](./limbo) to hold a player without a backend. The Limbo path is exposed to WASM through `infrarust:plugin@0.3.0` (`register-limbo-handler`, `hold-with-timeout`, `limbo-on-session-end`), covers idle worlds and queue screens, and runs today.
 
-If you need packet-level control before Virtual Backend lands, the [`raw-packet` capability and `RawPacketEvent`](./capabilities) are the relevant contract surface to track; note that `raw-packet` is defined in the WIT contract and not yet exposed by the SDK.
+If you need packet-level control before Virtual Backend lands, use a [codec filter](./codec-filters), or subscribe to raw packets with `ctx.on_packets` (the `subscribe-packets` import), which needs `raw-packet`.
 
 ## See also
 

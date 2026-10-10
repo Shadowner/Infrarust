@@ -7,14 +7,16 @@
 
 use std::time::Duration;
 
-use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig, SKnownPacks};
+use infrarust_protocol::packets::play::start_configuration::SAcknowledgeConfiguration;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::player::packets::encode_packet;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::frame_chain::FrameChain;
 
 const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 
@@ -33,7 +35,7 @@ const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::Other`] if no registry data is available for the
+/// Returns [`CoreError::RegistryData`] if no registry data is available for the
 /// client's protocol version, or [`CoreError::ConnectionClosed`] if the
 /// client disconnects.
 pub(crate) async fn complete_config_for_limbo(
@@ -41,7 +43,19 @@ pub(crate) async fn complete_config_for_limbo(
     version: ProtocolVersion,
     registry: &PacketRegistry,
     codec_cache: &RegistryCodecCache,
+    observer: Option<&FrameChain<'_>>,
 ) -> Result<(), CoreError> {
+    if client.awaits_config_ack() {
+        absorb_until(
+            client,
+            registry.get_packet_id::<SAcknowledgeConfiguration>(version),
+            "limbo login: client did not acknowledge the configuration phase in time",
+            None,
+        )
+        .await?;
+        client.reconfiguration_acknowledged();
+    }
+
     // 1. KnownPacks handshake (>= 1.20.5, protocol >= 766)
     if let Ok(Some(kp_frame)) = codec_cache.get_known_packs_frame(version) {
         client.write_frame(&kp_frame).await?;
@@ -53,6 +67,7 @@ pub(crate) async fn complete_config_for_limbo(
             client,
             skp_id,
             "limbo login: client did not send KnownPacks in time",
+            observer,
         )
         .await?;
     }
@@ -64,22 +79,7 @@ pub(crate) async fn complete_config_for_limbo(
     }
 
     // 3. Send CFinishConfig
-    let finish_id = registry
-        .get_packet_id::<CFinishConfig>(version)
-        .ok_or_else(|| {
-            CoreError::Other(format!(
-                "no packet ID for {} in {}/{}/{version:?}",
-                CFinishConfig::NAME,
-                CFinishConfig::STATE,
-                CFinishConfig::DIRECTION,
-            ))
-        })?;
-    let mut finish_payload = Vec::new();
-    CFinishConfig
-        .encode(&mut finish_payload, version)
-        .map_err(|e| CoreError::Other(e.to_string()))?;
-    let finish_frame =
-        infrarust_protocol::io::PacketFrame::new(finish_id, bytes::Bytes::from(finish_payload));
+    let finish_frame = encode_packet(&CFinishConfig, version, registry)?;
     client.write_frame(&finish_frame).await?;
 
     // 4. Wait for SAcknowledgeFinishConfig, absorbing any other client packets
@@ -89,6 +89,7 @@ pub(crate) async fn complete_config_for_limbo(
         client,
         ack_id,
         "limbo login: client did not acknowledge finish config in time",
+        observer,
     )
     .await?;
 
@@ -106,6 +107,7 @@ async fn absorb_until(
     client: &mut ClientBridge,
     target_id: Option<i32>,
     timeout_message: &'static str,
+    observer: Option<&FrameChain<'_>>,
 ) -> Result<(), CoreError> {
     tokio::time::timeout(
         Duration::from_secs(LIMBO_CONFIG_PHASE_TIMEOUT_SECS),
@@ -118,6 +120,9 @@ async fn absorb_until(
 
                 if Some(frame.id) == target_id {
                     break;
+                }
+                if let Some(observer) = observer {
+                    observer.observe(&frame, ConnectionState::Config);
                 }
                 tracing::trace!(
                     id = frame.id,
@@ -133,6 +138,7 @@ async fn absorb_until(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use bytes::BytesMut;
     use tokio::net::{TcpListener, TcpStream};
 
@@ -147,7 +153,7 @@ mod tests {
 
         let mut client = ClientBridge::new(server_side, BytesMut::new(), ProtocolVersion::V1_21);
 
-        let result = absorb_until(&mut client, Some(0x42), "test timeout").await;
+        let result = absorb_until(&mut client, Some(0x42), "test timeout", None).await;
         assert!(
             matches!(result, Err(CoreError::Timeout(_))),
             "expected a timeout, got {result:?}"

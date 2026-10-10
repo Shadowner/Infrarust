@@ -110,10 +110,10 @@ impl Middleware for HandshakeParserMiddleware {
                 let port = handshake.server_port;
                 let protocol_version = ProtocolVersion(handshake.protocol_version.0);
 
-                let intent = match handshake.next_state {
-                    ConnectionState::Status => ConnectionIntent::Status,
-                    ConnectionState::Login => ConnectionIntent::Login,
-                    _ => ConnectionIntent::Transfer,
+                let intent = match (handshake.next_state, handshake.transfer) {
+                    (ConnectionState::Status, _) => ConnectionIntent::Status,
+                    (_, true) => ConnectionIntent::Transfer,
+                    (_, false) => ConnectionIntent::Login,
                 };
 
                 tracing::debug!(
@@ -134,6 +134,7 @@ impl Middleware for HandshakeParserMiddleware {
 
                 ctx.extensions.insert(HandshakeData {
                     domain,
+                    raw_host: handshake.server_address,
                     port,
                     protocol_version,
                     intent,

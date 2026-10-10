@@ -1,8 +1,8 @@
-use infrarust_api::command::CommandContext;
+use infrarust_api::branding::ProxyMessage;
+use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
-use infrarust_api::services::player_registry::PlayerRegistry;
 
+use crate::commands::actions::find_player;
 use crate::commands::{CommandServices, SubcommandHandler};
 
 pub(crate) struct FindSubcommand;
@@ -27,59 +27,40 @@ impl SubcommandHandler for FindSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(sender) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let sender = &ctx.source;
 
             let Some(target_name) = args.first() else {
-                let _ = sender.send_message(ProxyMessage::error("Usage: /ir find <player>"));
+                sender.send_message(ProxyMessage::error("Usage: /ir find <player>"));
                 return;
             };
 
-            match services.player_registry.get_player(target_name) {
-                Some(target) => match target.current_server() {
-                    Some(server) => {
-                        let _ = sender.send_message(ProxyMessage::success(&format!(
-                            "{target_name} is on server: {}",
-                            server.as_str()
-                        )));
-                    }
-                    None => {
-                        let _ = sender.send_message(ProxyMessage::info(&format!(
-                            "{target_name} is online but not on any server."
-                        )));
-                    }
+            let message = match find_player(&*services.player_registry, target_name) {
+                Ok(target) => match target.current_server() {
+                    Some(server) => ProxyMessage::success(&format!(
+                        "{target_name} is on server: {}",
+                        server.as_str()
+                    )),
+                    None => ProxyMessage::info(&format!(
+                        "{target_name} is online but not on any server."
+                    )),
                 },
-                None => {
-                    let _ = sender.send_message(ProxyMessage::error(&format!(
-                        "Player '{target_name}' is not online."
-                    )));
-                }
-            }
+                Err(error) => ProxyMessage::error(&error.to_string()),
+            };
+            sender.send_message(message);
         })
     }
 
     fn tab_complete<'a>(
         &'a self,
         args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {
-            if args.len() <= 1 {
-                let prefix = args.first().map(String::as_str).unwrap_or("");
-                services
-                    .player_registry
-                    .get_all_players()
-                    .into_iter()
-                    .map(|p| p.profile().username.clone())
-                    .filter(|name| name.to_lowercase().starts_with(&prefix.to_lowercase()))
-                    .collect()
-            } else {
-                vec![]
+            match args {
+                [] => services.complete_player_names(""),
+                [prefix] => services.complete_player_names(prefix),
+                _ => Vec::new(),
             }
         })
     }

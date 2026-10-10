@@ -102,7 +102,7 @@ A longer `ttl` reduces backend load under heavy ping traffic at the cost of stal
 
 ## Connection limits
 
-`max_connections` caps the number of simultaneous connections the proxy accepts. The default is `0`, which means unlimited. When set above zero, the accept loop holds a semaphore permit for the lifetime of each connection and will not accept a new one until a permit is free, so the cap is a hard ceiling rather than a soft target.
+`max_connections` caps the number of simultaneous connections the proxy accepts. The default is `0`, which means unlimited. When set above zero, the accept loop holds a semaphore permit for the lifetime of each connection and will not accept a new one until a permit is free, so the cap is a hard ceiling rather than a soft target. A connection still waiting for its PROXY protocol header holds its permit too, until the header arrives or the 5-second timeout drops it.
 
 ```toml
 max_connections = 5000

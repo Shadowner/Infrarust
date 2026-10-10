@@ -1,21 +1,14 @@
 //! Mocks over the infrarust-api player traits plus a handler test harness.
 
-use std::collections::HashSet;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use infrarust_api::error::PlayerError;
-use infrarust_api::event::BoxFuture;
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use infrarust_api::limbo::LimboEntryContext;
-use infrarust_api::limbo::test_util::RecordingLimboSession;
-use infrarust_api::permissions::PermissionLevel;
-use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{
-    Component, GameProfile, PlayerId, ProfileProperty, ProtocolVersion, RawPacket, ServerId,
-    TitleData,
-};
+use infrarust_api::test_util::{MockPlayer, MockPlayerRegistry, RecordingLimboSession};
+use infrarust_api::types::{Component, GameProfile, PlayerId, ProfileProperty, ServerId};
 use tempfile::TempDir;
 
 use crate::account::{AuthAccount, DisplayName, PremiumInfo, Username};
@@ -60,11 +53,7 @@ pub fn limbo_session_with(id: u64, profile: GameProfile) -> Arc<RecordingLimboSe
 }
 
 pub fn flatten(component: &Component) -> String {
-    let mut out = component.text.clone();
-    for child in &component.extra {
-        out.push_str(&flatten(child));
-    }
-    out
+    component.to_plain()
 }
 
 pub fn session_text(session: &RecordingLimboSession) -> String {
@@ -76,174 +65,14 @@ pub fn session_text(session: &RecordingLimboSession) -> String {
         .join("\n")
 }
 
-pub struct MockPlayer {
-    id: PlayerId,
-    profile: GameProfile,
-    admin: bool,
-    messages: Mutex<Vec<Component>>,
+pub fn player(id: u64, username: &str) -> Arc<MockPlayer> {
+    MockPlayer::new(id, username).into_arc()
 }
 
-impl MockPlayer {
-    pub fn new(id: u64, username: &str) -> Arc<Self> {
-        Self::build(id, username, false)
-    }
-
-    pub fn admin(id: u64, username: &str) -> Arc<Self> {
-        Self::build(id, username, true)
-    }
-
-    fn build(id: u64, username: &str, admin: bool) -> Arc<Self> {
-        Arc::new(Self {
-            id: PlayerId::new(id),
-            profile: profile(id, username),
-            admin,
-            messages: Mutex::new(Vec::new()),
-        })
-    }
-
-    pub fn sent_text(&self) -> String {
-        self.messages
-            .lock()
-            .expect("lock poisoned")
-            .iter()
-            .map(flatten)
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-impl infrarust_api::player::private::Sealed for MockPlayer {}
-
-impl Player for MockPlayer {
-    fn id(&self) -> PlayerId {
-        self.id
-    }
-
-    fn profile(&self) -> &GameProfile {
-        &self.profile
-    }
-
-    fn protocol_version(&self) -> ProtocolVersion {
-        ProtocolVersion::MINECRAFT_1_21
-    }
-
-    fn remote_addr(&self) -> SocketAddr {
-        ([127, 0, 0, 1], 25565).into()
-    }
-
-    fn current_server(&self) -> Option<ServerId> {
-        None
-    }
-
-    fn is_connected(&self) -> bool {
-        true
-    }
-
-    fn is_active(&self) -> bool {
-        true
-    }
-
-    fn disconnect(&self, _reason: Component) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-
-    fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        self.messages.lock().expect("lock poisoned").push(message);
-        Ok(())
-    }
-
-    fn send_title(&self, _title: TitleData) -> Result<(), PlayerError> {
-        Ok(())
-    }
-
-    fn send_action_bar(&self, _message: Component) -> Result<(), PlayerError> {
-        Ok(())
-    }
-
-    fn send_packet(&self, _packet: RawPacket) -> Result<(), PlayerError> {
-        Ok(())
-    }
-
-    fn switch_server(&self, _target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn is_online_mode(&self) -> bool {
-        false
-    }
-
-    fn permission_level(&self) -> PermissionLevel {
-        if self.admin {
-            PermissionLevel::Admin
-        } else {
-            PermissionLevel::Player
-        }
-    }
-
-    fn has_permission(&self, _permission: &str) -> bool {
-        self.admin
-    }
-
-    fn connected_at(&self) -> SystemTime {
-        SystemTime::now()
-    }
-}
-
-#[derive(Default)]
-pub struct MockRegistry {
-    players: Mutex<Vec<Arc<MockPlayer>>>,
-}
-
-impl MockRegistry {
-    pub fn add(&self, player: Arc<MockPlayer>) {
-        self.players.lock().expect("lock poisoned").push(player);
-    }
-
-    fn find(&self, pred: impl Fn(&MockPlayer) -> bool) -> Option<Arc<dyn Player>> {
-        self.players
-            .lock()
-            .expect("lock poisoned")
-            .iter()
-            .find(|p| pred(p))
-            .map(|p| Arc::clone(p) as Arc<dyn Player>)
-    }
-}
-
-impl infrarust_api::services::player_registry::private::Sealed for MockRegistry {}
-
-impl PlayerRegistry for MockRegistry {
-    fn get_player(&self, username: &str) -> Option<Arc<dyn Player>> {
-        self.find(|p| p.profile.username.eq_ignore_ascii_case(username))
-    }
-
-    fn get_player_by_uuid(&self, uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
-        self.find(|p| p.profile.uuid == *uuid)
-    }
-
-    fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {
-        self.find(|p| p.id == id)
-    }
-
-    fn get_players_on_server(&self, _server: &ServerId) -> Vec<Arc<dyn Player>> {
-        Vec::new()
-    }
-
-    fn get_all_players(&self) -> Vec<Arc<dyn Player>> {
-        self.players
-            .lock()
-            .expect("lock poisoned")
-            .iter()
-            .map(|p| Arc::clone(p) as Arc<dyn Player>)
-            .collect()
-    }
-
-    fn online_count(&self) -> usize {
-        self.players.lock().expect("lock poisoned").len()
-    }
-
-    fn online_count_on(&self, _server: &ServerId) -> usize {
-        0
-    }
+pub fn admin(id: u64, username: &str) -> Arc<MockPlayer> {
+    MockPlayer::new(id, username)
+        .with_all_permissions()
+        .into_arc()
 }
 
 pub fn fast_config() -> AuthConfig {
@@ -257,7 +86,7 @@ pub fn fast_config() -> AuthConfig {
 pub struct TestEnv {
     pub handler: Arc<AuthHandler>,
     pub storage: Arc<dyn AuthStorage>,
-    pub registry: Arc<MockRegistry>,
+    pub registry: Arc<MockPlayerRegistry>,
     pub config: Arc<AuthConfig>,
     _dir: TempDir,
 }
@@ -275,7 +104,7 @@ impl TestEnv {
                 .expect("storage"),
         );
         let config = Arc::new(config);
-        let registry = Arc::new(MockRegistry::default());
+        let registry = Arc::new(MockPlayerRegistry::new());
         let dummy_hash = password::generate_dummy_hash(&config.hashing)
             .await
             .expect("dummy hash");
@@ -319,6 +148,17 @@ impl TestEnv {
             .create_account(&account)
             .await
             .expect("create account");
+    }
+
+    pub async fn log_in(&self, id: u64, username: &str, password: &str) {
+        use infrarust_api::limbo::handler::{LimboHandler, LimboOutcome};
+
+        let session = limbo_session(id, username);
+        self.handler.on_player_enter(&*session).await;
+        self.handler
+            .on_command(&*session, "login", &[password])
+            .await;
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
     }
 
     pub async fn set_premium_info(&self, username: &str, force_cracked: bool) {

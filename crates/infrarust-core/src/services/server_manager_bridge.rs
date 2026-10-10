@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use infrarust_api::error::ServiceError;
-use infrarust_api::event::{BoxFuture, ListenerHandle};
-use infrarust_api::services::server_manager::{ServerManager, ServerState, StateChangeCallback};
+use infrarust_api::event::BoxFuture;
+use infrarust_api::services::server_manager::{ServerManager, ServerState};
 use infrarust_api::types::ServerId;
 
 use infrarust_server_manager::service::ServerManagerService;
@@ -48,17 +48,6 @@ impl ServerManager for ServerManagerBridge {
         })
     }
 
-    fn on_state_change(&self, callback: StateChangeCallback) -> ListenerHandle {
-        let id = self.service.add_on_state_change(Arc::new(
-            move |server_id: &str, old: CoreServerState, new: CoreServerState| {
-                let server = ServerId::new(server_id);
-                callback(&server, convert_state(old), convert_state(new));
-            },
-        ));
-
-        ListenerHandle::new(id)
-    }
-
     fn get_all_servers(&self) -> Vec<(ServerId, ServerState)> {
         self.service
             .get_all_managed()
@@ -86,10 +75,6 @@ impl ServerManager for NoopServerManager {
     fn stop(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
         let id = server.as_str().to_string();
         Box::pin(async move { Err(ServiceError::NotFound(id)) })
-    }
-
-    fn on_state_change(&self, _callback: StateChangeCallback) -> ListenerHandle {
-        ListenerHandle::new(0)
     }
 
     fn get_all_servers(&self) -> Vec<(ServerId, ServerState)> {

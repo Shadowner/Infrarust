@@ -68,16 +68,16 @@ impl ServerProvider for LocalProvider {
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true);
 
-            let mut child = cmd.spawn().map_err(ServerManagerError::Process)?;
+            let mut child = cmd.spawn().map_err(ServerManagerError::from)?;
 
             let stdin = child.stdin.take().ok_or_else(|| {
-                ServerManagerError::Process(std::io::Error::other("stdin not available"))
+                ServerManagerError::from(std::io::Error::other("stdin not available"))
             })?;
             let stdout = child.stdout.take().ok_or_else(|| {
-                ServerManagerError::Process(std::io::Error::other("stdout not available"))
+                ServerManagerError::from(std::io::Error::other("stdout not available"))
             })?;
             let stderr = child.stderr.take().ok_or_else(|| {
-                ServerManagerError::Process(std::io::Error::other("stderr not available"))
+                ServerManagerError::from(std::io::Error::other("stderr not available"))
             })?;
 
             let ready = Arc::new(AtomicBool::new(false));

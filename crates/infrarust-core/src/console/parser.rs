@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::services::ban_service::{BanTarget, IpNet};
 
 pub struct ParsedLine<'a> {
     pub command: &'a str,
@@ -35,6 +35,10 @@ pub fn parse_duration_arg(arg: &str) -> Result<Option<Duration>, String> {
 pub fn parse_ban_target(arg: &str) -> BanTarget {
     if let Ok(ip) = arg.parse::<IpAddr>() {
         return BanTarget::Ip(ip);
+    }
+
+    if let Ok(net) = arg.parse::<IpNet>() {
+        return BanTarget::IpRange(net);
     }
 
     if let Ok(uuid) = uuid::Uuid::parse_str(arg) {

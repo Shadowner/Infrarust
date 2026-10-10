@@ -5,9 +5,13 @@
 //! - `SpliceForwarder`: Linux-only zero-copy via `splice(2)` syscall
 
 use std::future::Future;
+use std::io;
 use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 
 use tokio::net::TcpStream;
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_config::ProxyMode;
@@ -34,7 +38,7 @@ pub enum ForwardEndReason {
     /// Shutdown signal received.
     Shutdown,
     /// I/O error during forwarding.
-    Error(std::io::Error),
+    Error(io::Error),
 }
 
 /// Trait for bidirectional TCP forwarding strategies.
@@ -70,103 +74,112 @@ async fn copy_forward(
     backend: TcpStream,
     shutdown: CancellationToken,
 ) -> ForwardResult {
-    use tokio::io::AsyncWriteExt;
+    let (client_read, client_write) = client.into_split();
+    let (backend_read, backend_write) = backend.into_split();
+    let first = Arc::new(OnceLock::new());
 
-    let (mut client_read, mut client_write) = client.into_split();
-    let (mut backend_read, mut backend_write) = backend.into_split();
+    let mut c2b = tokio::spawn(copy_until_eof(
+        client_read,
+        backend_write,
+        Arc::clone(&first),
+        Side::Client,
+    ));
+    let mut b2c = tokio::spawn(copy_until_eof(
+        backend_read,
+        client_write,
+        Arc::clone(&first),
+        Side::Backend,
+    ));
 
-    let mut c2b = tokio::spawn(async move {
-        let copied = tokio::io::copy(&mut client_read, &mut backend_write).await;
-        let _ = backend_write.shutdown().await;
-        copied
-    });
-
-    let mut b2c = tokio::spawn(async move {
-        let copied = tokio::io::copy(&mut backend_read, &mut client_write).await;
-        let _ = client_write.shutdown().await;
-        copied
-    });
-
-    tokio::select! {
-        biased;
-        () = shutdown.cancelled() => {
-            c2b.abort();
-            b2c.abort();
-            ForwardResult {
-                client_to_backend: 0,
-                backend_to_client: 0,
-                reason: ForwardEndReason::Shutdown,
-            }
+    let mut c2b_end = None;
+    let mut b2c_end = None;
+    while c2b_end.is_none() || b2c_end.is_none() {
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => break,
+            ended = &mut c2b, if c2b_end.is_none() => c2b_end = Some(joined(ended)),
+            ended = &mut b2c, if b2c_end.is_none() => b2c_end = Some(joined(ended)),
         }
-        c2b_result = &mut c2b => {
-            match c2b_result {
-                Ok(Ok(client_to_backend)) => {
-                    let backend_to_client = match b2c.await {
-                        Ok(Ok(n)) => n,
-                        _ => 0,
-                    };
-                    ForwardResult {
-                        client_to_backend,
-                        backend_to_client,
-                        reason: ForwardEndReason::ClientClosed,
-                    }
-                }
-                Ok(Err(e)) => {
-                    b2c.abort();
-                    ForwardResult {
-                        client_to_backend: 0,
-                        backend_to_client: 0,
-                        reason: ForwardEndReason::Error(e),
-                    }
-                }
-                Err(e) => {
-                    b2c.abort();
-                    ForwardResult {
-                        client_to_backend: 0,
-                        backend_to_client: 0,
-                        reason: ForwardEndReason::Error(std::io::Error::other(e.to_string())),
-                    }
-                }
-            }
-        }
-        b2c_result = &mut b2c => {
-            match b2c_result {
-                Ok(Ok(backend_to_client)) => {
-                    let client_to_backend = match c2b.await {
-                        Ok(Ok(n)) => n,
-                        _ => 0,
-                    };
-                    ForwardResult {
-                        client_to_backend,
-                        backend_to_client,
-                        reason: ForwardEndReason::BackendClosed,
-                    }
-                }
-                Ok(Err(e)) => {
-                    c2b.abort();
-                    ForwardResult {
-                        client_to_backend: 0,
-                        backend_to_client: 0,
-                        reason: ForwardEndReason::Error(e),
-                    }
-                }
-                Err(e) => {
-                    c2b.abort();
-                    ForwardResult {
-                        client_to_backend: 0,
-                        backend_to_client: 0,
-                        reason: ForwardEndReason::Error(std::io::Error::other(e.to_string())),
-                    }
-                }
-            }
+        if matches!(c2b_end, Some(Err(_))) || matches!(b2c_end, Some(Err(_))) {
+            break;
         }
     }
+
+    c2b.abort();
+    b2c.abort();
+    if c2b_end.is_none() {
+        c2b_end = c2b.await.ok();
+    }
+    if b2c_end.is_none() {
+        b2c_end = b2c.await.ok();
+    }
+    finish(first.get().copied(), c2b_end, b2c_end)
+}
+
+async fn copy_until_eof(
+    mut from: OwnedReadHalf,
+    mut to: OwnedWriteHalf,
+    first: Arc<OnceLock<Side>>,
+    side: Side,
+) -> io::Result<u64> {
+    use tokio::io::AsyncWriteExt;
+
+    let copied = tokio::io::copy(&mut from, &mut to).await;
+    let _ = first.set(side);
+    let _ = to.shutdown().await;
+    copied
+}
+
+fn joined(result: Result<io::Result<u64>, JoinError>) -> io::Result<u64> {
+    result.unwrap_or_else(|e| Err(io::Error::other(e)))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Side {
+    Client,
+    Backend,
+}
+
+fn finish(
+    first: Option<Side>,
+    c2b: Option<io::Result<u64>>,
+    b2c: Option<io::Result<u64>>,
+) -> ForwardResult {
+    let client_to_backend = transferred(c2b.as_ref());
+    let backend_to_client = transferred(b2c.as_ref());
+    let reason = match first {
+        Some(Side::Client) => blame(c2b, ForwardEndReason::ClientClosed),
+        Some(Side::Backend) => blame(b2c, ForwardEndReason::BackendClosed),
+        None => match (c2b, b2c) {
+            (Some(Err(e)), _) | (_, Some(Err(e))) => ForwardEndReason::Error(e),
+            _ => ForwardEndReason::Shutdown,
+        },
+    };
+    ForwardResult {
+        client_to_backend,
+        backend_to_client,
+        reason,
+    }
+}
+
+fn blame(end: Option<io::Result<u64>>, closed: ForwardEndReason) -> ForwardEndReason {
+    match end {
+        Some(Err(e)) => ForwardEndReason::Error(e),
+        _ => closed,
+    }
+}
+
+fn transferred(end: Option<&io::Result<u64>>) -> u64 {
+    end.and_then(|result| result.as_ref().ok())
+        .copied()
+        .unwrap_or(0)
 }
 
 #[cfg(target_os = "linux")]
 mod splice_impl {
     use super::{
-        CancellationToken, ForwardEndReason, ForwardResult, Forwarder, Future, Pin, TcpStream,
+        CancellationToken, ForwardEndReason, ForwardResult, Forwarder, Future, Pin, Side,
+        TcpStream, finish,
     };
     use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 
@@ -245,7 +258,7 @@ mod splice_impl {
         dst: &TcpStream,
         pipe: &KernelPipe,
         shutdown: CancellationToken,
-    ) -> Result<u64, std::io::Error> {
+    ) -> Result<Option<u64>, std::io::Error> {
         use nix::fcntl::SpliceFFlags;
         use tokio::io::Interest;
 
@@ -289,7 +302,7 @@ mod splice_impl {
                 tokio::select! {
                     biased;
                     () = shutdown.cancelled() => {
-                        return Ok(total + pumped as u64);
+                        return Ok(None);
                     }
                     result = dst.ready(Interest::WRITABLE) => {
                         let _ = result?;
@@ -326,7 +339,7 @@ mod splice_impl {
             let _ = nix::sys::socket::shutdown(dst.as_raw_fd(), nix::sys::socket::Shutdown::Write);
         }
 
-        Ok(total)
+        Ok(eof_received.then_some(total))
     }
 
     impl Forwarder for SpliceForwarder {
@@ -366,64 +379,30 @@ mod splice_impl {
                 tokio::pin!(c2b);
                 tokio::pin!(b2c);
 
-                let (mut client_to_backend, mut backend_to_client) = (0u64, 0u64);
-
-                // Wait for the first direction to finish. Each direction propagates
-                // EOF via socket half-close, so the other direction will finish
-                // naturally without needing CancellationToken signaling.
-                let reason = tokio::select! {
-                    result = &mut c2b => {
-                        match result {
-                            Ok(bytes) => {
-                                client_to_backend = bytes;
-                                // c2b already shut down backend's write half;
-                                // wait for b2c to drain and finish naturally.
-                                if let Ok(bytes) = (&mut b2c).await {
-                                    backend_to_client = bytes;
-                                }
-                                ForwardEndReason::ClientClosed
-                            }
-                            Err(e) => {
-                                shutdown.cancel();
-                                let _ = (&mut b2c).await;
-                                ForwardEndReason::Error(e)
-                            }
-                        }
+                let mut first = None;
+                let mut c2b_end = None;
+                let mut b2c_end = None;
+                while c2b_end.is_none() || b2c_end.is_none() {
+                    let (side, ended) = tokio::select! {
+                        biased;
+                        () = shutdown.cancelled() => break,
+                        ended = &mut c2b, if c2b_end.is_none() => (Side::Client, ended),
+                        ended = &mut b2c, if b2c_end.is_none() => (Side::Backend, ended),
+                    };
+                    let Some(ended) = ended.transpose() else {
+                        break;
+                    };
+                    let failed = ended.is_err();
+                    first.get_or_insert(side);
+                    match side {
+                        Side::Client => c2b_end = Some(ended),
+                        Side::Backend => b2c_end = Some(ended),
                     }
-                    result = &mut b2c => {
-                        match result {
-                            Ok(bytes) => {
-                                backend_to_client = bytes;
-                                // b2c already shut down client's write half;
-                                // wait for c2b to drain and finish naturally.
-                                if let Ok(bytes) = (&mut c2b).await {
-                                    client_to_backend = bytes;
-                                }
-                                ForwardEndReason::BackendClosed
-                            }
-                            Err(e) => {
-                                shutdown.cancel();
-                                let _ = (&mut c2b).await;
-                                ForwardEndReason::Error(e)
-                            }
-                        }
+                    if failed {
+                        break;
                     }
-                    () = shutdown.cancelled() => {
-                        let _ = (&mut c2b).await;
-                        let _ = (&mut b2c).await;
-                        ForwardEndReason::Shutdown
-                    }
-                };
-
-                // client and backend are kept alive by the borrow in c2b/b2c
-                // and will be dropped when this future completes.
-                let _ = (&client, &backend);
-
-                ForwardResult {
-                    client_to_backend,
-                    backend_to_client,
-                    reason,
                 }
+                finish(first, c2b_end, b2c_end)
             })
         }
     }

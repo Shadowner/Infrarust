@@ -19,15 +19,40 @@ pub struct ProviderConfig {
     pub config: ServerConfig,
 }
 
-/// Event emitted by a provider when a server configuration changes.
+#[derive(Debug)]
+pub enum ProviderChange {
+    Added(ProviderConfig),
+    Updated(ProviderConfig),
+    Removed(ProviderId),
+}
+
 #[derive(Debug)]
 pub enum ProviderEvent {
-    /// A new server configuration was discovered.
     Added(ProviderConfig),
-    /// An existing server configuration was modified.
     Updated(ProviderConfig),
-    /// A server configuration was removed.
     Removed(ProviderId),
+    Batch(Vec<ProviderChange>),
+}
+
+impl ProviderEvent {
+    pub fn into_changes(self) -> Vec<ProviderChange> {
+        match self {
+            Self::Added(config) => vec![ProviderChange::Added(config)],
+            Self::Updated(config) => vec![ProviderChange::Updated(config)],
+            Self::Removed(id) => vec![ProviderChange::Removed(id)],
+            Self::Batch(changes) => changes,
+        }
+    }
+}
+
+impl From<ProviderChange> for ProviderEvent {
+    fn from(change: ProviderChange) -> Self {
+        match change {
+            ProviderChange::Added(config) => Self::Added(config),
+            ProviderChange::Updated(config) => Self::Updated(config),
+            ProviderChange::Removed(id) => Self::Removed(id),
+        }
+    }
 }
 
 /// Source of dynamic server configurations.

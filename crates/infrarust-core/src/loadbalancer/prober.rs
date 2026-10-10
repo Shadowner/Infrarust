@@ -1,15 +1,16 @@
 //! Active health probing.
 
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::net::TcpStream;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_config::{ActiveHealthConfig, ProbeKind, ProxyConfig, ServerAddress, ServerConfig};
 use infrarust_protocol::registry::PacketRegistry;
+use infrarust_transport::{BackendConnector, ConnectionInfo};
 
 use super::{BackendHealthView, BackendState, PassiveBackendHealth};
 use crate::routing::DomainRouter;
@@ -26,6 +27,8 @@ pub struct ActiveHealthProber {
     router: Arc<DomainRouter>,
     health: Arc<PassiveBackendHealth>,
     registry: Arc<PacketRegistry>,
+    connector: BackendConnector,
+    bind: SocketAddr,
     defaults: ActiveHealthConfig,
     last_probe: Mutex<HashMap<ServerAddress, Instant>>,
 }
@@ -35,6 +38,7 @@ struct Target {
     address: ServerAddress,
     kind: ProbeKind,
     timeout: Duration,
+    send_proxy_protocol: bool,
 }
 
 /// What one server asks of the prober, once its own `[active_health]` block
@@ -62,6 +66,8 @@ impl ActiveHealthProber {
             router,
             health,
             registry,
+            connector: BackendConnector::new(config.connect_timeout, config.keepalive.clone()),
+            bind: config.bind,
             defaults: config.active_health.clone(),
             last_probe: Mutex::new(HashMap::new()),
         }
@@ -144,6 +150,7 @@ impl ActiveHealthProber {
                         address: weighted.address.clone(),
                         kind: settings.kind,
                         timeout: settings.timeout,
+                        send_proxy_protocol: config.send_proxy_protocol,
                     });
                 }
             }
@@ -173,8 +180,28 @@ impl ActiveHealthProber {
 
     async fn run_probe(&self, target: &Target) -> bool {
         let connect_addr = format!("{}:{}", target.address.host, target.address.port);
-        let Ok(mut stream) = TcpStream::connect(&connect_addr).await else {
-            return false;
+        let prober_info = ConnectionInfo {
+            peer_addr: self.bind,
+            real_ip: None,
+            real_port: None,
+            local_addr: self.bind,
+            connected_at: tokio::time::Instant::now(),
+        };
+        let connected = self
+            .connector
+            .connect_one(
+                &target.address,
+                target.timeout,
+                target.send_proxy_protocol,
+                &prober_info,
+            )
+            .await;
+        let mut stream = match connected {
+            Ok(connection) => connection.into_stream(),
+            Err(error) => {
+                tracing::debug!(address = %target.address, %error, "health probe could not connect");
+                return false;
+            }
         };
         match target.kind {
             ProbeKind::Tcp => true,
@@ -232,6 +259,13 @@ mod tests {
         ))
     }
 
+    fn closed_port() -> tokio::net::TcpSocket {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(false).unwrap();
+        socket.bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+        socket
+    }
+
     fn config(address: &str) -> ServerConfig {
         toml::from_str(&format!(
             "name = \"probed\"\ndomains = [\"probed.test\"]\naddresses = [\"{address}\"]\n"
@@ -285,9 +319,8 @@ mod tests {
     /// come back in slow start rather than at full weight.
     #[tokio::test]
     async fn sweep_reinstates_a_recovered_address_in_slow_start() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        let reserved = closed_port();
+        let port = reserved.local_addr().unwrap().port();
 
         let router = Arc::new(DomainRouter::new());
         router.add(
@@ -310,9 +343,7 @@ mod tests {
         assert_ne!(health.snapshot(&address).state, BackendState::Healthy);
 
         // The server comes back.
-        let _listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .unwrap();
+        let _listener = reserved.listen(16).unwrap();
         health.rewind_failures_for_test(&address);
         prober(&router, &health).sweep().await;
 

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 

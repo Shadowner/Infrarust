@@ -10,8 +10,6 @@ use bollard::models::ContainerInspectResponse;
 use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
 
 /// Default Minecraft port.
-const DEFAULT_MC_PORT: u16 = 25565;
-
 /// Converts Docker container labels to a `ServerConfig`.
 pub fn labels_to_server_config(
     container_name: &str,
@@ -45,7 +43,7 @@ pub fn labels_to_server_config(
 
     let server_address: ServerAddress = address.parse().unwrap_or_else(|_| ServerAddress {
         host: address.to_string(),
-        port: DEFAULT_MC_PORT,
+        port: infrarust_config::DEFAULT_MC_PORT,
     });
 
     // Deserializing through a toml::Table (instead of a struct literal) keeps
@@ -113,6 +111,7 @@ pub fn labels_to_server_config(
             ip_filter: None,
             disconnect_message: None,
             limbo_handlers: Vec::new(),
+            bungeecord_channel: false,
         }
     })
 }

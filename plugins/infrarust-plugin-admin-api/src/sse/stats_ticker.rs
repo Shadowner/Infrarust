@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use crate::state::ApiEvent;
-use crate::util::{get_memory_rss, now_iso8601};
+use crate::util::{active_ban_count, get_memory_rss, now_iso8601};
 
 /// Periodic task that emits `ApiEvent::StatsTick` every 5 seconds.
 pub struct StatsTicker {
@@ -51,12 +51,7 @@ impl StatsTicker {
                         .iter()
                         .filter(|(_, state)| matches!(state, ServerState::Online))
                         .count();
-                    let bans_active = self
-                        .ban_service
-                        .get_all_bans()
-                        .await
-                        .map(|b| b.len())
-                        .unwrap_or(0);
+                    let bans_active = active_ban_count(&*self.ban_service).await.unwrap_or(0);
 
                     let _ = self.event_tx.send(ApiEvent::StatsTick {
                         players_online,

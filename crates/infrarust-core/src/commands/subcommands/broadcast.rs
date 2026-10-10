@@ -1,11 +1,8 @@
-use infrarust_api::command::CommandContext;
+use infrarust_api::branding::ProxyMessage;
+use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::message::ProxyMessage;
-use infrarust_api::permissions::PermissionLevel;
-use infrarust_api::services::config_service::ConfigService;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{Component, ServerId};
 
+use crate::commands::actions::broadcast;
 use crate::commands::{CommandServices, SubcommandHandler};
 
 pub(crate) struct BroadcastSubcommand;
@@ -19,8 +16,8 @@ impl SubcommandHandler for BroadcastSubcommand {
         "Broadcast a message to all players"
     }
 
-    fn required_level(&self) -> PermissionLevel {
-        PermissionLevel::Admin
+    fn admin_only(&self) -> bool {
+        true
     }
 
     fn usage(&self) -> &str {
@@ -34,22 +31,17 @@ impl SubcommandHandler for BroadcastSubcommand {
         services: &'a CommandServices,
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            let Some(player_id) = ctx.player_id else {
-                return;
-            };
-            let Some(sender) = services.player_registry.get_player_by_id(player_id) else {
-                return;
-            };
+            let sender = &ctx.source;
 
             if args.is_empty() {
-                let _ = sender.send_message(ProxyMessage::error(
+                sender.send_message(ProxyMessage::error(
                     "Usage: /ir broadcast <message> [--server <name>]",
                 ));
                 return;
             }
 
             let mut message_parts: Vec<&str> = Vec::new();
-            let mut target_server: Option<String> = None;
+            let mut target_server: Option<&str> = None;
             let mut skip_next = false;
 
             for (i, arg) in args.iter().enumerate() {
@@ -59,7 +51,7 @@ impl SubcommandHandler for BroadcastSubcommand {
                 }
                 if arg == "--server" {
                     if let Some(server) = args.get(i + 1) {
-                        target_server = Some(server.clone());
+                        target_server = Some(server);
                         skip_next = true;
                     }
                 } else {
@@ -67,53 +59,34 @@ impl SubcommandHandler for BroadcastSubcommand {
                 }
             }
 
-            if message_parts.is_empty() {
-                let _ = sender.send_message(ProxyMessage::error("No message provided."));
-                return;
-            }
-
-            let raw_message = message_parts.join(" ");
-            let message = Component::from_legacy(&raw_message);
-
-            let recipients = match &target_server {
-                Some(server_name) => {
-                    let server_id = ServerId::new(server_name);
-                    if services
-                        .config_service
-                        .get_server_config(&server_id)
-                        .is_none()
-                    {
-                        let _ = sender.send_message(ProxyMessage::error(&format!(
-                            "Server '{server_name}' not found."
-                        )));
-                        return;
-                    }
-                    services.player_registry.get_players_on_server(&server_id)
+            let message = match broadcast(
+                &*services.player_registry,
+                &*services.config_service,
+                target_server,
+                &message_parts.join(" "),
+            ) {
+                Ok(sent) => {
+                    let scope = sent
+                        .scope
+                        .as_ref()
+                        .map(|server| format!(" on '{}'", server.as_str()))
+                        .unwrap_or_default();
+                    ProxyMessage::success(&format!(
+                        "Broadcast sent to {} player{}{scope}.",
+                        sent.recipients,
+                        if sent.recipients == 1 { "" } else { "s" }
+                    ))
                 }
-                None => services.player_registry.get_all_players(),
+                Err(error) => ProxyMessage::error(&error.to_string()),
             };
-
-            let count = recipients.len();
-            for player in &recipients {
-                let _ = player.send_message(message.clone());
-            }
-
-            let scope = target_server
-                .as_deref()
-                .map(|s| format!(" on '{s}'"))
-                .unwrap_or_default();
-
-            let _ = sender.send_message(ProxyMessage::success(&format!(
-                "Broadcast sent to {count} player{}{scope}.",
-                if count == 1 { "" } else { "s" }
-            )));
+            sender.send_message(message);
         })
     }
 
     fn tab_complete<'a>(
         &'a self,
         args: &'a [String],
-        _cursor: u32,
+        _source: &'a CommandSource,
         services: &'a CommandServices,
     ) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async move {
@@ -125,13 +98,7 @@ impl SubcommandHandler for BroadcastSubcommand {
             };
 
             if prev == "--server" {
-                services
-                    .config_service
-                    .get_all_server_configs()
-                    .into_iter()
-                    .map(|cfg| cfg.id.as_str().to_string())
-                    .filter(|name| name.starts_with(last))
-                    .collect()
+                services.complete_server_names(last)
             } else if "--server".starts_with(last) {
                 vec!["--server".to_string()]
             } else {

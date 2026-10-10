@@ -1,5 +1,7 @@
 //! Error types for the Infrarust plugin API.
 
+pub use infrarust_plugin_common::ErrorKind;
+
 /// Errors that can occur when interacting with a player.
 ///
 /// Returned by [`Player`](crate::player::Player) methods when an operation
@@ -26,6 +28,41 @@ pub enum PlayerError {
     /// A server switch operation failed.
     #[error("switch failed: {0}")]
     SwitchFailed(String),
+
+    #[error("player is not connected to a backend server")]
+    NoBackend,
+
+    #[error("plugin message of {size} bytes is over the {max} bytes allowed")]
+    MessageTooLarge { size: usize, max: usize },
+
+    #[error("not supported: {0}")]
+    Unsupported(String),
+
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+
+    #[error("denied: {0}")]
+    Denied(Box<crate::types::Component>),
+
+    #[error(
+        "the player's session is waiting for the code that made this call, so it cannot answer it; use switch_server, or await the call in a task of its own"
+    )]
+    WouldDeadlock,
+}
+
+impl PlayerError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Disconnected => ErrorKind::PlayerGone,
+            Self::NotActive | Self::NoBackend | Self::WouldDeadlock => ErrorKind::InvalidState,
+            Self::ServerNotFound(_) => ErrorKind::NotFound,
+            Self::MessageTooLarge { .. } | Self::InvalidArgument(_) => ErrorKind::InvalidArgument,
+            Self::SendFailed(_) | Self::SwitchFailed(_) => ErrorKind::Unavailable,
+            Self::Unsupported(_) => ErrorKind::Unsupported,
+            Self::Denied(_) => ErrorKind::PermissionDenied,
+        }
+    }
 }
 
 /// Errors that can occur when interacting with proxy services.
@@ -40,9 +77,27 @@ pub enum ServiceError {
     #[error("operation failed: {0}")]
     OperationFailed(String),
 
+    #[error("operation failed: {0}")]
+    Internal(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// The service is temporarily unavailable.
     #[error("service unavailable: {0}")]
     Unavailable(String),
+
+    #[error("service `{service}` is already provided by `{by}`")]
+    AlreadyProvided { service: &'static str, by: String },
+}
+
+impl ServiceError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::NotFound(_) => ErrorKind::NotFound,
+            Self::Unavailable(_) => ErrorKind::Unavailable,
+            Self::AlreadyProvided { .. } => ErrorKind::Conflict,
+            Self::OperationFailed(_) | Self::Internal(_) => ErrorKind::Internal,
+        }
+    }
 }
 
 /// Errors that can occur during plugin lifecycle.
@@ -53,20 +108,25 @@ pub enum PluginError {
     #[error("plugin initialization failed: {0}")]
     InitFailed(String),
 
-    /// A custom plugin error.
-    #[error("{0}")]
-    Custom(String),
+    #[error(transparent)]
+    Service(#[from] ServiceError),
+
+    #[error(transparent)]
+    Limbo(#[from] crate::limbo::LimboHandlerError),
+
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl From<String> for PluginError {
     fn from(s: String) -> Self {
-        Self::Custom(s)
+        Self::Other(s.into())
     }
 }
 
 impl From<&str> for PluginError {
     fn from(s: &str) -> Self {
-        Self::Custom(s.to_owned())
+        Self::Other(s.into())
     }
 }
 
@@ -93,14 +153,36 @@ mod tests {
     #[test]
     fn plugin_error_from_string() {
         let err: PluginError = "something went wrong".into();
-        assert!(matches!(err, PluginError::Custom(_)));
-        assert!(err.to_string().contains("something went wrong"));
+        assert!(matches!(err, PluginError::Other(_)));
+        assert_eq!(err.to_string(), "something went wrong");
     }
 
     #[test]
     fn plugin_error_from_owned_string() {
         let err: PluginError = String::from("failure").into();
-        assert!(matches!(err, PluginError::Custom(_)));
+        assert!(matches!(err, PluginError::Other(_)));
+    }
+
+    #[test]
+    fn plugin_error_keeps_the_service_and_limbo_errors_it_wraps() {
+        let service: PluginError = ServiceError::NotFound("lobby".into()).into();
+        assert!(matches!(
+            service,
+            PluginError::Service(ServiceError::NotFound(ref id)) if id == "lobby"
+        ));
+        assert_eq!(service.to_string(), "not found: lobby");
+
+        let limbo: PluginError = crate::limbo::LimboHandlerError::MissingCapability.into();
+        assert!(matches!(
+            limbo,
+            PluginError::Limbo(crate::limbo::LimboHandlerError::MissingCapability)
+        ));
+        assert!(std::error::Error::source(&limbo).is_none());
+
+        let io: PluginError =
+            Box::<dyn std::error::Error + Send + Sync>::from(std::io::Error::other("disk")).into();
+        assert!(matches!(io, PluginError::Other(_)));
+        assert_eq!(io.to_string(), "disk");
     }
 
     #[test]

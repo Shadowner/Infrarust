@@ -5,10 +5,13 @@ use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use infrarust_protocol::io::PacketFrame;
+use infrarust_protocol::packets::config::{CFeatureFlags, CKnownPacks, CRegistryData, CUpdateTags};
+use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::registry_data::RegistryDataProvider;
+use crate::util::sync::{read, write};
 
 pub struct RegistryCodecCache {
     captured: RwLock<HashMap<ProtocolVersion, CapturedFrames>>,
@@ -29,34 +32,42 @@ impl RegistryCodecCache {
         }
     }
 
-    pub fn collect_registry_frame(&self, version: ProtocolVersion, frame: PacketFrame) {
+    pub fn collect_config_frame(
+        &self,
+        registry: &PacketRegistry,
+        version: ProtocolVersion,
+        frame: &PacketFrame,
+    ) {
+        let id = Some(frame.id);
+        let known_packs = registry.get_packet_id::<CKnownPacks>(version) == id;
+        let shared = [
+            registry.get_packet_id::<CRegistryData>(version),
+            registry.get_packet_id::<CFeatureFlags>(version),
+            registry.get_packet_id::<CUpdateTags>(version),
+        ]
+        .contains(&id);
+        if !known_packs && !shared {
+            return;
+        }
         let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
-        let mut map = self.captured.write().expect("registry cache lock poisoned");
+        let mut map = write(&self.captured);
         let entry = map.entry(version).or_insert_with(|| CapturedFrames {
             registry_frames: Vec::new(),
             known_packs_frame: None,
             finalized: false,
         });
-        if !entry.finalized {
+        if entry.finalized {
+            return;
+        }
+        if known_packs {
+            entry.known_packs_frame = Some(frame);
+        } else {
             entry.registry_frames.push(frame);
         }
     }
 
-    pub fn collect_known_packs_frame(&self, version: ProtocolVersion, frame: PacketFrame) {
-        let frame = PacketFrame::new(frame.id, Bytes::copy_from_slice(&frame.payload));
-        let mut map = self.captured.write().expect("registry cache lock poisoned");
-        let entry = map.entry(version).or_insert_with(|| CapturedFrames {
-            registry_frames: Vec::new(),
-            known_packs_frame: None,
-            finalized: false,
-        });
-        if !entry.finalized {
-            entry.known_packs_frame = Some(frame);
-        }
-    }
-
     pub fn finalize(&self, version: ProtocolVersion) {
-        let mut map = self.captured.write().expect("registry cache lock poisoned");
+        let mut map = write(&self.captured);
         if let Some(entry) = map.get_mut(&version) {
             entry.finalized = true;
             tracing::info!(
@@ -72,7 +83,7 @@ impl RegistryCodecCache {
         version: ProtocolVersion,
     ) -> Result<Vec<PacketFrame>, CoreError> {
         {
-            let map = self.captured.read().expect("registry cache lock poisoned");
+            let map = read(&self.captured);
             if let Some(entry) = map.get(&version)
                 && entry.finalized
                 && !entry.registry_frames.is_empty()
@@ -89,9 +100,10 @@ impl RegistryCodecCache {
         version: ProtocolVersion,
     ) -> Result<Option<PacketFrame>, CoreError> {
         {
-            let map = self.captured.read().expect("registry cache lock poisoned");
+            let map = read(&self.captured);
             if let Some(entry) = map.get(&version)
                 && entry.finalized
+                && !entry.registry_frames.is_empty()
             {
                 return Ok(entry.known_packs_frame.clone());
             }
@@ -101,7 +113,7 @@ impl RegistryCodecCache {
     }
 
     pub fn has_captured(&self, version: ProtocolVersion) -> bool {
-        let map = self.captured.read().expect("registry cache lock poisoned");
+        let map = read(&self.captured);
         map.get(&version).is_some_and(|e| e.finalized)
     }
 

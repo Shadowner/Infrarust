@@ -1,12 +1,13 @@
 //! [`PlayerRegistry`] implementation backed by [`ConnectionRegistry`].
 
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ServerId};
 
-use crate::registry::ConnectionRegistry;
+use crate::session::connection_registry::ConnectionRegistry;
 
 /// Thin wrapper around [`ConnectionRegistry`] that exposes the API-level
 /// [`PlayerRegistry`] trait.
@@ -37,6 +38,14 @@ impl PlayerRegistry for PlayerRegistryImpl {
 
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {
         self.registry.find_by_id(id).map(|s| s as Arc<dyn Player>)
+    }
+
+    fn get_players_by_ip(&self, ip: IpAddr) -> Vec<Arc<dyn Player>> {
+        self.registry
+            .find_by_ip(&ip)
+            .into_iter()
+            .map(|s| s as Arc<dyn Player>)
+            .collect()
     }
 
     fn get_players_on_server(&self, server: &ServerId) -> Vec<Arc<dyn Player>> {

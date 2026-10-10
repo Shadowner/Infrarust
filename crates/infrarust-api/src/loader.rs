@@ -33,13 +33,6 @@ pub enum LoaderError {
 
     #[error("failed to unload plugin '{plugin_id}': {reason}")]
     UnloadFailed { plugin_id: String, reason: String },
-
-    #[error("duplicate plugin id '{plugin_id}' (found in loader '{first}' and '{second}')")]
-    DuplicateId {
-        plugin_id: String,
-        first: String,
-        second: String,
-    },
 }
 
 /// Passed to loaders during `load()` so they can bind proxy services
@@ -80,6 +73,11 @@ pub trait PluginLoader: Send + Sync {
         &'a self,
         plugin_dir: &'a Path,
     ) -> BoxFuture<'a, Result<Vec<PluginMetadata>, LoaderError>>;
+
+    fn plugin_source(&self, plugin_id: &str) -> Option<PathBuf> {
+        let _ = plugin_id;
+        None
+    }
 
     /// Initializes the loader's runtime once, before any of its plugins load.
     ///

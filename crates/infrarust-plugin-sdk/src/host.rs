@@ -1,0 +1,549 @@
+pub(crate) use imp::*;
+
+#[cfg(target_family = "wasm")]
+mod imp {
+    use crate::bindings::ban_service::BanFeatures;
+    use crate::bindings::codec_registry::{self, CodecFilterMetadata};
+    use crate::bindings::command_manager::{self, CommandInfo, CommandRegistration, CommandSpec};
+    use crate::bindings::event_bus::PacketFilter;
+    use crate::bindings::events::{EventKind, NamedEventResult};
+    use crate::bindings::permission_nodes::{PermissionNode, PermissionNodeInfo};
+    use crate::bindings::permissions::PermissionSnapshot;
+    use crate::bindings::types::HostError;
+    use crate::bindings::{event_bus, limbo, permissions, providers, scheduler};
+
+    pub(crate) fn subscribe(kind: EventKind, priority: u8) -> Result<u64, HostError> {
+        event_bus::subscribe(kind, priority)
+    }
+
+    pub(crate) fn subscribe_named(name: &str, priority: u8) -> Result<u64, HostError> {
+        event_bus::subscribe_named(name, priority)
+    }
+
+    pub(crate) fn subscribe_packets(
+        filters: &[PacketFilter],
+        priority: u8,
+    ) -> Result<u64, HostError> {
+        event_bus::subscribe_packets(filters, priority)
+    }
+
+    pub(crate) fn fire_named(
+        name: &str,
+        content_type: &str,
+        payload: &[u8],
+    ) -> Result<NamedEventResult, HostError> {
+        event_bus::fire_named(name, content_type, payload)
+    }
+
+    pub(crate) fn unsubscribe(listener: u64) -> Result<bool, HostError> {
+        event_bus::unsubscribe(listener)
+    }
+
+    pub(crate) fn register_command(
+        spec: &CommandSpec,
+        handler: u64,
+    ) -> Result<CommandRegistration, HostError> {
+        command_manager::register(spec, handler)
+    }
+
+    pub(crate) fn unregister_command(name: &str) -> Result<(), HostError> {
+        command_manager::unregister(name)
+    }
+
+    pub(crate) fn get_command(label: &str) -> Result<Option<CommandInfo>, HostError> {
+        command_manager::get(label)
+    }
+
+    pub(crate) fn get_command_by_name(name: &str) -> Result<Option<CommandInfo>, HostError> {
+        command_manager::get_by_name(name)
+    }
+
+    pub(crate) fn get_command_by_alias(alias: &str) -> Result<Option<CommandInfo>, HostError> {
+        command_manager::get_by_alias(alias)
+    }
+
+    pub(crate) fn contains_command(label: &str) -> Result<bool, HostError> {
+        command_manager::contains(label)
+    }
+
+    pub(crate) fn list_commands() -> Result<Vec<CommandInfo>, HostError> {
+        command_manager::list()
+    }
+
+    pub(crate) fn list_owned_commands() -> Result<Vec<CommandInfo>, HostError> {
+        command_manager::list_owned()
+    }
+
+    pub(crate) fn delay(after_ms: u64, handler: u64) -> Result<u64, HostError> {
+        scheduler::delay(after_ms, handler)
+    }
+
+    pub(crate) fn interval(
+        period_ms: u64,
+        initial_delay_ms: Option<u64>,
+        handler: u64,
+    ) -> Result<u64, HostError> {
+        scheduler::interval(period_ms, initial_delay_ms, handler)
+    }
+
+    pub(crate) fn cancel(handle: u64) -> Result<(), HostError> {
+        scheduler::cancel(handle)
+    }
+
+    pub(crate) fn register_codec_filter(
+        metadata: &CodecFilterMetadata,
+        factory: u64,
+    ) -> Result<(), HostError> {
+        codec_registry::register_codec_filter(metadata, factory)
+    }
+
+    pub(crate) fn unregister_codec_filter(id: &str) -> Result<(), HostError> {
+        codec_registry::unregister_codec_filter(id)
+    }
+
+    pub(crate) fn register_limbo_handler(name: &str, handler: u64) -> Result<(), HostError> {
+        limbo::register_limbo_handler(name, handler)
+    }
+
+    pub(crate) fn register_ban_provider(features: &BanFeatures) -> Result<(), HostError> {
+        providers::register_ban_provider(*features)
+    }
+
+    pub(crate) fn register_permission_provider() -> Result<(), HostError> {
+        providers::register_permission_provider()
+    }
+
+    pub(crate) fn set_snapshot(
+        player: u64,
+        snapshot: &PermissionSnapshot,
+    ) -> Result<(), HostError> {
+        permissions::set_snapshot(player, snapshot)
+    }
+
+    pub(crate) fn release_snapshot(player: u64) -> Result<(), HostError> {
+        permissions::release(player)
+    }
+
+    pub(crate) fn register_permission_node(node: &PermissionNode) -> Result<(), HostError> {
+        crate::bindings::permission_nodes::register(node)
+    }
+
+    pub(crate) fn permission_node(name: &str) -> Option<PermissionNodeInfo> {
+        crate::bindings::permission_nodes::get(name)
+    }
+
+    pub(crate) fn permission_nodes() -> Vec<PermissionNodeInfo> {
+        crate::bindings::permission_nodes::list()
+    }
+
+    pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
+        crate::bindings::log::max_level()
+    }
+
+    pub(crate) fn ping_description() -> Option<crate::bindings::types::Component> {
+        crate::bindings::events::ping_description()
+    }
+
+    pub(crate) fn ping_favicon() -> Option<String> {
+        crate::bindings::events::ping_favicon()
+    }
+
+    pub(crate) fn ping_player_sample() -> Vec<crate::bindings::events::PingPlayer> {
+        crate::bindings::events::ping_player_sample()
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+mod imp {
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, HashMap, HashSet};
+
+    use crate::bindings::ban_service::BanFeatures;
+    use crate::bindings::codec_registry::CodecFilterMetadata;
+    use crate::bindings::command_manager::{CommandInfo, CommandRegistration, CommandSpec};
+    use crate::bindings::event_bus::PacketFilter;
+    use crate::bindings::events::{EventKind, NamedEventResult};
+    use crate::bindings::permission_nodes::{PermissionNode, PermissionNodeInfo};
+    use crate::bindings::permissions::PermissionSnapshot;
+    use crate::bindings::types::{ErrorKind, HostError};
+
+    const FAKE_PLUGIN: &str = "fake";
+
+    #[derive(Default)]
+    pub(crate) struct FakeHost {
+        next_handle: u64,
+        pub(crate) listeners: HashMap<u64, EventKind>,
+        pub(crate) named: HashMap<u64, String>,
+        pub(crate) packets: HashMap<u64, Vec<PacketFilter>>,
+        pub(crate) fired: Vec<(String, String, Vec<u8>)>,
+        pub(crate) answer: Option<NamedEventResult>,
+        pub(crate) commands: HashMap<String, u64>,
+        pub(crate) command_table: Vec<CommandInfo>,
+        pub(crate) tasks: HashMap<u64, (u64, bool)>,
+        pub(crate) cancelled: Vec<u64>,
+        pub(crate) codec_filters: Vec<(String, u64)>,
+        pub(crate) limbo_handlers: Vec<(String, u64)>,
+        pub(crate) ban_providers: Vec<BanFeatures>,
+        pub(crate) permission_providers: usize,
+        pub(crate) snapshots: HashMap<u64, PermissionSnapshot>,
+        pub(crate) permission_nodes: BTreeMap<String, PermissionNodeInfo>,
+        pub(crate) refused: HashSet<String>,
+        pub(crate) log_level: Option<crate::bindings::log::Level>,
+        pub(crate) ping_description: Option<crate::bindings::types::Component>,
+        pub(crate) ping_favicon: Option<String>,
+        pub(crate) ping_sample: Vec<crate::bindings::events::PingPlayer>,
+        pub(crate) ping_reads: u32,
+    }
+
+    impl FakeHost {
+        fn next_handle(&mut self) -> u64 {
+            self.next_handle += 1;
+            self.next_handle
+        }
+
+        fn schedule(&mut self, handler: u64, repeating: bool) -> u64 {
+            let handle = self.next_handle();
+            self.tasks.insert(handle, (handler, repeating));
+            handle
+        }
+
+        fn refuse(&self, name: &str) -> Result<(), HostError> {
+            if self.refused.contains(name) {
+                Err(HostError {
+                    kind: ErrorKind::Conflict,
+                    message: format!("{name} is refused"),
+                })
+            } else {
+                Ok(())
+            }
+        }
+
+        fn find_command(
+            &self,
+            label: &str,
+            matches: fn(&CommandInfo, &str) -> bool,
+        ) -> Result<Option<CommandInfo>, HostError> {
+            self.refuse("command-lookup")?;
+            let label = label.to_lowercase();
+            Ok(self
+                .command_table
+                .iter()
+                .find(|info| matches(info, &label))
+                .cloned())
+        }
+
+        fn sorted_commands(
+            &self,
+            keep: fn(&CommandInfo) -> bool,
+        ) -> Result<Vec<CommandInfo>, HostError> {
+            self.refuse("command-lookup")?;
+            let mut infos: Vec<CommandInfo> = self
+                .command_table
+                .iter()
+                .filter(|info| keep(info))
+                .cloned()
+                .collect();
+            infos.sort_by(|a, b| {
+                a.spec
+                    .name
+                    .cmp(&b.spec.name)
+                    .then(a.plugin_id.cmp(&b.plugin_id))
+            });
+            Ok(infos)
+        }
+    }
+
+    fn is_name(info: &CommandInfo, label: &str) -> bool {
+        info.spec.name == label
+            || info
+                .plugin_id
+                .as_ref()
+                .is_some_and(|plugin| format!("{plugin}:{}", info.spec.name) == label)
+    }
+
+    fn is_alias(info: &CommandInfo, label: &str) -> bool {
+        info.spec.aliases.iter().any(|alias| alias == label)
+    }
+
+    fn is_label(info: &CommandInfo, label: &str) -> bool {
+        is_name(info, label) || is_alias(info, label)
+    }
+
+    fn is_owned(info: &CommandInfo, name: &str) -> bool {
+        info.plugin_id.as_deref() == Some(FAKE_PLUGIN) && info.spec.name == name
+    }
+
+    thread_local! {
+        static FAKE: RefCell<FakeHost> = RefCell::new(FakeHost::default());
+    }
+
+    pub(crate) fn with_fake<R>(f: impl FnOnce(&mut FakeHost) -> R) -> R {
+        FAKE.with(|host| f(&mut host.borrow_mut()))
+    }
+
+    pub(crate) fn subscribe(kind: EventKind, _priority: u8) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("subscribe")?;
+            let handle = host.next_handle();
+            host.listeners.insert(handle, kind);
+            Ok(handle)
+        })
+    }
+
+    pub(crate) fn unsubscribe(listener: u64) -> Result<bool, HostError> {
+        Ok(with_fake(|host| {
+            let event = host.listeners.remove(&listener).is_some();
+            let named = host.named.remove(&listener).is_some();
+            let packets = host.packets.remove(&listener).is_some();
+            event || named || packets
+        }))
+    }
+
+    pub(crate) fn subscribe_named(name: &str, _priority: u8) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("subscribe")?;
+            let handle = host.next_handle();
+            host.named.insert(handle, name.to_owned());
+            Ok(handle)
+        })
+    }
+
+    pub(crate) fn subscribe_packets(
+        filters: &[PacketFilter],
+        _priority: u8,
+    ) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("subscribe-packets")?;
+            let handle = host.next_handle();
+            host.packets.insert(handle, filters.to_vec());
+            Ok(handle)
+        })
+    }
+
+    pub(crate) fn fire_named(
+        name: &str,
+        content_type: &str,
+        payload: &[u8],
+    ) -> Result<NamedEventResult, HostError> {
+        with_fake(|host| {
+            host.refuse("fire-named")?;
+            host.fired
+                .push((name.to_owned(), content_type.to_owned(), payload.to_vec()));
+            Ok(host.answer.clone().unwrap_or(NamedEventResult {
+                cancelled: false,
+                response: None,
+            }))
+        })
+    }
+
+    pub(crate) fn register_command(
+        spec: &CommandSpec,
+        handler: u64,
+    ) -> Result<CommandRegistration, HostError> {
+        with_fake(|host| {
+            let name = spec.name.to_lowercase();
+            host.refuse(&name)?;
+            host.commands.insert(name.clone(), handler);
+            host.command_table.retain(|info| !is_owned(info, &name));
+            host.command_table.push(CommandInfo {
+                spec: CommandSpec {
+                    name: name.clone(),
+                    aliases: spec.aliases.iter().map(|a| a.to_lowercase()).collect(),
+                    ..spec.clone()
+                },
+                plugin_id: Some(FAKE_PLUGIN.to_owned()),
+            });
+            Ok(CommandRegistration {
+                namespaced: format!("{FAKE_PLUGIN}:{name}"),
+                name,
+                aliases: spec.aliases.clone(),
+                rejected_aliases: Vec::new(),
+            })
+        })
+    }
+
+    pub(crate) fn unregister_command(name: &str) -> Result<(), HostError> {
+        with_fake(|host| {
+            let name = name.to_lowercase();
+            host.commands.remove(&name);
+            host.command_table.retain(|info| !is_owned(info, &name));
+        });
+        Ok(())
+    }
+
+    pub(crate) fn get_command(label: &str) -> Result<Option<CommandInfo>, HostError> {
+        with_fake(|host| host.find_command(label, is_label))
+    }
+
+    pub(crate) fn get_command_by_name(name: &str) -> Result<Option<CommandInfo>, HostError> {
+        with_fake(|host| host.find_command(name, is_name))
+    }
+
+    pub(crate) fn get_command_by_alias(alias: &str) -> Result<Option<CommandInfo>, HostError> {
+        with_fake(|host| host.find_command(alias, is_alias))
+    }
+
+    pub(crate) fn contains_command(label: &str) -> Result<bool, HostError> {
+        Ok(get_command(label)?.is_some())
+    }
+
+    pub(crate) fn list_commands() -> Result<Vec<CommandInfo>, HostError> {
+        with_fake(|host| host.sorted_commands(|_| true))
+    }
+
+    pub(crate) fn list_owned_commands() -> Result<Vec<CommandInfo>, HostError> {
+        with_fake(|host| {
+            host.sorted_commands(|info| info.plugin_id.as_deref() == Some(FAKE_PLUGIN))
+        })
+    }
+
+    pub(crate) fn delay(_after_ms: u64, handler: u64) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("scheduler")?;
+            Ok(host.schedule(handler, false))
+        })
+    }
+
+    pub(crate) fn interval(
+        _period_ms: u64,
+        _initial_delay_ms: Option<u64>,
+        handler: u64,
+    ) -> Result<u64, HostError> {
+        with_fake(|host| {
+            host.refuse("scheduler")?;
+            Ok(host.schedule(handler, true))
+        })
+    }
+
+    pub(crate) fn cancel(handle: u64) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.tasks.remove(&handle);
+            host.cancelled.push(handle);
+        });
+        Ok(())
+    }
+
+    pub(crate) fn register_codec_filter(
+        metadata: &CodecFilterMetadata,
+        factory: u64,
+    ) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse(&metadata.id)?;
+            host.codec_filters.push((metadata.id.clone(), factory));
+            Ok(())
+        })
+    }
+
+    pub(crate) fn unregister_codec_filter(id: &str) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse(id)?;
+            let before = host.codec_filters.len();
+            host.codec_filters.retain(|(name, _)| name != id);
+            if host.codec_filters.len() == before {
+                return Err(HostError {
+                    kind: ErrorKind::NotFound,
+                    message: format!("no codec filter {id}"),
+                });
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn register_limbo_handler(name: &str, handler: u64) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse(name)?;
+            host.limbo_handlers.push((name.to_owned(), handler));
+            Ok(())
+        })
+    }
+
+    pub(crate) fn register_ban_provider(features: &BanFeatures) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse("ban-provider")?;
+            host.ban_providers.push(*features);
+            Ok(())
+        })
+    }
+
+    pub(crate) fn register_permission_provider() -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse("permission-provider")?;
+            host.permission_providers += 1;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn set_snapshot(
+        player: u64,
+        snapshot: &PermissionSnapshot,
+    ) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.refuse("set-snapshot")?;
+            host.snapshots.insert(player, snapshot.clone());
+            Ok(())
+        })
+    }
+
+    pub(crate) fn release_snapshot(player: u64) -> Result<(), HostError> {
+        with_fake(|host| {
+            host.snapshots.remove(&player);
+        });
+        Ok(())
+    }
+
+    fn node_key(name: &str) -> String {
+        name.trim().to_lowercase()
+    }
+
+    pub(crate) fn register_permission_node(node: &PermissionNode) -> Result<(), HostError> {
+        with_fake(|host| {
+            let name = node_key(&node.name);
+            host.refuse(&name)?;
+            let node = PermissionNode {
+                name: name.clone(),
+                ..node.clone()
+            };
+            host.permission_nodes.insert(
+                name,
+                PermissionNodeInfo {
+                    node,
+                    plugin_id: Some("fake".to_owned()),
+                },
+            );
+            Ok(())
+        })
+    }
+
+    pub(crate) fn permission_node(name: &str) -> Option<PermissionNodeInfo> {
+        with_fake(|host| host.permission_nodes.get(&node_key(name)).cloned())
+    }
+
+    pub(crate) fn permission_nodes() -> Vec<PermissionNodeInfo> {
+        with_fake(|host| host.permission_nodes.values().cloned().collect())
+    }
+
+    pub(crate) fn max_log_level() -> Option<crate::bindings::log::Level> {
+        with_fake(|host| host.log_level)
+    }
+
+    pub(crate) fn ping_description() -> Option<crate::bindings::types::Component> {
+        with_fake(|host| {
+            host.ping_reads += 1;
+            host.ping_description.clone()
+        })
+    }
+
+    pub(crate) fn ping_favicon() -> Option<String> {
+        with_fake(|host| {
+            host.ping_reads += 1;
+            host.ping_favicon.clone()
+        })
+    }
+
+    pub(crate) fn ping_player_sample() -> Vec<crate::bindings::events::PingPlayer> {
+        with_fake(|host| {
+            host.ping_reads += 1;
+            host.ping_sample.clone()
+        })
+    }
+}

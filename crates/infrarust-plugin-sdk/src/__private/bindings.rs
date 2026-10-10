@@ -1,0 +1,18 @@
+#![allow(clippy::all)]
+
+wit_bindgen::generate!({
+    world: "plugin",
+    path: "wit",
+    generate_all,
+    pub_export_macro: true,
+    export_macro_name: "export",
+    default_bindings_module: "infrarust_plugin_sdk::__private::bindings",
+    additional_derives: [PartialEq],
+});
+
+pub use exports::infrarust::plugin::{codec_filter, guest};
+pub use infrarust::plugin::{
+    ban_service, codec_registry, command_manager, config_service, event_bus, events, limbo,
+    load_balancer, log, messaging, permission_nodes, permissions, players, plugin_registry,
+    providers, proxy_info, scheduler, server_manager, text, types,
+};

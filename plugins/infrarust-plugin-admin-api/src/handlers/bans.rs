@@ -5,55 +5,57 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
-use infrarust_api::services::ban_service::BanTarget;
+use infrarust_api::services::ban_service::{BanRequest, BanSource, BanTarget, UnbanRequest};
 
 use crate::dto::ban::{BanCheckResponse, BanResponse};
 use crate::dto::requests::{BanTargetRequest, CreateBanRequest};
 use crate::error::ApiError;
 use crate::response::{
-    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, created, default_page,
-    default_per_page, mutation_ok, ok,
+    ApiResponse, MutationResult, PaginatedResponse, PaginationParams, created, mutation_ok, ok,
 };
 use crate::state::{ApiEvent, ApiState};
-use crate::util::{ban_target_type_str, ban_target_value, now_iso8601, parse_ban_target};
+use crate::util::{BanTargetKind, BanTargetParts, now_iso8601, parse_ban_target};
 
 #[derive(Debug, Deserialize)]
 pub struct BanListQuery {
-    #[serde(default = "default_page")]
-    pub page: usize,
-    #[serde(default = "default_per_page")]
-    pub per_page: usize,
     pub target_type: Option<String>,
     pub source: Option<String>,
 }
 
 pub async fn list(
     State(state): State<Arc<ApiState>>,
+    Query(mut pagination): Query<PaginationParams>,
     Query(query): Query<BanListQuery>,
 ) -> Result<Json<PaginatedResponse<BanResponse>>, ApiError> {
-    let mut pagination = PaginationParams {
-        page: query.page,
-        per_page: query.per_page,
-    };
     pagination.normalize();
+
+    let target_kind = query
+        .target_type
+        .as_deref()
+        .map(str::parse::<BanTargetKind>)
+        .transpose()?
+        .map(|kind| kind.to_string());
 
     let mut bans = state
         .ban_service
-        .get_all_bans()
+        .list_all()
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to fetch bans: {e}")))?;
 
-    if let Some(ref tt) = query.target_type {
-        bans.retain(|b| ban_target_type_str(&b.target) == tt.as_str());
-    }
-
     if let Some(ref src) = query.source {
-        bans.retain(|b| b.source == *src);
+        bans.retain(|b| b.source.to_string() == *src);
     }
 
     bans.sort_by_key(|b| std::cmp::Reverse(b.created_at));
 
-    let responses: Vec<BanResponse> = bans.iter().map(BanResponse::from_entry).collect();
+    let mut responses = bans
+        .iter()
+        .map(BanResponse::from_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if let Some(kind) = target_kind {
+        responses.retain(|ban| ban.target_type == kind);
+    }
 
     Ok(Json(pagination.apply(responses)))
 }
@@ -66,14 +68,14 @@ pub async fn check(
 
     let ban_entry = state
         .ban_service
-        .get_ban(&target)
+        .get(&target)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to check ban: {e}")))?;
 
     let response = match ban_entry {
         Some(entry) if !entry.is_expired() => BanCheckResponse {
             banned: true,
-            ban: Some(BanResponse::from_entry(&entry)),
+            ban: Some(BanResponse::from_entry(&entry)?),
         },
         _ => BanCheckResponse {
             banned: false,
@@ -92,6 +94,7 @@ pub async fn create(
         BanTargetRequest::Ip(ref ip) => ip
             .parse()
             .map(BanTarget::Ip)
+            .or_else(|_| ip.parse().map(BanTarget::IpRange))
             .map_err(|_| ApiError::BadRequest(format!("Invalid IP address: {ip}")))?,
         BanTargetRequest::Username(ref name) => BanTarget::Username(name.clone()),
         BanTargetRequest::Uuid(ref uuid) => uuid
@@ -119,18 +122,20 @@ pub async fn create(
         "Ban created via Admin API"
     );
 
-    let target_type = ban_target_type_str(&target);
-    let target_value = ban_target_value(&target);
+    let parts = BanTargetParts::try_from(&target)?;
 
+    let mut request = BanRequest::new(target).source(web_api());
+    request.reason = body.reason.clone();
+    request.duration = duration;
     state
         .ban_service
-        .ban(target, body.reason.clone(), duration)
+        .ban(request)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to create ban: {e}")))?;
 
     let _ = state.event_tx.send(ApiEvent::BanCreated {
-        target_type: target_type.to_string(),
-        target_value,
+        target_type: parts.kind.to_string(),
+        target_value: parts.value,
         reason: body.reason,
         source: "admin_api".to_string(),
         timestamp: now_iso8601(),
@@ -159,14 +164,15 @@ pub async fn delete(
 
     let removed = state
         .ban_service
-        .unban(&target)
+        .unban(UnbanRequest::new(target.clone()).source(web_api()))
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to remove ban: {e}")))?;
 
-    if removed {
+    if removed.is_some() {
+        let parts = BanTargetParts::try_from(&target)?;
         let _ = state.event_tx.send(ApiEvent::BanRemoved {
-            target_type: ban_target_type_str(&target).to_string(),
-            target_value: ban_target_value(&target),
+            target_type: parts.kind.to_string(),
+            target_value: parts.value,
             timestamp: now_iso8601(),
         });
         Ok(mutation_ok("Ban removed"))
@@ -175,4 +181,8 @@ pub async fn delete(
             "No active ban found for {target_type}/{value}"
         )))
     }
+}
+
+const fn web_api() -> BanSource {
+    BanSource::WebApi { actor: None }
 }

@@ -2,6 +2,9 @@ use crate::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use crate::error::ProtocolResult;
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
+use super::play::client_information::{
+    ClientInformation, decode_client_information, encode_client_information,
+};
 use super::{Packet, PacketMapping};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,11 +97,43 @@ impl Packet for CRegistryData {
 }
 
 define_twin_packets! {
+    states: {
+        #[derive(PartialEq, Eq)]
+        CFeatureFlags: Config / Clientbound = ids![
+            V1_20_2 => 0x07,
+            V1_20_3 => 0x08,
+            V1_20_5 => 0x0C,
+            V26_3   => 0x0D,
+        ],
+        #[derive(PartialEq, Eq)]
+        CUpdateTags: Config / Clientbound = ids![
+            V1_20_2 => 0x08,
+            V1_20_3 => 0x09,
+            V1_20_5 => 0x0D,
+            V26_3   => 0x0E,
+        ],
+    },
+    encode_only: true,
+    fields: {
+        pub data: Vec<u8>,
+    },
+    shared_impl: {},
+    decode(r, _version): {
+        Ok(Self { data: r.read_remaining()? })
+    },
+    encode(self, w, _version): {
+        w.write_all(&self.data)?;
+        Ok(())
+    },
+}
+
+define_twin_packets! {
     clientbound: CKnownPacks,
     serverbound: SKnownPacks,
     state: ConnectionState::Config,
     clientbound_ids: ids![
         V1_20_5 => 0x0E,
+        V26_3   => 0x0F,
     ],
     serverbound_ids: ids![
         V1_20_5 => 0x07,
@@ -108,13 +143,7 @@ define_twin_packets! {
         pub packs: Vec<KnownPack>,
     },
     decode(r, _version): {
-        let count = r.read_var_int()?.0;
-        if count < 0 {
-            return Err(crate::error::ProtocolError::invalid(
-                "negative pack count",
-            ));
-        }
-        let count = count as usize;
+        let count = r.read_count("pack count")?;
         let mut packs = Vec::with_capacity(count.min(64));
         for _ in 0..count {
             packs.push(KnownPack {
@@ -195,12 +224,79 @@ impl Packet for CConfigDisconnect {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SConfigClientInformation {
+    pub information: ClientInformation,
+}
+
+impl Packet for SConfigClientInformation {
+    const NAME: &'static str = "SConfigClientInformation";
+
+    const STATE: ConnectionState = ConnectionState::Config;
+    const DIRECTION: Direction = Direction::Serverbound;
+    const IDS: &'static [PacketMapping] = ids![
+        V1_20_2 => 0x00,
+    ];
+
+    fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
+        let information = decode_client_information(r, version)?;
+        Ok(Self { information })
+    }
+
+    fn encode(
+        &self,
+        w: &mut (impl std::io::Write + ?Sized),
+        version: ProtocolVersion,
+    ) -> ProtocolResult<()> {
+        encode_client_information(w, &self.information, version)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::packets::round_trip;
     use crate::registry::build_default_registry;
+
+    #[test]
+    fn test_config_client_information_golden_bytes() {
+        let information = ClientInformation {
+            locale: "fr_fr".to_string(),
+            view_distance: 8,
+            chat_mode: 0,
+            chat_colors: true,
+            difficulty: 0,
+            displayed_skin_parts: 0x7F,
+            main_hand: 1,
+            text_filtering: false,
+            allow_server_listings: true,
+            particle_status: 1,
+        };
+        let pkt = SConfigClientInformation {
+            information: information.clone(),
+        };
+        let base = [
+            0x05, b'f', b'r', b'_', b'f', b'r', 0x08, 0x00, 0x01, 0x7F, 0x01, 0x00, 0x01,
+        ];
+
+        let mut buf = Vec::new();
+        pkt.encode(&mut buf, ProtocolVersion::V1_20_2).unwrap();
+        assert_eq!(buf, base);
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_2);
+        assert_eq!(
+            decoded.information,
+            ClientInformation {
+                particle_status: 0,
+                ..information.clone()
+            }
+        );
+
+        let mut buf = Vec::new();
+        pkt.encode(&mut buf, ProtocolVersion::V1_21_2).unwrap();
+        assert_eq!(buf, [&base[..], &[0x01]].concat());
+        assert_eq!(round_trip(&pkt, ProtocolVersion::V1_21_2), pkt);
+    }
 
     #[test]
     fn test_finish_config_round_trip() {

@@ -7,22 +7,31 @@
 //!
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
-use infrarust_api::event::ResultedEvent;
-use infrarust_api::event::bus::EventBus;
-use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::types::{PlayerId, RawPacket, ServerId};
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use infrarust_api::command::{CommandSource, Suggestion};
+use infrarust_api::events::connection::ConnectCause;
+use infrarust_api::messaging::ChannelId;
+use infrarust_api::player::Player;
+use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, ServerId};
+use tokio::time::Instant;
 
 use infrarust_protocol::io::PacketFrame;
-use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig};
+use infrarust_protocol::packets::config::{
+    CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
+};
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
 };
-use infrarust_protocol::packets::play::chat::{SChatCommand, SChatMessage};
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::commands::CCommands;
 use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::packets::play::join_game::CJoinGame;
+use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
+use infrarust_protocol::packets::play::start_configuration::{
+    CStartConfiguration, SAcknowledgeConfiguration,
+};
 use infrarust_protocol::packets::play::tab_complete::{
     CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
 };
@@ -30,41 +39,52 @@ use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::event_bus::conversion::{protocol_direction_to_api, protocol_state_to_api};
-use crate::filter::codec_chain::{CodecFilterChain, FilterResult};
-use crate::player::PlayerCommand;
+use crate::event_bus::conversion::protocol_state_to_api;
+use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
+use crate::player::commands::CommandOutcome;
+use crate::player::{PlayerCommand, PlayerSession};
+use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::services::ProxyServices;
+use crate::services::command_manager::Prepared;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
+use crate::session::frame_chain::FrameChain;
+use crate::session::kick::BackendKick;
+use crate::session::presentation;
+use crate::session::server_join::ServerJoin;
+use crate::util::text::encode_text_component;
 
 /// Result of the proxy loop, determining what happens after the loop ends.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum ProxyLoopOutcome {
     /// Client closed its connection — full cleanup.
     ClientDisconnected,
     /// Backend closed its connection.
     /// In Phase 2A: cleanup. In Phase 4+: server switch / limbo.
-    BackendDisconnected { reason: Option<String> },
+    BackendDisconnected {
+        reason: Option<String>,
+    },
     /// Global proxy shutdown.
     Shutdown,
     /// I/O or protocol error.
     Error(CoreError),
     /// Server switch requested by plugin/command — handler should perform the switch.
-    SwitchRequested { target: ServerId },
+    SwitchRequested {
+        target: ServerId,
+        cause: ConnectCause,
+    },
+    Kicked {
+        reason: Component,
+    },
+    BackendKick(Box<BackendKick>),
+    BackendClosed {
+        reason: Option<Component>,
+    },
 }
 
-/// Action to take after processing a backend → client packet.
-#[derive(Debug)]
-#[non_exhaustive]
-enum BackendAction {
-    /// Continue the loop normally.
-    Continue,
-    /// Backend sent a disconnect packet.
-    Disconnected(Option<String>),
-}
-
-use super::chat_utils::{ChatAction, detect_chat_or_command};
+use super::chat_intercept::{ChatScope, intercept};
+use super::chat_utils::{ChatIds, decode_player_input};
 
 #[inline]
 fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
@@ -76,26 +96,19 @@ fn raw_to_frame(raw: &RawPacket) -> PacketFrame {
     PacketFrame::new(raw.packet_id, raw.data.clone())
 }
 
-const fn assert_immutable_payload(_: &bytes::Bytes) {}
-
-#[inline]
-fn filter_modified(frame: &PacketFrame, raw: &RawPacket) -> bool {
-    assert_immutable_payload(&raw.data);
-    assert_immutable_payload(&frame.payload);
-
-    raw.packet_id != frame.id
-        || raw.data.len() != frame.payload.len()
-        || raw.data.as_ptr() != frame.payload.as_ptr()
-}
-
 struct HotIds {
     s_chat_session: Option<i32>,
     s_tab_request: Option<i32>,
     c_tab_response: Option<i32>,
-    s_chat_command: Option<i32>,
-    s_chat_message: Option<i32>,
+    chat: ChatIds,
     c_disconnect: Option<i32>,
     c_commands: Option<i32>,
+    c_join_game: Option<i32>,
+    c_login_success: Option<i32>,
+    c_keepalive: Option<i32>,
+    s_keepalive: Option<i32>,
+    c_start_config: Option<i32>,
+    s_ack_config: Option<i32>,
 }
 
 impl HotIds {
@@ -104,10 +117,135 @@ impl HotIds {
             s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(version),
             s_tab_request: registry.get_packet_id::<STabCompleteRequest>(version),
             c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(version),
-            s_chat_command: registry.get_packet_id::<SChatCommand>(version),
-            s_chat_message: registry.get_packet_id::<SChatMessage>(version),
+            chat: ChatIds::resolve(registry, version),
             c_disconnect: registry.get_packet_id::<CDisconnect>(version),
             c_commands: registry.get_packet_id::<CCommands>(version),
+            c_join_game: registry.get_packet_id::<CJoinGame>(version),
+            c_login_success: registry.get_packet_id::<CLoginSuccess>(version),
+            c_keepalive: registry.get_packet_id::<CKeepAlive>(version),
+            s_keepalive: registry.get_packet_id::<SKeepAlive>(version),
+            c_start_config: registry.get_packet_id::<CStartConfiguration>(version),
+            s_ack_config: registry.get_packet_id::<SAcknowledgeConfiguration>(version),
+        }
+    }
+
+    fn milestone(
+        &self,
+        frame: &PacketFrame,
+        backend: &BackendBridge,
+        awaiting_join: bool,
+    ) -> Option<Milestone> {
+        if !awaiting_join {
+            return None;
+        }
+        match backend.state {
+            ConnectionState::Play if Some(frame.id) == self.c_join_game => Some(Milestone::Joined),
+            ConnectionState::Login if Some(frame.id) == self.c_login_success => {
+                Some(Milestone::LoggedIn)
+            }
+            _ => None,
+        }
+    }
+
+    fn joins_game(&self, frame: &PacketFrame, reading: ConnectionState, in_game: bool) -> bool {
+        !in_game && reading == ConnectionState::Play && Some(frame.id) == self.c_join_game
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Milestone {
+    LoggedIn,
+    Joined,
+}
+
+const TRACKED_KEEPALIVES: usize = 8;
+
+struct LoopState {
+    keepalives: VecDeque<(i64, Instant)>,
+    config_closing: bool,
+    reconfiguring: bool,
+    presentation_lost: bool,
+}
+
+impl LoopState {
+    const fn new() -> Self {
+        Self {
+            keepalives: VecDeque::new(),
+            config_closing: false,
+            reconfiguring: false,
+            presentation_lost: false,
+        }
+    }
+
+    const fn client_reading(client: &ClientBridge) -> ConnectionState {
+        if client.awaits_config_ack() {
+            ConnectionState::Play
+        } else {
+            client.state()
+        }
+    }
+
+    const fn backend_reading(&self, backend: &BackendBridge) -> ConnectionState {
+        if self.reconfiguring {
+            ConnectionState::Config
+        } else {
+            backend.state
+        }
+    }
+
+    fn keepalive_sent(&mut self, frame: &PacketFrame, version: ProtocolVersion) {
+        use infrarust_protocol::packets::Packet;
+        let Ok(keepalive) = CKeepAlive::decode(&mut frame.payload.as_ref(), version) else {
+            return;
+        };
+        if self.keepalives.len() == TRACKED_KEEPALIVES {
+            self.keepalives.pop_front();
+        }
+        self.keepalives.push_back((keepalive.id, Instant::now()));
+    }
+
+    fn keepalive_answered(
+        &mut self,
+        session: &PlayerSession,
+        frame: &PacketFrame,
+        version: ProtocolVersion,
+    ) {
+        use infrarust_protocol::packets::Packet;
+        let Ok(keepalive) = SKeepAlive::decode(&mut frame.payload.as_ref(), version) else {
+            return;
+        };
+        let Some(index) = self
+            .keepalives
+            .iter()
+            .position(|(id, _)| *id == keepalive.id)
+        else {
+            return;
+        };
+        let sent_at = self.keepalives[index].1;
+        self.keepalives.drain(..=index);
+        session.client_state().record_ping(sent_at.elapsed());
+    }
+
+    const fn client_open(&self, client: &ClientBridge, in_game: bool) -> bool {
+        match client.state() {
+            ConnectionState::Play => in_game,
+            ConnectionState::Config => !self.config_closing,
+            _ => false,
+        }
+    }
+}
+
+async fn reach(milestone: Milestone, join: &mut Option<ServerJoin>, services: &ProxyServices) {
+    match milestone {
+        Milestone::LoggedIn => {
+            if let Some(join) = join.as_mut() {
+                join.connected(&services.event_bus).await;
+            }
+        }
+        Milestone::Joined => {
+            if let Some(join) = join.take() {
+                join.joined(&services.event_bus).await;
+            }
         }
     }
 }
@@ -119,200 +257,750 @@ impl HotIds {
 /// - `SetCompression`: activates compression on both bridges
 /// - `LoginSuccess`: transitions Login → Config (1.20.2+) or Play
 /// - `FinishConfig` / `AcknowledgeFinishConfig`: transitions Config → Play
-/// - `Disconnect`: forwards and terminates
 ///
-/// Codec filters are applied to every packet BEFORE the EventBus.
-/// In Play state, only `CDisconnect` is intercepted. All other packets
-/// are forwarded opaquely for maximum performance.
-#[allow(clippy::too_many_arguments)]
+/// Codec filters and raw packet listeners only see Play packets, codec
+/// filters first. A backend `CDisconnect` is taken as a kick before either.
 pub async fn proxy_loop(
-    client: &mut ClientBridge,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
     backend: &mut BackendBridge,
-    registry: &PacketRegistry,
-    shutdown: CancellationToken,
-    command_rx: &mut mpsc::Receiver<PlayerCommand>,
-    services: &ProxyServices,
-    player_id: PlayerId,
-    client_codec_chain: &mut CodecFilterChain,
-    server_codec_chain: &mut CodecFilterChain,
+    server: &ServerId,
+    join: &mut Option<ServerJoin>,
 ) -> ProxyLoopOutcome {
-    let hot_ids = HotIds::resolve(registry, client.protocol_version);
-    loop {
-        tokio::select! {
-            frame = client.read_frame() => {
-                match frame {
-                    Ok(Some(frame)) => {
-                        let mut result = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain, &hot_ids).await;
-                        let mut command_outcome = drain_player_commands(client, command_rx, registry);
-                        while result.is_ok() && command_outcome.is_none() {
-                            match client.try_next_frame() {
-                                Ok(Some(frame)) => {
-                                    result = handle_client_to_backend(client, backend, frame, registry, services, player_id, client_codec_chain, &hot_ids).await;
-                                    command_outcome = drain_player_commands(client, command_rx, registry);
-                                }
-                                Ok(None) => break,
-                                Err(e) => result = Err(e),
-                            }
-                        }
-                        if result.is_ok() {
-                            result = backend.flush().await;
-                        }
-                        if result.is_ok() {
-                            result = client.flush().await; // tab-complete responses etc.
-                        }
-                        if let Err(e) = result {
-                            let _ = backend.flush().await;
-                            let _ = client.flush().await;
-                            if e.is_expected_disconnect() {
-                                break ProxyLoopOutcome::BackendDisconnected { reason: Some(e.to_string()) };
-                            }
-                            break ProxyLoopOutcome::Error(e);
-                        }
-                        match command_outcome {
-                            Some(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
-                            Some(CommandResult::Switch(target)) => break ProxyLoopOutcome::SwitchRequested { target },
-                            _ => {}
-                        }
-                    }
-                    Ok(None) => break ProxyLoopOutcome::ClientDisconnected,
-                    Err(e) => break ProxyLoopOutcome::Error(e),
-                }
-            }
-            frame = backend.read_frame() => {
-                match frame {
-                    Ok(Some(frame)) => {
-                        let mut result = handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain, &hot_ids).await;
-                        let mut command_outcome = drain_player_commands(client, command_rx, registry);
-                        while matches!(result, Ok(BackendAction::Continue)) && command_outcome.is_none() {
-                            match backend.try_next_frame() {
-                                Ok(Some(frame)) => {
-                                    result = handle_backend_to_client(client, backend, frame, registry, services, player_id, server_codec_chain, &hot_ids).await;
-                                    command_outcome = drain_player_commands(client, command_rx, registry);
-                                }
-                                Ok(None) => break,
-                                Err(e) => result = Err(e),
-                            }
-                        }
-                        match result {
-                            Ok(action) => {
-                                if let Err(e) = client.flush().await {
-                                    break ProxyLoopOutcome::Error(e);
-                                }
-                                if let Err(e) = backend.flush().await {
-                                    break ProxyLoopOutcome::Error(e);
-                                }
-                                match action {
-                                    BackendAction::Continue => {}
-                                    BackendAction::Disconnected(reason) => {
-                                        break ProxyLoopOutcome::BackendDisconnected { reason };
-                                    }
-                                }
-                                match command_outcome {
-                                    Some(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
-                                    Some(CommandResult::Switch(target)) => break ProxyLoopOutcome::SwitchRequested { target },
-                                    _ => {}
-                                }
-                            }
-                            Err(e) => {
-                                let _ = client.flush().await;
-                                break ProxyLoopOutcome::Error(e);
-                            }
-                        }
-                    }
-                    Ok(None) => break ProxyLoopOutcome::BackendDisconnected { reason: None },
-                    Err(e) => break ProxyLoopOutcome::Error(e),
-                }
-            }
-            Some(cmd) = command_rx.recv() => {
-                let result = handle_player_command(client, cmd, registry);
-                if let Err(e) = client.flush().await {
-                    tracing::warn!("failed to flush player command: {e}");
-                }
-                match result {
-                    Ok(CommandResult::Continue) => {}
-                    Ok(CommandResult::Kick) => break ProxyLoopOutcome::ClientDisconnected,
-                    Ok(CommandResult::Switch(target)) => {
-                        break ProxyLoopOutcome::SwitchRequested { target };
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to handle player command: {e}");
-                    }
-                }
-            }
-            () = shutdown.cancelled() => {
-                break ProxyLoopOutcome::Shutdown;
-            }
-        }
+    let in_game = io.client.state() == ConnectionState::Play && join.is_none();
+    Loop {
+        ids: HotIds::resolve(ctx.registry(), ctx.version()),
+        chain: FrameChain::new(ctx, server),
+        ctx,
+        io,
+        backend,
+        server,
+        state: LoopState::new(),
+        in_game,
+        backend_tree: None,
+        join,
+        codec_closed: None,
     }
+    .run()
+    .await
 }
 
-/// What `handle_player_command` resolved to.
-enum CommandResult {
-    /// Continue the loop normally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Client,
+    Backend,
+}
+
+enum Step {
     Continue,
-    /// Kick the player — terminate the connection.
-    Kick,
-    /// Switch to a different server.
-    Switch(ServerId),
+    Kicked(Box<BackendKick>),
+    Milestone(Milestone),
 }
 
-fn drain_player_commands(
-    client: &mut ClientBridge,
-    command_rx: &mut mpsc::Receiver<PlayerCommand>,
-    registry: &PacketRegistry,
-) -> Option<CommandResult> {
-    while let Ok(cmd) = command_rx.try_recv() {
-        match handle_player_command(client, cmd, registry) {
-            Ok(CommandResult::Continue) => {}
-            Ok(outcome) => return Some(outcome),
-            Err(e) => tracing::warn!("failed to handle player command: {e}"),
-        }
+enum LoopEvent {
+    Command(PlayerCommand),
+    Shutdown,
+    CommandsChanged,
+    Client(Result<Option<PacketFrame>, CoreError>),
+    Backend(Result<Option<PacketFrame>, CoreError>),
+}
+
+async fn next_frame(client: &mut ClientBridge, backend: &mut BackendBridge) -> LoopEvent {
+    tokio::select! {
+        frame = client.read_frame() => LoopEvent::Client(frame),
+        frame = backend.read_frame() => LoopEvent::Backend(frame),
     }
-    None
 }
 
-/// Handles a player command from the plugin system.
-///
-/// Frames are queued on the client bridge; the caller flushes.
-fn handle_player_command(
-    client: &mut ClientBridge,
-    cmd: PlayerCommand,
-    registry: &PacketRegistry,
-) -> Result<CommandResult, CoreError> {
-    use crate::player::packets;
+struct Loop<'a> {
+    ctx: &'a SessionContext<'a>,
+    io: &'a mut SessionIo,
+    backend: &'a mut BackendBridge,
+    server: &'a ServerId,
+    ids: HotIds,
+    chain: FrameChain<'a>,
+    state: LoopState,
+    in_game: bool,
+    backend_tree: Option<CCommands>,
+    join: &'a mut Option<ServerJoin>,
+    codec_closed: Option<String>,
+}
 
-    let version = client.protocol_version;
-
-    match cmd {
-        PlayerCommand::SendMessage(component) => {
-            let frame = packets::build_system_chat_message(&component, version, registry)?;
-            client.queue_frame(&frame)?;
-        }
-        PlayerCommand::SendActionBar(component) => {
-            let frame = packets::build_action_bar(&component, version, registry)?;
-            client.queue_frame(&frame)?;
-        }
-        PlayerCommand::SendTitle(title_data) => {
-            let frames = packets::build_title_packets(&title_data, version, registry)?;
-            for frame in &frames {
-                client.queue_frame(frame)?;
+impl Loop<'_> {
+    async fn run(mut self) -> ProxyLoopOutcome {
+        let registry = self.ctx.registry();
+        let mut tree_updates = self.ctx.services.command_manager.subscribe();
+        let mut permission_updates = self.ctx.session.subscribe_permissions();
+        if self.in_game {
+            let outcome = self
+                .io
+                .commands
+                .drain(&mut self.io.client, registry, self.in_game);
+            self.deliver();
+            if let Err(e) = self.io.client.flush().await {
+                return ProxyLoopOutcome::Error(e);
+            }
+            if let Err(e) = self.backend.flush().await {
+                return ProxyLoopOutcome::Error(e);
+            }
+            if let Some(end) = self.settle(outcome).await {
+                return end;
             }
         }
-        PlayerCommand::SendPacket(raw_packet) => {
-            let frame = raw_to_frame(&raw_packet);
-            client.queue_frame(&frame)?;
-        }
-        PlayerCommand::Kick(reason) => {
-            let frame = packets::build_disconnect(&reason, version, registry)?;
-            client.queue_frame(&frame)?;
-            return Ok(CommandResult::Kick);
-        }
-        PlayerCommand::SwitchServer(target) => {
-            return Ok(CommandResult::Switch(target));
+        loop {
+            let event = tokio::select! {
+                biased;
+                Some(command) = self.io.commands.recv() => LoopEvent::Command(command),
+                () = self.ctx.token.cancelled() => LoopEvent::Shutdown,
+                Ok(()) = tree_updates.changed() => LoopEvent::CommandsChanged,
+                Ok(()) = permission_updates.changed() => LoopEvent::CommandsChanged,
+                event = next_frame(&mut self.io.client, &mut *self.backend) => event,
+            };
+            match event {
+                LoopEvent::Command(command) => {
+                    let outcome = match self.io.commands.apply(
+                        command,
+                        &mut self.io.client,
+                        registry,
+                        self.in_game,
+                    ) {
+                        CommandOutcome::Continue => {
+                            self.io
+                                .commands
+                                .drain(&mut self.io.client, registry, self.in_game)
+                        }
+                        outcome => outcome,
+                    };
+                    self.deliver();
+                    if let Err(e) = self.io.client.flush().await {
+                        tracing::warn!("failed to flush player command: {e}");
+                    }
+                    if let Err(e) = self.backend.flush().await {
+                        tracing::warn!("failed to flush a plugin message to the backend: {e}");
+                    }
+                    if let Some(end) = self.settle(outcome).await {
+                        break end;
+                    }
+                }
+                LoopEvent::CommandsChanged => {
+                    if let Some(tree) = self.backend_tree.as_ref()
+                        && self.io.client.state() == ConnectionState::Play
+                        && let Some(frame) = command_tree_frame(tree, self.ctx, &self.ids)
+                    {
+                        if let Err(e) = self.io.client.queue_frame(&frame) {
+                            tracing::warn!("failed to queue the refreshed command tree: {e}");
+                        }
+                        if let Err(e) = self.io.client.flush().await {
+                            tracing::warn!("failed to flush the refreshed command tree: {e}");
+                        }
+                    }
+                }
+                LoopEvent::Shutdown => {
+                    if let Some(reason) =
+                        self.io
+                            .commands
+                            .take_kick(&mut self.io.client, registry, self.in_game)
+                    {
+                        break kick(&mut self.io.client, &reason, registry).await;
+                    }
+                    let _ = self.io.client.flush().await;
+                    break ProxyLoopOutcome::Shutdown;
+                }
+                LoopEvent::Client(Ok(Some(frame))) => {
+                    if let Some(end) = self.pump(frame, Side::Client).await {
+                        break end;
+                    }
+                }
+                LoopEvent::Client(Ok(None)) => break ProxyLoopOutcome::ClientDisconnected,
+                LoopEvent::Client(Err(e)) => break ProxyLoopOutcome::Error(e),
+                LoopEvent::Backend(Ok(Some(frame))) => {
+                    if let Some(end) = self.pump(frame, Side::Backend).await {
+                        break end;
+                    }
+                }
+                LoopEvent::Backend(Ok(None)) => {
+                    break ProxyLoopOutcome::BackendDisconnected { reason: None };
+                }
+                LoopEvent::Backend(Err(e)) if e.is_expected_disconnect() => {
+                    let _ = self.io.client.flush().await;
+                    break ProxyLoopOutcome::BackendDisconnected {
+                        reason: Some(e.to_string()),
+                    };
+                }
+                LoopEvent::Backend(Err(e)) => break ProxyLoopOutcome::Error(e),
+            }
         }
     }
 
-    Ok(CommandResult::Continue)
+    async fn pump(&mut self, first: PacketFrame, side: Side) -> Option<ProxyLoopOutcome> {
+        let registry = self.ctx.registry();
+        let mut step = Ok(Step::Continue);
+        let mut commands = CommandOutcome::Continue;
+        let mut next = Some(first);
+        while let Some(frame) = next.take() {
+            step = match side {
+                Side::Client => self.on_client(frame).await.map(|()| Step::Continue),
+                Side::Backend => self.on_backend(frame).await,
+            };
+            commands = self
+                .io
+                .commands
+                .drain(&mut self.io.client, registry, self.in_game);
+            if !matches!(step, Ok(Step::Continue))
+                || !matches!(commands, CommandOutcome::Continue)
+                || self.codec_closed.is_some()
+            {
+                break;
+            }
+            let buffered = match side {
+                Side::Client => self.io.client.try_next_frame(),
+                Side::Backend => self.backend.try_next_frame(),
+            };
+            next = match buffered {
+                Ok(frame) => frame,
+                Err(e) => {
+                    step = Err(e);
+                    None
+                }
+            };
+        }
+        self.deliver();
+        if let Some(reason) = self.codec_closed.take() {
+            tracing::warn!(%reason, "a required codec filter failed; closing the session");
+            let _ = self.backend.flush().await;
+            return Some(
+                kick(
+                    &mut self.io.client,
+                    &Component::text(CODEC_FILTER_FAILED),
+                    registry,
+                )
+                .await,
+            );
+        }
+        let step = match step {
+            Ok(step) => step,
+            Err(e) => {
+                let _ = self.backend.flush().await;
+                let _ = self.io.client.flush().await;
+                return Some(ended(e, side, side));
+            }
+        };
+        if matches!(step, Step::Milestone(Milestone::Joined)) {
+            self.announce_channels();
+        }
+        if let Some(end) = self.flush(side).await {
+            return Some(end);
+        }
+        match step {
+            Step::Continue => {}
+            Step::Milestone(milestone) => {
+                reach(milestone, &mut *self.join, self.ctx.services).await
+            }
+            Step::Kicked(kick) => return Some(ProxyLoopOutcome::BackendKick(kick)),
+        }
+        self.settle(commands).await
+    }
+
+    async fn flush(&mut self, side: Side) -> Option<ProxyLoopOutcome> {
+        let order = match side {
+            Side::Client => [Side::Backend, Side::Client],
+            Side::Backend => [Side::Client, Side::Backend],
+        };
+        for peer in order {
+            let flushed = match peer {
+                Side::Client => self.io.client.flush().await,
+                Side::Backend => self.backend.flush().await,
+            };
+            if let Err(e) = flushed {
+                let _ = self.backend.flush().await;
+                let _ = self.io.client.flush().await;
+                return Some(ended(e, peer, side));
+            }
+        }
+        None
+    }
+
+    fn deliver(&mut self) {
+        let open = self.state.client_open(&self.io.client, self.in_game);
+        self.io.commands.deliver_messages(
+            &mut self.io.client,
+            Some(&mut *self.backend),
+            self.ctx.registry(),
+            open,
+        );
+    }
+
+    async fn settle(&mut self, outcome: CommandOutcome) -> Option<ProxyLoopOutcome> {
+        match outcome {
+            CommandOutcome::Continue => None,
+            CommandOutcome::Kick(reason) => {
+                Some(kick(&mut self.io.client, &reason, self.ctx.registry()).await)
+            }
+            CommandOutcome::Switch(target, cause) => {
+                Some(ProxyLoopOutcome::SwitchRequested { target, cause })
+            }
+        }
+    }
+
+    fn restore_presentation(&mut self) {
+        if !std::mem::take(&mut self.state.presentation_lost) {
+            return;
+        }
+        self.io.commands.discard_deferred_presentation();
+        let frames = match presentation::restore_frames(
+            &self.ctx.session,
+            self.ctx.registry(),
+            self.io.client.protocol_version,
+        ) {
+            Ok(frames) => frames,
+            Err(e) => {
+                tracing::warn!("failed to rebuild the player list and boss bars: {e}");
+                return;
+            }
+        };
+        for frame in &frames {
+            if let Err(e) = self.io.client.queue_frame(frame) {
+                tracing::warn!("failed to restore the player list and boss bars: {e}");
+                return;
+            }
+        }
+    }
+
+    fn announce_channels(&mut self) {
+        let services = self.ctx.services;
+        let version = self.ctx.version();
+        let config = services
+            .domain_router
+            .find_by_server_id(self.server.as_str());
+        let names = services
+            .plugin_messaging
+            .announced_channels(config.as_deref(), version);
+        if names.is_empty() {
+            return;
+        }
+        let Some(id) =
+            MessageIds::resolve(self.ctx.registry(), version).serverbound(self.backend.state)
+        else {
+            return;
+        };
+        let register = ChannelId::register();
+        let channel = register.wire_name(ApiVersion::new(version.0));
+        for payload in channels::channel_payloads(names.iter().map(String::as_str)) {
+            if let Err(e) = self
+                .backend
+                .queue_frame(&channels::build(id, channel, &payload, version))
+            {
+                tracing::warn!("failed to announce the proxy's plugin channels: {e}");
+            }
+        }
+    }
+
+    async fn on_client(&mut self, mut frame: PacketFrame) -> Result<(), CoreError> {
+        let registry = self.ctx.registry();
+        let services = self.ctx.services;
+        let session = &self.ctx.session;
+        let version = self.io.client.protocol_version;
+        let state = LoopState::client_reading(&self.io.client);
+
+        if state == ConnectionState::Play {
+            if self.state.reconfiguring && Some(frame.id) == self.ids.s_ack_config {
+                self.backend.queue_frame(&frame)?;
+                self.backend.set_state(ConnectionState::Config);
+                self.io.client.reconfiguration_acknowledged();
+                self.state.reconfiguring = false;
+                self.io
+                    .client_codec
+                    .notify_state_change(protocol_state_to_api(ConnectionState::Config));
+                tracing::debug!("state transition: Play → Config (AcknowledgeConfiguration)");
+                return Ok(());
+            }
+
+            match apply_codec_filter(&mut self.io.client_codec, &mut frame, &mut *self.backend)? {
+                Filtered::Forward => {}
+                Filtered::Consumed => return Ok(()),
+                Filtered::Close(reason) => {
+                    self.codec_closed = Some(reason);
+                    return Ok(());
+                }
+            }
+
+            if Some(frame.id) == self.ids.s_keepalive {
+                self.state.keepalive_answered(session, &frame, version);
+            }
+            match self.chain.serverbound(frame, state).await {
+                Some(next) => frame = next,
+                None => return Ok(()),
+            }
+
+            if Some(frame.id) == self.ids.s_chat_session {
+                tracing::debug!("dropping Chat Session Update (offline backend)");
+                return Ok(());
+            }
+
+            if Some(frame.id) == self.ids.s_tab_request
+                && let Some(packet_id) = self.ids.c_tab_response
+                && let Ok(DecodedPacket::Typed { id: _, packet }) =
+                    registry.decode_frame(&frame, state, Direction::Serverbound, version)
+                && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
+                && let Some(input) = req.text.trim_start().strip_prefix('/')
+            {
+                let reply = TabReply::new(packet_id, req, version);
+                let source = CommandSource::Player(self.ctx.player());
+                match services.command_manager.prepare_suggestion(source, input) {
+                    Prepared::Unknown => {}
+                    Prepared::Denied => {
+                        if let Some(answer) = reply.frame(Vec::new()) {
+                            self.io.client.queue_frame(&answer)?;
+                            return Ok(());
+                        }
+                    }
+                    Prepared::Ready(completion) => {
+                        let replying = Arc::clone(session);
+                        session.run_completion(completion, move |suggestions| {
+                            let Some(answer) = reply.frame(suggestions) else {
+                                return;
+                            };
+                            if let Err(e) =
+                                replying.send_packet(RawPacket::new(answer.id, answer.payload))
+                            {
+                                tracing::debug!("dropping proxy command suggestions: {e}");
+                            }
+                        });
+                        return Ok(());
+                    }
+                }
+            }
+
+            if let Some(input) = decode_player_input(&frame, &self.ids.chat, version) {
+                let scope = ChatScope {
+                    ctx: self.ctx,
+                    ids: &self.ids.chat,
+                    server: self.server,
+                };
+                match intercept(
+                    input,
+                    frame,
+                    &scope,
+                    &mut self.io.client,
+                    &mut *self.backend,
+                )
+                .await?
+                {
+                    Some(next) => frame = next,
+                    None => return Ok(()),
+                }
+            }
+
+            match self
+                .chain
+                .raw_event(frame, Direction::Serverbound, state)
+                .await
+            {
+                Some(next) => frame = next,
+                None => return Ok(()),
+            }
+
+            self.backend.queue_frame(&frame)?;
+            return Ok(());
+        }
+
+        if state == ConnectionState::Config {
+            match self.chain.serverbound(frame, state).await {
+                Some(next) => frame = next,
+                None => return Ok(()),
+            }
+        }
+
+        match registry.decode_frame(&frame, state, Direction::Serverbound, version) {
+            Ok(DecodedPacket::Typed { packet, .. }) => {
+                if packet
+                    .as_any()
+                    .downcast_ref::<SLoginAcknowledged>()
+                    .is_some()
+                {
+                    self.backend.queue_frame(&frame)?;
+                    self.io.client.set_state(ConnectionState::Config);
+                    self.backend.set_state(ConnectionState::Config);
+                    self.io
+                        .client_codec
+                        .notify_state_change(protocol_state_to_api(ConnectionState::Config));
+                    tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
+                    return Ok(());
+                }
+
+                if packet
+                    .as_any()
+                    .downcast_ref::<SAcknowledgeFinishConfig>()
+                    .is_some()
+                {
+                    self.backend.queue_frame(&frame)?;
+                    self.io.client.set_state(ConnectionState::Play);
+                    self.backend.set_state(ConnectionState::Play);
+                    self.state.config_closing = false;
+                    self.io
+                        .client_codec
+                        .notify_state_change(protocol_state_to_api(ConnectionState::Play));
+                    tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
+                    return Ok(());
+                }
+
+                self.backend.queue_frame(&frame)?;
+            }
+            Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
+                self.backend.queue_frame(&frame)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn on_backend(&mut self, frame: PacketFrame) -> Result<Step, CoreError> {
+        let joins = self.ids.joins_game(
+            &frame,
+            self.state.backend_reading(self.backend),
+            self.in_game,
+        );
+        let milestone = self
+            .ids
+            .milestone(&frame, self.backend, self.join.is_some());
+        let action = self.forward_backend(frame).await?;
+        self.in_game |= joins;
+        self.in_game &= !self.state.reconfiguring;
+        if joins {
+            self.restore_presentation();
+        }
+        Ok(match action {
+            BackendAction::Kicked(kick) => Step::Kicked(kick),
+            BackendAction::Continue => milestone.map_or(Step::Continue, Step::Milestone),
+        })
+    }
+
+    async fn forward_backend(
+        &mut self,
+        mut frame: PacketFrame,
+    ) -> Result<BackendAction, CoreError> {
+        let registry = self.ctx.registry();
+        let services = self.ctx.services;
+        let version = self.io.client.protocol_version;
+        let state = self.state.backend_reading(self.backend);
+
+        if state == ConnectionState::Play {
+            if Some(frame.id) == self.ids.c_disconnect {
+                return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                    frame,
+                    ConnectionState::Play,
+                    version,
+                ))));
+            }
+            match apply_codec_filter(&mut self.io.server_codec, &mut frame, &mut self.io.client)? {
+                Filtered::Forward => {}
+                Filtered::Consumed => return Ok(BackendAction::Continue),
+                Filtered::Close(reason) => {
+                    self.codec_closed = Some(reason);
+                    return Ok(BackendAction::Continue);
+                }
+            }
+
+            if Some(frame.id) == self.ids.c_keepalive {
+                self.state.keepalive_sent(&frame, version);
+            }
+            match self
+                .chain
+                .clientbound(frame, &mut *self.backend, state)
+                .await?
+            {
+                Some(next) => frame = next,
+                None => return Ok(BackendAction::Continue),
+            }
+            match self
+                .chain
+                .raw_event(frame, Direction::Clientbound, state)
+                .await
+            {
+                Some(next) => frame = next,
+                None => return Ok(BackendAction::Continue),
+            }
+
+            if Some(frame.id) == self.ids.c_start_config {
+                self.io.client.queue_frame(&frame)?;
+                self.io.client.begin_reconfiguration();
+                self.state.reconfiguring = true;
+                self.state.presentation_lost = true;
+                tracing::debug!("state transition: Play → Config (backend StartConfiguration)");
+                return Ok(BackendAction::Continue);
+            }
+            let intercepted =
+                Some(frame.id) == self.ids.c_commands && services.config.announce_proxy_commands;
+            if !intercepted {
+                self.io.client.queue_frame(&frame)?;
+                return Ok(BackendAction::Continue);
+            }
+
+            let tree = match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
+                Ok(DecodedPacket::Typed { packet, .. }) => {
+                    packet.as_any().downcast_ref::<CCommands>().cloned()
+                }
+                Ok(DecodedPacket::Opaque { .. }) | Err(_) => None,
+            };
+            let injected = tree
+                .as_ref()
+                .and_then(|tree| command_tree_frame(tree, self.ctx, &self.ids));
+            self.io
+                .client
+                .queue_frame(injected.as_ref().unwrap_or(&frame))?;
+            if tree.is_some() {
+                self.backend_tree = tree;
+            }
+            return Ok(BackendAction::Continue);
+        }
+
+        if state == ConnectionState::Config {
+            match self
+                .chain
+                .clientbound(frame, &mut *self.backend, state)
+                .await?
+            {
+                Some(next) => frame = next,
+                None => return Ok(BackendAction::Continue),
+            }
+        }
+
+        match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
+            Ok(DecodedPacket::Typed { packet, .. }) => {
+                if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
+                    let threshold = set_comp.threshold.0;
+                    self.backend.set_compression(threshold);
+                    self.io.client.queue_frame(&frame)?;
+                    self.io.client.set_compression(threshold);
+                    match self.io.client.compression_threshold() {
+                        Some(effective) => {
+                            self.io.server_codec.notify_compression_change(effective);
+                            tracing::debug!(threshold = effective, "compression activated");
+                        }
+                        None => {
+                            tracing::debug!(threshold, "compression left disabled by backend");
+                        }
+                    }
+                    return Ok(BackendAction::Continue);
+                }
+
+                if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
+                    self.io.client.queue_frame(&frame)?;
+                    if version.less_than(ProtocolVersion::V1_20_2) {
+                        self.io.client.set_state(ConnectionState::Play);
+                        self.backend.set_state(ConnectionState::Play);
+                        self.io
+                            .server_codec
+                            .notify_state_change(protocol_state_to_api(ConnectionState::Play));
+                        tracing::debug!("state transition: Login → Play (pre-1.20.2)");
+                    }
+                    return Ok(BackendAction::Continue);
+                }
+
+                if packet.as_any().downcast_ref::<CLoginDisconnect>().is_some()
+                    || packet
+                        .as_any()
+                        .downcast_ref::<CConfigDisconnect>()
+                        .is_some()
+                {
+                    return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                        frame, state, version,
+                    ))));
+                }
+
+                if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
+                    services.registry_codec_cache.finalize(version);
+                    self.io.client.queue_frame(&frame)?;
+                    self.state.config_closing = true;
+                    return Ok(BackendAction::Continue);
+                }
+
+                if state == ConnectionState::Config {
+                    services
+                        .registry_codec_cache
+                        .collect_config_frame(registry, version, &frame);
+                }
+
+                self.io.client.queue_frame(&frame)?;
+            }
+            Ok(DecodedPacket::Opaque { .. }) => {
+                if state == ConnectionState::Config {
+                    services
+                        .registry_codec_cache
+                        .collect_config_frame(registry, version, &frame);
+                }
+                self.io.client.queue_frame(&frame)?;
+            }
+            Err(e) => {
+                tracing::warn!("failed to decode backend frame: {e}");
+                self.io.client.queue_frame(&frame)?;
+            }
+        }
+
+        Ok(BackendAction::Continue)
+    }
+}
+
+#[derive(Debug)]
+enum BackendAction {
+    Continue,
+    Kicked(Box<BackendKick>),
+}
+
+fn ended(error: CoreError, peer: Side, side: Side) -> ProxyLoopOutcome {
+    if side == Side::Backend || !error.is_expected_disconnect() {
+        return ProxyLoopOutcome::Error(error);
+    }
+    match peer {
+        Side::Client => ProxyLoopOutcome::ClientDisconnected,
+        Side::Backend => ProxyLoopOutcome::BackendDisconnected {
+            reason: Some(error.to_string()),
+        },
+    }
+}
+
+async fn kick(
+    client: &mut ClientBridge,
+    reason: &Component,
+    registry: &PacketRegistry,
+) -> ProxyLoopOutcome {
+    if let Err(e) = client.disconnect(reason, registry).await {
+        tracing::debug!("failed to send the kick reason: {e}");
+    }
+    ProxyLoopOutcome::Kicked {
+        reason: reason.clone(),
+    }
+}
+
+fn command_tree_frame(
+    tree: &CCommands,
+    ctx: &SessionContext<'_>,
+    hot_ids: &HotIds,
+) -> Option<PacketFrame> {
+    let id = hot_ids.c_commands?;
+    let services = ctx.services;
+    let version = ctx.version();
+    let source = CommandSource::Player(ctx.player());
+    let proxy_tree = services.command_manager.tree_for(Some(&source));
+    let visible = services.permission_service.visible_subcommands(&source);
+    let mut modified = tree.clone();
+    if let Err(e) = crate::commands::brigadier::inject_proxy_commands(
+        &mut modified,
+        version,
+        &proxy_tree,
+        Some(&visible),
+    ) {
+        tracing::warn!("failed to inject proxy commands into CCommands: {e}");
+        return None;
+    }
+    let mut buf = Vec::new();
+    match infrarust_protocol::packets::Packet::encode(&modified, &mut buf, version) {
+        Ok(()) => Some(PacketFrame::new(id, buf.into())),
+        Err(e) => {
+            tracing::warn!("failed to re-encode CCommands: {e}");
+            None
+        }
+    }
 }
 
 /// Queues injected frames from a codec filter's FrameOutput.
@@ -353,449 +1041,93 @@ impl FrameWriter for BackendBridge {
     }
 }
 
-/// Applies codec filter chain to a frame and handles the result.
-///
-/// Returns `Ok(true)` if the frame was consumed (dropped/replaced/queued with
-/// injections) and should NOT be forwarded further. Returns `Ok(false)` if
-/// processing should continue with the (possibly modified) frame.
+enum Filtered {
+    Forward,
+    Consumed,
+    Close(String),
+}
+
 fn apply_codec_filter(
     chain: &mut CodecFilterChain,
     frame: &mut PacketFrame,
     writer: &mut impl FrameWriter,
-) -> Result<bool, CoreError> {
+) -> Result<Filtered, CoreError> {
     if chain.is_empty() {
-        return Ok(false);
+        return Ok(Filtered::Forward);
     }
 
     let mut raw = frame_to_raw(frame);
     match chain.process(&mut raw) {
-        FilterResult::Pass => {
-            if filter_modified(frame, &raw) {
+        FilterResult::Pass { modified } => {
+            if modified {
                 *frame = raw_to_frame(&raw);
             }
-            Ok(false)
+            Ok(Filtered::Forward)
         }
-        FilterResult::Dropped => Ok(true),
+        FilterResult::Dropped => Ok(Filtered::Consumed),
         FilterResult::Replaced(mut output) => {
             send_injected_frames(writer, &mut output, true, true)?;
-            Ok(true) // Original frame is NOT sent
+            Ok(Filtered::Consumed)
         }
-        FilterResult::PassWithInjections(mut output) => {
-            // Queue before-injections, then the (possibly modified) original, then after-injections
+        FilterResult::PassWithInjections {
+            mut output,
+            modified,
+        } => {
             send_injected_frames(writer, &mut output, true, false)?;
-            if filter_modified(frame, &raw) {
+            if modified {
                 *frame = raw_to_frame(&raw);
             }
             writer.queue_frame(frame)?;
             send_injected_frames(writer, &mut output, false, true)?;
-            Ok(true) // Frame already queued with injections
+            Ok(Filtered::Consumed)
         }
+        FilterResult::Closed(reason) => Ok(Filtered::Close(reason)),
     }
 }
 
-/// Handles a packet from the client, forwarding it to the backend.
-///
-/// Order: CodecFilter → Chat/Command interception → EventBus → forward.
-#[allow(clippy::too_many_arguments)]
-async fn handle_client_to_backend(
-    client: &mut ClientBridge,
-    backend: &mut BackendBridge,
-    mut frame: PacketFrame,
-    registry: &PacketRegistry,
-    services: &ProxyServices,
-    player_id: PlayerId,
-    codec_chain: &mut CodecFilterChain,
-    hot_ids: &HotIds,
-) -> Result<(), CoreError> {
-    let version = client.protocol_version;
-    let state = client.state();
+struct TabReply {
+    packet_id: i32,
+    transaction_id: i32,
+    start: i32,
+    length: i32,
+    version: ProtocolVersion,
+}
 
-    // In Play state: CodecFilter → chat/command → RawPacketEvent → forward
-    if state == ConnectionState::Play {
-        if apply_codec_filter(codec_chain, &mut frame, backend)? {
-            return Ok(()); // Frame consumed by filter
-        }
-
-        // Drop SChatSessionUpdate (offline backends can't validate signatures)
-        if Some(frame.id) == hot_ids.s_chat_session {
-            tracing::debug!("dropping Chat Session Update (offline backend)");
-            return Ok(());
-        }
-
-        if Some(frame.id) == hot_ids.s_tab_request
-            && let Ok(DecodedPacket::Typed { id: _, packet }) =
-                registry.decode_frame(&frame, state, Direction::Serverbound, version)
-            && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
-        {
-            let text = req.text.trim_start();
-            let should_intercept = if text.starts_with("/infrarust ") || text.starts_with("/ir ") {
-                true
-            } else {
-                let cmd_name = text
-                    .trim_start_matches('/')
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("");
-                !cmd_name.is_empty() && services.command_manager.is_plugin_command(cmd_name)
-            };
-
-            if should_intercept {
-                let cmd_input = text.trim_start_matches('/');
-                let suggestions = services
-                    .command_manager
-                    .tab_complete_for_player(cmd_input, Some(player_id))
-                    .await;
-                let last_space = text.rfind(' ').unwrap_or(0) + 1;
-                let response = CTabCompleteResponse {
-                    transaction_id: req.transaction_id,
-                    start: last_space as i32,
-                    length: (text.len() - last_space) as i32,
-                    matches: suggestions
-                        .into_iter()
-                        .map(|s| TabCompleteMatch {
-                            text: s,
-                            tooltip: None,
-                        })
-                        .collect(),
-                };
-                if let Some(resp_id) = hot_ids.c_tab_response {
-                    let mut buf = Vec::new();
-                    if infrarust_protocol::packets::Packet::encode(&response, &mut buf, version)
-                        .is_ok()
-                    {
-                        let resp_frame = PacketFrame::new(resp_id, buf.into());
-                        client.queue_frame(&resp_frame)?;
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        // Chat/command detection (serverbound only)
-        if let Some(action) = detect_chat_or_command(
-            &frame,
-            hot_ids.s_chat_command,
-            hot_ids.s_chat_message,
+impl TabReply {
+    fn new(packet_id: i32, request: &STabCompleteRequest, version: ProtocolVersion) -> Self {
+        let text = request.text.as_str();
+        let start = text.rfind(' ').map_or(0, |i| i + 1);
+        Self {
+            packet_id,
+            transaction_id: request.transaction_id,
+            start: i32::try_from(start).unwrap_or(i32::MAX),
+            length: i32::try_from(text.len() - start).unwrap_or(i32::MAX),
             version,
-        ) {
-            match action {
-                ChatAction::Command(input) => {
-                    // CommandManager first
-                    let handled = services
-                        .command_manager
-                        .dispatch(Some(player_id), &input, services.player_registry.as_ref())
-                        .await;
-                    if handled {
-                        return Ok(()); // Command consumed, don't forward
-                    }
-                    // Unknown command → forward normally to backend
-                }
-                ChatAction::Message(text) => {
-                    // Fire ChatMessageEvent
-                    let chat_event =
-                        infrarust_api::events::chat::ChatMessageEvent::new(player_id, text);
-                    let chat_event = services.event_bus.fire(chat_event).await;
-                    match chat_event.result() {
-                        infrarust_api::events::chat::ChatMessageResult::Deny { .. } => {
-                            return Ok(()); // Don't forward
-                        }
-                        infrarust_api::events::chat::ChatMessageResult::Allow => {
-                            // Forward normally below
-                        }
-                        infrarust_api::events::chat::ChatMessageResult::Modify { .. } => {
-                            // Modifying signed messages is not possible (1.19+)
-                            // Forward the original for now
-                        }
-                        _ => {} // non-exhaustive
-                    }
-                }
-            }
-        }
-
-        // RawPacketEvent — only fire if someone is listening for this specific packet
-        let api_state = protocol_state_to_api(state);
-        let api_direction = protocol_direction_to_api(Direction::Serverbound);
-        if services
-            .event_bus
-            .has_packet_listeners(frame.id, api_state, api_direction)
-        {
-            let raw_packet = RawPacket::new(frame.id, frame.payload.clone());
-            let mut event = infrarust_api::events::packet::RawPacketEvent::new(
-                player_id,
-                api_direction,
-                raw_packet,
-            );
-            services
-                .event_bus
-                .fire_packet_event(frame.id, api_state, api_direction, &mut event)
-                .await;
-            match event.result() {
-                infrarust_api::events::packet::RawPacketResult::Pass => {}
-                infrarust_api::events::packet::RawPacketResult::Modify { packet } => {
-                    frame = PacketFrame::new(packet.packet_id, packet.data.clone());
-                }
-                infrarust_api::events::packet::RawPacketResult::Drop => {
-                    return Ok(());
-                }
-                _ => {} // non-exhaustive
-            }
-        }
-
-        backend.queue_frame(&frame)?;
-        return Ok(());
-    }
-
-    // Login/Config: decode for state transition detection
-    match registry.decode_frame(&frame, state, Direction::Serverbound, version) {
-        Ok(DecodedPacket::Typed { packet, .. }) => {
-            if packet
-                .as_any()
-                .downcast_ref::<SLoginAcknowledged>()
-                .is_some()
-            {
-                // Client acknowledged login success → transition to Config
-                backend.queue_frame(&frame)?;
-                client.set_state(ConnectionState::Config);
-                backend.set_state(ConnectionState::Config);
-                codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Config));
-                tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
-                return Ok(());
-            }
-
-            if packet
-                .as_any()
-                .downcast_ref::<SAcknowledgeFinishConfig>()
-                .is_some()
-            {
-                // Client acknowledged finish config → transition to Play
-                backend.queue_frame(&frame)?;
-                client.set_state(ConnectionState::Play);
-                backend.set_state(ConnectionState::Play);
-                codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Play));
-                tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
-                return Ok(());
-            }
-
-            // All other typed packets: forward
-            backend.queue_frame(&frame)?;
-        }
-        Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
-            // Unknown or decode error: forward opaquely
-            backend.queue_frame(&frame)?;
         }
     }
 
-    Ok(())
-}
-
-/// Handles a packet from the backend, forwarding it to the client.
-///
-/// Order: CodecFilter → EventBus → state interception → forward.
-#[allow(clippy::too_many_arguments)]
-async fn handle_backend_to_client(
-    client: &mut ClientBridge,
-    backend: &mut BackendBridge,
-    mut frame: PacketFrame,
-    registry: &PacketRegistry,
-    services: &ProxyServices,
-    player_id: PlayerId,
-    codec_chain: &mut CodecFilterChain,
-    hot_ids: &HotIds,
-) -> Result<BackendAction, CoreError> {
-    let version = client.protocol_version;
-    let state = backend.state;
-
-    // In Play state: CodecFilter → RawPacketEvent → disconnect detection
-    if state == ConnectionState::Play {
-        if apply_codec_filter(codec_chain, &mut frame, client)? {
-            return Ok(BackendAction::Continue); // Frame consumed by filter
-        }
-
-        // RawPacketEvent — only fire if someone is listening
-        let api_state = protocol_state_to_api(state);
-        let api_direction = protocol_direction_to_api(Direction::Clientbound);
-        if services
-            .event_bus
-            .has_packet_listeners(frame.id, api_state, api_direction)
-        {
-            let raw_packet = RawPacket::new(frame.id, frame.payload.clone());
-            let mut event = infrarust_api::events::packet::RawPacketEvent::new(
-                player_id,
-                api_direction,
-                raw_packet,
-            );
-            services
-                .event_bus
-                .fire_packet_event(frame.id, api_state, api_direction, &mut event)
-                .await;
-            match event.result() {
-                infrarust_api::events::packet::RawPacketResult::Pass => {}
-                infrarust_api::events::packet::RawPacketResult::Modify { packet } => {
-                    frame = PacketFrame::new(packet.packet_id, packet.data.clone());
-                }
-                infrarust_api::events::packet::RawPacketResult::Drop => {
-                    return Ok(BackendAction::Continue);
-                }
-                _ => {} // non-exhaustive
+    fn frame(&self, suggestions: Vec<Suggestion>) -> Option<PacketFrame> {
+        let response = CTabCompleteResponse {
+            transaction_id: self.transaction_id,
+            start: self.start,
+            length: self.length,
+            matches: suggestions
+                .into_iter()
+                .map(|suggestion| TabCompleteMatch {
+                    text: suggestion.text,
+                    tooltip: suggestion.tooltip.map(|tooltip| {
+                        encode_text_component(&tooltip, self.version, ConnectionState::Play)
+                    }),
+                })
+                .collect(),
+        };
+        let mut buf = Vec::new();
+        match infrarust_protocol::packets::Packet::encode(&response, &mut buf, self.version) {
+            Ok(()) => Some(PacketFrame::new(self.packet_id, buf.into())),
+            Err(e) => {
+                tracing::warn!("failed to encode proxy command suggestions: {e}");
+                None
             }
-        }
-
-        let intercepted = Some(frame.id) == hot_ids.c_disconnect
-            || (Some(frame.id) == hot_ids.c_commands && services.config.announce_proxy_commands);
-        if !intercepted {
-            client.queue_frame(&frame)?;
-            return Ok(BackendAction::Continue);
-        }
-
-        match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-            Ok(DecodedPacket::Typed { id, packet }) => {
-                if let Some(disc) = packet.as_any().downcast_ref::<CDisconnect>() {
-                    client.queue_frame(&frame)?;
-                    let reason = disc
-                        .as_json()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| String::from_utf8_lossy(&disc.reason).to_string());
-                    return Ok(BackendAction::Disconnected(Some(reason)));
-                }
-                if let Some(commands) = packet.as_any().downcast_ref::<CCommands>() {
-                    if services.config.announce_proxy_commands {
-                        let mut modified = commands.clone();
-                        let plugin_cmds = services.command_manager.list_plugin_commands();
-                        let visible =
-                            services
-                                .player_registry
-                                .get_player_by_id(player_id)
-                                .map(|p| {
-                                    services
-                                        .permission_service
-                                        .visible_subcommands(p.permission_level())
-                                });
-                        crate::commands::brigadier::inject_proxy_commands(
-                            &mut modified,
-                            version,
-                            &plugin_cmds,
-                            visible.as_ref(),
-                        );
-                        let mut buf = Vec::new();
-                        if let Err(e) = infrarust_protocol::packets::Packet::encode(
-                            &modified, &mut buf, version,
-                        ) {
-                            tracing::warn!("failed to re-encode CCommands: {e}");
-                            client.queue_frame(&frame)?;
-                        } else {
-                            let new_frame = PacketFrame::new(id, buf.into());
-                            client.queue_frame(&new_frame)?;
-                        }
-                    } else {
-                        client.queue_frame(&frame)?;
-                    }
-                } else {
-                    client.queue_frame(&frame)?;
-                }
-            }
-            Ok(DecodedPacket::Opaque { .. }) => {
-                client.queue_frame(&frame)?;
-            }
-            Err(_) => {
-                // Should not happen with encode_only cleanup, but forward anyway
-                client.queue_frame(&frame)?;
-            }
-        }
-        return Ok(BackendAction::Continue);
-    }
-
-    // Login/Config: full interception logic
-    match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-        Ok(DecodedPacket::Typed { packet, .. }) => {
-            if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
-                let threshold = set_comp.threshold.0;
-                backend.set_compression(threshold);
-                client.queue_frame(&frame)?;
-                client.set_compression(threshold);
-                match client.compression_threshold() {
-                    Some(effective) => {
-                        codec_chain.notify_compression_change(effective);
-                        tracing::debug!(threshold = effective, "compression activated");
-                    }
-                    None => {
-                        tracing::debug!(threshold, "compression left disabled by backend");
-                    }
-                }
-                return Ok(BackendAction::Continue);
-            }
-
-            // LoginSuccess — forward, transition state
-            if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
-                client.queue_frame(&frame)?;
-                // State transition happens when client sends LoginAcknowledged (1.20.2+)
-                // or immediately for older versions
-                if version.less_than(ProtocolVersion::V1_20_2) {
-                    client.set_state(ConnectionState::Play);
-                    backend.set_state(ConnectionState::Play);
-                    codec_chain.notify_state_change(protocol_state_to_api(ConnectionState::Play));
-                    tracing::debug!("state transition: Login → Play (pre-1.20.2)");
-                }
-                // For 1.20.2+, transition happens in handle_client_to_backend
-                // when SLoginAcknowledged is received
-                return Ok(BackendAction::Continue);
-            }
-
-            // LoginDisconnect
-            if let Some(disconnect) = packet.as_any().downcast_ref::<CLoginDisconnect>() {
-                client.queue_frame(&frame)?;
-                return Ok(BackendAction::Disconnected(Some(disconnect.reason.clone())));
-            }
-
-            // Play Disconnect (should not occur in Login/Config, but handle defensively)
-            if packet.as_any().downcast_ref::<CDisconnect>().is_some() {
-                client.queue_frame(&frame)?;
-                return Ok(BackendAction::Disconnected(Some(
-                    "backend disconnect".to_string(),
-                )));
-            }
-
-            // FinishConfig — forward, state transition happens when client ACKs
-            if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
-                services.registry_codec_cache.finalize(version);
-                client.queue_frame(&frame)?;
-                // Transition happens in handle_client_to_backend
-                // when SAcknowledgeFinishConfig is received
-                return Ok(BackendAction::Continue);
-            }
-
-            if state == ConnectionState::Config {
-                let is_known_packs = registry
-                    .get_packet_id::<infrarust_protocol::CKnownPacks>(version)
-                    .is_some_and(|id| id == frame.id);
-
-                if is_known_packs {
-                    services
-                        .registry_codec_cache
-                        .collect_known_packs_frame(version, frame.clone());
-                } else {
-                    services
-                        .registry_codec_cache
-                        .collect_registry_frame(version, frame.clone());
-                }
-            }
-
-            // All other typed packets: forward
-            client.queue_frame(&frame)?;
-        }
-        Ok(DecodedPacket::Opaque { .. }) => {
-            if state == ConnectionState::Config {
-                services
-                    .registry_codec_cache
-                    .collect_registry_frame(version, frame.clone());
-            }
-            client.queue_frame(&frame)?;
-        }
-        Err(e) => {
-            tracing::warn!("failed to decode backend frame: {e}");
-            // Forward anyway (best effort)
-            client.queue_frame(&frame)?;
         }
     }
-
-    Ok(BackendAction::Continue)
 }

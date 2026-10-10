@@ -28,8 +28,20 @@ pub fn read_text_component(
     Ok(payload[..split].to_vec())
 }
 
+pub fn read_nested_text_component(
+    r: &mut &[u8],
+    version: ProtocolVersion,
+) -> ProtocolResult<Vec<u8>> {
+    if version.less_than(NBT_COMPONENT_VERSION) {
+        return Ok(r.read_string()?.into_bytes());
+    }
+    let start = *r;
+    crate::nbt::skip_network_nbt(r)?;
+    Ok(start[..start.len() - r.len()].to_vec())
+}
+
 pub fn write_text_component(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     text: &[u8],
     version: ProtocolVersion,
     packet_name: &str,
@@ -48,6 +60,41 @@ pub fn write_text_component(
     Ok(())
 }
 
+pub fn decode_game_modes(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<(u8, i8)> {
+    if version.less_than(ProtocolVersion::V26_3) {
+        return Ok((r.read_u8()?, r.read_i8()?));
+    }
+    let gamemode = u8::try_from(r.read_var_int()?.0)
+        .map_err(|_| ProtocolError::invalid("game mode out of range"))?;
+    let previous = match r.read_var_int()?.0 {
+        0 => -1,
+        shifted => i8::try_from(shifted - 1)
+            .map_err(|_| ProtocolError::invalid("previous game mode out of range"))?,
+    };
+    Ok((gamemode, previous))
+}
+
+pub fn encode_game_modes(
+    w: &mut (impl Write + ?Sized),
+    gamemode: u8,
+    previous_gamemode: i8,
+    version: ProtocolVersion,
+) -> ProtocolResult<()> {
+    if version.less_than(ProtocolVersion::V26_3) {
+        w.write_u8(gamemode)?;
+        w.write_i8(previous_gamemode)?;
+        return Ok(());
+    }
+    let previous = if previous_gamemode < 0 {
+        0
+    } else {
+        i32::from(previous_gamemode) + 1
+    };
+    w.write_var_int(&VarInt(i32::from(gamemode)))?;
+    w.write_var_int(&VarInt(previous))?;
+    Ok(())
+}
+
 pub fn decode_death_location(r: &mut &[u8]) -> ProtocolResult<(Option<String>, Option<i64>)> {
     if r.read_bool()? {
         let dim = r.read_string()?;
@@ -59,7 +106,7 @@ pub fn decode_death_location(r: &mut &[u8]) -> ProtocolResult<(Option<String>, O
 }
 
 pub fn encode_death_location(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     death_dimension: Option<&str>,
     death_position: Option<i64>,
 ) -> ProtocolResult<()> {
@@ -84,7 +131,7 @@ pub fn decode_world_info(r: &mut &[u8], version: ProtocolVersion) -> ProtocolRes
 }
 
 pub fn encode_world_info(
-    mut w: &mut (impl Write + ?Sized),
+    w: &mut (impl Write + ?Sized),
     portal_cooldown: i32,
     sea_level: i32,
     version: ProtocolVersion,
@@ -94,4 +141,41 @@ pub fn encode_world_info(
         w.write_var_int(&VarInt(sea_level))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    const CASES: [(u8, i8, [u8; 2], [u8; 2]); 4] = [
+        (0, -1, [0x00, 0xFF], [0x00, 0x00]),
+        (1, -1, [0x01, 0xFF], [0x01, 0x00]),
+        (0, 1, [0x00, 0x01], [0x00, 0x02]),
+        (3, 0, [0x03, 0x00], [0x03, 0x01]),
+    ];
+
+    #[test]
+    fn game_modes_use_the_version_encoding() {
+        for (gamemode, previous, before_26_3, from_26_3) in CASES {
+            for (version, expected) in [
+                (ProtocolVersion::V26_2, before_26_3),
+                (ProtocolVersion::V26_3, from_26_3),
+            ] {
+                let mut buf = Vec::new();
+                encode_game_modes(&mut buf, gamemode, previous, version).unwrap();
+                assert_eq!(buf, expected, "{gamemode}/{previous} at {version}");
+                let decoded = decode_game_modes(&mut buf.as_slice(), version).unwrap();
+                assert_eq!(decoded, (gamemode, previous), "{version}");
+            }
+        }
+    }
+
+    #[test]
+    fn out_of_range_previous_game_mode_is_rejected() {
+        let mut buf = Vec::new();
+        buf.write_var_int(&VarInt(0)).unwrap();
+        buf.write_var_int(&VarInt(300)).unwrap();
+        assert!(decode_game_modes(&mut buf.as_slice(), ProtocolVersion::V26_3).is_err());
+    }
 }

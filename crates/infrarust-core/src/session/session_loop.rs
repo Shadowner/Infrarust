@@ -1,0 +1,732 @@
+//! Unified session loop for intercepted proxy modes.
+
+use std::sync::Arc;
+
+use infrarust_api::event::ResultedEvent;
+use infrarust_api::events::connection::{
+    ConnectCause, KickCause, KickedFromServerEvent, KickedFromServerResult,
+};
+use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent, LimboExitReason};
+use infrarust_api::limbo::context::LimboEntryContext;
+use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, LimboHandler};
+use infrarust_api::player::ConnectionResult;
+use infrarust_api::types::{Component, ServerId};
+use infrarust_protocol::version::ConnectionState;
+
+use crate::error::CoreError;
+use crate::limbo::LIMBO_SWITCH_TARGET;
+use crate::limbo::engine::{LimboExitResult, enter_limbo};
+use crate::session::backend_bridge::BackendBridge;
+use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
+use crate::session::frame_chain::FrameChain;
+use crate::session::kick::Kick;
+use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
+use crate::session::server_join::ServerJoin;
+use crate::session::server_switch::{SwitchResult, SwitchTarget};
+
+use super::initial_connect::{ConnectionMode, Initial};
+use crate::handler::helpers::MAX_KICK_REDIRECTS;
+
+const UNREACHABLE_MESSAGE: &str = "Server is currently unreachable. Please try again later.";
+
+/// Alternates between Backend (`proxy_loop`) and Limbo (`enter_limbo`),
+/// handling server switches, kicks, and limbo transitions.
+pub(crate) async fn run_session_loop(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    initial: Initial,
+) -> ProxyLoopOutcome {
+    let Initial {
+        mut mode,
+        server: mut current_server_id,
+        mut pending,
+    } = initial;
+    let services = ctx.services;
+    let session = &ctx.session;
+
+    loop {
+        if ctx.token.is_cancelled() && !matches!(mode, ConnectionMode::Backend(_)) {
+            break ProxyLoopOutcome::Shutdown;
+        }
+        match mode {
+            ConnectionMode::Backend(ref mut backend) => {
+                session.set_connected_address(backend.server_address().cloned());
+                pending.approved = None;
+                let outcome =
+                    proxy_loop(ctx, io, backend, &current_server_id, &mut pending.join).await;
+
+                match outcome {
+                    ProxyLoopOutcome::SwitchRequested { target, .. }
+                        if target.as_str() == LIMBO_SWITCH_TARGET =>
+                    {
+                        let handler_names = server_limbo_handlers(ctx, &current_server_id);
+                        match services
+                            .limbo_handler_registry
+                            .resolve_handlers(&handler_names)
+                        {
+                            Ok(handlers) if !handlers.is_empty() => {
+                                session.settle_connect(&target, &ConnectionResult::Success);
+                                mode = ConnectionMode::Limbo(
+                                    handlers,
+                                    LimboEntryContext::PluginRedirect {
+                                        from_server: Some(current_server_id.clone()),
+                                    },
+                                );
+                                continue;
+                            }
+                            resolved => {
+                                let reason = match resolved {
+                                    Ok(_) => {
+                                        tracing::warn!(
+                                            "no limbo handlers configured, disconnecting"
+                                        );
+                                        Component::text(
+                                            "No limbo handlers configured for this server",
+                                        )
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "limbo handler not loaded, disconnecting");
+                                        Component::text(HANDLER_UNAVAILABLE)
+                                    }
+                                };
+                                io.client
+                                    .disconnect(&reason, &services.packet_registry)
+                                    .await
+                                    .ok();
+                                break ProxyLoopOutcome::Kicked { reason };
+                            }
+                        }
+                    }
+                    ProxyLoopOutcome::SwitchRequested { target, .. }
+                        if target == current_server_id =>
+                    {
+                        tracing::debug!(server = %target, "already on the requested server");
+                        session.settle_connect(&target, &ConnectionResult::AlreadyConnected);
+                        continue;
+                    }
+                    ProxyLoopOutcome::SwitchRequested { target, cause } => {
+                        let request = SwitchTarget::Unapproved {
+                            server: target.clone(),
+                            cause,
+                        };
+                        let action = switch(ctx, io, &current_server_id, request).await;
+                        session.settle_connect(&target, &connection_result(ctx, &action));
+                        let settled = match action {
+                            SwitchAction::Backend(backend, server) => {
+                                Settled::Backend(backend, server)
+                            }
+                            SwitchAction::Unchanged => Settled::Stay,
+                            SwitchAction::Limbo(handlers, _) if handlers.is_empty() => {
+                                tracing::warn!(
+                                    "SendToLimbo during switch but no handlers, staying on current server"
+                                );
+                                Settled::Stay
+                            }
+                            SwitchAction::Limbo(handlers, entry) => {
+                                Settled::Limbo(handlers, entry, current_server_id.clone())
+                            }
+                            SwitchAction::Denied(reason) => {
+                                tracing::info!(reason = %reason, "server switch denied by event");
+                                chat(ctx, &mut io.client, &reason).await;
+                                Settled::Stay
+                            }
+                            SwitchAction::Failed(kick) => {
+                                settle(ctx, io, &current_server_id, kick, true).await
+                            }
+                            SwitchAction::Error(e) => {
+                                tracing::warn!("server switch failed: {e}");
+                                let message = Component::text(format!("Server switch failed: {e}"));
+                                chat(ctx, &mut io.client, &message).await;
+                                Settled::Stay
+                            }
+                        };
+                        match settled {
+                            Settled::Stay => continue,
+                            Settled::Backend(backend, server) => {
+                                mode = ConnectionMode::Backend(backend);
+                                current_server_id = server;
+                                pending.join = None;
+                            }
+                            Settled::Limbo(handlers, entry, server) => {
+                                mode = ConnectionMode::Limbo(handlers, entry);
+                                current_server_id = server;
+                            }
+                            Settled::End(outcome) => break outcome,
+                        }
+                    }
+                    ProxyLoopOutcome::BackendKick(packet) => {
+                        let during_connect = pending.join.take().is_some();
+                        mode = ConnectionMode::Kicked(Kick::from_packet(
+                            current_server_id.clone(),
+                            *packet,
+                            during_connect,
+                        ));
+                    }
+                    ProxyLoopOutcome::BackendDisconnected { reason } => {
+                        tracing::debug!(?reason, "backend connection lost");
+                        let during_connect = pending.join.take().is_some();
+                        mode = ConnectionMode::Kicked(Kick::lost(
+                            current_server_id.clone(),
+                            during_connect,
+                        ));
+                    }
+                    other => break other,
+                }
+            }
+            ConnectionMode::Kicked(ref kick) => {
+                session.set_connected_address(None);
+                pending.join = None;
+                match settle(ctx, io, &current_server_id, kick.clone(), false).await {
+                    Settled::Backend(backend, server) => {
+                        mode = ConnectionMode::Backend(backend);
+                        current_server_id = server;
+                    }
+                    Settled::Limbo(handlers, entry, server) => {
+                        mode = ConnectionMode::Limbo(handlers, entry);
+                        current_server_id = server;
+                    }
+                    Settled::End(outcome) => break outcome,
+                    Settled::Stay => {
+                        break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                            "a kicked player has no server to stay on",
+                        ));
+                    }
+                }
+            }
+            ConnectionMode::Limbo(ref handlers, ref entry_ctx) => {
+                session.set_connected_address(None);
+                pending.join = None;
+                if let Err(e) = enter_play(ctx, &mut io.client, &current_server_id).await {
+                    tracing::warn!("could not bring the client into play for limbo: {e}");
+                    io.client
+                        .disconnect(&Component::text(e.to_string()), &services.packet_registry)
+                        .await
+                        .ok();
+                    break ProxyLoopOutcome::Error(e);
+                }
+                let player = ctx.player();
+                services
+                    .event_bus
+                    .fire(LimboEnterEvent::new(
+                        Arc::clone(&player),
+                        handlers.iter().map(|h| h.name().to_string()).collect(),
+                        entry_ctx.clone(),
+                    ))
+                    .await;
+                let exit = enter_limbo(
+                    ctx,
+                    io,
+                    handlers.clone(),
+                    entry_ctx.clone(),
+                    &current_server_id,
+                )
+                .await;
+
+                let shutting_down = ctx.token.is_cancelled();
+                let (reason, next_server) = limbo_exit(&exit, shutting_down, &current_server_id);
+                services
+                    .event_bus
+                    .fire(LimboExitEvent::new(player, reason, next_server))
+                    .await;
+
+                let gate_target = match entry_ctx {
+                    LimboEntryContext::InitialConnection { target_server } => {
+                        Some(target_server.clone())
+                    }
+                    _ => None,
+                };
+                let from_initial = gate_target.is_some();
+
+                match exit {
+                    LimboExitResult::Completed | LimboExitResult::SwitchedTo(_)
+                        if shutting_down =>
+                    {
+                        break ProxyLoopOutcome::Shutdown;
+                    }
+                    LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) => {
+                        let target = match exit {
+                            LimboExitResult::SwitchedTo(ref s) => s.clone(),
+                            _ => current_server_id.clone(),
+                        };
+                        let requested = target.clone();
+                        let target = pending.release(target, gate_target.as_ref());
+                        let action = switch(ctx, io, &current_server_id, target).await;
+                        session.settle_connect(&requested, &connection_result(ctx, &action));
+                        match action {
+                            SwitchAction::Backend(new_backend, new_server) => {
+                                mode = ConnectionMode::Backend(new_backend);
+                                current_server_id = new_server;
+                            }
+                            SwitchAction::Unchanged => {
+                                break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                                    "a limbo exit kept no server to join",
+                                ));
+                            }
+                            SwitchAction::Limbo(handlers, limbo_ctx) => {
+                                if from_initial || handlers.is_empty() {
+                                    if from_initial {
+                                        tracing::warn!(
+                                            "skipping re-entry into limbo after initial connection gate"
+                                        );
+                                    }
+                                    break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                                        "no limbo handlers left to continue with",
+                                    ));
+                                }
+                                mode = ConnectionMode::Limbo(handlers, limbo_ctx);
+                            }
+                            SwitchAction::Denied(reason) => {
+                                tracing::info!(reason = %reason, "switch after limbo denied by event");
+                                io.client
+                                    .disconnect(&reason, &services.packet_registry)
+                                    .await
+                                    .ok();
+                                break ProxyLoopOutcome::Kicked { reason };
+                            }
+                            SwitchAction::Failed(kick) => {
+                                mode = ConnectionMode::Kicked(kick);
+                            }
+                            SwitchAction::Error(e) => {
+                                tracing::warn!("switch after limbo failed: {e}");
+                                break ProxyLoopOutcome::Error(e);
+                            }
+                        }
+                    }
+                    LimboExitResult::SendToLimbo(handler_names) => {
+                        let handlers = match services
+                            .limbo_handler_registry
+                            .resolve_handlers(&handler_names)
+                        {
+                            Ok(handlers) => handlers,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "limbo-to-limbo move refused");
+                                break ProxyLoopOutcome::Error(e);
+                            }
+                        };
+                        if handlers.is_empty() {
+                            tracing::warn!(
+                                "limbo-to-limbo but no valid handlers resolved, disconnecting"
+                            );
+                            break ProxyLoopOutcome::Error(CoreError::InvalidState(
+                                "no limbo handlers resolved for a limbo-to-limbo move",
+                            ));
+                        }
+                        mode = ConnectionMode::Limbo(
+                            handlers,
+                            LimboEntryContext::PluginRedirect {
+                                from_server: Some(current_server_id.clone()),
+                            },
+                        );
+                    }
+                    LimboExitResult::Kicked(reason) => {
+                        break ProxyLoopOutcome::Kicked { reason };
+                    }
+                    LimboExitResult::ClientDisconnected => {
+                        break ProxyLoopOutcome::ClientDisconnected;
+                    }
+                    LimboExitResult::Timeout => {
+                        break ProxyLoopOutcome::Error(CoreError::Timeout(
+                            "the client stopped answering limbo keepalives".into(),
+                        ));
+                    }
+                    LimboExitResult::Error(e) => {
+                        break ProxyLoopOutcome::Error(e);
+                    }
+                    LimboExitResult::Shutdown => {
+                        break ProxyLoopOutcome::Shutdown;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn limbo_exit(
+    exit: &LimboExitResult,
+    shutting_down: bool,
+    held_for: &ServerId,
+) -> (LimboExitReason, Option<ServerId>) {
+    match exit {
+        LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) if shutting_down => {
+            (LimboExitReason::Shutdown, None)
+        }
+        LimboExitResult::Completed => (LimboExitReason::Released, Some(held_for.clone())),
+        LimboExitResult::SwitchedTo(server) => (LimboExitReason::Redirected, Some(server.clone())),
+        LimboExitResult::SendToLimbo(handlers) => (
+            LimboExitReason::SentToLimbo {
+                handlers: handlers.clone(),
+            },
+            None,
+        ),
+        LimboExitResult::Kicked(reason) => (
+            LimboExitReason::Kicked {
+                reason: reason.clone(),
+            },
+            None,
+        ),
+        LimboExitResult::ClientDisconnected | LimboExitResult::Error(_) => {
+            (LimboExitReason::Disconnected, None)
+        }
+        LimboExitResult::Timeout => (LimboExitReason::TimedOut, None),
+        LimboExitResult::Shutdown => (LimboExitReason::Shutdown, None),
+    }
+}
+
+pub(crate) struct Pending {
+    join: Option<ServerJoin>,
+    approved: Option<ServerId>,
+}
+
+impl Pending {
+    pub(crate) const fn join(join: ServerJoin) -> Self {
+        Self {
+            join: Some(join),
+            approved: None,
+        }
+    }
+
+    pub(crate) const fn approved(server: ServerId) -> Self {
+        Self {
+            join: None,
+            approved: Some(server),
+        }
+    }
+
+    pub(crate) const fn nothing() -> Self {
+        Self {
+            join: None,
+            approved: None,
+        }
+    }
+
+    fn release(&mut self, target: ServerId, gate_target: Option<&ServerId>) -> SwitchTarget {
+        if self.approved.take().as_ref() == Some(&target) {
+            return SwitchTarget::Approved(target);
+        }
+        let cause = if gate_target == Some(&target) {
+            ConnectCause::Initial
+        } else {
+            ConnectCause::LimboExit
+        };
+        SwitchTarget::Unapproved {
+            server: target,
+            cause,
+        }
+    }
+}
+
+enum SwitchAction {
+    Backend(BackendBridge, ServerId),
+    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
+    Denied(Component),
+    Unchanged,
+    Failed(Kick),
+    Error(CoreError),
+}
+
+async fn switch(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    current_server: &ServerId,
+    target: SwitchTarget,
+) -> SwitchAction {
+    match crate::session::server_switch::perform_switch(ctx, io, current_server, target).await {
+        Ok(SwitchResult::Backend(success)) => {
+            SwitchAction::Backend(success.new_backend, success.new_server_id)
+        }
+        Ok(SwitchResult::Limbo(handlers, ctx)) => SwitchAction::Limbo(handlers, ctx),
+        Ok(SwitchResult::Denied(reason)) => SwitchAction::Denied(reason),
+        Ok(SwitchResult::Unchanged) => SwitchAction::Unchanged,
+        Ok(SwitchResult::Failed(kick)) => SwitchAction::Failed(kick),
+        Err(e) => SwitchAction::Error(e),
+    }
+}
+
+fn connection_result(ctx: &SessionContext<'_>, action: &SwitchAction) -> ConnectionResult {
+    if ctx.session.shutdown_token().is_cancelled() {
+        return ConnectionResult::Cancelled;
+    }
+    match action {
+        SwitchAction::Backend(..) => ConnectionResult::Success,
+        SwitchAction::Unchanged => ConnectionResult::AlreadyConnected,
+        SwitchAction::Limbo(..) => ConnectionResult::Cancelled,
+        SwitchAction::Denied(reason) => ConnectionResult::Denied(reason.clone()),
+        SwitchAction::Failed(kick) => ConnectionResult::Failed(shown_reason(ctx, kick)),
+        SwitchAction::Error(e) => ConnectionResult::Failed(Component::text(e.to_string())),
+    }
+}
+
+enum Settled {
+    Stay,
+    Backend(BackendBridge, ServerId),
+    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext, ServerId),
+    End(ProxyLoopOutcome),
+}
+
+async fn settle(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    current_server: &ServerId,
+    mut kick: Kick,
+    mut can_stay: bool,
+) -> Settled {
+    let mut redirects = 0;
+    loop {
+        if ctx.session.shutdown_token().is_cancelled() {
+            return Settled::End(ProxyLoopOutcome::Shutdown);
+        }
+        can_stay &= !kick.stranded;
+        match fire_kicked(ctx, &kick, can_stay).await {
+            KickedFromServerResult::Redirect(target) if redirects < MAX_KICK_REDIRECTS => {
+                redirects += 1;
+                if let Err(e) = leave_login(ctx, &mut io.client).await {
+                    return Settled::End(ProxyLoopOutcome::Error(e));
+                }
+                let request = SwitchTarget::Unapproved {
+                    server: target,
+                    cause: ConnectCause::KickRedirect,
+                };
+                match switch(ctx, io, current_server, request).await {
+                    SwitchAction::Backend(backend, server) => {
+                        return Settled::Backend(backend, server);
+                    }
+                    SwitchAction::Limbo(handlers, entry) if !handlers.is_empty() => {
+                        return Settled::Limbo(handlers, entry, current_server.clone());
+                    }
+                    SwitchAction::Failed(next) => kick = next,
+                    SwitchAction::Denied(reason) => {
+                        return notify(ctx, &mut io.client, &kick, reason, can_stay).await;
+                    }
+                    SwitchAction::Limbo(..) | SwitchAction::Unchanged => {
+                        return fall_back(ctx, &mut io.client, &kick, can_stay).await;
+                    }
+                    SwitchAction::Error(e) => {
+                        tracing::warn!(server = %kick.server, "kick redirect failed: {e}");
+                        return fall_back(ctx, &mut io.client, &kick, can_stay).await;
+                    }
+                }
+            }
+            KickedFromServerResult::Redirect(target) => {
+                tracing::warn!(
+                    server = %kick.server,
+                    target = %target,
+                    "giving up after {MAX_KICK_REDIRECTS} kick redirects"
+                );
+                return Settled::End(disconnect(ctx, &mut io.client, &kick, None).await);
+            }
+            KickedFromServerResult::SendToLimbo { limbo_handlers } => {
+                return to_limbo(ctx, &mut io.client, &kick, limbo_handlers, can_stay).await;
+            }
+            KickedFromServerResult::Notify { message } => {
+                return notify(ctx, &mut io.client, &kick, message, can_stay).await;
+            }
+            KickedFromServerResult::DisconnectPlayer { reason } => {
+                return Settled::End(disconnect(ctx, &mut io.client, &kick, reason).await);
+            }
+            _ => return Settled::End(disconnect(ctx, &mut io.client, &kick, None).await),
+        }
+    }
+}
+
+async fn fire_kicked(
+    ctx: &SessionContext<'_>,
+    kick: &Kick,
+    can_stay: bool,
+) -> KickedFromServerResult {
+    let player = ctx.player();
+    let previous_server = if kick.during_connect {
+        player.current_server()
+    } else {
+        ctx.session.previous_server()
+    };
+    let event = KickedFromServerEvent::new(
+        player,
+        kick.server.clone(),
+        kick.reason(),
+        kick.cause.clone(),
+        kick.during_connect,
+        previous_server,
+        default_result(ctx, kick, can_stay),
+    );
+    ctx.services.event_bus.fire(event).await.result().clone()
+}
+
+fn default_result(ctx: &SessionContext<'_>, kick: &Kick, can_stay: bool) -> KickedFromServerResult {
+    if !kick.during_connect {
+        return KickedFromServerResult::DisconnectPlayer { reason: None };
+    }
+    if can_stay {
+        return KickedFromServerResult::Notify {
+            message: shown_reason(ctx, kick),
+        };
+    }
+    let limbo_handlers = server_limbo_handlers(ctx, &kick.server);
+    let resolvable = !limbo_handlers.is_empty()
+        && ctx
+            .services
+            .limbo_handler_registry
+            .resolve_handlers(&limbo_handlers)
+            .is_ok();
+    if resolvable {
+        KickedFromServerResult::SendToLimbo { limbo_handlers }
+    } else {
+        KickedFromServerResult::DisconnectPlayer { reason: None }
+    }
+}
+
+async fn notify(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    kick: &Kick,
+    message: Component,
+    can_stay: bool,
+) -> Settled {
+    if can_stay {
+        chat(ctx, client, &message).await;
+        return Settled::Stay;
+    }
+    Settled::End(disconnect(ctx, client, kick, Some(message)).await)
+}
+
+async fn fall_back(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    kick: &Kick,
+    can_stay: bool,
+) -> Settled {
+    let message = shown_reason(ctx, kick);
+    notify(ctx, client, kick, message, can_stay).await
+}
+
+async fn to_limbo(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    kick: &Kick,
+    limbo_handlers: Vec<String>,
+    can_stay: bool,
+) -> Settled {
+    let names = if limbo_handlers.is_empty() {
+        server_limbo_handlers(ctx, &kick.server)
+    } else {
+        limbo_handlers
+    };
+    let handlers = match ctx.services.limbo_handler_registry.resolve_handlers(&names) {
+        Ok(handlers) if !handlers.is_empty() => handlers,
+        Ok(_) => {
+            tracing::warn!(server = %kick.server, "SendToLimbo after a kick but no limbo handlers configured");
+            return fall_back(ctx, client, kick, can_stay).await;
+        }
+        Err(e) => {
+            tracing::warn!(server = %kick.server, error = %e, "SendToLimbo after a kick refused");
+            return fall_back(ctx, client, kick, can_stay).await;
+        }
+    };
+    let entry = LimboEntryContext::KickedFromServer {
+        server: kick.server.clone(),
+        reason: shown_reason(ctx, kick),
+    };
+    Settled::Limbo(handlers, entry, kick.server.clone())
+}
+
+async fn disconnect(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    kick: &Kick,
+    reason: Option<Component>,
+) -> ProxyLoopOutcome {
+    let registry = ctx.registry();
+    let reported = match (reason, &kick.packet) {
+        (Some(reason), _) => {
+            client.disconnect(&reason, registry).await.ok();
+            Some(reason)
+        }
+        (None, Some(packet)) if packet.state == client.state() => {
+            client.close_with(&packet.frame).await.ok();
+            Some(packet.reason.clone())
+        }
+        (None, Some(packet)) => {
+            client.disconnect(&packet.reason, registry).await.ok();
+            Some(packet.reason.clone())
+        }
+        (None, None) => {
+            client
+                .disconnect(&shown_reason(ctx, kick), registry)
+                .await
+                .ok();
+            kick.reason()
+        }
+    };
+    match &kick.cause {
+        KickCause::Unreachable { error } => {
+            ProxyLoopOutcome::Error(CoreError::BackendUnreachable(error.clone()))
+        }
+        _ => ProxyLoopOutcome::BackendClosed { reason: reported },
+    }
+}
+
+async fn chat(ctx: &SessionContext<'_>, client: &mut ClientBridge, message: &Component) {
+    if let Ok(frame) =
+        crate::player::packets::build_system_chat_message(message, ctx.version(), ctx.registry())
+    {
+        let _ = client.write_frame(&frame).await;
+    }
+}
+
+async fn leave_login(ctx: &SessionContext<'_>, client: &mut ClientBridge) -> Result<(), CoreError> {
+    if client.state() == ConnectionState::Login {
+        crate::session::client_login::complete_login(
+            client,
+            ctx.profile(),
+            ctx.version(),
+            ctx.registry(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn enter_play(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    server: &ServerId,
+) -> Result<(), CoreError> {
+    leave_login(ctx, client).await?;
+    if client.state() == ConnectionState::Config {
+        let observer = FrameChain::new(ctx, server);
+        crate::limbo::login::complete_config_for_limbo(
+            client,
+            ctx.version(),
+            ctx.registry(),
+            &ctx.services.registry_codec_cache,
+            Some(&observer),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn server_limbo_handlers(ctx: &SessionContext<'_>, server: &ServerId) -> Vec<String> {
+    ctx.services
+        .domain_router
+        .find_by_server_id(server.as_str())
+        .map(|config| config.limbo_handlers.clone())
+        .unwrap_or_default()
+}
+
+fn server_message(ctx: &SessionContext<'_>, server: &ServerId) -> Component {
+    let message = ctx
+        .services
+        .domain_router
+        .find_by_server_id(server.as_str())
+        .map_or_else(
+            || UNREACHABLE_MESSAGE.to_string(),
+            |config| config.effective_disconnect_message().to_string(),
+        );
+    Component::text(message)
+}
+
+fn shown_reason(ctx: &SessionContext<'_>, kick: &Kick) -> Component {
+    kick.reason()
+        .unwrap_or_else(|| server_message(ctx, &kick.server))
+}

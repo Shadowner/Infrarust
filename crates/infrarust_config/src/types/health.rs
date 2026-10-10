@@ -26,7 +26,7 @@ pub enum ProbeKind {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActiveHealthConfig {
-    #[serde(default = "defaults::enabled")]
+    #[serde(default = "crate::defaults::true_val")]
     pub enabled: bool,
 
     #[serde(default)]
@@ -54,9 +54,6 @@ pub struct ActiveHealthConfig {
 mod defaults {
     use std::time::Duration;
 
-    pub const fn enabled() -> bool {
-        true
-    }
     pub const fn unhealthy_interval() -> Duration {
         Duration::from_secs(10)
     }
@@ -74,7 +71,7 @@ mod defaults {
 impl Default for ActiveHealthConfig {
     fn default() -> Self {
         Self {
-            enabled: defaults::enabled(),
+            enabled: crate::defaults::true_val(),
             kind: ProbeKind::default(),
             unhealthy_interval: defaults::unhealthy_interval(),
             probe_healthy: false,

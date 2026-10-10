@@ -2,9 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-fn default_true() -> bool {
-    true
-}
+use crate::defaults;
 
 fn default_bind() -> String {
     "127.0.0.1:8080".to_string()
@@ -17,7 +15,7 @@ fn default_requests_per_minute() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "defaults::true_val")]
     pub enable_api: bool,
 
     /// `None` follows [`enable_api`](Self::enable_api): the dashboard is
@@ -164,7 +162,7 @@ impl WebConfig {
 impl Default for WebConfig {
     fn default() -> Self {
         Self {
-            enable_api: true,
+            enable_api: defaults::true_val(),
             enable_webui: None,
             bind: default_bind(),
             api_key: None,
@@ -176,6 +174,7 @@ impl Default for WebConfig {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn config(bind: &str, api_key: Option<&str>) -> WebConfig {

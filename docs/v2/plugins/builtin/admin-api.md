@@ -28,7 +28,7 @@ That is enough. All fields have defaults:
 | `bind` | string | `"127.0.0.1:8080"` | Socket address the HTTP server listens on |
 | `api_key` | string | *(see below)* | Bearer token for authentication. Must be at least 16 characters. |
 | `cors_origins` | string[] | `[]` | Allowed CORS origins. Empty means no CORS headers are sent. |
-| `rate_limit.requests_per_minute` | u64 | `60` | Maximum requests per minute across all clients on authenticated endpoints |
+| `rate_limit.requests_per_minute` | u64 | `60` | Maximum requests per minute per client IP, on every endpoint except `/api/v1/health` |
 
 The dashboard is served by the same HTTP server as the API and calls it for every screen, so `enable_webui = true` with `enable_api = false` is refused at startup. To turn the whole thing off, set both to `false` or drop the `[web]` section.
 
@@ -42,11 +42,14 @@ enable_webui = false
 
 ### API key behavior
 
-If `api_key` is not set and `bind` resolves to a loopback address (`127.0.0.1`, `::1`, `localhost`), the plugin generates a random UUID v4 key at startup and logs it as a warning:
+If `api_key` is not set and `bind` resolves to a loopback address (`127.0.0.1`, `::1`, `localhost`), the plugin generates a random UUID v4 key at startup and prints it once on stdout:
 
 ```
-WARN No API key configured for loopback bind (127.0.0.1:8080) — generated an ephemeral key: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+[web] ephemeral API key for 127.0.0.1:8080: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+It changes on every restart and is not written to the configuration file.
 ```
+
+The log only gets a warning that a key was generated, without the key itself. The placeholder `CHANGE-ME` counts as no key.
 
 This key is not written to disk. It changes on every restart. For a persistent key, set one explicitly:
 
@@ -83,9 +86,9 @@ GET /api/v1/events?token=YOUR_API_KEY&types=player.join,player.leave
 
 ## Rate limiting
 
-Authenticated endpoints are rate-limited to `requests_per_minute` (default 60). The counter is shared across all clients. It tracks total requests to the API, not per-IP. The health endpoint is exempt.
+Every endpoint except `/api/v1/health` is rate-limited to `requests_per_minute` (default 60) per client IP, over a fixed 60-second window. The SSE routes count too, and so do requests that fail authentication.
 
-Response headers on every authenticated request:
+Response headers on every rate-limited request:
 
 | Header | Description |
 |--------|-------------|
@@ -144,7 +147,6 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 |--------|------|-------------|
 | GET | `/api/v1/proxy` | Proxy status: version, uptime, player count, server count, features, memory usage |
 | POST | `/api/v1/proxy/shutdown` | Graceful proxy shutdown |
-| POST | `/api/v1/proxy/gc` | Trigger garbage collection (no-op in Rust, returns success) |
 
 ### Players
 
@@ -251,7 +253,7 @@ Per-address load balancing status and drain controls for servers that list sever
 }
 ```
 
-`strategy` is `first_available`, `round_robin`, or `least_conn`. `effective_weight` is the weight selection actually uses, so it sits below `weight` while an address ramps through slow start. `healthy_since_secs` counts from the moment the address became healthy, which is what the ramp measures against; it is absent for an ejected address, and for one that has been stable long enough for the proxy to stop tracking it.
+`strategy` is `first_available`, `round_robin`, or `least_conn`. `effective_weight` is the weight selection actually uses, so it sits below `weight` while an address ramps through slow start. `healthy_since_secs` counts from the moment the address became healthy, which is what the ramp measures against; it is `null` for an ejected address, and for one that has been stable long enough for the proxy to stop tracking it.
 
 | `state` | Meaning |
 |---------|---------|
@@ -274,17 +276,69 @@ Drain intent is stored in `<plugins_dir>/admin_api/drained.json` and replayed af
 |--------|------|-------------|
 | GET | `/api/v1/bans` | List all bans (paginated) |
 | GET | `/api/v1/bans/check/{target_type}/{value}` | Check if a username, UUID, or IP is banned |
-| POST | `/api/v1/bans` | Create a ban. Target types: `username`, `uuid`, `ip` |
-| DELETE | `/api/v1/bans/{target_type}/{value}` | Remove a ban |
+| POST | `/api/v1/bans` | Create a ban. Target types: `username`, `uuid`, `ip` (an address or a CIDR range) |
+| DELETE | `/api/v1/bans/{target_type}/{value}` | Remove a ban. `target_type` is `username`, `uuid`, `ip` or `ip_range`; URL-encode the `/` of a range as `%2F` |
+
+The ban endpoints go through whichever [ban provider](../../configuration/security/bans#choosing-a-provider) is active. Bans created or removed here are recorded with the `web-api` source, and every ban in a response carries the `id` the provider gave it. With `[ban] provider = "none"` they answer with an error.
 
 ### Plugins
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/plugins` | List all loaded plugins |
-| GET | `/api/v1/plugins/{id}` | Get a specific plugin's info |
-| POST | `/api/v1/plugins/{id}/enable` | Enable a plugin |
-| POST | `/api/v1/plugins/{id}/disable` | Disable a plugin |
+| GET | `/api/v1/plugins` | List the enabled plugins |
+| GET | `/api/v1/plugins/{id}` | Get one enabled plugin's info |
+
+Each plugin carries its metadata, its lifecycle `state`, and a `runtime` object, which is `null` for a native plugin and filled for a WASM plugin. The runtime is read when the request is answered:
+
+```json
+{
+  "data": {
+    "id": "flaky",
+    "name": "Flaky",
+    "version": "0.2.0",
+    "authors": [],
+    "description": null,
+    "state": "enabled",
+    "dependencies": [],
+    "runtime": {
+      "health": "quarantined",
+      "retry_in_ms": 12500,
+      "generation": 7,
+      "restarts_in_window": 5,
+      "max_restarts": 5,
+      "restart_window_secs": 300,
+      "last_fault": {
+        "cause": "the call ran past the event deadline",
+        "secs_ago": 4,
+        "generation": 7
+      },
+      "queue": {
+        "depth": 3,
+        "capacity": 1024,
+        "window_secs": 60,
+        "taken": 1234,
+        "peak_depth": 12,
+        "wait_p50_us": 21,
+        "wait_p99_us": 1250,
+        "wait_max_us": 3000
+      }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `health` | `healthy`, `recovering` (replacing the instance after a fault), `quarantined` (restart budget spent) or `stopped` (no instance and none coming) |
+| `retry_in_ms` | Time until the next attempt at a fresh instance, for a quarantined plugin or one that waits after an instance could not be created; `null` otherwise |
+| `generation` | Number of the latest instance the proxy started or tried to start; 1 is the first |
+| `restarts_in_window`, `max_restarts`, `restart_window_secs` | Fresh instances and retries within `[wasm.recovery] window`, out of `max_restarts` |
+| `last_fault` | Cause of the latest fault as the proxy logged it, seconds since, and the generation of the instance that faulted; `null` before the first fault |
+| `queue.depth`, `queue.capacity` | Calls waiting in the plugin's queue now, out of `queue_capacity` |
+| `queue.taken`, `queue.peak_depth` | Calls taken from the queue over the last `window_secs`, and the most that waited at once |
+| `queue.wait_p50_us`, `wait_p99_us`, `wait_max_us` | How long those calls waited in the queue before the plugin took them, in microseconds |
+
+A quarantined or recovering plugin keeps `state: "enabled"`: it is still enabled and is tried again on its own. See [Fault Model](../wasm/fault-model#watching-a-plugin-s-health) for the health values and [Threading](../wasm/threading#watching-the-queue) for reading the queue figures.
 
 ### Configuration
 
@@ -362,18 +416,56 @@ Available event types:
 
 Omit the `types` parameter to receive all events. The stream sends a keep-alive comment every 15 seconds.
 
+Each frame's SSE event name is the event type. Its data is a JSON object with the event's variant name in `type` (`PlayerJoin`, `PlayerLeave`, `BackendHealthChange`...) and its fields in `data`. `player.join` fires at login, before the player is routed, so its `server` is always an empty string; `player.switch` carries the servers.
+
+`player.leave` says why the player left. `cause` is `client_quit`, `kicked`, `backend_closed`, `shutdown` or `error`. `reason` is the plain text of the kick or backend message, or `null` when there was none:
+
+```json
+{
+  "type": "PlayerLeave",
+  "data": {
+    "player_id": 42,
+    "username": "Steve",
+    "last_server": "lobby",
+    "cause": "kicked",
+    "reason": "You have been banned",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
+}
+```
+
 `backend.health_change` carries the address, every server that lists it, and the new state:
 
 ```json
 {
-  "address": "10.0.0.1:25565",
-  "server_ids": ["lobby", "survival"],
-  "state": "draining",
-  "timestamp": "2025-01-15T10:30:00Z"
+  "type": "BackendHealthChange",
+  "data": {
+    "address": "10.0.0.1:25565",
+    "server_ids": ["lobby", "survival"],
+    "state": "draining",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
 }
 ```
 
 The state is the one selection acts on, so a drained address reports `draining` even while its own health checks pass.
+
+`config.reload` carries the provider that changed the servers and the IDs of the servers it added, removed and updated. One event covers one batch, for example every file written in the servers directory at once:
+
+```json
+{
+  "type": "ConfigReload",
+  "data": {
+    "provider": "file",
+    "added": ["creative"],
+    "removed": [],
+    "updated": ["lobby", "survival"],
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
+}
+```
+
+A rewrite that changes nothing sends no event.
 
 ### Log stream
 
@@ -386,6 +478,8 @@ Streams log entries in real time. Filter by minimum `level` (`trace`, `debug`, `
 ## Web dashboard
 
 When `enable_webui` is `true`, the plugin serves an embedded web frontend at the root URL (`http://127.0.0.1:8080/`). The frontend is a Nuxt SPA bundled into the binary at compile time.
+
+The Plugins page shows each plugin's state; it has no enable or disable action, since a plugin is turned on or off with `enabled` in its `[plugins.<id>]` table and a restart. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
 
 Non-API routes serve static files from the embedded bundle. If a requested file doesn't exist, the server returns `index.html` for client-side routing. API routes (`/api/*`) that don't match a defined endpoint return 404.
 
@@ -446,12 +540,12 @@ const events = new EventSource(
 );
 
 events.addEventListener('player.join', (e) => {
-  const data = JSON.parse(e.data);
-  console.log(`${data.username} joined ${data.server}`);
+  const { data } = JSON.parse(e.data);
+  console.log(`${data.username} joined`);
 });
 
 events.addEventListener('player.leave', (e) => {
-  const data = JSON.parse(e.data);
+  const { data } = JSON.parse(e.data);
   console.log(`${data.username} left`);
 });
 ```

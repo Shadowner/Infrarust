@@ -157,6 +157,17 @@ impl BackendConnector {
         )
     }
 
+    pub async fn connect_one(
+        &self,
+        address: &ServerAddress,
+        timeout: Duration,
+        send_proxy_protocol: bool,
+        client_info: &ConnectionInfo,
+    ) -> Result<BackendConnection, TransportError> {
+        self.try_connect(address, timeout, send_proxy_protocol, client_info)
+            .await
+    }
+
     async fn try_connect(
         &self,
         address: &ServerAddress,

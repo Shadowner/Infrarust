@@ -8,12 +8,13 @@ use governor::clock::DefaultClock;
 use governor::state::keyed::DashMapStateStore;
 use governor::{Quota, RateLimiter};
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_config::RateLimitConfig;
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused};
 
 type KeyedLimiter = RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>;
 
@@ -37,11 +38,10 @@ impl RateLimiterMiddleware {
         }
     }
 
-    #[allow(clippy::expect_used)] // max.max(1) guarantees NonZero, and period is always valid
     fn build_limiter(max: u32, window: std::time::Duration) -> KeyedLimiter {
-        let max = NonZeroU32::new(max.max(1)).expect("rate limit max must be > 0");
+        let max = NonZeroU32::new(max).unwrap_or(NonZeroU32::MIN);
         let quota = Quota::with_period(window / max.get())
-            .expect("valid quota period")
+            .unwrap_or_else(|| Quota::per_second(max))
             .allow_burst(max);
         RateLimiter::dashmap(quota)
     }
@@ -78,6 +78,7 @@ impl Middleware for RateLimiterMiddleware {
                     intent = ?handshake.intent,
                     "rate limit exceeded"
                 );
+                ctx.extensions.insert(Refused(RejectReason::RateLimit));
                 Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
             }
         })

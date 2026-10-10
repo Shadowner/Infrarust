@@ -6,7 +6,33 @@ pub mod plugins;
 pub mod servers;
 pub mod system;
 
-use super::dispatcher::CommandDispatcher;
+use std::time::Duration;
+
+use super::dispatcher::{CommandDispatcher, ConsoleCommand};
+use super::output::CommandOutput;
+use super::parser::parse_duration_arg;
+
+pub(crate) fn usage(command: &dyn ConsoleCommand) -> CommandOutput {
+    CommandOutput::usage(command.usage())
+}
+
+pub(crate) mod args {
+    use super::{Duration, parse_duration_arg};
+
+    pub fn rest(args: &[&str]) -> Option<String> {
+        (!args.is_empty()).then(|| args.join(" "))
+    }
+
+    pub fn duration_and_reason(args: &[&str]) -> (Option<Duration>, Option<String>) {
+        match args.split_first() {
+            Some((head, tail)) => match parse_duration_arg(head) {
+                Ok(duration) => (duration, rest(tail)),
+                Err(_) => (None, rest(args)),
+            },
+            None => (None, None),
+        }
+    }
+}
 
 pub fn register_all(dispatcher: &mut CommandDispatcher) {
     dispatcher.register(Box::new(players::ListPlayersCommand));
@@ -48,4 +74,31 @@ pub fn register_all(dispatcher: &mut CommandDispatcher) {
 
     let help = system::HelpCommand::from_commands(dispatcher.command_info());
     dispatcher.register(Box::new(help));
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn duration_and_reason_split_on_a_leading_duration() {
+        assert_eq!(args::duration_and_reason(&[]), (None, None));
+        assert_eq!(
+            args::duration_and_reason(&["griefing", "a", "lot"]),
+            (None, Some("griefing a lot".to_string()))
+        );
+        assert_eq!(
+            args::duration_and_reason(&["permanent", "bye"]),
+            (None, Some("bye".to_string()))
+        );
+        let (duration, reason) = args::duration_and_reason(&["1h", "cool", "off"]);
+        assert_eq!(duration, Some(Duration::from_secs(3600)));
+        assert_eq!(reason.as_deref(), Some("cool off"));
+        assert_eq!(
+            args::duration_and_reason(&["1h"]),
+            (Some(Duration::from_secs(3600)), None)
+        );
+    }
 }

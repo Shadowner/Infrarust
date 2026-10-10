@@ -6,6 +6,8 @@ rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 description = "Minimal example plugin for the Infrarust Minecraft proxy"
+keywords = ["minecraft", "proxy", "plugin", "example"]
+categories = ["game-development"]
 
 [package.metadata.docs.rs]
 all-features = true

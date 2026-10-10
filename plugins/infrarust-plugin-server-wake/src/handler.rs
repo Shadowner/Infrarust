@@ -6,7 +6,7 @@ use infrarust_api::prelude::ConfigService;
 
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, LimboOutcome, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::services::server_manager::{ServerManager, ServerState};
 use infrarust_api::types::{Component, PlayerId, ServerId, TitleData};
@@ -200,9 +200,9 @@ impl LimboHandler for ServerWakeHandler {
             } else {
                 HandlerResult::HoldWithTimeout {
                     after: Duration::from_secs(timeout_secs),
-                    on_timeout: Box::new(HandlerResult::Deny(Component::from_legacy(
+                    on_timeout: LimboOutcome::Deny(Component::from_legacy(
                         &self.state.config.messages.timeout_kick,
-                    ))),
+                    )),
                 }
             }
         })

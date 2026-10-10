@@ -1,0 +1,19 @@
+[package]
+name = "infrarust-plugin-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Dependency-free types shared by the Infrarust plugin API and the WASM guest SDK"
+keywords = ["minecraft", "proxy", "plugin"]
+categories = ["game-development"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
+
+[dependencies]

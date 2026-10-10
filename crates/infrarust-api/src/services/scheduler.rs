@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use crate::event::BoxFuture;
+
 pub mod private {
     /// Sealed — only the proxy implements [`Scheduler`](super::Scheduler).
     pub trait Sealed {}
@@ -30,20 +32,24 @@ impl TaskHandle {
 /// Tasks run on the proxy's async runtime. The scheduler does not
 /// depend on tokio in the API — the proxy provides the implementation.
 pub trait Scheduler: Send + Sync + private::Sealed {
-    /// Schedules a one-shot task after a delay.
-    fn delay(&self, duration: Duration, task: Box<dyn FnOnce() + Send>) -> TaskHandle;
+    fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle;
 
-    /// Schedules a repeating task at a fixed interval.
-    fn interval(&self, period: Duration, task: Box<dyn Fn() + Send + Sync>) -> TaskHandle;
-
-    /// Schedules a repeating task at a fixed interval, starting after an initial delay.
-    fn interval_with_delay(
+    fn repeat(
         &self,
         period: Duration,
-        delay: Duration,
-        task: Box<dyn Fn() + Send + Sync>,
+        initial_delay: Option<Duration>,
+        task: RepeatingTask,
     ) -> TaskHandle;
+
+    fn spawn(&self, task: BoxFuture<'static, ()>) -> TaskHandle;
+
+    /// Cancelling or unloading the plugin stops the task only before it starts; a running task finishes.
+    fn spawn_blocking(&self, task: Box<dyn FnOnce() + Send>) -> TaskHandle;
 
     /// Cancels a scheduled task.
     fn cancel(&self, handle: TaskHandle);
 }
+
+pub type AsyncTask = Box<dyn FnOnce() -> BoxFuture<'static, ()> + Send>;
+
+pub type RepeatingTask = Box<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;

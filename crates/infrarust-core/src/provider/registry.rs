@@ -7,14 +7,15 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::events::proxy::ConfigReloadEvent;
-use infrarust_config::ServerConfig;
+use infrarust_api::types::ServerId;
+use infrarust_config::{ForwardingMode, ServerConfig};
 
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::routing::DomainRouter;
 use crate::status::{FaviconCache, StatusCache};
 
-use super::{ConfigProvider, ProviderEvent};
+use super::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
 
 /// Orchestrates config providers, feeding their events into the `DomainRouter`.
 ///
@@ -31,6 +32,7 @@ pub struct ProviderRegistry {
     status_cache: Arc<StatusCache>,
     favicon_cache: Arc<FaviconCache>,
     shutdown: CancellationToken,
+    default_forwarding: ForwardingMode,
 }
 
 impl ProviderRegistry {
@@ -40,6 +42,7 @@ impl ProviderRegistry {
         status_cache: Arc<StatusCache>,
         favicon_cache: Arc<FaviconCache>,
         shutdown: CancellationToken,
+        default_forwarding: ForwardingMode,
     ) -> Self {
         Self {
             providers: Vec::new(),
@@ -48,6 +51,7 @@ impl ProviderRegistry {
             status_cache,
             favicon_cache,
             shutdown,
+            default_forwarding,
         }
     }
 
@@ -82,7 +86,9 @@ impl ProviderRegistry {
                         );
                     }
                     for pc in configs {
-                        self.domain_router.add(pc.id, pc.config);
+                        if accepted(&pc, &self.default_forwarding) {
+                            self.domain_router.add(pc.id, pc.config);
+                        }
                     }
                     tracing::info!(
                         provider = provider.provider_type(),
@@ -130,6 +136,7 @@ impl ProviderRegistry {
                 self.status_cache,
                 self.favicon_cache,
                 self.shutdown,
+                self.default_forwarding,
             )
             .await;
             if !shutdown_token.is_cancelled() {
@@ -151,6 +158,7 @@ async fn event_loop(
     status_cache: Arc<StatusCache>,
     favicon_cache: Arc<FaviconCache>,
     shutdown: CancellationToken,
+    default_forwarding: ForwardingMode,
 ) {
     loop {
         tokio::select! {
@@ -160,25 +168,15 @@ async fn event_loop(
                 break;
             }
             event = rx.recv() => {
-                match event {
-                    Some(ProviderEvent::Added(pc)) => {
-                        tracing::info!(id = %pc.id, "config added by provider");
-                        router.add(pc.id, pc.config);
-                        on_config_change(&router, &status_cache, &favicon_cache, &event_bus).await;
-                    }
-                    Some(ProviderEvent::Updated(pc)) => {
-                        tracing::info!(id = %pc.id, "config updated by provider");
-                        router.update(pc.id, pc.config);
-                        on_config_change(&router, &status_cache, &favicon_cache, &event_bus).await;
-                    }
-                    Some(ProviderEvent::Removed(id)) => {
-                        tracing::info!(id = %id, "config removed by provider");
-                        router.remove(&id);
-                        on_config_change(&router, &status_cache, &favicon_cache, &event_bus).await;
-                    }
-                    None => {
-                        tracing::debug!("all provider senders dropped, event loop exiting");
-                        break;
+                let Some(event) = event else {
+                    tracing::debug!("all provider senders dropped, event loop exiting");
+                    break;
+                };
+                let reloads = apply(&router, &default_forwarding, event);
+                if !reloads.is_empty() {
+                    on_config_change(&router, &status_cache, &favicon_cache).await;
+                    for reload in reloads {
+                        event_bus.post(reload);
                     }
                 }
             }
@@ -186,12 +184,96 @@ async fn event_loop(
     }
 }
 
-/// Common post-change handler: invalidate caches, reload favicons, fire event.
+fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
+    match infrarust_config::validate_server_forwarding(&pc.config, default_forwarding.clone()) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::error!(id = %pc.id, %error, "server config rejected");
+            false
+        }
+    }
+}
+
+fn apply(
+    router: &DomainRouter,
+    default_forwarding: &ForwardingMode,
+    event: ProviderEvent,
+) -> Vec<ConfigReloadEvent> {
+    let changes = event.into_changes();
+
+    let mut before: Vec<(ProviderId, Option<Arc<ServerConfig>>)> = Vec::new();
+    for change in changes {
+        let id = match &change {
+            ProviderChange::Added(pc) | ProviderChange::Updated(pc) => {
+                if !accepted(pc, default_forwarding) {
+                    continue;
+                }
+                pc.id.clone()
+            }
+            ProviderChange::Removed(id) => id.clone(),
+        };
+        if !before.iter().any(|(seen, _)| *seen == id) {
+            let previous = router.get(&id);
+            before.push((id, previous));
+        }
+        match change {
+            ProviderChange::Added(pc) => {
+                tracing::info!(id = %pc.id, "config added by provider");
+                router.add(pc.id, pc.config);
+            }
+            ProviderChange::Updated(pc) => {
+                tracing::info!(id = %pc.id, "config updated by provider");
+                router.update(pc.id, pc.config);
+            }
+            ProviderChange::Removed(id) => {
+                tracing::info!(id = %id, "config removed by provider");
+                router.remove(&id);
+            }
+        }
+    }
+
+    let mut reloads: Vec<ConfigReloadEvent> = Vec::new();
+    for (id, previous) in before {
+        let position = reloads
+            .iter()
+            .position(|reload| reload.provider == id.provider_type)
+            .unwrap_or_else(|| {
+                reloads.push(ConfigReloadEvent::new(
+                    id.provider_type.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ));
+                reloads.len() - 1
+            });
+        let reload = &mut reloads[position];
+        match (previous, router.get(&id)) {
+            (None, Some(now)) => reload.added.push(ServerId::new(now.effective_id())),
+            (Some(was), None) => reload.removed.push(ServerId::new(was.effective_id())),
+            (Some(was), Some(now)) if was.effective_id() != now.effective_id() => {
+                reload.removed.push(ServerId::new(was.effective_id()));
+                reload.added.push(ServerId::new(now.effective_id()));
+            }
+            (Some(was), Some(now)) if was != now => {
+                reload.updated.push(ServerId::new(now.effective_id()));
+            }
+            _ => {}
+        }
+    }
+    reloads.retain(|reload| !reload.is_empty());
+    for reload in &mut reloads {
+        for ids in [&mut reload.added, &mut reload.removed, &mut reload.updated] {
+            ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+            ids.dedup();
+        }
+    }
+    reloads
+}
+
 async fn on_config_change(
     router: &DomainRouter,
     status_cache: &StatusCache,
     favicon_cache: &FaviconCache,
-    event_bus: &Arc<EventBusImpl>,
 ) {
     status_cache.invalidate_all();
 
@@ -203,6 +285,58 @@ async fn on_config_change(
     if let Err(e) = favicon_cache.reload(&favicon_configs, None).await {
         tracing::warn!(error = %e, "failed to reload favicons after config change");
     }
+}
 
-    event_bus.fire_and_forget_arc(ConfigReloadEvent);
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    fn passthrough(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            id: ProviderId::file(name),
+            config: toml::from_str(&format!(
+                "name = \"{name}\"\ndomains = [\"{name}.test\"]\naddresses = [\"10.0.0.1:25565\"]\n"
+            ))
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_forwarding_server_under_a_velocity_default_is_not_published() {
+        let router = DomainRouter::new();
+        let lobby = passthrough("lobby");
+        let id = lobby.id.clone();
+
+        let reloads = apply(
+            &router,
+            &ForwardingMode::Velocity,
+            ProviderEvent::Added(lobby),
+        );
+
+        assert!(
+            router.get(&id).is_none(),
+            "the rejected server must not be routed"
+        );
+        assert!(reloads.is_empty());
+    }
+
+    #[test]
+    fn a_rejected_update_keeps_the_previous_config() {
+        let router = DomainRouter::new();
+        let lobby = passthrough("lobby");
+        let id = lobby.id.clone();
+        apply(&router, &ForwardingMode::None, ProviderEvent::Added(lobby));
+
+        let mut broken = passthrough("lobby");
+        broken.config.forwarding_mode = Some(ForwardingMode::Velocity);
+        apply(
+            &router,
+            &ForwardingMode::None,
+            ProviderEvent::Updated(broken),
+        );
+
+        let kept = router.get(&id).expect("the previous config stays routed");
+        assert_eq!(kept.forwarding_mode, None);
+    }
 }

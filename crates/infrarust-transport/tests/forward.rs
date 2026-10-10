@@ -221,3 +221,240 @@ async fn test_splice_forwarder_linux() {
 
     assert!(result.client_to_backend > 0);
 }
+
+const T: Duration = Duration::from_secs(5);
+const SHUTDOWN_ROUNDS: usize = 20;
+
+type Forwarding<'a> = std::pin::Pin<Box<dyn Future<Output = ForwardResult> + Send + 'a>>;
+
+async fn start_without_driving(forward: &mut Forwarding<'_>) {
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(forward.as_mut().poll(cx).is_pending()))
+            .await;
+    assert!(pending, "the forward ended before either side closed");
+}
+
+async fn eof(half: &mut tokio::net::tcp::OwnedReadHalf) {
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(T, half.read(&mut byte))
+        .await
+        .expect("the proxy never closed this side")
+        .unwrap();
+    assert_eq!(read, 0);
+}
+
+async fn assert_proxy_let_go(half: &mut tokio::net::tcp::OwnedWriteHalf) {
+    tokio::time::timeout(T, async {
+        while half.write_all(b"x").await.is_ok() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the proxy kept its socket open");
+}
+
+async fn relay_one_byte_each_way(
+    client: &mut tokio::net::TcpStream,
+    backend: &mut tokio::net::TcpStream,
+) {
+    let mut byte = [0u8; 1];
+    client.write_all(b"c").await.unwrap();
+    tokio::time::timeout(T, backend.read_exact(&mut byte))
+        .await
+        .unwrap()
+        .unwrap();
+    backend.write_all(b"b").await.unwrap();
+    tokio::time::timeout(T, client.read_exact(&mut byte))
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn copy_forwarder_blames_the_backend_that_closed_first_even_when_polled_late() {
+    let (client_side, proxy_client) = create_connected_pair().await;
+    let (proxy_backend, backend_side) = create_connected_pair().await;
+    let forwarder = CopyForwarder;
+    let mut forward = forwarder.forward(proxy_client, proxy_backend, CancellationToken::new());
+    start_without_driving(&mut forward).await;
+    let (mut client_read, mut client_write) = client_side.into_split();
+    let (mut backend_read, mut backend_write) = backend_side.into_split();
+
+    backend_write.shutdown().await.unwrap();
+    eof(&mut client_read).await;
+    client_write.shutdown().await.unwrap();
+    eof(&mut backend_read).await;
+    let result = tokio::time::timeout(T, forward).await.unwrap();
+
+    assert!(
+        matches!(result.reason, ForwardEndReason::BackendClosed),
+        "{:?}",
+        result.reason
+    );
+}
+
+#[tokio::test]
+async fn copy_forwarder_blames_the_client_that_closed_first_even_when_polled_late() {
+    let (client_side, proxy_client) = create_connected_pair().await;
+    let (proxy_backend, backend_side) = create_connected_pair().await;
+    let forwarder = CopyForwarder;
+    let mut forward = forwarder.forward(proxy_client, proxy_backend, CancellationToken::new());
+    start_without_driving(&mut forward).await;
+    let (mut client_read, mut client_write) = client_side.into_split();
+    let (mut backend_read, mut backend_write) = backend_side.into_split();
+
+    client_write.shutdown().await.unwrap();
+    eof(&mut backend_read).await;
+    backend_write.shutdown().await.unwrap();
+    eof(&mut client_read).await;
+    let result = tokio::time::timeout(T, forward).await.unwrap();
+
+    assert!(
+        matches!(result.reason, ForwardEndReason::ClientClosed),
+        "{:?}",
+        result.reason
+    );
+}
+
+async fn assert_blames_the_side_that_closed_first<F: Forwarder + Default + 'static>(
+    backend_first: bool,
+) {
+    let (client_side, proxy_client) = create_connected_pair().await;
+    let (proxy_backend, backend_side) = create_connected_pair().await;
+    let forward = tokio::spawn(async move {
+        F::default()
+            .forward(proxy_client, proxy_backend, CancellationToken::new())
+            .await
+    });
+    let (mut client_read, mut client_write) = client_side.into_split();
+    let (mut backend_read, mut backend_write) = backend_side.into_split();
+
+    if backend_first {
+        backend_write.shutdown().await.unwrap();
+        eof(&mut client_read).await;
+        client_write.shutdown().await.unwrap();
+        eof(&mut backend_read).await;
+    } else {
+        client_write.shutdown().await.unwrap();
+        eof(&mut backend_read).await;
+        backend_write.shutdown().await.unwrap();
+        eof(&mut client_read).await;
+    }
+    let result = tokio::time::timeout(T, forward).await.unwrap().unwrap();
+
+    let expected = if backend_first {
+        matches!(result.reason, ForwardEndReason::BackendClosed)
+    } else {
+        matches!(result.reason, ForwardEndReason::ClientClosed)
+    };
+    assert!(
+        expected,
+        "backend_first={backend_first}: {:?}",
+        result.reason
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn splice_forwarder_blames_the_backend_that_closed_first() {
+    assert_blames_the_side_that_closed_first::<SpliceForwarder>(true).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn splice_forwarder_blames_the_client_that_closed_first() {
+    assert_blames_the_side_that_closed_first::<SpliceForwarder>(false).await;
+}
+
+async fn assert_shutdown_ends_a_half_closed_forward<F: Forwarder + Default + 'static>() {
+    let (client_side, proxy_client) = create_connected_pair().await;
+    let (proxy_backend, backend_side) = create_connected_pair().await;
+    let shutdown = CancellationToken::new();
+    let forward = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            F::default()
+                .forward(proxy_client, proxy_backend, shutdown)
+                .await
+        }
+    });
+    let (mut client_read, mut client_write) = client_side.into_split();
+    let (mut backend_read, mut backend_write) = backend_side.into_split();
+
+    client_write.shutdown().await.unwrap();
+    eof(&mut backend_read).await;
+    backend_write.write_all(b"still open").await.unwrap();
+    let mut relayed = [0u8; 10];
+    tokio::time::timeout(T, client_read.read_exact(&mut relayed))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&relayed, b"still open");
+
+    shutdown.cancel();
+    let result = tokio::time::timeout(T, forward)
+        .await
+        .expect("a half-closed forward must end on shutdown")
+        .unwrap();
+
+    assert!(
+        matches!(result.reason, ForwardEndReason::ClientClosed),
+        "{:?}",
+        result.reason
+    );
+    assert_eq!(result.client_to_backend, 0);
+    eof(&mut client_read).await;
+    assert_proxy_let_go(&mut backend_write).await;
+}
+
+#[tokio::test]
+async fn copy_forwarder_shutdown_ends_a_half_closed_forward() {
+    assert_shutdown_ends_a_half_closed_forward::<CopyForwarder>().await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn splice_forwarder_shutdown_ends_a_half_closed_forward() {
+    assert_shutdown_ends_a_half_closed_forward::<SpliceForwarder>().await;
+}
+
+async fn assert_shutdown_is_reported_as_shutdown<F: Forwarder + Default + 'static>() {
+    for round in 0..SHUTDOWN_ROUNDS {
+        let (mut client_side, proxy_client) = create_connected_pair().await;
+        let (proxy_backend, mut backend_side) = create_connected_pair().await;
+        let shutdown = CancellationToken::new();
+        let forward = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move {
+                F::default()
+                    .forward(proxy_client, proxy_backend, shutdown)
+                    .await
+            }
+        });
+        relay_one_byte_each_way(&mut client_side, &mut backend_side).await;
+
+        shutdown.cancel();
+        let result = tokio::time::timeout(T, forward).await.unwrap().unwrap();
+
+        assert!(
+            matches!(result.reason, ForwardEndReason::Shutdown),
+            "round {round}: {:?}",
+            result.reason
+        );
+        let (mut client_read, _client_write) = client_side.into_split();
+        let (mut backend_read, _backend_write) = backend_side.into_split();
+        eof(&mut client_read).await;
+        eof(&mut backend_read).await;
+    }
+}
+
+#[tokio::test]
+async fn copy_forwarder_reports_shutdown_as_shutdown() {
+    assert_shutdown_is_reported_as_shutdown::<CopyForwarder>().await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn splice_forwarder_reports_shutdown_as_shutdown() {
+    assert_shutdown_is_reported_as_shutdown::<SpliceForwarder>().await;
+}

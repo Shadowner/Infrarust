@@ -5,7 +5,7 @@
 //! - Clone providers before `set_global` (issue #1961)
 //! - `eprintln!` in Drop (not `tracing::error!` — subscriber may be dead)
 
-use infrarust_config::TelemetryConfig;
+use infrarust_config::{OtlpProtocol, TelemetryConfig};
 use opentelemetry::global;
 use opentelemetry_otlp::{ExporterBuildError, MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
@@ -91,23 +91,20 @@ impl Drop for OtelGuard {
 fn build_span_exporter(config: &TelemetryConfig) -> Result<SpanExporter, CoreError> {
     let endpoint = config
         .endpoint
-        .as_deref()
-        .unwrap_or("http://localhost:4317");
+        .clone()
+        .unwrap_or_else(infrarust_config::defaults::otlp_endpoint);
 
-    match config.protocol.as_str() {
-        "grpc" => SpanExporter::builder()
+    match config.protocol {
+        OtlpProtocol::Grpc => SpanExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .build()
             .map_err(|e: ExporterBuildError| CoreError::TelemetryInit(e.to_string())),
-        "http" => SpanExporter::builder()
+        OtlpProtocol::Http => SpanExporter::builder()
             .with_http()
             .with_endpoint(endpoint)
             .build()
             .map_err(|e: ExporterBuildError| CoreError::TelemetryInit(e.to_string())),
-        other => Err(CoreError::TelemetryInit(format!(
-            "unsupported protocol: {other}, expected 'grpc' or 'http'"
-        ))),
     }
 }
 
@@ -115,22 +112,19 @@ fn build_span_exporter(config: &TelemetryConfig) -> Result<SpanExporter, CoreErr
 fn build_metric_exporter(config: &TelemetryConfig) -> Result<MetricExporter, CoreError> {
     let endpoint = config
         .endpoint
-        .as_deref()
-        .unwrap_or("http://localhost:4317");
+        .clone()
+        .unwrap_or_else(infrarust_config::defaults::otlp_endpoint);
 
-    match config.protocol.as_str() {
-        "grpc" => MetricExporter::builder()
+    match config.protocol {
+        OtlpProtocol::Grpc => MetricExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .build()
             .map_err(|e: ExporterBuildError| CoreError::TelemetryInit(e.to_string())),
-        "http" => MetricExporter::builder()
+        OtlpProtocol::Http => MetricExporter::builder()
             .with_http()
             .with_endpoint(endpoint)
             .build()
             .map_err(|e: ExporterBuildError| CoreError::TelemetryInit(e.to_string())),
-        other => Err(CoreError::TelemetryInit(format!(
-            "unsupported protocol: {other}, expected 'grpc' or 'http'"
-        ))),
     }
 }

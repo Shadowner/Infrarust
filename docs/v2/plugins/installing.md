@@ -5,9 +5,9 @@ description: How to configure the plugins directory, register plugins in infraru
 
 # Installing plugins
 
-Infrarust loads plugins from the directory pointed to by `plugins_dir` (default: `./plugins`). When the binary is built with the `wasm` feature, the WASM loader scans that directory recursively for every `.wasm` file and loads each one. Built-in plugins compile into the binary and register themselves at startup, with no files to copy.
+Infrarust loads plugins from the directory pointed to by `plugins_dir` (default: `./plugins`). When the binary is built with the `wasm` feature, the WASM loader loads every `.wasm` file directly in that directory. It does not look into subdirectories. Built-in plugins compile into the binary and register themselves at startup, with no files to copy.
 
-The `wasm` feature is not on by default, so a stock release build does not load `.wasm` files. Build with `cargo build --release --features wasm` to enable WASM plugin support.
+The `wasm` feature is on by default, so a stock release build loads `.wasm` files. Building with `--no-default-features` removes it; add `--features wasm` back to keep WASM plugin support.
 
 ## WASM plugins
 
@@ -17,13 +17,12 @@ A WASM plugin is a single `.wasm` file that implements the `infrarust:plugin` co
 plugins/
   my-filter.wasm
   analytics.wasm
-  .cache/          ← AOT compilation cache, managed automatically
 ```
 
-The loader will find both files on the next startup. Subdirectories are also scanned, so you can organise plugins however you like. The `.cache` subdirectory is skipped during the scan.
+The loader will find both files on the next startup. Put every `.wasm` directly in the plugins directory: subdirectories are not scanned. They are where plugins keep their data (`plugins/<id>/`), and a plugin can write to its own data directory, so a component found there is never loaded. A backup copy left in a subdirectory is ignored.
 
 ::: tip
-AOT-compiled `.cwasm` artifacts land in `plugins/.cache/`. They speed up subsequent startups by skipping recompilation. The cache is keyed on the WASM binary hash and the wasmtime version, so a wasmtime upgrade or a changed plugin automatically triggers recompilation.
+The compiled plugins are cached in `[wasm] cache_dir`, `./cache/wasm` by default, next to `plugins/` and never inside it. The cache speeds up later startups by skipping compilation, is keyed on the plugin's content and the wasmtime version, and can be deleted at any time. See [The AOT cache](./wasm/deploying#the-aot-cache).
 :::
 
 ## Configuring a plugin in infrarust.toml
@@ -36,19 +35,22 @@ permissions = ["server-manage", "ban"]
 enabled = true
 ```
 
-The three fields are:
+The fields are:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `path` | string | none | Reserved for future use (native `.so` loader, not yet available). |
+| `path` | string | none | Accepted for compatibility. WASM plugins are always loaded from `plugins_dir`, and native plugins are compiled in. |
 | `permissions` | string array | `[]` | Extra capabilities to grant beyond the baseline. Values are kebab-case strings. |
-| `enabled` | bool | none | Parsed and stored, but not yet enforced at startup in this version. |
+| `deny` | string array | `[]` | Capabilities to remove, applied after the baseline and `permissions`. Also applies to built-in plugins. |
+| `strict_capabilities` | bool | `false` | WASM plugins: refuse to load the plugin when it imports a host function whose capability it lacks. |
+| `wasm` | table | none | Per-plugin overrides of the `[wasm]` sandbox limits, plus the `network` and `mounts` settings. |
+| `enabled` | bool | `true` | Set to `false` to skip the plugin at startup. |
 
-A `[plugins.<id>]` table is optional. You only need one if you want to grant extra capabilities.
+A `[plugins.<id>]` table is optional. You only need one to grant or deny capabilities, disable the plugin, or change its sandbox settings. See [`[plugins.<id>]`](../reference/config-schema#plugins-id) for every key.
 
 ## Capabilities
 
-WASM plugins start with a baseline set of capabilities and can request more via `permissions`. Native (built-in) plugins are trusted and receive every capability unconditionally.
+WASM plugins start with a baseline set of capabilities and can request more via `permissions`. Native (built-in) plugins are trusted and receive every capability except the ones listed in their `deny`.
 
 The baseline every WASM plugin receives:
 
@@ -57,7 +59,7 @@ The baseline every WASM plugin receives:
 - `player-write`: send messages, titles, and kicks
 - `command`: register in-game commands
 - `scheduler`: run periodic tasks
-- `config-read`: read the proxy configuration
+- `config-read`: read the proxy configuration, except the other plugins' `[plugins.<id>]` blocks
 
 Additional capabilities that require an explicit grant:
 
@@ -66,11 +68,15 @@ Additional capabilities that require an explicit grant:
 | `server-manage` | Start, stop, and query backend servers |
 | `ban` | Access the ban service |
 | `raw-packet` | Emit raw packets and receive `RawPacketEvent` |
+| `chat-intercept` | Read, deny and rewrite players' chat messages and commands (WASM `chat-message` and `command-execute` events) |
+| `plugin-messaging` | Register plugin channels, send plugin messages and receive `plugin-message` events |
 | `codec-filter` | Register codec-level packet filters |
 | `limbo` | Provide limbo handlers (hold players in a void world) |
 | `config-write` | Rewrite the global `infrarust.toml` |
-| `filesystem-extended` | Access paths outside the plugin's data directory |
-| `network` | Make outbound network connections |
+| `permission-provider` | Answer permission questions for every player when `[permissions] provider` names the plugin |
+| `ban-provider` | Provide the proxy's bans when `[ban] provider` names the plugin |
+| `filesystem-extended` | See the host folders listed in `[[plugins.<id>.wasm.mounts]]` |
+| `network` | Reach the destinations listed in `[plugins.<id>.wasm.network] allow` |
 
 Two more capability strings exist in the model. `transport-filter` is the one value that config parsing refuses outright: it is native-only and listing it in `permissions` puts it on the rejected list. `virtual-backend` parses fine but its proxy-side bridge is not yet implemented, so granting it does nothing today. Treat it as planned.
 
@@ -98,9 +104,9 @@ The Auth plugin's limbo handler and the Server wake plugin's hold logic are only
 
 ## Checking loaded plugins
 
-Any player with Admin permission can run `/ir plugins` in chat to list every plugin the proxy loaded at startup, along with its version and description. For plugin-specific commands, `/ir plugin <id>` shows what commands that plugin registered.
+Admins can run `/ir plugins` in chat to list every plugin the proxy loaded at startup, along with its version and description. For plugin-specific commands, `/ir plugin <id>` shows what commands that plugin registered.
 
-Both subcommands require the Admin permission level. Players without it see no response.
+The subcommands are gated by the permission nodes `infrarust.command.plugins` and `infrarust.command.plugin`, which default to admins and cannot be opened with `player_commands`. A plugin permission provider may still grant them. A player without the node gets `[Infrarust] You don't have permission.`
 
 ## Data directories
 

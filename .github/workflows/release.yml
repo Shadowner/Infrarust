@@ -12,7 +12,7 @@ jobs:
       version: ${{ steps.get-version.outputs.version }}
       commit_title: ${{ steps.get-commit-title.outputs.commit_title }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       
       - name: Get version from Cargo.toml
         id: get-version
@@ -45,12 +45,11 @@ jobs:
             platform: linux
             ext: tar.gz
           
-          # TODO: re-enable once musl cross-compilation toolchain is sorted out
-          # - os: ubuntu-latest
-          #   target: aarch64-unknown-linux-musl
-          #   arch: arm64
-          #   platform: linux
-          #   ext: tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            arch: arm64
+            platform: linux
+            ext: tar.gz
 
           # macOS builds
           - os: macos-latest
@@ -80,10 +79,10 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: ${{ matrix.target }}
       
@@ -92,17 +91,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev musl-tools
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            curl -LO https://musl.cc/aarch64-linux-musl-cross.tgz
-            tar xzf aarch64-linux-musl-cross.tgz
-            echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
-          fi
-
-      - name: Set aarch64 musl cross-compile env
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> $GITHUB_ENV
-          echo "AR_aarch64_unknown_linux_musl=aarch64-linux-musl-ar" >> $GITHUB_ENV
 
       - name: Build Admin Frontend
         uses: ./.github/actions/build-frontend
@@ -129,7 +117,7 @@ jobs:
           cd ..
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
           name: v${{ needs.check-release.outputs.version }} - ${{ needs.check-release.outputs.commit_title }} 
@@ -149,18 +137,18 @@ jobs:
     needs: check-release
     runs-on: ubuntu-latest
     steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v7.0.1
           with:
             ref: v${{ needs.check-release.outputs.version}}
           
         - name: Install Rust
-          uses: dtolnay/rust-toolchain@stable
+          uses: dtolnay/rust-toolchain@1.99.0
 
         - name: Build Admin Frontend
           uses: ./.github/actions/build-frontend
 
         - name: Install cargo-workspaces
-          uses: taiki-e/install-action@v2
+          uses: taiki-e/install-action@v2.87.21
           with:
             tool: cargo-workspaces
           
@@ -174,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Repository Dispatch
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4.0.1
         with:
           token: ${{ secrets.INFRARUST_EGG_REPO_PAT }}
           repository: shadowner/infrarust-egg

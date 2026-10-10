@@ -15,26 +15,51 @@ Feel free to add or modify the source code. On GitHub the best way of doing this
 
 ## Project Structure
 
-```C#
-rust/
-├── src/
-│   ├── bin/           # Binary executables
-│   ├── core/          # Core functionality
-│   ├── network/       # Networking code
-│   ├── protocol/      # Minecraft protocol implementation
-│   └── proxy_modes/   # Different proxy mode implementations
-├── tests/             # Integration tests // TODO
-├── Cargo.toml         # Project dependencies and metadata
-└── Cargo.lock         # Locked dependencies
+Infrarust is a Cargo workspace. Each directory below is one crate unless noted.
+
+```text
+crates/
+├── infrarust/                  # The proxy binary: CLI, config loading, telemetry, plugin bootstrap
+├── infrarust-core/             # Proxy engine: pipeline, sessions, status, event bus, plugin manager
+├── infrarust-api/              # The native plugin API (traits, events, types); `test-util` feature ships mocks
+├── infrarust-plugin-common/    # Dependency-free types shared by the API and the WASM guest SDK
+├── infrarust-plugin-sdk/       # Guest SDK for WASM plugins (infrarust:plugin@0.3)
+├── infrarust-plugin-macros/    # Proc-macros used by the guest SDK (`#[plugin]`)
+├── infrarust-plugin-wit/       # The frozen WIT contract shared by the host loader and the SDK
+├── infrarust-loader-wasm/      # The wasmtime host that loads WASM plugins
+├── infrarust_protocol/         # Minecraft protocol codec: packets, framing, compression, encryption
+├── infrarust_config/           # Configuration types, validation, providers and migration
+├── infrarust_server_manager/   # Managed backends: local process, Pterodactyl and Crafty providers
+├── infrarust-transport/        # Listener, backend connector, PROXY protocol
+└── infrarust-test-harness/     # In-process fake clients and backends for end-to-end tests
+plugins/
+├── infrarust-plugin-hello/     # Minimal example plugin
+├── infrarust-plugin-auth/      # Offline-mode login and register, premium auto-login
+├── infrarust-plugin-admin-api/ # HTTP REST administration API
+├── infrarust-plugin-server-wake/ # Wakes managed backends on demand
+└── infrarust-plugin-stats/     # Statistics plugin, built natively and as WASM
+tools/
+├── mc-bench/                   # Play-state load generator and mock backend for benchmarks
+├── stress-test/                # Connection-flood stress tester
+└── registry-extractor/         # Dumps configuration-phase registry data into crates/infrarust-core/registry
+templates/
+└── plugin-template/            # `cargo generate` template for a new plugin
+docs/
+└── v2/                         # The documentation site (VitePress): guide, configuration, plugins
 ```
 
-> More detail will be added on the website documentation
+Integration tests live in each crate's `tests/` directory; the end-to-end suite that drives real Minecraft traffic through the proxy is in `crates/infrarust-test-harness/tests/`.
 
 ## Code Style
 
 - Follow the official [Rust Style Guide](https://rust-lang.github.io/api-guidelines/)
-- Use `cargo fmt` before committing to ensure consistent formatting
-- Run `cargo clippy` to catch common mistakes and improve code quality
+- Use `cargo fmt --all` before committing to ensure consistent formatting
+- Run `cargo clippy --workspace --all-targets --all-features` and keep it at zero warnings
+
+Two conventions are enforced across the workspace:
+
+- **No `unwrap` or `expect` in production code.** The workspace lints warn on `clippy::unwrap_used` and `clippy::expect_used`. Handle the error or return it; for a `std::sync::Mutex` or `RwLock`, use `crate::util::sync::{lock, read, write}` in `infrarust-core`, which recover from poisoning. Test modules start with `#![allow(clippy::unwrap_used, clippy::expect_used)]`, so tests may unwrap freely.
+- **No comments in code.** Rust sources carry no `//`, `///` or `//!` comments: names and types are expected to explain the code, and anything that needs prose goes to `docs/v2`, next to the feature it documents. Public items of `infrarust-api` keep their doc comments since they are rendered by rustdoc for plugin authors.
 
 ## Commit Messages
 
@@ -69,3 +94,19 @@ We follow [Semantic Versioning](https://semver.org/):
 - MAJOR version for incompatible API changes
 - MINOR version for new functionality in a backwards compatible manner
 - PATCH version for backwards compatible bug fixes
+
+## Publishing to crates.io
+
+Every crate must build from its own packaged tarball, so build scripts only write to `OUT_DIR` and no crate reads files outside its directory:
+
+- the registry snapshots embedded by `infrarust-core` live in `crates/infrarust-core/registry/`;
+- `infrarust-loader-wasm/wit` and `infrarust-plugin-sdk/wit` are symlinks to `crates/infrarust-plugin-wit/wit`, which `cargo package` copies as regular files (on Windows, enable `core.symlinks` before cloning);
+- `infrarust-plugin-admin-api` embeds `frontend/.output/public/` when it exists and a placeholder page otherwise, so build the frontend before publishing it.
+
+```bash
+cd plugins/infrarust-plugin-admin-api/frontend && npm install && npx nuxt generate && cd -
+cargo package --workspace
+cargo publish --workspace
+```
+
+`cargo package --workspace` verifies every crate against the others in dependency order; `cargo publish --workspace` uploads them in that same order and skips the `publish = false` tools and test harness.

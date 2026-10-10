@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ada66d04d1d9f5efa307f14b23f5f5208d4f8ab2fef5e58269dca30cd03a72e5 # shrinks to packet = SChatMessage { message: "", timestamp: 0, salt: 0, signature: None, signed_preview: false, previous_messages: PreviousMessages { seen: [], last_received: None }, last_seen: LastSeenMessages { offset: 0, acknowledged: [0, 0, 0], checksum: 0 } }
+cc 4bdc125467613749cef1e1e27299536c34205ce7d98b68486321e4a16cd15574 # shrinks to command = "", timestamp = 0, salt = 0, argument_signatures = [], last_seen = LastSeenMessages { offset: 0, acknowledged: [0, 0, 0], checksum: 0 }

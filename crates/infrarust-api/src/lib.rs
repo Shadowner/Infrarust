@@ -44,7 +44,7 @@
 //! |------|-----------|------------|
 //! | 1 | Event listeners, commands | [`Plugin`](plugin::Plugin), [`EventBus`](event::bus::EventBus) |
 //! | 2 | Limbo handlers (proxy handles protocol) | [`LimboHandler`](limbo::LimboHandler) |
-//! | 3 | Virtual backends (full packet control) — *planned, not yet dispatched by the proxy* | [`VirtualBackendHandler`](virtual_backend::VirtualBackendHandler) |
+//! | 3 | Virtual backends (full packet control) — *planned, behind the `unstable` feature* | `virtual_backend::VirtualBackendHandler` |
 //!
 //! ## Modules
 //!
@@ -54,17 +54,27 @@
 //! - [`filter`] — Codec and transport filter system
 //! - [`plugin`] — Plugin trait and lifecycle
 //! - [`player`] — Player trait
-//! - [`permissions`] — Permission levels and plugin capabilities
+//! - [`permissions`] — Permission nodes, providers and plugin capabilities
 //! - [`services`] — Proxy service traits
 //! - [`limbo`] — Limbo handler system (Tier 2)
-//! - [`virtual_backend`] — Virtual backend system (Tier 3, planned)
+//! - `virtual_backend` — Virtual backend system (Tier 3, planned; `unstable` feature)
 //! - [`command`] — Command system
 //! - [`loader`] — Plugin discovery and loading traits
-//! - [`message`] — Proxy-branded chat message helpers
+//! - [`branding`] — Proxy-branded chat message helpers
 //! - [`provider`] — Plugin-provided server config sources
 //! - [`error`] — Error types
 //! - [`prelude`] — Convenience re-exports
 
+#[doc(hidden)]
+#[cfg(any(test, feature = "host"))]
+pub mod __private {
+    //! Proxy-side plumbing shared by `infrarust-core` and `infrarust-loader-wasm`.
+    //! Not part of the plugin API: plugins must not depend on the `host` feature.
+
+    pub mod caller_deadline;
+    pub mod session_task;
+}
+pub mod branding;
 pub mod command;
 pub mod error;
 pub mod event;
@@ -72,12 +82,15 @@ pub mod events;
 pub mod filter;
 pub mod limbo;
 pub mod loader;
-pub mod message;
+pub mod messaging;
 pub mod permissions;
 pub mod player;
 pub mod plugin;
 pub mod prelude;
 pub mod provider;
 pub mod services;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 pub mod types;
+#[cfg(feature = "unstable")]
 pub mod virtual_backend;

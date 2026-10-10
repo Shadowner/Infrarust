@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use infrarust_config::ServerConfig;
 use infrarust_core::provider::ProviderId;
@@ -308,4 +309,77 @@ fn test_update_preserves_load_balancer_when_balancing_is_unchanged() {
     let (_, _, rebuilt) = router.resolve_route("play.mc").unwrap();
     assert!(!Arc::ptr_eq(&first, &rebuilt));
     assert_eq!(rebuilt.name(), "least_conn");
+}
+
+fn lobby_config(round: usize) -> ServerConfig {
+    let rotating = if round.is_multiple_of(2) {
+        "lobby-old.mc"
+    } else {
+        "lobby-new.mc"
+    };
+    toml::from_str(&format!(
+        "domains = [\"lobby.mc\", \"*.lobby.mc\", \"{rotating}\"]\n\
+         addresses = [\"10.0.0.1:25565\"]\n\
+         [motd.online]\ntext = \"round {round}\"\n"
+    ))
+    .unwrap()
+}
+
+#[test]
+fn test_update_never_unroutes_a_domain_it_keeps() {
+    const ROUNDS: usize = 20_000;
+    const RESOLVERS: usize = 4;
+
+    let router = Arc::new(DomainRouter::new());
+    let id = ProviderId::file("lobby.toml");
+    router.add(id.clone(), lobby_config(0));
+
+    let done = Arc::new(AtomicBool::new(false));
+    let resolvers: Vec<_> = (0..RESOLVERS)
+        .map(|_| {
+            let router = Arc::clone(&router);
+            let done = Arc::clone(&done);
+            std::thread::spawn(move || {
+                let mut lookups = 0usize;
+                let mut misses = Vec::new();
+                while !done.load(Ordering::Acquire) {
+                    for domain in ["lobby.mc", "play.lobby.mc"] {
+                        lookups += 1;
+                        if router.resolve(domain).is_none() {
+                            misses.push(domain);
+                        }
+                    }
+                }
+                (lookups, misses)
+            })
+        })
+        .collect();
+
+    for round in 1..=ROUNDS {
+        router.update(id.clone(), lobby_config(round));
+    }
+    done.store(true, Ordering::Release);
+
+    let mut lookups = 0;
+    let mut misses = Vec::new();
+    for resolver in resolvers {
+        let (seen, missed) = resolver.join().unwrap();
+        lookups += seen;
+        misses.extend(missed);
+    }
+    assert!(lookups > 0);
+    assert!(
+        misses.is_empty(),
+        "{} of {lookups} lookups found no server, first: {:?}",
+        misses.len(),
+        misses.first()
+    );
+
+    let (_, config) = router.resolve("lobby.mc").unwrap();
+    assert_eq!(
+        config.motd.online.as_ref().unwrap().text,
+        format!("round {ROUNDS}")
+    );
+    assert!(router.resolve("lobby-new.mc").is_none());
+    assert!(router.resolve("lobby-old.mc").is_some());
 }

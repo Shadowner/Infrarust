@@ -1,5 +1,6 @@
 //! Configuration service.
 
+use crate::error::ErrorKind;
 use crate::types::ServerId;
 
 pub mod private {
@@ -7,21 +8,7 @@ pub mod private {
     pub trait Sealed {}
 }
 
-/// The proxy mode for a server connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum ProxyMode {
-    /// Raw TCP forwarding — proxy cannot inspect or inject packets.
-    Passthrough,
-    /// Zero-copy forwarding — similar to Passthrough but with optimizations.
-    ZeroCopy,
-    /// Proxy terminates the client connection and re-encodes packets.
-    ClientOnly,
-    /// Offline mode — no Mojang authentication.
-    Offline,
-    /// Full server-side integration.
-    ServerOnly,
-}
+pub use infrarust_plugin_common::enums::ProxyMode;
 
 /// Configuration for a backend server.
 #[derive(Debug, Clone)]
@@ -51,31 +38,73 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        id: ServerId,
-        network: Option<String>,
-        addresses: Vec<crate::types::ServerAddress>,
-        domains: Vec<String>,
-        proxy_mode: ProxyMode,
-        limbo_handlers: Vec<String>,
-        max_players: u32,
-        disconnect_message: Option<String>,
-        send_proxy_protocol: bool,
-        has_server_manager: bool,
-    ) -> Self {
+    pub fn new(id: ServerId) -> Self {
         Self {
             id,
-            network,
-            addresses,
-            domains,
-            proxy_mode,
-            limbo_handlers,
-            max_players,
-            disconnect_message,
-            send_proxy_protocol,
-            has_server_manager,
+            network: None,
+            addresses: Vec::new(),
+            domains: Vec::new(),
+            proxy_mode: ProxyMode::Passthrough,
+            limbo_handlers: Vec::new(),
+            max_players: 0,
+            disconnect_message: None,
+            send_proxy_protocol: false,
+            has_server_manager: false,
         }
+    }
+
+    #[must_use]
+    pub fn network(mut self, network: Option<String>) -> Self {
+        self.network = network;
+        self
+    }
+
+    #[must_use]
+    pub fn addresses(mut self, addresses: Vec<crate::types::ServerAddress>) -> Self {
+        self.addresses = addresses;
+        self
+    }
+
+    #[must_use]
+    pub fn domains(mut self, domains: Vec<String>) -> Self {
+        self.domains = domains;
+        self
+    }
+
+    #[must_use]
+    pub const fn proxy_mode(mut self, proxy_mode: ProxyMode) -> Self {
+        self.proxy_mode = proxy_mode;
+        self
+    }
+
+    #[must_use]
+    pub fn limbo_handlers(mut self, limbo_handlers: Vec<String>) -> Self {
+        self.limbo_handlers = limbo_handlers;
+        self
+    }
+
+    #[must_use]
+    pub const fn max_players(mut self, max_players: u32) -> Self {
+        self.max_players = max_players;
+        self
+    }
+
+    #[must_use]
+    pub fn disconnect_message(mut self, message: Option<String>) -> Self {
+        self.disconnect_message = message;
+        self
+    }
+
+    #[must_use]
+    pub const fn send_proxy_protocol(mut self, send: bool) -> Self {
+        self.send_proxy_protocol = send;
+        self
+    }
+
+    #[must_use]
+    pub const fn has_server_manager(mut self, managed: bool) -> Self {
+        self.has_server_manager = managed;
+        self
     }
 }
 
@@ -112,6 +141,17 @@ pub enum ConfigWriteError {
     Io(String),
 }
 
+impl ConfigWriteError {
+    /// The [`ErrorKind`] a WASM guest receives for this error.
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::PermissionDenied => ErrorKind::PermissionDenied,
+            Self::Parse(_) | Self::Validation(_) => ErrorKind::InvalidArgument,
+            Self::Io(_) => ErrorKind::Unavailable,
+        }
+    }
+}
+
 /// Access to proxy configuration.
 ///
 /// Obtained via [`PluginContext::config_service()`](crate::plugin::PluginContext::config_service).
@@ -120,6 +160,8 @@ pub enum ConfigWriteError {
 pub trait ConfigService: Send + Sync + private::Sealed {
     /// Returns the configuration for a specific server.
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig>;
+
+    fn get_server_config_by_domain(&self, domain: &str) -> Option<ServerConfig>;
 
     /// Returns all server configurations.
     fn get_all_server_configs(&self) -> Vec<ServerConfig>;
@@ -154,7 +196,7 @@ pub trait ConfigService: Send + Sync + private::Sealed {
     /// See [`ConfigWriteError`].
     fn write_proxy_config_document(&self, toml: &str) -> Result<(), ConfigWriteError>;
 
-    /// Returns a configuration value by key, or `None` if not set.
+    /// Returns the value at a dotted path of the effective proxy config, or `None`.
     fn get_value(&self, key: &str) -> Option<String>;
 }
 

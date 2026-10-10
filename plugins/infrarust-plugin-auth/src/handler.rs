@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use infrarust_api::event::BoxFuture;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
+use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, LimboOutcome, SessionEndReason};
 use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, PlayerId, TitleData};
@@ -20,14 +20,25 @@ use crate::storage::AuthStorage;
 use crate::util::parse_colored;
 
 struct AuthSessionState {
-    failed_attempts: u32,
     needs_register: bool,
     username: Username,
     force_completed: bool,
 }
 
+#[derive(Default)]
+struct ConnectionAuth {
+    authenticated: bool,
+    failed_attempts: u32,
+}
+
+pub(crate) enum Attempt {
+    Retry { attempts_left: u32 },
+    Exhausted,
+}
+
 pub struct AuthHandler {
     sessions: DashMap<PlayerId, AuthSessionState>,
+    connections: DashMap<PlayerId, ConnectionAuth>,
     storage: Arc<dyn AuthStorage>,
     config: Arc<AuthConfig>,
     player_registry: Arc<dyn PlayerRegistry>,
@@ -47,6 +58,7 @@ impl AuthHandler {
     ) -> Self {
         Self {
             sessions: DashMap::new(),
+            connections: DashMap::new(),
             storage,
             config,
             player_registry,
@@ -68,6 +80,10 @@ impl AuthHandler {
         &self.config
     }
 
+    pub(crate) fn player_registry(&self) -> &dyn PlayerRegistry {
+        self.player_registry.as_ref()
+    }
+
     pub(crate) fn force_complete_session(&self, player_id: PlayerId) -> bool {
         if let Some(mut entry) = self.sessions.get_mut(&player_id) {
             entry.force_completed = true;
@@ -77,9 +93,50 @@ impl AuthHandler {
         }
     }
 
-    #[allow(dead_code)]
+    pub(crate) fn dummy_hash(&self) -> &crate::account::PasswordHash {
+        &self.dummy_hash
+    }
+
     pub(crate) fn is_in_auth_limbo(&self, player_id: PlayerId) -> bool {
         self.sessions.contains_key(&player_id)
+    }
+
+    pub(crate) fn is_authenticated(&self, player_id: PlayerId) -> bool {
+        !self.is_in_auth_limbo(player_id)
+            && self
+                .connections
+                .get(&player_id)
+                .is_some_and(|c| c.authenticated)
+    }
+
+    fn mark_authenticated(&self, player_id: PlayerId) {
+        let mut connection = self.connections.entry(player_id).or_default();
+        connection.authenticated = true;
+        connection.failed_attempts = 0;
+    }
+
+    pub(crate) fn record_failed_attempt(&self, player_id: PlayerId) -> Attempt {
+        let mut connection = self.connections.entry(player_id).or_default();
+        connection.failed_attempts += 1;
+        let max = self.config.security.max_login_attempts;
+        if connection.failed_attempts >= max {
+            Attempt::Exhausted
+        } else {
+            Attempt::Retry {
+                attempts_left: max - connection.failed_attempts,
+            }
+        }
+    }
+
+    pub(crate) fn clear_failed_attempts(&self, player_id: PlayerId) {
+        if let Some(mut connection) = self.connections.get_mut(&player_id) {
+            connection.failed_attempts = 0;
+        }
+    }
+
+    pub fn forget_player(&self, player_id: PlayerId) {
+        self.sessions.remove(&player_id);
+        self.connections.remove(&player_id);
     }
 
     fn cleanup_session(&self, player_id: PlayerId) {
@@ -98,6 +155,14 @@ impl AuthHandler {
                 .stay(0)
                 .fade_out(0),
         );
+    }
+
+    fn accept(&self, session: &dyn LimboSession, message: Component) {
+        let _ = session.send_message(message);
+        Self::clear_title(session);
+        self.cleanup_session(session.player_id());
+        self.mark_authenticated(session.player_id());
+        session.complete(LimboOutcome::Accept);
     }
 
     fn spawn_reminder_task(&self, player_id: PlayerId, cancel_token: CancellationToken) {
@@ -181,7 +246,7 @@ impl LimboHandler for AuthHandler {
             let mojang_uuid = profile.uuid;
             let now = chrono::Utc::now();
 
-            match self.storage.get_account_blocking(&username) {
+            match self.storage.get_account(&username) {
                 Ok(Some(existing)) => {
                     let first = existing
                         .premium_info
@@ -244,13 +309,14 @@ impl LimboHandler for AuthHandler {
                 .replace("{username}", &display_name);
             let _ = session.send_message(parse_colored(&msg));
             tracing::info!(%display_name, "Premium auto-login");
+            self.mark_authenticated(player_id);
             return Box::pin(async { HandlerResult::Accept });
         }
 
         let username = Username::new(&profile.username);
         let display_name = profile.username.clone();
 
-        let needs_register = !self.storage.has_account_blocking(&username);
+        let needs_register = !self.storage.has_account(&username);
 
         if needs_register {
             let title = self.msg(
@@ -280,7 +346,6 @@ impl LimboHandler for AuthHandler {
         self.sessions.insert(
             player_id,
             AuthSessionState {
-                failed_attempts: 0,
                 needs_register,
                 username,
                 force_completed: false,
@@ -295,12 +360,11 @@ impl LimboHandler for AuthHandler {
         if timeout_secs == 0 {
             Box::pin(async { HandlerResult::Hold })
         } else {
-            let on_timeout =
-                HandlerResult::Deny(parse_colored(&self.config.messages.login_timeout));
+            let on_timeout = LimboOutcome::Deny(parse_colored(&self.config.messages.login_timeout));
             Box::pin(async move {
                 HandlerResult::HoldWithTimeout {
                     after: Duration::from_secs(timeout_secs),
-                    on_timeout: Box::new(on_timeout),
+                    on_timeout,
                 }
             })
         }
@@ -319,10 +383,7 @@ impl LimboHandler for AuthHandler {
             .get(&player_id)
             .is_some_and(|e| e.force_completed)
         {
-            let _ = session.send_message(self.msg(&self.config.messages.login_success, &[]));
-            Self::clear_title(session);
-            self.cleanup_session(player_id);
-            session.complete(HandlerResult::Accept);
+            self.accept(session, self.msg(&self.config.messages.login_success, &[]));
             return Box::pin(async {});
         }
 
@@ -349,7 +410,7 @@ impl LimboHandler for AuthHandler {
 
                 // Passwordless (premium) accounts verify against the dummy hash so
                 // messaging and timing match unknown accounts (no account-type oracle).
-                let hash = match self.storage.get_account_blocking(&username) {
+                let hash = match self.storage.get_account(&username) {
                     Ok(Some(AuthAccount {
                         password_hash: Some(h),
                         ..
@@ -389,35 +450,18 @@ impl LimboHandler for AuthHandler {
                                 });
                             }
 
-                            let _ = session
-                                .send_message(self.msg(&self.config.messages.login_success, &[]));
-                            Self::clear_title(session);
-                            self.cleanup_session(player_id);
-                            session.complete(HandlerResult::Accept);
+                            self.accept(
+                                session,
+                                self.msg(&self.config.messages.login_success, &[]),
+                            );
                         }
-                        Ok((false, _)) => {
-                            let (should_kick, attempts_left) =
-                                if let Some(mut entry) = self.sessions.get_mut(&player_id) {
-                                    entry.failed_attempts += 1;
-                                    let left = self
-                                        .config
-                                        .security
-                                        .max_login_attempts
-                                        .saturating_sub(entry.failed_attempts);
-                                    (
-                                        entry.failed_attempts
-                                            >= self.config.security.max_login_attempts,
-                                        left,
-                                    )
-                                } else {
-                                    (false, 0)
-                                };
-
-                            if should_kick {
+                        Ok((false, _)) => match self.record_failed_attempt(player_id) {
+                            Attempt::Exhausted => {
                                 let msg = self.msg(&self.config.messages.login_max_attempts, &[]);
                                 self.cleanup_session(player_id);
-                                session.complete(HandlerResult::Deny(msg));
-                            } else {
+                                session.complete(LimboOutcome::Deny(msg));
+                            }
+                            Attempt::Retry { attempts_left } => {
                                 let _ = session.send_message(self.msg(
                                     &self.config.messages.login_fail,
                                     &[
@@ -429,7 +473,7 @@ impl LimboHandler for AuthHandler {
                                     ],
                                 ));
                             }
-                        }
+                        },
                         Err(e) => {
                             tracing::error!("Password verification error: {e}");
                             let _ = session.send_message(Component::error(
@@ -505,12 +549,10 @@ impl LimboHandler for AuthHandler {
 
                     match storage.create_account(&account).await {
                         Ok(()) => {
-                            let _ = session.send_message(
+                            self.accept(
+                                session,
                                 self.msg(&self.config.messages.register_success, &[]),
                             );
-                            Self::clear_title(session);
-                            self.cleanup_session(player_id);
-                            session.complete(HandlerResult::Accept);
                         }
                         Err(crate::error::AuthStorageError::AccountAlreadyExists { .. }) => {
                             let _ = session.send_message(
@@ -546,15 +588,16 @@ impl LimboHandler for AuthHandler {
             .get(&player_id)
             .is_some_and(|e| e.force_completed)
         {
-            let _ = session.send_message(self.msg(&self.config.messages.login_success, &[]));
-            Self::clear_title(session);
-            self.cleanup_session(player_id);
-            session.complete(HandlerResult::Accept);
+            self.accept(session, self.msg(&self.config.messages.login_success, &[]));
             return Box::pin(async {});
         }
 
         let _ = session.send_message(self.msg(&self.config.messages.unknown_command, &[]));
         Box::pin(async {})
+    }
+
+    fn allows_proxy_commands(&self) -> bool {
+        false
     }
 
     fn on_session_end(&self, player_id: PlayerId, _reason: SessionEndReason) -> BoxFuture<'_, ()> {
@@ -566,6 +609,7 @@ impl LimboHandler for AuthHandler {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::account::Username;
     use crate::test_support::{
@@ -584,8 +628,8 @@ mod tests {
             .on_command(&*session, "register", &["hunter2hunter2", "hunter2hunter2"])
             .await;
 
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
-        assert!(env.storage.has_account_blocking(&Username::new("Steve")));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
+        assert!(env.storage.has_account(&Username::new("Steve")));
     }
 
     #[tokio::test]
@@ -602,7 +646,7 @@ mod tests {
             .await;
 
         assert!(session.completions().is_empty());
-        assert!(!env.storage.has_account_blocking(&Username::new("Steve")));
+        assert!(!env.storage.has_account(&Username::new("Steve")));
     }
 
     #[tokio::test]
@@ -618,7 +662,7 @@ mod tests {
             .on_command(&*session, "login", &["hunter2hunter2"])
             .await;
 
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
     }
 
     #[tokio::test]
@@ -638,10 +682,7 @@ mod tests {
         env.handler
             .on_command(&*session, "login", &["wrong-password"])
             .await;
-        assert!(matches!(
-            session.completions()[..],
-            [HandlerResult::Deny(_)]
-        ));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Deny(_)]));
     }
 
     #[tokio::test]
@@ -654,7 +695,7 @@ mod tests {
         assert!(env.handler.force_complete_session(PlayerId::new(1)));
 
         env.handler.on_chat(&*session, "hello").await;
-        assert!(matches!(session.completions()[..], [HandlerResult::Accept]));
+        assert!(matches!(session.completions()[..], [LimboOutcome::Accept]));
     }
 
     #[tokio::test]
@@ -669,14 +710,14 @@ mod tests {
 
         let username = Username::new("Notch");
         for _ in 0..200 {
-            if env.storage.has_account_blocking(&username) {
+            if env.storage.has_account(&username) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         let account = env
             .storage
-            .get_account_blocking(&username)
+            .get_account(&username)
             .unwrap()
             .expect("premium account created in background");
         assert!(account.premium_info.is_some());
@@ -702,6 +743,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_login_lasts_until_the_player_disconnects() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        env.log_in(1, "Steve", "hunter2hunter2").await;
+        assert!(env.handler.is_authenticated(PlayerId::new(1)));
+
+        env.handler.forget_player(PlayerId::new(1));
+        assert!(!env.handler.is_authenticated(PlayerId::new(1)));
+    }
+
+    #[tokio::test]
     async fn session_end_cleans_up_state() {
         let env = TestEnv::new().await;
         env.create_account("Steve", Some("hunter2hunter2")).await;
@@ -710,6 +762,25 @@ mod tests {
         assert!(env.handler.is_in_auth_limbo(PlayerId::new(1)));
 
         env.handler
+            .on_session_end(PlayerId::new(1), SessionEndReason::Disconnected)
+            .await;
+        assert!(!env.handler.is_in_auth_limbo(PlayerId::new(1)));
+    }
+
+    #[tokio::test]
+    async fn the_registered_handler_forwards_session_callbacks_to_the_shared_handler() {
+        let env = TestEnv::new().await;
+        env.create_account("Steve", Some("hunter2hunter2")).await;
+        let registered: Box<dyn LimboHandler> = Box::new(Arc::clone(&env.handler));
+        let session = limbo_session(1, "Steve");
+
+        assert_eq!(registered.name(), "auth");
+        assert!(!registered.allows_proxy_commands());
+        registered.on_player_enter(&*session).await;
+        assert!(env.handler.is_in_auth_limbo(PlayerId::new(1)));
+
+        registered.on_disconnect(PlayerId::new(1)).await;
+        registered
             .on_session_end(PlayerId::new(1), SessionEndReason::Disconnected)
             .await;
         assert!(!env.handler.is_in_auth_limbo(PlayerId::new(1)));

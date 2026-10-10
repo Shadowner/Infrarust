@@ -16,15 +16,15 @@ jobs:
   check-and-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: clippy, rustfmt
           
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.2
 
       - name: Build Admin Frontend
         uses: ./.github/actions/build-frontend
@@ -45,7 +45,7 @@ jobs:
         run: mv target/release/infrarust target/release/infrarust-latest-linux
           
       - name: Upload latest build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: latest-build
           path: target/release/infrarust-latest-linux

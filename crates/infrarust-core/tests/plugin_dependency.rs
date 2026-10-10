@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use infrarust_api::plugin::PluginMetadata;
+use infrarust_core::plugin::PluginManagerError;
 use infrarust_core::plugin::dependency::resolve_load_order;
 
 #[test]
@@ -10,7 +11,7 @@ fn test_no_dependencies() {
         PluginMetadata::new("b", "B", "1.0"),
         PluginMetadata::new("c", "C", "1.0"),
     ];
-    let order = resolve_load_order(&plugins).unwrap();
+    let order = resolve_load_order(&plugins).order;
     assert_eq!(order.len(), 3);
     assert!(order.contains(&"a".to_string()));
     assert!(order.contains(&"b".to_string()));
@@ -23,7 +24,7 @@ fn test_simple_dependency() {
         PluginMetadata::new("a", "A", "1.0").depends_on("b"),
         PluginMetadata::new("b", "B", "1.0"),
     ];
-    let order = resolve_load_order(&plugins).unwrap();
+    let order = resolve_load_order(&plugins).order;
     let pos_a = order.iter().position(|x| x == "a").unwrap();
     let pos_b = order.iter().position(|x| x == "b").unwrap();
     assert!(pos_b < pos_a, "B must load before A");
@@ -36,26 +37,26 @@ fn test_chain() {
         PluginMetadata::new("b", "B", "1.0").depends_on("c"),
         PluginMetadata::new("c", "C", "1.0"),
     ];
-    let order = resolve_load_order(&plugins).unwrap();
+    let order = resolve_load_order(&plugins).order;
     assert_eq!(order, vec!["c", "b", "a"]);
 }
 
 #[test]
 fn test_missing_required() {
     let plugins = vec![PluginMetadata::new("a", "A", "1.0").depends_on("missing")];
-    let result = resolve_load_order(&plugins);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("missing"),
-        "Error should mention the missing dep: {err}"
-    );
+    let resolution = resolve_load_order(&plugins);
+    assert!(resolution.order.is_empty());
+    assert!(matches!(
+        resolution.refused.as_slice(),
+        [PluginManagerError::MissingDependency { plugin, dependency }]
+            if plugin == "a" && dependency == "missing"
+    ));
 }
 
 #[test]
 fn test_missing_optional() {
     let plugins = vec![PluginMetadata::new("a", "A", "1.0").optional_dependency("missing")];
-    let order = resolve_load_order(&plugins).unwrap();
+    let order = resolve_load_order(&plugins).order;
     assert_eq!(order, vec!["a"]);
 }
 
@@ -65,7 +66,7 @@ fn test_optional_present_influences_order() {
         PluginMetadata::new("a", "A", "1.0").optional_dependency("b"),
         PluginMetadata::new("b", "B", "1.0"),
     ];
-    let order = resolve_load_order(&plugins).unwrap();
+    let order = resolve_load_order(&plugins).order;
     let pos_a = order.iter().position(|x| x == "a").unwrap();
     let pos_b = order.iter().position(|x| x == "b").unwrap();
     assert!(
@@ -80,13 +81,15 @@ fn test_cycle() {
         PluginMetadata::new("a", "A", "1.0").depends_on("b"),
         PluginMetadata::new("b", "B", "1.0").depends_on("a"),
     ];
-    let result = resolve_load_order(&plugins);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("Circular dependency"),
-        "Error should mention circular dependency: {err}"
-    );
+    let resolution = resolve_load_order(&plugins);
+    assert!(resolution.order.is_empty());
+    assert!(matches!(
+        resolution.refused.as_slice(),
+        [
+            PluginManagerError::Cycle { plugin: first, cycle: first_cycle },
+            PluginManagerError::Cycle { plugin: second, cycle: second_cycle },
+        ] if first == "a" && second == "b" && first_cycle == &["a", "b"] && second_cycle == &["a", "b"]
+    ));
 }
 
 #[test]
@@ -100,7 +103,7 @@ fn test_diamond() {
         PluginMetadata::new("c", "C", "1.0").depends_on("d"),
         PluginMetadata::new("d", "D", "1.0"),
     ];
-    let order = resolve_load_order(&plugins).unwrap();
+    let order = resolve_load_order(&plugins).order;
     let pos = |id: &str| order.iter().position(|x| x == id).unwrap();
     assert!(pos("d") < pos("b"), "D before B");
     assert!(pos("d") < pos("c"), "D before C");

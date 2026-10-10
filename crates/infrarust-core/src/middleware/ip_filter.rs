@@ -1,11 +1,13 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_config::IpFilterConfig;
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
+use crate::pipeline::types::Refused;
 
 /// Middleware that checks client IP against a global whitelist/blacklist.
 pub struct IpFilterMiddleware {
@@ -33,6 +35,7 @@ impl Middleware for IpFilterMiddleware {
                 && !filter.is_allowed(&ctx.client_ip)
             {
                 tracing::debug!(ip = %ctx.client_ip, "ip blocked by global filter");
+                ctx.extensions.insert(Refused(RejectReason::IpFilter));
                 return Ok(MiddlewareResult::Reject(format!(
                     "IP {} is not allowed",
                     ctx.client_ip

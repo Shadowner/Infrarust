@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use rand::Rng;
+use rand::RngExt;
 
 const GENERATED_SECRET_LENGTH: usize = 32;
 
@@ -19,8 +19,8 @@ pub fn load_or_generate_secret(path: &Path) -> Result<Vec<u8>, std::io::Error> {
         }
         Ok(trimmed.as_bytes().to_vec())
     } else {
-        let secret: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
+        let secret: String = rand::rng()
+            .sample_iter(rand::distr::Alphanumeric)
             .take(GENERATED_SECRET_LENGTH)
             .map(char::from)
             .collect();

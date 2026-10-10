@@ -6,6 +6,8 @@ rust-version.workspace = true
 license-file.workspace = true
 repository.workspace = true
 description = "Offline-mode authentication plugin for the Infrarust Minecraft proxy (login/register, premium auto-login)"
+keywords = ["minecraft", "proxy", "plugin", "authentication"]
+categories = ["game-development", "authentication"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -28,7 +30,6 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 argon2 = { workspace = true }
 bcrypt = { workspace = true }
-rand_core = { workspace = true }
 reqwest = { workspace = true }
 governor = { workspace = true }
 

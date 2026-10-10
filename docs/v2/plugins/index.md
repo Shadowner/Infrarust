@@ -36,8 +36,8 @@ Infrarust includes three built-in plugins:
 | Plugin | Activation | Description |
 |--------|------------|-------------|
 | [Admin API & Web UI](./builtin/admin-api) | `[web]` section in `infrarust.toml`, with `enable_api` on | REST API and embedded web dashboard for monitoring, server and proxy configuration, and backend drain controls. |
-| [Auth](./builtin/auth) | `plugin-auth` feature flag | Password-based authentication with `/login` and `/register` commands. Holds players in limbo until authenticated. |
-| [Server Wake](./builtin/server-wake) | `plugin-server-wake` feature flag | Holds players in limbo while a backend server starts up, showing status messages. |
+| [Auth](./builtin/auth) | `plugin-auth` feature flag (on by default), and `"auth"` in the `limbo_handlers` of a `client_only` or `offline` server | Password-based authentication with `/login` and `/register` commands. Holds players in limbo until authenticated. |
+| [Server Wake](./builtin/server-wake) | `plugin-server-wake` feature flag (on by default), and `"server_wake"` in the `limbo_handlers` of a `client_only` or `offline` server | Holds players in limbo while a backend server starts up, showing status messages. |
 
 Built-in plugins are registered at compile time in `crates/infrarust/src/plugins.rs` using a `StaticPluginLoader`. To enable or disable them, toggle the corresponding Cargo feature when building:
 

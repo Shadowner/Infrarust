@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -11,40 +13,32 @@ use infrarust_api::provider::{
 use crate::provider::provider_id::ProviderId;
 use crate::provider::traits::{ProviderConfig, ProviderEvent};
 use crate::routing::DomainRouter;
-
-pub struct ActivatedProvider {
-    pub config_ids: Vec<ProviderId>,
-    pub watch_token: CancellationToken,
-}
+use crate::util::sync::lock;
 
 struct PluginProviderSenderImpl {
     sender: mpsc::Sender<ProviderEvent>,
     shutdown: CancellationToken,
-    provider_prefix: String,
+    plugin_id: String,
+    kind: String,
 }
 
 impl PluginProviderSender for PluginProviderSenderImpl {
     fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             let core_event = match event {
-                PluginProviderEvent::Added(config) => {
-                    self.provider_config_of(&config).map(ProviderEvent::Added)
-                }
-                PluginProviderEvent::Updated(config) => {
-                    self.provider_config_of(&config).map(ProviderEvent::Updated)
-                }
-                PluginProviderEvent::Removed(server_id) => Some(ProviderEvent::Removed(
-                    make_provider_id(&self.provider_prefix, server_id.as_str()),
-                )),
-                PluginProviderEvent::AddedDocument(doc) => {
+                PluginProviderEvent::Added(doc) => {
                     self.provider_config_from(&doc).map(ProviderEvent::Added)
                 }
-                PluginProviderEvent::UpdatedDocument(doc) => {
+                PluginProviderEvent::Updated(doc) => {
                     self.provider_config_from(&doc).map(ProviderEvent::Updated)
+                }
+                PluginProviderEvent::Removed(server_id) => {
+                    Some(ProviderEvent::Removed(self.provider_id(server_id.as_str())))
                 }
                 _ => {
                     tracing::warn!(
-                        provider = %self.provider_prefix,
+                        plugin = %self.plugin_id,
+                        provider = %self.kind,
                         "dropping unknown PluginProviderEvent variant"
                     );
                     None
@@ -66,36 +60,20 @@ impl PluginProviderSender for PluginProviderSenderImpl {
 }
 
 impl PluginProviderSenderImpl {
-    fn provider_config_of(
-        &self,
-        api: &infrarust_api::services::config_service::ServerConfig,
-    ) -> Option<ProviderConfig> {
-        match convert_api_to_config(api) {
-            Ok(config) => Some(ProviderConfig {
-                id: make_provider_id(&self.provider_prefix, api.id.as_str()),
-                config,
-            }),
-            Err(e) => {
-                tracing::warn!(
-                    provider = %self.provider_prefix,
-                    server = %api.id.as_str(),
-                    error = %e,
-                    "rejecting invalid server config"
-                );
-                None
-            }
-        }
+    fn provider_id(&self, document: &str) -> ProviderId {
+        ProviderId::plugin(&self.plugin_id, &self.kind, document)
     }
 
     fn provider_config_from(&self, doc: &ServerDocument) -> Option<ProviderConfig> {
         match parse_document(doc) {
             Ok(config) => Some(ProviderConfig {
-                id: make_provider_id(&self.provider_prefix, doc.id.as_str()),
+                id: self.provider_id(doc.id.as_str()),
                 config,
             }),
             Err(e) => {
                 tracing::warn!(
-                    provider = %self.provider_prefix,
+                    plugin = %self.plugin_id,
+                    provider = %self.kind,
                     document = %doc.id.as_str(),
                     error = %e,
                     "rejecting invalid server document"
@@ -106,202 +84,180 @@ impl PluginProviderSenderImpl {
     }
 }
 
-/// Parses a plugin-supplied TOML document into a full server config.
-///
-/// # Errors
-///
-/// Returns a human-readable message when the TOML does not parse or the
-/// resulting config fails [`infrarust_config::validate_server_config`].
-pub fn parse_document(doc: &ServerDocument) -> Result<infrarust_config::ServerConfig, String> {
-    let mut config: infrarust_config::ServerConfig =
-        toml::from_str(&doc.toml).map_err(|e| e.to_string())?;
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DocumentError {
+    #[error("invalid TOML: {0}")]
+    Toml(#[from] toml::de::Error),
+
+    #[error(transparent)]
+    Config(#[from] infrarust_config::ConfigError),
+}
+
+pub fn parse_document(
+    doc: &ServerDocument,
+) -> Result<infrarust_config::ServerConfig, DocumentError> {
+    let mut config: infrarust_config::ServerConfig = toml::from_str(&doc.toml)?;
 
     if config.id.is_none() {
         config.id = Some(doc.id.as_str().to_string());
     }
 
-    infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
+    for warning in infrarust_config::validate_server_config(&config)? {
+        tracing::warn!(server = %config.effective_id(), "{warning}");
+    }
     Ok(config)
 }
 
-/// Projects a plugin-supplied [`infrarust_api`] config onto the proxy's own,
-/// held to the same validation as a TOML document.
-fn convert_api_to_config(
-    api: &infrarust_api::services::config_service::ServerConfig,
-) -> Result<infrarust_config::ServerConfig, String> {
-    use infrarust_api::services::config_service::ProxyMode as ApiMode;
-    use infrarust_config::ProxyMode as ConfigMode;
-
-    let proxy_mode = match api.proxy_mode {
-        ApiMode::Passthrough => ConfigMode::Passthrough,
-        ApiMode::ZeroCopy => ConfigMode::ZeroCopy,
-        ApiMode::ClientOnly => ConfigMode::ClientOnly,
-        ApiMode::Offline => ConfigMode::Offline,
-        ApiMode::ServerOnly => ConfigMode::ServerOnly,
-        _ => ConfigMode::Passthrough,
-    };
-
-    let addresses = api
-        .addresses
-        .iter()
-        .map(|a| {
-            infrarust_config::WeightedAddress::from(infrarust_config::ServerAddress {
-                host: a.host.clone(),
-                port: a.port,
-            })
-        })
-        .collect();
-
-    let config = infrarust_config::ServerConfig {
-        id: Some(api.id.as_str().to_string()),
-        name: None,
-        network: api.network.clone(),
-        domains: api.domains.clone(),
-        addresses,
-        balance: Default::default(),
-        slow_start: None,
-        slow_start_aggression: 1.0,
-        active_health: None,
-        proxy_mode,
-        forwarding_mode: None,
-        send_proxy_protocol: api.send_proxy_protocol,
-        domain_rewrite: Default::default(),
-        motd: Default::default(),
-        server_manager: None,
-        timeouts: None,
-        max_players: api.max_players,
-        ip_filter: None,
-        disconnect_message: api.disconnect_message.clone(),
-        limbo_handlers: api.limbo_handlers.clone(),
-    };
-
-    infrarust_config::validate_server_config(&config).map_err(|e| e.to_string())?;
-    Ok(config)
+struct Activation {
+    config_ids: Vec<ProviderId>,
+    watch: CancellationToken,
 }
 
-fn make_provider_id(provider_prefix: &str, config_id: &str) -> ProviderId {
-    ProviderId::new(provider_prefix, config_id)
-}
-
-pub async fn activate_plugin_providers(
-    providers: Vec<(String, Box<dyn PluginConfigProvider>)>,
-    event_sender: mpsc::Sender<ProviderEvent>,
-    domain_router: &Arc<DomainRouter>,
+pub struct PluginProviderActivator {
+    sender: mpsc::Sender<ProviderEvent>,
+    router: Arc<DomainRouter>,
     shutdown: CancellationToken,
-) -> Vec<(String, ActivatedProvider)> {
-    let mut results = Vec::new();
+    started: AtomicBool,
+    active: Mutex<HashMap<String, Vec<Activation>>>,
+}
 
-    for (plugin_id, provider) in providers {
-        let provider_prefix = format!("plugin:{}:{}", plugin_id, provider.provider_type());
-        let mut loaded_ids = Vec::new();
-
-        match provider.load_initial().await {
-            Ok(configs) => {
-                let mut count = 0;
-                for config in &configs {
-                    match convert_api_to_config(config) {
-                        Ok(server_config) => {
-                            let pid = make_provider_id(&provider_prefix, config.id.as_str());
-                            domain_router.add(pid.clone(), server_config);
-                            loaded_ids.push(pid);
-                            count += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                plugin = %plugin_id,
-                                server = %config.id.as_str(),
-                                error = %e,
-                                "skipping invalid server config"
-                            );
-                        }
-                    }
-                }
-                tracing::info!(
-                    plugin = %plugin_id,
-                    provider = provider.provider_type(),
-                    count,
-                    "plugin config provider loaded initial configs"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    plugin = %plugin_id,
-                    provider = provider.provider_type(),
-                    error = %e,
-                    "plugin config provider failed to load initial configs"
-                );
-            }
+impl PluginProviderActivator {
+    pub fn new(
+        sender: mpsc::Sender<ProviderEvent>,
+        router: Arc<DomainRouter>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        Self {
+            sender,
+            router,
+            shutdown,
+            started: AtomicBool::new(false),
+            active: Mutex::new(HashMap::new()),
         }
+    }
 
-        match provider.load_initial_documents().await {
-            Ok(documents) => {
-                let mut count = 0;
-                for doc in &documents {
-                    match parse_document(doc) {
-                        Ok(server_config) => {
-                            let pid = make_provider_id(&provider_prefix, doc.id.as_str());
-                            domain_router.add(pid.clone(), server_config);
-                            loaded_ids.push(pid);
-                            count += 1;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                plugin = %plugin_id,
-                                document = %doc.id.as_str(),
-                                error = %e,
-                                "skipping invalid server document"
-                            );
-                        }
-                    }
-                }
-                tracing::info!(
-                    plugin = %plugin_id,
-                    provider = provider.provider_type(),
-                    count,
-                    "plugin config provider loaded initial documents"
-                );
-            }
+    pub fn start(&self) {
+        self.started.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_started(&self) -> bool {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    pub fn spawn(self: &Arc<Self>, plugin_id: &str, provider: Box<dyn PluginConfigProvider>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                plugin = %plugin_id,
+                provider = provider.provider_type(),
+                "config provider registered outside the async runtime: dropped"
+            );
+            return;
+        };
+        let activator = Arc::clone(self);
+        let plugin_id = plugin_id.to_owned();
+        runtime.spawn(async move { activator.activate(&plugin_id, provider).await });
+    }
+
+    pub async fn activate(&self, plugin_id: &str, provider: Box<dyn PluginConfigProvider>) {
+        let kind = provider.provider_type().to_string();
+        let watch = self.shutdown.child_token();
+        self.record(
+            plugin_id,
+            Activation {
+                config_ids: Vec::new(),
+                watch: watch.clone(),
+            },
+        );
+
+        let documents = match provider.load_initial().await {
+            Ok(documents) => documents,
             Err(e) => {
                 tracing::warn!(
                     plugin = %plugin_id,
-                    provider = provider.provider_type(),
+                    provider = %kind,
                     error = %e,
                     "plugin config provider failed to load initial documents"
                 );
+                Vec::new()
             }
+        };
+
+        {
+            let mut active = lock(&self.active);
+            if watch.is_cancelled() {
+                return;
+            }
+            let mut config_ids = Vec::new();
+            for doc in &documents {
+                match parse_document(doc) {
+                    Ok(server_config) => {
+                        let pid = ProviderId::plugin(plugin_id, &kind, doc.id.as_str());
+                        self.router.add(pid.clone(), server_config);
+                        config_ids.push(pid);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            plugin = %plugin_id,
+                            document = %doc.id.as_str(),
+                            error = %e,
+                            "skipping invalid server document"
+                        );
+                    }
+                }
+            }
+            tracing::info!(
+                plugin = %plugin_id,
+                provider = %kind,
+                count = config_ids.len(),
+                "plugin config provider loaded initial documents"
+            );
+            active
+                .entry(plugin_id.to_owned())
+                .or_default()
+                .push(Activation {
+                    config_ids,
+                    watch: watch.clone(),
+                });
         }
 
-        let watch_token = shutdown.child_token();
         let sender_impl = Box::new(PluginProviderSenderImpl {
-            sender: event_sender.clone(),
-            shutdown: watch_token.clone(),
-            provider_prefix,
+            sender: self.sender.clone(),
+            shutdown: watch,
+            plugin_id: plugin_id.to_owned(),
+            kind: kind.clone(),
         });
-
-        let provider_type = provider.provider_type().to_string();
-        let plugin_id_clone = plugin_id.clone();
-
+        let plugin_id = plugin_id.to_owned();
         tokio::spawn(async move {
             if let Err(e) = provider.watch(sender_impl).await {
                 tracing::warn!(
-                    plugin = %plugin_id_clone,
-                    provider = %provider_type,
+                    plugin = %plugin_id,
+                    provider = %kind,
                     error = %e,
                     "plugin config provider watch exited with error"
                 );
             }
         });
-
-        results.push((
-            plugin_id,
-            ActivatedProvider {
-                config_ids: loaded_ids,
-                watch_token,
-            },
-        ));
     }
 
-    results
+    pub fn deactivate(&self, plugin_id: &str) {
+        let Some(activations) = lock(&self.active).remove(plugin_id) else {
+            return;
+        };
+        for activation in activations {
+            activation.watch.cancel();
+            for pid in &activation.config_ids {
+                self.router.remove(pid);
+            }
+        }
+    }
+
+    fn record(&self, plugin_id: &str, activation: Activation) {
+        lock(&self.active)
+            .entry(plugin_id.to_owned())
+            .or_default()
+            .push(activation);
+    }
 }
 
 #[cfg(test)]
@@ -393,61 +349,38 @@ mod tests {
         assert_eq!(parse_document(&doc).unwrap().effective_id(), "explicit");
     }
 
-    fn projected(
-        id: &str,
-        addresses: Vec<infrarust_api::types::ServerAddress>,
-    ) -> infrarust_api::services::config_service::ServerConfig {
-        infrarust_api::services::config_service::ServerConfig::new(
-            ServerId::new(id),
-            None,
-            addresses,
-            vec!["mc.example.com".to_string()],
-            infrarust_api::services::config_service::ProxyMode::Passthrough,
-            vec![],
-            0,
-            None,
-            false,
-            false,
-        )
-    }
-
     fn test_sender() -> (PluginProviderSenderImpl, mpsc::Receiver<ProviderEvent>) {
         let (sender, receiver) = mpsc::channel(4);
         (
             PluginProviderSenderImpl {
                 sender,
                 shutdown: CancellationToken::new(),
-                provider_prefix: "plugin:test:api".to_string(),
+                plugin_id: "test".to_string(),
+                kind: "api".to_string(),
             },
             receiver,
         )
     }
 
-    /// A projected config reaches the router without ever being written as
-    /// TOML, so it has to be validated here or not at all.
     #[tokio::test]
-    async fn projected_configs_are_validated_like_documents() {
+    async fn rejected_documents_are_dropped_without_closing_the_sender() {
         let (sender, mut receiver) = test_sender();
 
         assert!(
             sender
-                .send(PluginProviderEvent::Added(projected(
+                .send(PluginProviderEvent::Added(document(
                     "no-addresses",
-                    vec![]
+                    "addresses = []"
                 )))
                 .await
         );
         assert!(receiver.try_recv().is_err());
 
-        let address = infrarust_api::types::ServerAddress {
-            host: "10.0.0.1".to_string(),
-            port: 25565,
-        };
         assert!(
             sender
-                .send(PluginProviderEvent::Added(projected(
+                .send(PluginProviderEvent::Added(document(
                     "lobby",
-                    vec![address.clone()]
+                    "domains = [\"lobby.example.com\"]\naddresses = [\"10.0.0.1:25565\"]"
                 )))
                 .await
         );
@@ -458,13 +391,20 @@ mod tests {
 
         assert!(
             sender
-                .send(PluginProviderEvent::Updated(projected(
+                .send(PluginProviderEvent::Updated(document(
                     "Bad Id",
-                    vec![address]
+                    "domains = [\"bad.example.com\"]\naddresses = [\"10.0.0.1:25565\"]"
                 )))
                 .await
         );
         assert!(receiver.try_recv().is_err());
+
+        drop(receiver);
+        assert!(
+            !sender
+                .send(PluginProviderEvent::Removed(ServerId::new("lobby")))
+                .await
+        );
     }
 
     #[test]

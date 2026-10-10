@@ -2,11 +2,13 @@ pub mod config;
 pub mod handler;
 pub mod state;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use infrarust_api::error::PluginError;
-use infrarust_api::event::BoxFuture;
-use infrarust_api::limbo::handler::HandlerResult;
+use infrarust_api::event::bus::EventBusExt;
+use infrarust_api::event::{BoxFuture, EventPriority};
+use infrarust_api::events::proxy::ServerStateChangeEvent;
+use infrarust_api::limbo::handler::LimboOutcome;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::Component;
@@ -55,21 +57,18 @@ impl Plugin for ServerWakePlugin {
 
             ctx.register_limbo_handler(Box::new(ServerWakeHandler {
                 state: Arc::clone(&state),
-                server_manager: ctx.server_manager_handle(),
-                config_service: ctx.config_service_handle(),
-            }));
+                server_manager: ctx.server_manager(),
+                config_service: ctx.config_service(),
+            }))?;
 
             let wake_state = Arc::clone(&state);
-            let sm = ctx.server_manager_handle();
-            sm.on_state_change(Box::new(move |server_id, _old_state, new_state| {
-                handle_state_change(&wake_state, server_id, new_state);
-            }));
+            ctx.event_bus()
+                .subscribe::<ServerStateChangeEvent, _>(EventPriority::NORMAL, move |event| {
+                    handle_state_change(&wake_state, &event.server, event.new_state)
+                });
 
             {
-                let mut guard = self
-                    .state
-                    .lock()
-                    .expect("server_wake plugin state mutex poisoned");
+                let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
                 *guard = Some(state);
             }
 
@@ -82,7 +81,7 @@ impl Plugin for ServerWakePlugin {
         let state = self
             .state
             .lock()
-            .expect("server_wake plugin state mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
 
         Box::pin(async move {
@@ -126,7 +125,7 @@ fn handle_state_change(
                     .fade_in(0)
                     .stay(40);
                     let _ = entry.session_handle.send_title(title);
-                    entry.session_handle.complete(HandlerResult::Accept);
+                    entry.session_handle.complete(LimboOutcome::Accept);
                 }
             }
         }
@@ -144,7 +143,7 @@ fn handle_state_change(
                 if let Some((_, entry)) = state.waiting.remove(&player_id) {
                     entry
                         .session_handle
-                        .complete(HandlerResult::Deny(Component::from_legacy(
+                        .complete(LimboOutcome::Deny(Component::from_legacy(
                             &state.config.messages.failed_kick,
                         )));
                 }

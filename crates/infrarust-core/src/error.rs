@@ -47,8 +47,41 @@ pub enum CoreError {
     #[error("telemetry initialization error: {0}")]
     TelemetryInit(String),
 
-    #[error("{0}")]
-    Other(String),
+    #[error("backend kicked the player: {0}")]
+    BackendKick(Box<crate::session::kick::BackendKick>),
+
+    #[error("invalid session state: {0}")]
+    InvalidState(&'static str),
+
+    #[error("invalid status response: {0}")]
+    InvalidStatus(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("registry data error: {0}")]
+    RegistryData(String),
+
+    #[error("limbo handler not found: {0}")]
+    UnknownLimboHandler(String),
+
+    #[error("file watcher error: {0}")]
+    Watcher(#[from] notify::Error),
+
+    #[error("startup error: {0}")]
+    Startup(String),
+
+    #[error("plugin error: {0}")]
+    Plugin(#[from] crate::plugin::PluginManagerError),
+
+    #[error("ban storage error: {0}")]
+    Ban(String),
+}
+
+impl From<CoreError> for infrarust_api::error::ServiceError {
+    fn from(error: CoreError) -> Self {
+        Self::Internal(Box::new(error))
+    }
 }
 
 impl CoreError {

@@ -10,17 +10,18 @@ use tokio::sync::mpsc;
 use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
-use crate::filter::transport_chain::TransportFilterChain;
+use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
+use crate::plugin_messaging::PluginMessaging;
 use crate::provider::ProviderEvent;
-use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
+use crate::session::connection_registry::ConnectionRegistry;
 
 /// Shared services passed to connection handlers.
 ///
@@ -61,8 +62,8 @@ pub struct ProxyServices {
     pub load_balancer_service: Arc<crate::services::load_balancer_service::LoadBalancerServiceImpl>,
     /// Codec filter registry for building per-connection filter chains.
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
-    /// Transport filter chain applied to accepted connections.
-    pub transport_filter_chain: TransportFilterChain,
+    /// Transport filter registry whose chain is applied to accepted connections.
+    pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     /// Registry of limbo handler instances, keyed by name.
     pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
     /// Multi-version registry data cache for limbo login.
@@ -71,6 +72,7 @@ pub struct ProxyServices {
     pub forwarding_mode: Arc<ForwardingMode>,
     pub forwarding_secret: Option<Arc<[u8]>>,
     pub permission_service: Arc<PermissionService>,
+    pub plugin_messaging: Arc<PluginMessaging>,
 }
 
 impl ProxyServices {

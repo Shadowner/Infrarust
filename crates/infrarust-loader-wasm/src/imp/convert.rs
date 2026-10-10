@@ -1,15 +1,103 @@
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use infrarust_api::error::{PlayerError, ServiceError};
-use infrarust_api::limbo::{HandlerResult, LimboEntryContext, SessionEndReason};
-use infrarust_api::permissions::PermissionLevel;
-use infrarust_api::services::ban_service::{BanEntry, BanTarget};
+use infrarust_api::event::ConnectionState;
+use infrarust_api::events::packet::PacketDirection;
+use infrarust_api::limbo::{HandlerResult, LimboEntryContext, LimboOutcome, SessionEndReason};
+use infrarust_api::messaging::ChannelId;
+use infrarust_api::permissions::PermissionSubject;
+use infrarust_api::player::{
+    ChatMode, ClientSettings, MainHand, ParticleStatus, Player, SkinParts,
+};
+use infrarust_api::services::ban_service::{
+    BanEntry, BanQuery, BanRequest, BanSource, BanTarget, IpNet, LoginAttempt, LoginStage,
+    UnbanRequest,
+};
 use infrarust_api::services::config_service::{ProxyMode, ServerConfig};
+use infrarust_api::services::load_balancer::BackendState;
 use infrarust_api::services::server_manager::ServerState;
-use infrarust_api::types::{Component, GameProfile, RawPacket, ServerId, TitleData};
+use infrarust_api::types::{
+    Component, GameProfile, ProfileProperty, RawPacket, ServerAddress, ServerId, TitleData,
+};
+use infrarust_plugin_wit::arena::ArenaError;
 
+use crate::bindings::infrarust::plugin::ban_service as wb;
+use crate::bindings::infrarust::plugin::config_service as wc;
+use crate::bindings::infrarust::plugin::events as we;
 use crate::bindings::infrarust::plugin::limbo as wl;
-use crate::bindings::infrarust::plugin::types as wit;
+use crate::bindings::infrarust::plugin::permissions as wp;
+use crate::bindings::infrarust::plugin::types as wt;
+use crate::component;
+use crate::host_error::{HostResult, host_error, invalid_component};
+
+macro_rules! wit_enum_map {
+    (
+        $name:ident: $native:ident => $module:ident::$wit:ident { $($variant:ident),+ $(,)? }
+        $(else $fallback:ident)?
+    ) => {
+        pub(crate) const fn $name(value: $native) -> $module::$wit {
+            match value {
+                $($native::$variant => $module::$wit::$variant,)+
+                $(_ => $module::$wit::$fallback,)?
+            }
+        }
+    };
+    ($name:ident: $module:ident::$wit:ident => $native:ident { $($variant:ident),+ $(,)? }) => {
+        pub(crate) const fn $name(value: $module::$wit) -> $native {
+            match value {
+                $($module::$wit::$variant => $native::$variant,)+
+            }
+        }
+    };
+}
+
+pub(crate) use wit_enum_map;
+
+wit_enum_map!(backend_state_to_wit: BackendState => we::BackendState {
+    Healthy, Probing, Draining
+} else Unhealthy);
+
+wit_enum_map!(server_state_to_wit: ServerState => wt::ServerState {
+    Online, Offline, Starting, Stopping, Sleeping, Crashed
+} else Offline);
+
+wit_enum_map!(proxy_mode_to_wit: ProxyMode => wt::ProxyMode {
+    Passthrough, ZeroCopy, ClientOnly, Offline, ServerOnly
+} else Passthrough);
+
+wit_enum_map!(packet_direction_to_wit: PacketDirection => wt::PacketDirection {
+    Serverbound, Clientbound
+} else Serverbound);
+
+wit_enum_map!(packet_direction_from_wit: wt::PacketDirection => PacketDirection {
+    Serverbound, Clientbound
+});
+
+wit_enum_map!(connection_state_from_wit: wt::ConnectionState => ConnectionState {
+    Handshake, Status, Login, Configuration, Play
+});
+
+wit_enum_map!(session_end_reason_to_wit: SessionEndReason => wl::SessionEndReason {
+    Disconnected, Released, Kicked, Redirected, TimedOut, Shutdown
+} else Disconnected);
+
+wit_enum_map!(login_stage_to_wit: LoginStage => wb::LoginStage {
+    Status, PreAuth, PostAuth
+} else PostAuth);
+
+wit_enum_map!(chat_mode_to_wit: ChatMode => wt::ChatMode {
+    Enabled, CommandsOnly, Hidden
+} else Enabled);
+
+wit_enum_map!(main_hand_to_wit: MainHand => wt::MainHand { Left, Right } else Right);
+
+wit_enum_map!(particle_status_to_wit: ParticleStatus => wt::ParticleStatus {
+    All, Decreased, Minimal
+} else All);
+
+pub(crate) fn server_id_opt(server: &Option<ServerId>) -> Option<String> {
+    server.as_ref().map(|server| server.as_str().to_owned())
+}
 
 pub(crate) fn system_time_to_millis(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH)
@@ -17,22 +105,58 @@ pub(crate) fn system_time_to_millis(t: SystemTime) -> u64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn component_from_wit(s: &str) -> Component {
-    Component::from_json(s).unwrap_or_else(|_| Component::text(s))
+pub(crate) fn millis_to_system_time(millis: u64) -> SystemTime {
+    UNIX_EPOCH
+        .checked_add(Duration::from_millis(millis))
+        .unwrap_or(UNIX_EPOCH)
 }
 
-pub(crate) fn component_to_wit(c: &Component) -> String {
-    c.to_json()
+pub(crate) fn uuid_to_wit(uuid: uuid::Uuid) -> wt::Uuid {
+    let (hi, lo) = uuid.as_u64_pair();
+    wt::Uuid { hi, lo }
 }
 
-pub(crate) fn game_profile_to_wit(p: &GameProfile) -> wit::GameProfile {
-    wit::GameProfile {
-        uuid: p.uuid.to_string(),
+pub(crate) fn uuid_from_wit(uuid: wt::Uuid) -> uuid::Uuid {
+    uuid::Uuid::from_u64_pair(uuid.hi, uuid.lo)
+}
+
+pub(crate) fn ip_to_wit(ip: IpAddr) -> wt::IpAddress {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, c, d] = v4.octets();
+            wt::IpAddress::Ipv4((a, b, c, d))
+        }
+        IpAddr::V6(v6) => {
+            let [a, b, c, d, e, f, g, h] = v6.segments();
+            wt::IpAddress::Ipv6((a, b, c, d, e, f, g, h))
+        }
+    }
+}
+
+pub(crate) fn ip_from_wit(ip: wt::IpAddress) -> IpAddr {
+    match ip {
+        wt::IpAddress::Ipv4((a, b, c, d)) => IpAddr::V4(Ipv4Addr::new(a, b, c, d)),
+        wt::IpAddress::Ipv6((a, b, c, d, e, f, g, h)) => {
+            IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h))
+        }
+    }
+}
+
+pub(crate) fn socket_to_wit(addr: SocketAddr) -> wt::SocketAddress {
+    wt::SocketAddress {
+        ip: ip_to_wit(addr.ip()),
+        port: addr.port(),
+    }
+}
+
+pub(crate) fn game_profile_to_wit(p: &GameProfile) -> wt::GameProfile {
+    wt::GameProfile {
+        uuid: uuid_to_wit(p.uuid),
         username: p.username.clone(),
         properties: p
             .properties
             .iter()
-            .map(|pp| wit::ProfileProperty {
+            .map(|pp| wt::ProfileProperty {
                 name: pp.name.clone(),
                 value: pp.value.clone(),
                 signature: pp.signature.clone(),
@@ -41,48 +165,47 @@ pub(crate) fn game_profile_to_wit(p: &GameProfile) -> wit::GameProfile {
     }
 }
 
-pub(crate) fn server_state_to_wit(s: ServerState) -> wit::ServerState {
-    match s {
-        ServerState::Online => wit::ServerState::Online,
-        ServerState::Offline => wit::ServerState::Offline,
-        ServerState::Starting => wit::ServerState::Starting,
-        ServerState::Stopping => wit::ServerState::Stopping,
-        ServerState::Sleeping => wit::ServerState::Sleeping,
-        ServerState::Crashed => wit::ServerState::Crashed,
-        _ => wit::ServerState::Offline,
-    }
-}
-
-pub(crate) fn proxy_mode_to_wit(m: ProxyMode) -> wit::ProxyMode {
-    match m {
-        ProxyMode::Passthrough => wit::ProxyMode::Passthrough,
-        ProxyMode::ZeroCopy => wit::ProxyMode::ZeroCopy,
-        ProxyMode::ClientOnly => wit::ProxyMode::ClientOnly,
-        ProxyMode::Offline => wit::ProxyMode::Offline,
-        ProxyMode::ServerOnly => wit::ProxyMode::ServerOnly,
-        _ => wit::ProxyMode::Passthrough,
-    }
-}
-
-pub(crate) fn permission_level_to_wit(l: PermissionLevel) -> wit::PermissionLevel {
-    match l {
-        PermissionLevel::Player => wit::PermissionLevel::Player,
-        PermissionLevel::Admin => wit::PermissionLevel::Admin,
-    }
-}
-
-pub(crate) fn server_config_to_wit(c: &ServerConfig) -> wit::ServerConfig {
-    wit::ServerConfig {
-        id: c.id.as_str().to_string(),
-        network: c.network.clone(),
-        addresses: c
-            .addresses
-            .iter()
-            .map(|a| wit::ServerAddress {
-                host: a.host.clone(),
-                port: a.port,
+pub(crate) fn game_profile_from_wit(p: wt::GameProfile) -> GameProfile {
+    GameProfile {
+        uuid: uuid_from_wit(p.uuid),
+        username: p.username,
+        properties: p
+            .properties
+            .into_iter()
+            .map(|pp| ProfileProperty {
+                name: pp.name,
+                value: pp.value,
+                signature: pp.signature,
             })
             .collect(),
+    }
+}
+
+pub(crate) fn player_ref(player: &dyn Player) -> wt::PlayerRef {
+    let profile = player.profile();
+    wt::PlayerRef {
+        id: player.id().as_u64(),
+        uuid: uuid_to_wit(profile.uuid),
+        username: profile.username.clone(),
+    }
+}
+
+pub(crate) fn server_ids(servers: &[ServerId]) -> Vec<String> {
+    servers.iter().map(|s| s.as_str().to_owned()).collect()
+}
+
+pub(crate) fn server_address_to_wit(address: &ServerAddress) -> wt::ServerAddress {
+    wt::ServerAddress {
+        host: address.host.clone(),
+        port: address.port,
+    }
+}
+
+pub(crate) fn server_config_to_wit(c: &ServerConfig) -> wc::ServerConfig {
+    wc::ServerConfig {
+        id: c.id.as_str().to_owned(),
+        network: c.network.clone(),
+        addresses: c.addresses.iter().map(server_address_to_wit).collect(),
         domains: c.domains.clone(),
         proxy_mode: proxy_mode_to_wit(c.proxy_mode),
         limbo_handlers: c.limbo_handlers.clone(),
@@ -93,175 +216,535 @@ pub(crate) fn server_config_to_wit(c: &ServerConfig) -> wit::ServerConfig {
     }
 }
 
-pub(crate) fn ban_target_from_wit(t: &wit::BanTarget) -> Option<BanTarget> {
+pub(crate) fn ban_target_from_wit(target: wb::BanTarget) -> HostResult<BanTarget> {
+    Ok(match target {
+        wb::BanTarget::Ip(ip) => BanTarget::Ip(ip_from_wit(ip)),
+        wb::BanTarget::IpRange(range) => {
+            BanTarget::IpRange(range.parse::<IpNet>().map_err(|e| {
+                host_error(
+                    wt::ErrorKind::InvalidArgument,
+                    format!("invalid ip range {range:?}: {e}"),
+                )
+            })?)
+        }
+        wb::BanTarget::Username(name) => BanTarget::Username(name),
+        wb::BanTarget::Uuid(uuid) => BanTarget::Uuid(uuid_from_wit(uuid)),
+    })
+}
+
+pub(crate) fn ban_target_to_wit(t: &BanTarget) -> wb::BanTarget {
     match t {
-        wit::BanTarget::Ip(s) => s.parse().ok().map(BanTarget::Ip),
-        wit::BanTarget::Username(s) => Some(BanTarget::Username(s.clone())),
-        wit::BanTarget::Uuid(s) => uuid::Uuid::parse_str(s).ok().map(BanTarget::Uuid),
+        BanTarget::Ip(ip) => wb::BanTarget::Ip(ip_to_wit(*ip)),
+        BanTarget::IpRange(net) => wb::BanTarget::IpRange(net.to_string()),
+        BanTarget::Username(u) => wb::BanTarget::Username(u.clone()),
+        BanTarget::Uuid(u) => wb::BanTarget::Uuid(uuid_to_wit(*u)),
+        other => wb::BanTarget::Username(other.to_string()),
     }
 }
 
-pub(crate) fn ban_target_to_wit(t: &BanTarget) -> wit::BanTarget {
-    match t {
-        BanTarget::Ip(ip) => wit::BanTarget::Ip(ip.to_string()),
-        BanTarget::Username(u) => wit::BanTarget::Username(u.clone()),
-        BanTarget::Uuid(u) => wit::BanTarget::Uuid(u.to_string()),
-        _ => wit::BanTarget::Username(String::new()),
-    }
-}
-
-pub(crate) fn ban_entry_to_wit(e: &BanEntry) -> wit::BanEntry {
-    wit::BanEntry {
+pub(crate) fn ban_entry_to_wit(e: &BanEntry) -> wb::BanEntry {
+    wb::BanEntry {
+        id: e.id.clone(),
         target: ban_target_to_wit(&e.target),
         reason: e.reason.clone(),
-        expires_at: e.expires_at.map(system_time_to_millis),
+        source: e.source.to_string(),
         created_at: system_time_to_millis(e.created_at),
-        source: e.source.clone(),
+        expires_at: e.expires_at.map(system_time_to_millis),
     }
 }
 
-pub(crate) fn player_error_to_wit(e: PlayerError) -> wit::PlayerError {
-    match e {
-        PlayerError::NotActive => wit::PlayerError::NotActive,
-        PlayerError::Disconnected => wit::PlayerError::Disconnected,
-        PlayerError::SendFailed(s) => wit::PlayerError::SendFailed(s),
-        PlayerError::ServerNotFound(s) => wit::PlayerError::ServerNotFound(s),
-        PlayerError::SwitchFailed(s) => wit::PlayerError::SwitchFailed(s),
-        _ => wit::PlayerError::SendFailed("unknown error".to_string()),
+pub(crate) fn ban_source_to_wit(source: &BanSource) -> wb::BanSource {
+    match source {
+        BanSource::Console => wb::BanSource::Console,
+        BanSource::Player { uuid, name } => wb::BanSource::Player(wb::BanActor {
+            uuid: uuid_to_wit(*uuid),
+            name: name.clone(),
+        }),
+        BanSource::Plugin(id) => wb::BanSource::Plugin(id.clone()),
+        BanSource::WebApi { actor } => wb::BanSource::WebApi(actor.clone()),
+        _ => wb::BanSource::System,
     }
 }
 
-pub(crate) fn service_error_to_wit(e: ServiceError) -> wit::ServiceError {
-    match e {
-        ServiceError::NotFound(s) => wit::ServiceError::NotFound(s),
-        ServiceError::OperationFailed(s) => wit::ServiceError::OperationFailed(s),
-        ServiceError::Unavailable(s) => wit::ServiceError::Unavailable(s),
-        _ => wit::ServiceError::OperationFailed("unknown error".to_string()),
+pub(crate) fn ban_source_from_wit(source: wb::BanSource) -> BanSource {
+    match source {
+        wb::BanSource::Console => BanSource::Console,
+        wb::BanSource::Player(actor) => BanSource::Player {
+            uuid: uuid_from_wit(actor.uuid),
+            name: actor.name,
+        },
+        wb::BanSource::Plugin(id) => BanSource::Plugin(id),
+        wb::BanSource::WebApi(actor) => BanSource::WebApi { actor },
+        wb::BanSource::System => BanSource::System,
     }
 }
 
-pub(crate) fn raw_packet_from_wit(p: wit::RawPacket) -> RawPacket {
+pub(crate) fn ban_record_from_wit(record: wb::BanRecord) -> HostResult<BanEntry> {
+    let target = ban_target_from_wit(record.target)?;
+    let mut entry = BanEntry::new(record.id, target, ban_source_from_wit(record.source))
+        .created_at(millis_to_system_time(record.created_at));
+    entry.reason = record.reason;
+    entry.expires_at = record.expires_at.map(millis_to_system_time);
+    Ok(entry)
+}
+
+pub(crate) fn login_attempt_to_wit(attempt: &LoginAttempt) -> wb::LoginAttempt {
+    wb::LoginAttempt {
+        stage: login_stage_to_wit(attempt.stage),
+        ip: ip_to_wit(attempt.ip),
+        username: attempt.username.clone(),
+        uuid: attempt.uuid.map(uuid_to_wit),
+        uuid_verified: attempt.uuid_verified,
+        virtual_host: attempt.virtual_host.clone(),
+        server: server_id_opt(&attempt.server),
+    }
+}
+
+pub(crate) fn ban_request_to_wit(request: &BanRequest) -> wb::BanRequest {
+    wb::BanRequest {
+        target: ban_target_to_wit(&request.target),
+        reason: request.reason.clone(),
+        duration_ms: request
+            .duration
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+        kick: request.kick,
+        silent: request.silent,
+    }
+}
+
+pub(crate) fn unban_request_to_wit(request: &UnbanRequest) -> wb::UnbanRequest {
+    wb::UnbanRequest {
+        target: ban_target_to_wit(&request.target),
+        source: ban_source_to_wit(request.source.as_ref().unwrap_or(&BanSource::System)),
+        silent: request.silent,
+    }
+}
+
+pub(crate) fn ban_query_to_wit(query: &BanQuery) -> wb::BanQuery {
+    wb::BanQuery {
+        cursor: query.cursor.clone(),
+        limit: u32::try_from(query.effective_limit()).unwrap_or(u32::MAX),
+    }
+}
+
+pub(crate) fn permission_subject_to_wit(subject: &PermissionSubject) -> wp::PermissionSubject {
+    match (
+        subject.player_id(),
+        subject.profile(),
+        subject.remote_addr(),
+    ) {
+        (Some(id), Some(profile), Some(remote_addr)) => {
+            wp::PermissionSubject::Player(wp::PlayerSubject {
+                id: id.as_u64(),
+                profile: game_profile_to_wit(profile),
+                online_mode: subject.is_online_mode(),
+                virtual_host: subject.virtual_host().map(str::to_owned),
+                remote_addr: socket_to_wit(remote_addr),
+            })
+        }
+        _ => wp::PermissionSubject::Console,
+    }
+}
+
+pub(crate) fn server_address_from_wit(address: wt::ServerAddress) -> ServerAddress {
+    ServerAddress {
+        host: address.host,
+        port: address.port,
+    }
+}
+
+pub(crate) fn channel_to_wit(channel: &ChannelId) -> wt::ChannelId {
+    wt::ChannelId {
+        modern: channel.modern_id().map(str::to_owned),
+        legacy: channel.legacy_name().map(str::to_owned),
+    }
+}
+
+pub(crate) fn channel_from_wit(channel: &wt::ChannelId) -> HostResult<ChannelId> {
+    let parsed = match (channel.modern.as_deref(), channel.legacy.as_deref()) {
+        (Some(modern), Some(legacy)) => ChannelId::pair(modern, legacy),
+        (Some(modern), None) => ChannelId::modern(modern),
+        (None, Some(legacy)) => ChannelId::legacy(legacy),
+        (None, None) => {
+            return Err(host_error(
+                wt::ErrorKind::InvalidArgument,
+                "a channel needs a modern id, a legacy name, or both",
+            ));
+        }
+    };
+    parsed.map_err(|e| host_error(wt::ErrorKind::InvalidArgument, e.to_string()))
+}
+
+pub(crate) fn client_settings_to_wit(settings: &ClientSettings) -> wt::ClientSettings {
+    wt::ClientSettings {
+        locale: settings.locale.clone(),
+        view_distance: settings.view_distance,
+        chat_mode: chat_mode_to_wit(settings.chat_mode),
+        chat_colors: settings.chat_colors,
+        skin_parts: skin_parts_to_wit(settings.skin_parts),
+        main_hand: main_hand_to_wit(settings.main_hand),
+        text_filtering: settings.text_filtering,
+        allow_listing: settings.allow_listing,
+        particle_status: particle_status_to_wit(settings.particle_status),
+    }
+}
+
+fn skin_parts_to_wit(parts: SkinParts) -> wt::SkinParts {
+    [
+        (SkinParts::CAPE, wt::SkinParts::CAPE),
+        (SkinParts::JACKET, wt::SkinParts::JACKET),
+        (SkinParts::LEFT_SLEEVE, wt::SkinParts::LEFT_SLEEVE),
+        (SkinParts::RIGHT_SLEEVE, wt::SkinParts::RIGHT_SLEEVE),
+        (SkinParts::LEFT_PANTS, wt::SkinParts::LEFT_PANTS),
+        (SkinParts::RIGHT_PANTS, wt::SkinParts::RIGHT_PANTS),
+        (SkinParts::HAT, wt::SkinParts::HAT),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| parts.shows(*bit))
+    .fold(wt::SkinParts::empty(), |shown, (_, part)| shown | part)
+}
+
+pub(crate) fn raw_packet_to_wit(p: &RawPacket) -> wt::RawPacket {
+    wt::RawPacket {
+        packet_id: p.packet_id,
+        data: p.data.to_vec(),
+    }
+}
+
+pub(crate) fn raw_packet_from_wit(p: wt::RawPacket) -> RawPacket {
     RawPacket::new(p.packet_id, bytes::Bytes::from(p.data))
 }
 
-pub(crate) fn title_data_from_wit(t: wit::TitleData) -> TitleData {
-    TitleData {
-        title: component_from_wit(&t.title),
-        subtitle: component_from_wit(&t.subtitle),
+pub(crate) fn title_data_from_wit(t: &wt::TitleData) -> Result<TitleData, ArenaError> {
+    Ok(TitleData {
+        title: component::from_wit(&t.title)?,
+        subtitle: component::from_wit(&t.subtitle)?,
         fade_in_ticks: t.fade_in_ticks,
         stay_ticks: t.stay_ticks,
         fade_out_ticks: t.fade_out_ticks,
-    }
+    })
 }
 
-pub(crate) fn handler_result_from_wit(r: wl::HandlerResult) -> HandlerResult {
-    match r {
+pub(crate) type TextConverter<'a> =
+    &'a mut dyn FnMut(&wt::Component) -> Result<Component, ArenaError>;
+
+pub(crate) fn handler_result_with(
+    r: &wl::HandlerResult,
+    text: TextConverter<'_>,
+) -> Result<HandlerResult, ArenaError> {
+    Ok(match r {
         wl::HandlerResult::Accept => HandlerResult::Accept,
-        wl::HandlerResult::Deny(c) => HandlerResult::Deny(component_from_wit(&c)),
+        wl::HandlerResult::Deny(c) => HandlerResult::Deny(text(c)?),
         wl::HandlerResult::Hold => HandlerResult::Hold,
         wl::HandlerResult::HoldWithTimeout(t) => HandlerResult::HoldWithTimeout {
             after: Duration::from_millis(t.after_ms),
-            on_timeout: Box::new(timeout_outcome_from_wit(t.on_timeout)),
+            on_timeout: timeout_outcome_with(&t.on_timeout, text)?,
         },
-        wl::HandlerResult::Redirect(s) => HandlerResult::Redirect(ServerId::from(s)),
-        wl::HandlerResult::SendToLimbo(v) => HandlerResult::SendToLimbo(v),
-    }
+        wl::HandlerResult::Redirect(s) => HandlerResult::Redirect(ServerId::from(s.as_str())),
+        wl::HandlerResult::SendToLimbo(v) => HandlerResult::SendToLimbo(v.clone()),
+    })
 }
 
-pub(crate) fn timeout_outcome_from_wit(t: wl::TimeoutOutcome) -> HandlerResult {
-    match t {
-        wl::TimeoutOutcome::Accept => HandlerResult::Accept,
-        wl::TimeoutOutcome::Deny(c) => HandlerResult::Deny(component_from_wit(&c)),
-        wl::TimeoutOutcome::Redirect(s) => HandlerResult::Redirect(ServerId::from(s)),
-        wl::TimeoutOutcome::SendToLimbo(v) => HandlerResult::SendToLimbo(v),
-    }
+pub(crate) fn timeout_outcome_with(
+    t: &wl::TimeoutOutcome,
+    text: TextConverter<'_>,
+) -> Result<LimboOutcome, ArenaError> {
+    Ok(match t {
+        wl::TimeoutOutcome::Accept => LimboOutcome::Accept,
+        wl::TimeoutOutcome::Deny(c) => LimboOutcome::Deny(text(c)?),
+        wl::TimeoutOutcome::Redirect(s) => LimboOutcome::Redirect(ServerId::from(s.as_str())),
+        wl::TimeoutOutcome::SendToLimbo(v) => LimboOutcome::SendToLimbo(v.clone()),
+    })
 }
 
-pub(crate) fn complete_result_from_wit(r: wl::HandlerResult) -> HandlerResult {
-    match handler_result_from_wit(r) {
-        HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. } => HandlerResult::Accept,
-        other => other,
-    }
-}
+const HOLD_NOT_A_COMPLETION: &str = "complete ends a hold and cannot start another: pass accept, deny, redirect or send-to-limbo; the current hold and its deadline stay in place";
 
-pub(crate) fn session_end_reason_to_wit(r: SessionEndReason) -> wl::SessionEndReason {
-    match r {
-        SessionEndReason::Disconnected => wl::SessionEndReason::Disconnected,
-        SessionEndReason::Released => wl::SessionEndReason::Released,
-        SessionEndReason::Kicked => wl::SessionEndReason::Kicked,
-        SessionEndReason::Redirected => wl::SessionEndReason::Redirected,
-        SessionEndReason::TimedOut => wl::SessionEndReason::TimedOut,
-        SessionEndReason::Shutdown => wl::SessionEndReason::Shutdown,
-        _ => wl::SessionEndReason::Disconnected,
-    }
+pub(crate) fn complete_result_from_wit(r: &wl::HandlerResult) -> HostResult<LimboOutcome> {
+    let text = |c| component::from_wit(c).map_err(|e| invalid_component(&e));
+    Ok(match r {
+        wl::HandlerResult::Hold | wl::HandlerResult::HoldWithTimeout(_) => {
+            return Err(host_error(
+                wt::ErrorKind::InvalidArgument,
+                HOLD_NOT_A_COMPLETION,
+            ));
+        }
+        wl::HandlerResult::Accept => LimboOutcome::Accept,
+        wl::HandlerResult::Deny(c) => LimboOutcome::Deny(text(c)?),
+        wl::HandlerResult::Redirect(s) => LimboOutcome::Redirect(ServerId::from(s.as_str())),
+        wl::HandlerResult::SendToLimbo(v) => LimboOutcome::SendToLimbo(v.clone()),
+    })
 }
 
 pub(crate) fn limbo_entry_context_to_wit(c: &LimboEntryContext) -> wl::LimboEntryContext {
     match c {
         LimboEntryContext::InitialConnection { target_server } => {
-            wl::LimboEntryContext::InitialConnection(target_server.as_str().to_string())
+            wl::LimboEntryContext::InitialConnection(target_server.as_str().to_owned())
         }
         LimboEntryContext::KickedFromServer { server, reason } => {
             wl::LimboEntryContext::KickedFromServer((
-                server.as_str().to_string(),
-                component_to_wit(reason),
+                server.as_str().to_owned(),
+                component::to_wit(reason),
             ))
         }
-        LimboEntryContext::PluginRedirect { from_server } => wl::LimboEntryContext::PluginRedirect(
-            from_server.as_ref().map(|s| s.as_str().to_string()),
-        ),
+        LimboEntryContext::PluginRedirect { from_server } => {
+            wl::LimboEntryContext::PluginRedirect(server_id_opt(from_server))
+        }
         _ => wl::LimboEntryContext::PluginRedirect(None),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    fn timeout_outcome_from_wit(t: &wl::TimeoutOutcome) -> Result<LimboOutcome, ArenaError> {
+        timeout_outcome_with(t, &mut component::from_wit)
+    }
+
+    fn handler_result_from_wit(r: &wl::HandlerResult) -> Result<HandlerResult, ArenaError> {
+        handler_result_with(r, &mut component::from_wit)
+    }
+
+    fn text(message: &str) -> wt::Component {
+        component::to_wit(&Component::text(message))
+    }
+
+    #[test]
+    fn uuids_and_addresses_round_trip() {
+        let uuid: uuid::Uuid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0".parse().unwrap();
+        assert_eq!(uuid_from_wit(uuid_to_wit(uuid)), uuid);
+        for ip in ["203.0.113.7", "2001:db8::7"] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert_eq!(ip_from_wit(ip_to_wit(ip)), ip);
+        }
+    }
+
+    #[test]
+    fn channels_convert_both_ways_and_an_empty_one_is_an_argument_error() {
+        let pair = ChannelId::pair("myplugin:main", "MyPlugin").unwrap();
+        let wire = channel_to_wit(&pair);
+        assert_eq!(wire.modern.as_deref(), Some("myplugin:main"));
+        assert_eq!(wire.legacy.as_deref(), Some("MyPlugin"));
+        assert_eq!(channel_from_wit(&wire).unwrap(), pair);
+        let bungee = wt::ChannelId {
+            modern: None,
+            legacy: Some("BungeeCord".into()),
+        };
+        assert_eq!(channel_from_wit(&bungee).unwrap(), ChannelId::bungeecord());
+        for bad in [
+            wt::ChannelId {
+                modern: None,
+                legacy: None,
+            },
+            wt::ChannelId {
+                modern: Some("Not A Channel".into()),
+                legacy: None,
+            },
+        ] {
+            assert_eq!(
+                channel_from_wit(&bad).unwrap_err().kind,
+                wt::ErrorKind::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn client_settings_keep_their_skin_bits() {
+        let mut settings = ClientSettings::new("fr_fr");
+        settings.skin_parts = SkinParts::new(SkinParts::HAT | SkinParts::CAPE);
+        settings.main_hand = MainHand::Left;
+        let wire = client_settings_to_wit(&settings);
+        assert_eq!(wire.locale, "fr_fr");
+        assert_eq!(wire.skin_parts, wt::SkinParts::HAT | wt::SkinParts::CAPE);
+        assert_eq!(wire.main_hand, wt::MainHand::Left);
+    }
+
+    #[test]
+    fn a_ban_range_is_parsed_and_a_bad_one_is_an_argument_error() {
+        assert_eq!(
+            ban_target_from_wit(wb::BanTarget::IpRange("10.0.0.0/8".into())).unwrap(),
+            BanTarget::IpRange("10.0.0.0/8".parse().unwrap())
+        );
+        let err = ban_target_from_wit(wb::BanTarget::IpRange("nope".into())).unwrap_err();
+        assert_eq!(err.kind, wt::ErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn a_provider_record_keeps_its_typed_source_and_times() {
+        let record = wb::BanRecord {
+            id: "p1".into(),
+            target: wb::BanTarget::IpRange("::ffff:10.0.0.0/104".into()),
+            reason: Some("proxy abuse".into()),
+            source: wb::BanSource::Player(wb::BanActor {
+                uuid: uuid_to_wit(uuid::Uuid::from_u128(5)),
+                name: "Mod".into(),
+            }),
+            created_at: 1_700_000_000_000,
+            expires_at: Some(1_700_000_060_000),
+        };
+        let entry = ban_record_from_wit(record).unwrap();
+        assert_eq!(
+            entry.source,
+            BanSource::Player {
+                uuid: uuid::Uuid::from_u128(5),
+                name: "Mod".into()
+            }
+        );
+        assert_eq!(system_time_to_millis(entry.created_at), 1_700_000_000_000);
+        assert_eq!(
+            entry.expires_at.map(system_time_to_millis),
+            Some(1_700_000_060_000)
+        );
+        assert_eq!(entry.reason.as_deref(), Some("proxy abuse"));
+
+        let broken = wb::BanRecord {
+            id: "p2".into(),
+            target: wb::BanTarget::IpRange("not a range".into()),
+            reason: None,
+            source: wb::BanSource::System,
+            created_at: 0,
+            expires_at: None,
+        };
+        assert_eq!(
+            ban_record_from_wit(broken).unwrap_err().kind,
+            wt::ErrorKind::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn a_login_attempt_and_its_requests_reach_the_guest_as_given() {
+        let attempt = LoginAttempt::post_auth(
+            "192.0.2.5".parse().unwrap(),
+            "Steve",
+            uuid::Uuid::from_u128(7),
+            true,
+        )
+        .virtual_host("play.example.com")
+        .server(ServerId::new("lobby"));
+        assert_eq!(
+            login_attempt_to_wit(&attempt),
+            wb::LoginAttempt {
+                stage: wb::LoginStage::PostAuth,
+                ip: wt::IpAddress::Ipv4((192, 0, 2, 5)),
+                username: Some("Steve".into()),
+                uuid: Some(uuid_to_wit(uuid::Uuid::from_u128(7))),
+                uuid_verified: true,
+                virtual_host: Some("play.example.com".into()),
+                server: Some("lobby".into()),
+            }
+        );
+        assert_eq!(
+            login_attempt_to_wit(&LoginAttempt::status("192.0.2.5".parse().unwrap())).stage,
+            wb::LoginStage::Status
+        );
+        let unban = unban_request_to_wit(&UnbanRequest::new(BanTarget::Username("Steve".into())));
+        assert_eq!(unban.source, wb::BanSource::System);
+        let query = ban_query_to_wit(&BanQuery::new().limit(usize::MAX).after("c"));
+        assert_eq!(query.limit, 1000);
+        assert_eq!(query.cursor.as_deref(), Some("c"));
+        let ban = ban_request_to_wit(
+            &BanRequest::new(BanTarget::Username("Steve".into()))
+                .duration(Duration::from_secs(2))
+                .silent(true),
+        );
+        assert_eq!(ban.duration_ms, Some(2000));
+        assert!(ban.kick && ban.silent);
+    }
+
+    #[test]
+    fn a_permission_subject_carries_the_player_or_the_console() {
+        let player = PermissionSubject::player(
+            infrarust_api::types::PlayerId::new(3),
+            GameProfile {
+                uuid: uuid::Uuid::from_u128(3),
+                username: "Steve".into(),
+                properties: vec![],
+            },
+            false,
+            "203.0.113.7:4000".parse().unwrap(),
+        )
+        .with_virtual_host("lobby.test");
+        let wp::PermissionSubject::Player(wit) = permission_subject_to_wit(&player) else {
+            panic!("a player subject");
+        };
+        assert_eq!(wit.id, 3);
+        assert_eq!(wit.profile.username, "Steve");
+        assert!(!wit.online_mode);
+        assert_eq!(wit.virtual_host.as_deref(), Some("lobby.test"));
+        assert_eq!(wit.remote_addr.port, 4000);
+        assert_eq!(
+            permission_subject_to_wit(&PermissionSubject::Console),
+            wp::PermissionSubject::Console
+        );
+    }
 
     #[test]
     fn hold_with_timeout_maps_to_native_with_terminal_outcome() {
         let wit = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
             after_ms: 1500,
-            on_timeout: wl::TimeoutOutcome::Deny("bye".to_string()),
+            on_timeout: wl::TimeoutOutcome::Deny(text("bye")),
         });
-        match handler_result_from_wit(wit) {
+        match handler_result_from_wit(&wit).unwrap() {
             HandlerResult::HoldWithTimeout { after, on_timeout } => {
                 assert_eq!(after, Duration::from_millis(1500));
-                assert!(matches!(*on_timeout, HandlerResult::Deny(_)));
+                assert!(matches!(on_timeout, LimboOutcome::Deny(_)));
             }
             other => panic!("expected HoldWithTimeout, got {other:?}"),
         }
     }
 
     #[test]
-    fn timeout_outcome_never_yields_a_hold() {
+    fn timeout_outcome_maps_to_the_native_outcome() {
         assert!(matches!(
-            timeout_outcome_from_wit(wl::TimeoutOutcome::Accept),
-            HandlerResult::Accept
+            timeout_outcome_from_wit(&wl::TimeoutOutcome::Accept),
+            Ok(LimboOutcome::Accept)
         ));
         assert!(matches!(
-            timeout_outcome_from_wit(wl::TimeoutOutcome::SendToLimbo(vec!["a".to_string()])),
-            HandlerResult::SendToLimbo(_)
+            timeout_outcome_from_wit(&wl::TimeoutOutcome::SendToLimbo(vec!["a".to_owned()])),
+            Ok(LimboOutcome::SendToLimbo(_))
         ));
     }
 
     #[test]
-    fn complete_coerces_holds_to_accept() {
-        assert!(matches!(
-            complete_result_from_wit(wl::HandlerResult::Hold),
-            HandlerResult::Accept
-        ));
-        let hwt = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
-            after_ms: 1,
-            on_timeout: wl::TimeoutOutcome::Accept,
+    fn complete_refuses_a_hold_instead_of_releasing_the_player() {
+        let rearm = wl::HandlerResult::HoldWithTimeout(wl::HoldTimeout {
+            after_ms: 30_000,
+            on_timeout: wl::TimeoutOutcome::Deny(text("too slow")),
         });
+        for hold in [wl::HandlerResult::Hold, rearm] {
+            let refused = complete_result_from_wit(&hold).unwrap_err();
+            assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument, "{hold:?}");
+            assert_eq!(refused.message, HOLD_NOT_A_COMPLETION, "{hold:?}");
+        }
         assert!(matches!(
-            complete_result_from_wit(hwt),
-            HandlerResult::Accept
+            complete_result_from_wit(&wl::HandlerResult::Redirect("lobby".to_owned())),
+            Ok(LimboOutcome::Redirect(_))
         ));
         assert!(matches!(
-            complete_result_from_wit(wl::HandlerResult::Redirect("lobby".to_string())),
-            HandlerResult::Redirect(_)
+            complete_result_from_wit(&wl::HandlerResult::Accept),
+            Ok(LimboOutcome::Accept)
+        ));
+    }
+
+    #[test]
+    fn complete_refuses_an_invalid_text_as_an_invalid_component() {
+        let invalid = wl::HandlerResult::Deny(wt::Component { nodes: Vec::new() });
+        let refused = complete_result_from_wit(&invalid).unwrap_err();
+        assert_eq!(refused.kind, wt::ErrorKind::InvalidArgument);
+        assert!(
+            refused.message.starts_with("invalid text component"),
+            "{}",
+            refused.message
+        );
+    }
+
+    #[test]
+    fn a_limbo_deny_with_an_invalid_component_is_refused() {
+        let invalid = wl::HandlerResult::Deny(wt::Component { nodes: Vec::new() });
+        assert!(matches!(
+            handler_result_from_wit(&invalid),
+            Err(ArenaError::Empty)
         ));
     }
 

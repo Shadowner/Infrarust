@@ -80,7 +80,7 @@ impl RateLimiter {
 }
 
 fn header_value(n: u64) -> HeaderValue {
-    HeaderValue::from_str(&n.to_string()).unwrap()
+    HeaderValue::from(n)
 }
 
 pub async fn rate_limit_middleware(

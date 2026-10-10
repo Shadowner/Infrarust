@@ -1,244 +1,283 @@
-//! Permission service — resolves admin UUIDs and provides permission checkers.
+mod builtin;
+mod nodes;
 
 use std::collections::HashSet;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
-use dashmap::DashSet;
+use tokio::time::Instant;
 use uuid::Uuid;
 
-use infrarust_api::permissions::{DefaultPermissionChecker, PermissionChecker, PermissionLevel};
-use infrarust_config::PermissionsConfig;
+use infrarust_api::__private::caller_deadline;
+use infrarust_api::command::CommandSource;
+use infrarust_api::permissions::{
+    ADMIN_PERMISSION, AllPermissionsChecker, DefaultPermissionChecker, PermissionChecker,
+    PermissionDefault, PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
+    PermissionSubject, Tristate, WILDCARD,
+};
+use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
+use infrarust_config::{PermissionProviderSelection, PermissionsConfig};
 
-const PERM_ADMIN: &str = "infrarust.admin";
-const PERM_COMMAND_PREFIX: &str = "infrarust.command.";
+use crate::util::guard::guarded;
+use crate::util::provider_slot::PluginProviderSlot;
+use crate::util::sync::{read, write};
 
-struct SubcommandInfo {
-    all: HashSet<String>,
-    admin_only: HashSet<String>,
-}
+pub use builtin::{ConfigPermissionChecker, ConfigPermissionProvider, resolve_username_to_uuid};
+pub use nodes::command_node;
+
+use nodes::NodeRegistry;
+
+const PROVIDER_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct PermissionService {
-    admin_uuids: Arc<DashSet<Uuid>>,
-    player_commands: Arc<HashSet<String>>,
-    subcommand_info: OnceLock<SubcommandInfo>,
+    selection: PermissionProviderSelection,
+    builtin: Arc<ConfigPermissionProvider>,
+    registered: PluginProviderSlot<dyn PermissionProvider>,
+    nodes: Arc<NodeRegistry>,
+    subcommands: RwLock<Vec<String>>,
 }
 
 impl PermissionService {
     pub fn new_sync(config: &PermissionsConfig) -> Self {
-        Self::build(config, Arc::new(DashSet::new()))
+        Self::build(config, ConfigPermissionProvider::new(config))
     }
 
     pub async fn new(config: &PermissionsConfig) -> Self {
-        let admin_uuids = Arc::new(DashSet::new());
-        resolve_admins_into(&config.admins, &admin_uuids).await;
-
-        if admin_uuids.is_empty() && config.admins.is_empty() {
-            tracing::warn!(
-                "No admins configured in [permissions]. \
-                 All proxy commands will be inaccessible in-game. \
-                 Use the console 'op <username>' command to add an admin."
-            );
-        }
-
-        Self::build(config, admin_uuids)
-    }
-
-    fn build(config: &PermissionsConfig, admin_uuids: Arc<DashSet<Uuid>>) -> Self {
-        let player_commands: HashSet<String> = config
-            .player_commands
-            .iter()
-            .map(|c| c.to_lowercase())
-            .collect();
-
-        Self {
-            admin_uuids,
-            player_commands: Arc::new(player_commands),
-            subcommand_info: OnceLock::new(),
-        }
-    }
-
-    pub fn register_subcommands(&self, all: HashSet<String>, admin_only: HashSet<String>) {
-        let _ = self.subcommand_info.set(SubcommandInfo { all, admin_only });
-
-        if let Some(info) = self.subcommand_info.get() {
-            for cmd in self.player_commands.iter() {
-                if info.admin_only.contains(cmd) {
+        let builtin = ConfigPermissionProvider::new(config);
+        match &config.provider {
+            PermissionProviderSelection::Builtin => {
+                builtin.resolve_admins(&config.admins).await;
+                if config.admins.is_empty() {
                     tracing::warn!(
-                        "Command '{cmd}' is always admin-only and cannot be opened to players"
+                        "No admins configured in [permissions]. \
+                         All proxy commands will be inaccessible in-game. \
+                         Use the console 'op <username>' command to add an admin."
                     );
                 }
             }
+            PermissionProviderSelection::Plugin(id) => {
+                tracing::info!(plugin = %id, "permissions are delegated to a plugin provider");
+            }
+        }
+        Self::build(config, builtin)
+    }
+
+    fn build(config: &PermissionsConfig, builtin: ConfigPermissionProvider) -> Self {
+        let nodes = NodeRegistry::default();
+        if let Err(e) = nodes.register(
+            None,
+            PermissionNode::new(ADMIN_PERMISSION, PermissionDefault::False)
+                .description("Every proxy command, and every node whose default is admin"),
+        ) {
+            tracing::error!("could not register {ADMIN_PERMISSION}: {e}");
+        }
+        Self {
+            selection: config.provider.clone(),
+            builtin: Arc::new(builtin),
+            registered: PluginProviderSlot::new(
+                ProviderKind::Permission,
+                config.provider.plugin_id(),
+                &config.provider,
+            ),
+            nodes: Arc::new(nodes),
+            subcommands: RwLock::new(Vec::new()),
         }
     }
 
-    pub fn build_checker(&self, player_uuid: Uuid) -> ConfigPermissionChecker {
-        ConfigPermissionChecker {
-            admin_uuids: Arc::clone(&self.admin_uuids),
-            player_uuid,
-            player_commands: Arc::clone(&self.player_commands),
+    pub const fn selection(&self) -> &PermissionProviderSelection {
+        &self.selection
+    }
+
+    pub fn builtin(&self) -> &ConfigPermissionProvider {
+        &self.builtin
+    }
+
+    pub fn register_provider(
+        &self,
+        plugin_id: &str,
+        provider: Arc<dyn PermissionProvider>,
+    ) -> Result<(), ProviderRejected> {
+        self.registered.register(plugin_id, provider)
+    }
+
+    pub fn unregister_provider(&self, plugin_id: &str) -> bool {
+        self.registered.unregister(plugin_id)
+    }
+
+    pub fn report_missing_provider(&self) {
+        self.registered
+            .report_missing("players only get the node defaults");
+    }
+
+    fn active(&self) -> Option<Arc<dyn PermissionProvider>> {
+        match &self.selection {
+            PermissionProviderSelection::Builtin => {
+                Some(Arc::clone(&self.builtin) as Arc<dyn PermissionProvider>)
+            }
+            PermissionProviderSelection::Plugin(_) => self.registered.get(),
         }
     }
 
-    pub fn is_admin(&self, uuid: &Uuid) -> bool {
-        self.admin_uuids.contains(uuid)
+    pub async fn create_checker(&self, subject: &PermissionSubject) -> Arc<dyn PermissionChecker> {
+        let Some(provider) = self.active() else {
+            if !subject.is_console() {
+                tracing::debug!(
+                    provider = %self.selection,
+                    player = subject_name(subject),
+                    "no permission provider is registered, the player only gets the node defaults"
+                );
+            }
+            return without_provider(subject);
+        };
+        let deadline = Instant::now() + PROVIDER_TIMEOUT;
+        let asked = guarded(PROVIDER_TIMEOUT, || {
+            caller_deadline::scope(deadline, provider.create_checker(subject))
+        });
+        match asked.await {
+            Ok(checker) => checker,
+            Err(failure) => {
+                tracing::warn!(
+                    provider = %self.selection,
+                    subject = subject_name(subject),
+                    %failure,
+                    "the permission provider gave no checker, falling back to the node defaults"
+                );
+                without_provider(subject)
+            }
+        }
     }
 
-    pub fn is_command_allowed(&self, command: &str, level: PermissionLevel) -> bool {
-        if level >= PermissionLevel::Admin {
-            return true;
-        }
-        let cmd_lower = command.to_lowercase();
-        if let Some(info) = self.subcommand_info.get()
-            && info.admin_only.contains(&cmd_lower)
-        {
-            return false;
-        }
-        self.player_commands.contains(&cmd_lower)
+    pub async fn console_checker(&self) -> Arc<dyn PermissionChecker> {
+        let checker = self.create_checker(&PermissionSubject::Console).await;
+        self.resolved(checker)
     }
 
-    pub fn visible_subcommands(&self, level: PermissionLevel) -> HashSet<String> {
-        let info = self.subcommand_info.get();
-        if level >= PermissionLevel::Admin {
-            return info.map(|i| i.all.clone()).unwrap_or_default();
-        }
-        let admin_only = info.map(|i| &i.admin_only);
-        self.player_commands
+    pub fn resolved(&self, checker: Arc<dyn PermissionChecker>) -> Arc<dyn PermissionChecker> {
+        Arc::new(Resolved {
+            checker,
+            nodes: Arc::clone(&self.nodes),
+        })
+    }
+
+    pub fn value(&self, checker: &dyn PermissionChecker, node: &str) -> Tristate {
+        self.nodes.resolve(checker, node)
+    }
+
+    pub fn register_node(
+        &self,
+        owner: Option<&str>,
+        node: PermissionNode,
+    ) -> Result<(), PermissionNodeError> {
+        self.nodes.register(owner, node)
+    }
+
+    pub fn unregister_nodes(&self, owner: &str) -> usize {
+        self.nodes.unregister_owned(owner)
+    }
+
+    pub fn node(&self, node: &str) -> Option<PermissionNodeInfo> {
+        self.nodes.get(node)
+    }
+
+    pub fn nodes(&self) -> Vec<PermissionNodeInfo> {
+        self.nodes.list()
+    }
+
+    pub fn node_default(&self, node: &str) -> Option<PermissionDefault> {
+        self.nodes.default_of(node)
+    }
+
+    pub fn register_subcommands<'a>(
+        &self,
+        subcommands: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
+    ) {
+        let opened: HashSet<&str> = self
+            .builtin
+            .player_commands()
             .iter()
-            .filter(|cmd| admin_only.is_none_or(|ao| !ao.contains(cmd.as_str())))
-            .cloned()
+            .map(String::as_str)
+            .collect();
+        let mut names = Vec::new();
+        let mut admin_only = HashSet::new();
+        for (name, description, locked) in subcommands {
+            let name = name.to_lowercase();
+            if locked && opened.contains(name.as_str()) {
+                tracing::warn!(
+                    "Command '{name}' is always admin-only and cannot be opened to players"
+                );
+            }
+            let open = !locked && (opened.contains(name.as_str()) || opened.contains(WILDCARD));
+            let default = if open {
+                PermissionDefault::True
+            } else {
+                PermissionDefault::Admin
+            };
+            let node = PermissionNode::new(command_node(&name), default).description(description);
+            if let Err(e) = self.nodes.register(None, node) {
+                tracing::error!("could not register the node of /ir {name}: {e}");
+            }
+            if locked {
+                admin_only.insert(name.clone());
+            }
+            names.push(name);
+        }
+        self.builtin.lock_subcommands(&admin_only);
+        names.sort();
+        *write(&self.subcommands) = names;
+    }
+
+    pub fn is_command_allowed(&self, command: &str, source: &CommandSource) -> bool {
+        source.has_permission(&command_node(command))
+    }
+
+    pub fn visible_subcommands(&self, source: &CommandSource) -> HashSet<String> {
+        let names = read(&self.subcommands).clone();
+        names
+            .into_iter()
+            .filter(|name| self.is_command_allowed(name, source))
             .collect()
     }
 
-    pub async fn reload(&self, config: &PermissionsConfig) {
-        let new_set = DashSet::new();
-        resolve_admins_into(&config.admins, &new_set).await;
-
-        let new_uuids: HashSet<Uuid> = new_set.iter().map(|r| *r).collect();
-        for uuid in &new_uuids {
-            self.admin_uuids.insert(*uuid);
-        }
-        self.admin_uuids.retain(|uuid| new_uuids.contains(uuid));
-
-        tracing::info!(count = self.admin_uuids.len(), "permissions reloaded");
+    pub fn is_admin(&self, uuid: &Uuid) -> bool {
+        self.builtin.is_admin(uuid)
     }
 
     pub fn add_admin(&self, uuid: Uuid) {
-        self.admin_uuids.insert(uuid);
+        self.builtin.add_admin(uuid);
     }
 
     pub fn remove_admin(&self, uuid: &Uuid) -> bool {
-        self.admin_uuids.remove(uuid).is_some()
+        self.builtin.remove_admin(uuid)
     }
 
     pub fn admin_list(&self) -> Vec<Uuid> {
-        self.admin_uuids.iter().map(|r| *r).collect()
+        self.builtin.admin_list()
     }
 }
 
-pub struct ConfigPermissionChecker {
-    admin_uuids: Arc<DashSet<Uuid>>,
-    player_uuid: Uuid,
-    player_commands: Arc<HashSet<String>>,
+struct Resolved {
+    checker: Arc<dyn PermissionChecker>,
+    nodes: Arc<NodeRegistry>,
 }
 
-impl PermissionChecker for ConfigPermissionChecker {
-    fn permission_level(&self) -> PermissionLevel {
-        if self.admin_uuids.contains(&self.player_uuid) {
-            PermissionLevel::Admin
-        } else {
-            PermissionLevel::Player
-        }
-    }
-
-    fn has_permission(&self, permission: &str) -> bool {
-        let is_admin = self.admin_uuids.contains(&self.player_uuid);
-        match permission {
-            PERM_ADMIN => is_admin,
-            p => match p.strip_prefix(PERM_COMMAND_PREFIX) {
-                Some(cmd) => is_admin || self.player_commands.contains(cmd.to_lowercase().as_str()),
-                None => is_admin,
-            },
-        }
+impl PermissionChecker for Resolved {
+    fn value(&self, node: &str) -> Tristate {
+        self.nodes.resolve(self.checker.as_ref(), node)
     }
 }
 
-async fn resolve_admins_into(admins: &[String], target: &DashSet<Uuid>) {
-    let client = reqwest::Client::new();
-
-    for entry in admins {
-        let trimmed = entry.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if let Ok(uuid) = Uuid::parse_str(trimmed) {
-            target.insert(uuid);
-            tracing::debug!(uuid = %uuid, "admin UUID added from config");
-            continue;
-        }
-
-        match resolve_username(&client, trimmed).await {
-            Ok(uuid) => {
-                target.insert(uuid);
-                tracing::info!(username = %trimmed, uuid = %uuid, "resolved admin username");
-            }
-            Err(e) => {
-                tracing::warn!(
-                    username = %trimmed,
-                    error = %e,
-                    "failed to resolve admin username — this admin will not be recognized"
-                );
-            }
-        }
-    }
-}
-
-async fn resolve_username(client: &reqwest::Client, username: &str) -> Result<Uuid, String> {
-    #[derive(serde::Deserialize)]
-    struct MojangProfile {
-        id: String,
-    }
-
-    let url = format!("https://api.mojang.com/users/profiles/minecraft/{username}");
-
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
-
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("username '{username}' not found on Mojang"));
-    }
-
-    if !response.status().is_success() {
-        return Err(format!("Mojang API returned status {}", response.status()));
-    }
-
-    let profile: MojangProfile = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse Mojang response: {e}"))?;
-
-    let uuid_str = if profile.id.len() == 32 && !profile.id.contains('-') {
-        format!(
-            "{}-{}-{}-{}-{}",
-            &profile.id[..8],
-            &profile.id[8..12],
-            &profile.id[12..16],
-            &profile.id[16..20],
-            &profile.id[20..]
-        )
+fn without_provider(subject: &PermissionSubject) -> Arc<dyn PermissionChecker> {
+    if subject.is_console() {
+        Arc::new(AllPermissionsChecker)
     } else {
-        profile.id
-    };
-
-    Uuid::parse_str(&uuid_str).map_err(|e| format!("invalid UUID from Mojang: {e}"))
+        Arc::new(DefaultPermissionChecker)
+    }
 }
 
-pub async fn resolve_username_to_uuid(username: &str) -> Result<Uuid, String> {
-    let client = reqwest::Client::new();
-    resolve_username(&client, username).await
+fn subject_name(subject: &PermissionSubject) -> &str {
+    subject
+        .profile()
+        .map_or("console", |profile| profile.username.as_str())
 }
 
 pub fn default_checker() -> Arc<dyn PermissionChecker> {
@@ -247,147 +286,322 @@ pub fn default_checker() -> Arc<dyn PermissionChecker> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+    use infrarust_api::event::BoxFuture;
+    use infrarust_api::permissions::PermissionMap;
+    use infrarust_api::types::{GameProfile, PlayerId};
+
     use super::*;
 
-    #[test]
-    fn config_checker_admin() {
-        let set = Arc::new(DashSet::new());
-        let uuid = Uuid::new_v4();
-        set.insert(uuid);
+    const SUBCOMMANDS: [(&str, &str, bool); 5] = [
+        ("kick", "Kick", true),
+        ("list", "List", false),
+        ("help", "Help", false),
+        ("server", "Server", false),
+        ("reload", "Reload", true),
+    ];
 
-        let checker = ConfigPermissionChecker {
-            admin_uuids: set,
-            player_uuid: uuid,
-            player_commands: Arc::new(HashSet::new()),
-        };
-
-        assert_eq!(checker.permission_level(), PermissionLevel::Admin);
-        assert!(checker.has_permission(PERM_ADMIN));
-        assert!(checker.has_permission("infrarust.command.kick"));
-        assert!(checker.has_permission("anything"));
+    fn service(config: &PermissionsConfig) -> PermissionService {
+        let service = PermissionService::new_sync(config);
+        service.register_subcommands(SUBCOMMANDS);
+        service
     }
 
-    #[test]
-    fn config_checker_player_no_commands() {
-        let checker = ConfigPermissionChecker {
-            admin_uuids: Arc::new(DashSet::new()),
-            player_uuid: Uuid::new_v4(),
-            player_commands: Arc::new(HashSet::new()),
-        };
-
-        assert_eq!(checker.permission_level(), PermissionLevel::Player);
-        assert!(!checker.has_permission(PERM_ADMIN));
-        assert!(!checker.has_permission("infrarust.command.list"));
+    fn player_commands(commands: &[&str]) -> PermissionsConfig {
+        PermissionsConfig {
+            player_commands: commands.iter().map(|c| (*c).to_string()).collect(),
+            ..PermissionsConfig::default()
+        }
     }
 
-    #[test]
-    fn config_checker_player_with_commands() {
-        let checker = ConfigPermissionChecker {
-            admin_uuids: Arc::new(DashSet::new()),
-            player_uuid: Uuid::new_v4(),
-            player_commands: Arc::new(HashSet::from(["list".into(), "help".into()])),
-        };
-
-        assert!(checker.has_permission("infrarust.command.list"));
-        assert!(checker.has_permission("infrarust.command.help"));
-        assert!(!checker.has_permission("infrarust.command.server"));
+    fn plugin_selected(id: &str) -> PermissionsConfig {
+        PermissionsConfig {
+            provider: PermissionProviderSelection::Plugin(id.into()),
+            ..PermissionsConfig::default()
+        }
     }
 
-    #[test]
-    fn config_checker_command_lookup_is_case_insensitive() {
-        let checker = ConfigPermissionChecker {
-            admin_uuids: Arc::new(DashSet::new()),
-            player_uuid: Uuid::new_v4(),
-            player_commands: Arc::new(HashSet::from(["list".into()])),
-        };
-
-        assert!(checker.has_permission("infrarust.command.LIST"));
-        assert!(checker.has_permission("infrarust.command.List"));
-        assert!(!checker.has_permission("infrarust.command.KICK"));
+    fn steve(online_mode: bool) -> PermissionSubject {
+        PermissionSubject::player(
+            PlayerId::new(1),
+            GameProfile {
+                uuid: Uuid::from_u128(1),
+                username: "Steve".into(),
+                properties: vec![],
+            },
+            online_mode,
+            "127.0.0.1:1".parse().unwrap(),
+        )
     }
 
-    fn test_service(player_commands: &[&str]) -> PermissionService {
-        let config = PermissionsConfig {
-            admins: vec![],
-            player_commands: player_commands.iter().map(|s| s.to_string()).collect(),
-        };
-        let svc = PermissionService::new_sync(&config);
-        svc.register_subcommands(
-            HashSet::from([
-                "kick".into(),
-                "list".into(),
-                "help".into(),
-                "server".into(),
-                "reload".into(),
-            ]),
-            HashSet::from(["kick".into(), "reload".into()]),
-        );
+    fn console(checker: Arc<dyn PermissionChecker>) -> CommandSource {
+        CommandSource::console(checker)
+    }
+
+    struct Fixed(PermissionMap);
+
+    impl PermissionProvider for Fixed {
+        fn create_checker<'a>(
+            &'a self,
+            _subject: &'a PermissionSubject,
+        ) -> BoxFuture<'a, Arc<dyn PermissionChecker>> {
+            let checker: Arc<dyn PermissionChecker> = Arc::new(self.0.clone());
+            Box::pin(async move { checker })
+        }
+    }
+
+    struct Hung;
+
+    impl PermissionProvider for Hung {
+        fn create_checker<'a>(
+            &'a self,
+            _subject: &'a PermissionSubject,
+        ) -> BoxFuture<'a, Arc<dyn PermissionChecker>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    struct Panicking;
+
+    impl PermissionProvider for Panicking {
+        fn create_checker<'a>(
+            &'a self,
+            _subject: &'a PermissionSubject,
+        ) -> BoxFuture<'a, Arc<dyn PermissionChecker>> {
+            Box::pin(async { panic!("the provider exploded") })
+        }
+    }
+
+    fn with_open_node(provider: Arc<dyn PermissionProvider>) -> PermissionService {
+        let svc = service(&plugin_selected("perms"));
+        svc.register_node(
+            Some("demo"),
+            PermissionNode::new("demo.open", PermissionDefault::True),
+        )
+        .unwrap();
+        svc.register_provider("perms", provider).unwrap();
         svc
     }
 
-    #[test]
-    fn is_command_allowed_admin() {
-        let svc = test_service(&[]);
-        assert!(svc.is_command_allowed("kick", PermissionLevel::Admin));
-        assert!(svc.is_command_allowed("list", PermissionLevel::Admin));
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_provider_falls_back_to_the_node_defaults_at_the_deadline() {
+        let svc = with_open_node(Arc::new(Hung));
+        let started = Instant::now();
+
+        let checker = svc.create_checker(&steve(true)).await;
+
+        assert_eq!(started.elapsed(), PROVIDER_TIMEOUT);
+        assert_eq!(svc.value(checker.as_ref(), "demo.open"), Tristate::True);
+        assert_eq!(
+            svc.value(checker.as_ref(), "infrarust.command.kick"),
+            Tristate::False
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panicking_provider_falls_back_like_a_missing_one() {
+        let svc = with_open_node(Arc::new(Panicking));
+
+        let checker = svc.create_checker(&steve(true)).await;
+        assert_eq!(svc.value(checker.as_ref(), "demo.open"), Tristate::True);
+        assert_eq!(
+            svc.value(checker.as_ref(), ADMIN_PERMISSION),
+            Tristate::False
+        );
+
+        let console = svc.console_checker().await;
+        assert!(console.has_permission("infrarust.command.kick"));
     }
 
     #[test]
-    fn is_command_allowed_player() {
-        let svc = test_service(&["list"]);
-        assert!(svc.is_command_allowed("list", PermissionLevel::Player));
-        assert!(!svc.is_command_allowed("kick", PermissionLevel::Player));
-        assert!(!svc.is_command_allowed("server", PermissionLevel::Player));
+    fn builtin_subcommands_get_nodes_with_todays_defaults() {
+        let svc = service(&player_commands(&["list", "kick"]));
+        assert_eq!(
+            svc.node_default("infrarust.command.list"),
+            Some(PermissionDefault::True)
+        );
+        assert_eq!(
+            svc.node_default("infrarust.command.help"),
+            Some(PermissionDefault::Admin)
+        );
+        assert_eq!(
+            svc.node_default("infrarust.command.kick"),
+            Some(PermissionDefault::Admin)
+        );
+        assert_eq!(
+            svc.node_default(ADMIN_PERMISSION),
+            Some(PermissionDefault::False)
+        );
     }
 
     #[test]
-    fn visible_subcommands_admin_sees_all() {
-        let svc = test_service(&[]);
-        let visible = svc.visible_subcommands(PermissionLevel::Admin);
-        assert!(visible.contains("kick"));
-        assert!(visible.contains("list"));
-        assert!(visible.contains("reload"));
+    fn a_wildcard_opens_every_subcommand_players_may_have() {
+        let svc = service(&player_commands(&["*"]));
+        for open in ["list", "help", "server"] {
+            assert_eq!(
+                svc.node_default(&command_node(open)),
+                Some(PermissionDefault::True),
+                "{open}"
+            );
+        }
+        let player = console(svc.resolved(Arc::new(DefaultPermissionChecker)));
+        let mut visible: Vec<String> = svc.visible_subcommands(&player).into_iter().collect();
+        visible.sort();
+        assert_eq!(visible, ["help", "list", "server"]);
     }
 
     #[test]
-    fn visible_subcommands_player_sees_configured() {
-        let svc = test_service(&["list", "help"]);
-        let visible = svc.visible_subcommands(PermissionLevel::Player);
-        assert!(visible.contains("list"));
-        assert!(visible.contains("help"));
-        assert!(!visible.contains("kick"));
+    fn subcommands_follow_the_sources_nodes() {
+        let svc = service(&player_commands(&["list"]));
+        let player = console(svc.resolved(Arc::new(DefaultPermissionChecker)));
+        assert!(svc.is_command_allowed("list", &player));
+        assert!(svc.is_command_allowed("LIST", &player));
+        assert!(!svc.is_command_allowed("kick", &player));
+        assert!(!svc.is_command_allowed("server", &player));
+        assert!(!svc.is_command_allowed("unknown", &player));
+
+        let admin =
+            console(svc.resolved(Arc::new(PermissionMap::new().with(ADMIN_PERMISSION, true))));
+        let mut visible: Vec<String> = svc.visible_subcommands(&admin).into_iter().collect();
+        visible.sort();
+        assert_eq!(visible, ["help", "kick", "list", "reload", "server"]);
+
+        let moderator = console(
+            svc.resolved(Arc::new(
+                PermissionMap::new()
+                    .with("infrarust.command.kick", true)
+                    .with("infrarust.command.list", false),
+            )),
+        );
+        assert!(svc.is_command_allowed("kick", &moderator));
+        assert!(!svc.is_command_allowed("list", &moderator));
     }
 
-    #[test]
-    fn add_remove_admin() {
-        let svc = test_service(&[]);
-        let uuid = Uuid::new_v4();
-        assert!(!svc.is_admin(&uuid));
+    #[tokio::test]
+    async fn the_builtin_provider_keeps_todays_admins() {
+        let admin = Uuid::from_u128(1);
+        let svc = service(&PermissionsConfig {
+            admins: vec![admin.to_string()],
+            ..player_commands(&["list"])
+        });
+        assert!(svc.is_admin(&admin));
 
-        svc.add_admin(uuid);
-        assert!(svc.is_admin(&uuid));
-
-        assert!(svc.remove_admin(&uuid));
-        assert!(!svc.is_admin(&uuid));
+        let online = svc.create_checker(&steve(true)).await;
+        assert_eq!(
+            svc.value(online.as_ref(), "infrarust.command.kick"),
+            Tristate::True
+        );
+        let offline = svc.create_checker(&steve(false)).await;
+        assert_eq!(
+            svc.value(offline.as_ref(), "infrarust.command.kick"),
+            Tristate::False
+        );
+        assert_eq!(
+            svc.value(offline.as_ref(), "infrarust.command.list"),
+            Tristate::True
+        );
+        assert_eq!(
+            svc.value(offline.as_ref(), ADMIN_PERMISSION),
+            Tristate::False
+        );
     }
 
-    #[test]
-    fn live_dashset_update_reflected_in_checker() {
-        let set = Arc::new(DashSet::new());
-        let uuid = Uuid::new_v4();
+    #[tokio::test]
+    async fn trust_offline_admins_lets_offline_admins_in() {
+        let admin = Uuid::from_u128(1);
+        let svc = service(&PermissionsConfig {
+            admins: vec![admin.to_string()],
+            trust_offline_admins: true,
+            ..PermissionsConfig::default()
+        });
+        let offline = svc.create_checker(&steve(false)).await;
+        assert_eq!(
+            svc.value(offline.as_ref(), "infrarust.command.reload"),
+            Tristate::True
+        );
+    }
 
-        let checker = ConfigPermissionChecker {
-            admin_uuids: Arc::clone(&set),
-            player_uuid: uuid,
-            player_commands: Arc::new(HashSet::new()),
-        };
+    #[tokio::test]
+    async fn only_the_selected_plugin_may_provide() {
+        let svc = service(&plugin_selected("perms"));
+        let provider: Arc<dyn PermissionProvider> =
+            Arc::new(Fixed(PermissionMap::new().with("demo.use", true)));
 
-        assert_eq!(checker.permission_level(), PermissionLevel::Player);
+        assert_eq!(
+            svc.register_provider("other", Arc::clone(&provider)),
+            Err(ProviderRejected::NotSelected {
+                kind: ProviderKind::Permission,
+                selected: "perms".into()
+            })
+        );
+        let builtin = service(&PermissionsConfig::default());
+        assert_eq!(
+            builtin.register_provider("perms", Arc::clone(&provider)),
+            Err(ProviderRejected::NotSelected {
+                kind: ProviderKind::Permission,
+                selected: "builtin".into()
+            })
+        );
 
-        set.insert(uuid);
-        assert_eq!(checker.permission_level(), PermissionLevel::Admin);
+        svc.register_provider("perms", provider).unwrap();
+        let checker = svc.create_checker(&steve(true)).await;
+        assert_eq!(svc.value(checker.as_ref(), "demo.use"), Tristate::True);
 
-        set.remove(&uuid);
-        assert_eq!(checker.permission_level(), PermissionLevel::Player);
+        assert!(!svc.unregister_provider("other"));
+        assert!(svc.unregister_provider("perms"));
+        let orphan = svc.create_checker(&steve(true)).await;
+        assert_eq!(svc.value(orphan.as_ref(), "demo.use"), Tristate::Undefined);
+    }
+
+    #[tokio::test]
+    async fn a_missing_provider_leaves_players_with_the_node_defaults() {
+        let svc = service(&PermissionsConfig {
+            admins: vec![Uuid::from_u128(1).to_string()],
+            ..plugin_selected("perms")
+        });
+        svc.register_node(
+            Some("demo"),
+            PermissionNode::new("demo.open", PermissionDefault::True),
+        )
+        .unwrap();
+        let checker = svc.create_checker(&steve(true)).await;
+        assert_eq!(svc.value(checker.as_ref(), "demo.open"), Tristate::True);
+        assert_eq!(
+            svc.value(checker.as_ref(), "infrarust.command.kick"),
+            Tristate::False
+        );
+        assert_eq!(
+            svc.value(checker.as_ref(), ADMIN_PERMISSION),
+            Tristate::False
+        );
+
+        let console = svc.console_checker().await;
+        assert!(console.has_permission("infrarust.command.kick"));
+    }
+
+    #[tokio::test]
+    async fn the_console_checker_applies_node_defaults() {
+        let svc = service(&plugin_selected("perms"));
+        svc.register_node(
+            Some("demo"),
+            PermissionNode::new("demo.open", PermissionDefault::True),
+        )
+        .unwrap();
+        svc.register_provider(
+            "perms",
+            Arc::new(Fixed(PermissionMap::new().with("demo.use", false))),
+        )
+        .unwrap();
+
+        let console = svc.console_checker().await;
+        assert!(!console.has_permission("demo.use"));
+        assert!(console.has_permission("demo.open"));
+        assert!(!console.has_permission("infrarust.command.kick"));
+
+        let builtin = service(&PermissionsConfig::default())
+            .console_checker()
+            .await;
+        assert!(builtin.has_permission("demo.use"));
+        assert!(builtin.has_permission("infrarust.command.kick"));
     }
 }

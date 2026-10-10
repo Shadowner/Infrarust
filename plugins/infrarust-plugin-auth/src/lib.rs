@@ -13,15 +13,12 @@ pub(crate) mod test_support;
 pub mod util;
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use infrarust_api::error::PluginError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::event::bus::EventBusExt;
-use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, SessionEndReason};
-use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
-use infrarust_api::types::PlayerId;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 
@@ -121,9 +118,10 @@ impl Plugin for AuthPlugin {
                     std::time::Duration::from_secs(config.premium.cache_ttl_seconds),
                     std::time::Duration::from_secs(config.premium.failed_auth_remember_seconds),
                 ));
-                let lookup = Arc::new(premium::MojangApiLookup::new(
-                    config.premium.rate_limit_per_second,
-                ));
+                let lookup = Arc::new(
+                    premium::MojangApiLookup::new(config.premium.rate_limit_per_second)
+                        .map_err(|e| PluginError::InitFailed(e.to_string()))?,
+                );
                 let detector = Arc::new(premium::PremiumDetector::new(
                     Arc::clone(&cache),
                     lookup,
@@ -138,16 +136,27 @@ impl Plugin for AuthPlugin {
                     );
 
                 let failure_cache = Arc::clone(&cache);
+                let refuse_premium_names = matches!(
+                    config.premium.premium_name_conflict_action,
+                    premium::config::NameConflictAction::Kick
+                );
                 ctx.event_bus().subscribe::<
-                    infrarust_api::events::lifecycle::OnlineAuthFailed, _
+                    infrarust_api::events::lifecycle::OnlineAuthFailedEvent, _
                 >(
                     infrarust_api::event::EventPriority::NORMAL,
                     move |event| {
-                        failure_cache.mark_auth_failed(&event.username);
-                        tracing::info!(
-                            username = %event.username,
-                            "Remembered failed premium auth — next attempt will skip ForceOnline"
-                        );
+                        let failure = failure_cache.mark_auth_failed(&event.username);
+                        if refuse_premium_names && failure == premium::FailedAuth::PremiumName {
+                            tracing::info!(
+                                username = %event.username,
+                                "Remembered failed auth on a premium name — next attempts are refused"
+                            );
+                        } else {
+                            tracing::info!(
+                                username = %event.username,
+                                "Remembered failed auth — next attempt will skip online auth"
+                            );
+                        }
                     },
                 );
 
@@ -160,14 +169,21 @@ impl Plugin for AuthPlugin {
             let handler = Arc::new(AuthHandler::new(
                 Arc::clone(&storage),
                 Arc::clone(&config),
-                ctx.player_registry_handle(),
+                ctx.player_registry(),
                 dummy_hash,
                 blocked_passwords,
                 premium_cache,
             ));
 
-            ctx.register_limbo_handler(Box::new(AuthLimbo(Arc::clone(&handler))));
+            let sweep_cache = handler.premium_cache().cloned();
+            ctx.register_limbo_handler(Box::new(Arc::clone(&handler)))?;
             commands::register_commands(ctx, Arc::clone(&handler));
+            let disconnects = Arc::clone(&handler);
+            ctx.event_bus()
+                .subscribe::<infrarust_api::events::lifecycle::DisconnectEvent, _>(
+                    infrarust_api::event::EventPriority::NORMAL,
+                    move |event| disconnects.forget_player(event.player.id()),
+                );
 
             let save_cancel = CancellationToken::new();
             let save_storage = Arc::clone(&storage);
@@ -193,13 +209,16 @@ impl Plugin for AuthPlugin {
                             if let Err(e) = save_storage.flush().await {
                                 tracing::error!("Auth auto-save failed: {e}");
                             }
+                            if let Some(cache) = &sweep_cache {
+                                cache.sweep();
+                            }
                         }
                         () = save_token.cancelled() => { break; }
                     }
                 }
             });
 
-            let mut guard = self.state.lock().expect("auth plugin state mutex poisoned");
+            let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             *guard = Some(PluginState {
                 storage,
                 save_cancel,
@@ -214,7 +233,7 @@ impl Plugin for AuthPlugin {
         let state = self
             .state
             .lock()
-            .expect("auth plugin state mutex poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
 
         Box::pin(async move {
@@ -227,44 +246,5 @@ impl Plugin for AuthPlugin {
             tracing::info!("[AuthPlugin] Disabled");
             Ok(())
         })
-    }
-}
-
-struct AuthLimbo(Arc<AuthHandler>);
-
-impl std::ops::Deref for AuthLimbo {
-    type Target = AuthHandler;
-    fn deref(&self) -> &AuthHandler {
-        &self.0
-    }
-}
-
-impl LimboHandler for AuthLimbo {
-    fn name(&self) -> &str {
-        (**self).name()
-    }
-
-    fn on_player_enter<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-    ) -> BoxFuture<'a, HandlerResult> {
-        (**self).on_player_enter(session)
-    }
-
-    fn on_command<'a>(
-        &'a self,
-        session: &'a dyn LimboSession,
-        command: &'a str,
-        args: &'a [&'a str],
-    ) -> BoxFuture<'a, ()> {
-        (**self).on_command(session, command, args)
-    }
-
-    fn on_chat<'a>(&'a self, session: &'a dyn LimboSession, message: &'a str) -> BoxFuture<'a, ()> {
-        (**self).on_chat(session, message)
-    }
-
-    fn on_session_end(&self, player_id: PlayerId, reason: SessionEndReason) -> BoxFuture<'_, ()> {
-        (**self).on_session_end(player_id, reason)
     }
 }

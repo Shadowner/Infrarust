@@ -120,9 +120,69 @@ forwarding error: <details>
 
 An error in the IP forwarding layer (Velocity modern forwarding). See [Forwarding Errors](#forwarding-errors) for the specific variants.
 
-### `Other`
+### `InvalidState`
 
-A catch-all for errors that don't fit other categories. The message string contains the details.
+```
+invalid session state: <details>
+```
+
+A session reached a state the proxy never expects: a packet arrived in the wrong connection phase, or a server configuration that validation rejects (the reserved `proxy_mode = "full"`, velocity forwarding under a forwarding proxy mode) still reached the session handler. The log line just before carries the server id.
+
+### `InvalidStatus`
+
+```
+invalid status response: <details>
+```
+
+A backend answered a status relay with something other than a status response, or with JSON the proxy cannot parse. Check the backend's server list ping output.
+
+### `Serialization`
+
+```
+serialization error: <details>
+```
+
+A JSON document the proxy produces (status response, ban file, registry data) failed to serialize or parse. The wrapped `serde_json` error names the offending field.
+
+### `RegistryData`
+
+```
+registry data error: <details>
+```
+
+The embedded or extracted registry data for a protocol version is missing, truncated or written in an unsupported format. Connect a player to a real backend first, or add registry data for that version.
+
+### `UnknownLimboHandler`
+
+```
+limbo handler not found: <name>
+```
+
+A server's `limbo_handlers` list names a handler no enabled plugin registered. Check the plugin is enabled and holds the `limbo` capability.
+
+### `Watcher`
+
+```
+file watcher error: <details>
+```
+
+The file provider could not create or attach the file system watcher on the servers directory. The wrapped `notify` error tells whether the directory is missing or the inotify limit is reached.
+
+### `Startup`
+
+```
+startup error: <details>
+```
+
+The runtime could not start: plugin discovery failed, a server provider was given for a server with no `[server_manager]` section, or the accept loop task panicked.
+
+### `Ban`
+
+```
+ban storage error: <details>
+```
+
+The file ban storage received a target type it cannot key, or a `list` cursor that is not one it issued.
 
 ## Transport errors
 
@@ -513,14 +573,6 @@ failed to unload plugin '<plugin_id>': <reason>
 ```
 
 A plugin couldn't be cleanly unloaded. Resources may not have been fully released.
-
-### `DuplicateId`
-
-```
-duplicate plugin id '<plugin_id>' (found in loader '<first>' and '<second>')
-```
-
-Two different plugin sources provide a plugin with the same ID. Rename one of the plugins or remove the duplicate.
 
 ## Filter ordering errors
 

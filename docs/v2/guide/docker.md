@@ -38,6 +38,21 @@ servers_dir = "/app/config/servers"
 plugins_dir = "/app/config/plugins"
 ```
 
+WASM plugins are compiled once and cached in `/app/cache/wasm`, the default `[wasm] cache_dir` resolved from the image's working directory `/app`. The image creates that directory for the user it runs as (`65532`), readable and writable by that user only, so the cache needs no configuration. It lives in the container's writable layer: it survives a restart of the container, and a new container, after pulling a new image for example, compiles the plugins again at its first start. To keep the cache across containers, mount a named volume at `/app/cache`; Docker fills a new named volume with the directory from the image, owner included:
+
+```yaml
+services:
+  infrarust:
+    volumes:
+      - ./config:/app/config
+      - wasm-cache:/app/cache
+
+volumes:
+  wasm-cache:
+```
+
+A bind mount at `/app/cache` needs a host directory that uid `65532` can write, ideally owned by it with mode `0700` to keep other users out; otherwise the proxy logs `AOT cache directory cannot be written` and compiles the plugins at each start. Do not place the cache under `plugins_dir`: the proxy refuses to start with `cache_dir` inside it.
+
 ## Running with docker run
 
 ```bash
@@ -67,15 +82,19 @@ services:
     volumes:
       - ./config:/app/config
     restart: unless-stopped
+    stop_grace_period: 45s
 ```
+
+`docker stop` sends SIGTERM and kills the container 10 seconds later by default. Infrarust drains connections for up to 30 seconds and then gives plugins up to 10 seconds, so `stop_grace_period: 45s` (or `docker stop -t 45`) lets it finish. A second SIGTERM while it is stopping makes it exit at once.
 
 ## Environment variables
 
-Infrarust reads one environment variable at runtime:
+Infrarust reads these environment variables at runtime:
 
 | Variable | Description |
 |----------|-------------|
 | `RUST_LOG` | Log level filter. Overrides the `--log-level` CLI flag. Accepts `trace`, `debug`, `info`, `warn`, `error`, or module-level filters like `infrarust_core=debug`. |
+| `INFRARUST_COLOR` | `auto` (default), `always` or `never`. Containers started without `-t` have no terminal, so `auto` prints plain text; use `always` for panels like Pterodactyl that display colors. See [Colors](../reference/cli#colors). |
 
 Set it in your Compose file or `docker run`:
 

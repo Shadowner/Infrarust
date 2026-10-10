@@ -6,9 +6,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::defaults;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OtlpProtocol {
+    #[default]
+    Grpc,
+    Http,
+}
+
 /// Sub-sections: `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
 /// Absent from the TOML file means `None` in `ProxyConfig` (no telemetry).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelemetryConfig {
     /// Enables telemetry. `false` = initialized but no export.
@@ -19,9 +27,8 @@ pub struct TelemetryConfig {
     #[serde(default)]
     pub endpoint: Option<String>,
 
-    /// Export protocol: "grpc" or "http".
-    #[serde(default = "defaults::telemetry_protocol")]
-    pub protocol: String,
+    #[serde(default)]
+    pub protocol: OtlpProtocol,
 
     /// Metrics configuration.
     #[serde(default)]
@@ -34,19 +41,6 @@ pub struct TelemetryConfig {
     /// `OTel` resource attributes.
     #[serde(default)]
     pub resource: ResourceConfig,
-}
-
-impl Default for TelemetryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            endpoint: None,
-            protocol: defaults::telemetry_protocol(),
-            metrics: MetricsConfig::default(),
-            traces: TracesConfig::default(),
-            resource: ResourceConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

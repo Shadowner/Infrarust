@@ -17,7 +17,7 @@ impl VarLong {
         }
     }
 
-    pub fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    pub fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         let mut val = self.0 as u64;
         loop {
             let byte = (val & 0x7F) as u8;
@@ -48,7 +48,7 @@ impl VarLong {
 }
 
 impl Encode for VarLong {
-    fn encode(&self, w: &mut impl Write) -> ProtocolResult<()> {
+    fn encode(&self, w: &mut (impl Write + ?Sized)) -> ProtocolResult<()> {
         Self::encode(self, w)
     }
 }

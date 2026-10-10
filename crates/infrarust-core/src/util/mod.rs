@@ -1,4 +1,8 @@
 pub mod domain_rewrite;
+pub(crate) mod guard;
+pub mod provider_slot;
+pub mod sync;
+pub mod text;
 
 /// Normalizes a handshake `serverAddress` for routing.
 ///

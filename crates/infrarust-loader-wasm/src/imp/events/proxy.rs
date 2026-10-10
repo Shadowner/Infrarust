@@ -1,0 +1,281 @@
+use infrarust_api::events::proxy::{
+    BackendHealthEvent, ConfigReloadEvent, PingResponse, ProxyInitializeEvent, ProxyPingEvent,
+    ProxyShutdownEvent, ServerStateChangeEvent,
+};
+use infrarust_api::types::{Component, ProtocolVersion};
+
+use super::{Applied, EventDetails, Texts, WasmEvent, unmatched};
+use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
+use crate::bindings::infrarust::plugin::types as wt;
+use crate::component;
+use crate::convert;
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PingDetails {
+    pub(crate) description: Component,
+    pub(crate) favicon: Option<String>,
+    pub(crate) player_sample: Vec<(String, uuid::Uuid)>,
+}
+
+impl PingDetails {
+    pub(crate) fn description_to_wit(&self) -> wt::Component {
+        component::to_wit(&self.description)
+    }
+
+    pub(crate) fn player_sample_to_wit(&self) -> Vec<we::PingPlayer> {
+        self.player_sample
+            .iter()
+            .map(|(name, uuid)| we::PingPlayer {
+                name: name.clone(),
+                uuid: convert::uuid_to_wit(*uuid),
+            })
+            .collect()
+    }
+}
+
+fn ping_summary_to_wit(response: &PingResponse) -> we::ProxyPingResult {
+    we::ProxyPingResult {
+        max_players: response.max_players,
+        online_players: response.online_players,
+        protocol: response.protocol_version.raw(),
+        version_name: response.version_name.clone(),
+        description: None,
+        favicon: None,
+        player_sample: None,
+    }
+}
+
+impl WasmEvent for ProxyPingEvent {
+    const KIND: EventKind = EventKind::ProxyPing;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::ProxyPing(we::ProxyPingEvent {
+            remote_addr: convert::socket_to_wit(self.remote_addr),
+            server: convert::server_id_opt(&self.server),
+            virtual_host: self.virtual_host.clone(),
+            protocol: self.protocol_version.raw(),
+            legacy: self.legacy,
+            result: ping_summary_to_wit(&self.response),
+        })
+    }
+
+    fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        let we::EventOutcome::ProxyPing(result) = outcome else {
+            return unmatched(&outcome);
+        };
+        let mut texts = Texts::default();
+        let response = &mut self.response;
+        response.max_players = result.max_players;
+        response.online_players = result.online_players;
+        response.protocol_version = ProtocolVersion::new(result.protocol);
+        response.version_name = result.version_name;
+        if let Some(description) = result.description {
+            response.description = texts.convert(&description);
+        }
+        if let Some(favicon) = result.favicon {
+            response.favicon = favicon;
+        }
+        if let Some(sample) = result.player_sample {
+            response.player_sample = sample
+                .into_iter()
+                .map(|player| (player.name, convert::uuid_from_wit(player.uuid)))
+                .collect();
+        }
+        texts.applied()
+    }
+
+    fn lend(&mut self) -> Option<EventDetails> {
+        let response = &mut self.response;
+        Some(EventDetails::Ping(PingDetails {
+            description: std::mem::take(&mut response.description),
+            favicon: response.favicon.take(),
+            player_sample: std::mem::take(&mut response.player_sample),
+        }))
+    }
+
+    fn give_back(&mut self, details: EventDetails) {
+        let EventDetails::Ping(ping) = details;
+        let response = &mut self.response;
+        response.description = ping.description;
+        response.favicon = ping.favicon;
+        response.player_sample = ping.player_sample;
+    }
+}
+
+impl WasmEvent for ProxyInitializeEvent {
+    const KIND: EventKind = EventKind::ProxyInitialize;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::ProxyInitialize
+    }
+}
+
+impl WasmEvent for ProxyShutdownEvent {
+    const KIND: EventKind = EventKind::ProxyShutdown;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::ProxyShutdown
+    }
+}
+
+impl WasmEvent for ConfigReloadEvent {
+    const KIND: EventKind = EventKind::ConfigReload;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::ConfigReload(we::ConfigReloadEvent {
+            provider: self.provider.clone(),
+            added: convert::server_ids(&self.added),
+            removed: convert::server_ids(&self.removed),
+            updated: convert::server_ids(&self.updated),
+        })
+    }
+}
+
+impl WasmEvent for ServerStateChangeEvent {
+    const KIND: EventKind = EventKind::ServerStateChange;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::ServerStateChange(we::ServerStateChangeEvent {
+            server: self.server.as_str().to_owned(),
+            old_state: convert::server_state_to_wit(self.old_state),
+            new_state: convert::server_state_to_wit(self.new_state),
+        })
+    }
+}
+
+impl WasmEvent for BackendHealthEvent {
+    const KIND: EventKind = EventKind::BackendHealth;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::BackendHealth(we::BackendHealthEvent {
+            address: convert::server_address_to_wit(&self.address),
+            servers: convert::server_ids(&self.servers),
+            state: convert::backend_state_to_wit(self.state),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use infrarust_api::services::load_balancer::BackendState;
+    use infrarust_api::types::{Component, HoverEvent, ServerId};
+
+    use super::*;
+
+    fn ping() -> ProxyPingEvent {
+        let mut response = PingResponse::new(
+            Component::text("motd").hover(HoverEvent::show_item("minecraft:stone", 1)),
+            20,
+            1,
+            ProtocolVersion::new(774),
+            "Infrarust".into(),
+            None,
+        );
+        response.player_sample = vec![("Notch".to_owned(), uuid::Uuid::from_u128(7))];
+        ProxyPingEvent::new(
+            "127.0.0.1:25565".parse().unwrap(),
+            Some(ServerId::new("lobby")),
+            Some("lobby.test".into()),
+            ProtocolVersion::new(774),
+            true,
+            response,
+        )
+    }
+
+    fn current(event: &ProxyPingEvent) -> we::ProxyPingResult {
+        let we::Event::ProxyPing(record) = event.to_wit() else {
+            panic!("a ping is sent as proxy-ping");
+        };
+        assert!(record.legacy);
+        assert_eq!(record.virtual_host.as_deref(), Some("lobby.test"));
+        record.result
+    }
+
+    #[test]
+    fn the_event_carries_the_cheap_fields_and_leaves_the_heavy_ones_on_the_host() {
+        let event = ping();
+        let result = current(&event);
+        assert_eq!(result.max_players, 20);
+        assert_eq!(result.online_players, 1);
+        assert_eq!(result.protocol, 774);
+        assert_eq!(result.version_name, "Infrarust");
+        assert_eq!(result.description, None);
+        assert_eq!(result.favicon, None);
+        assert_eq!(result.player_sample, None);
+    }
+
+    #[test]
+    fn lending_moves_the_heavy_fields_out_and_giving_them_back_restores_them() {
+        let mut event = ping();
+        event.response.favicon = Some("data:image/png;base64,AAAA".to_owned());
+        let original = event.response.clone();
+        let Some(EventDetails::Ping(lent)) = event.lend() else {
+            panic!("a ping lends its heavy fields");
+        };
+        assert_eq!(lent.description, original.description);
+        assert_eq!(lent.favicon, original.favicon);
+        assert_eq!(lent.player_sample, original.player_sample);
+        assert_eq!(
+            lent.description_to_wit(),
+            component::to_wit(&original.description)
+        );
+        assert_eq!(lent.player_sample_to_wit()[0].name, "Notch");
+        assert!(event.response.player_sample.is_empty());
+        assert_eq!(event.response.favicon, None);
+        event.give_back(EventDetails::Ping(lent));
+        assert_eq!(event.response, original);
+    }
+
+    #[test]
+    fn a_ping_outcome_without_heavy_fields_keeps_the_native_ones() {
+        let mut event = ping();
+        let original = event.response.clone();
+        let mut outcome = current(&event);
+        outcome.max_players = 99;
+
+        assert_eq!(
+            event.apply(we::EventOutcome::ProxyPing(outcome)),
+            Applied::Set
+        );
+
+        assert_eq!(event.response.max_players, 99);
+        assert_eq!(event.response.player_sample, original.player_sample);
+        assert_eq!(
+            event.response.description, original.description,
+            "an unchanged description keeps what the contract cannot carry"
+        );
+    }
+
+    #[test]
+    fn an_outcome_replaces_each_heavy_field_it_carries() {
+        let mut event = ping();
+        event.response.favicon = Some("data:image/png;base64,AAAA".to_owned());
+        let mut outcome = current(&event);
+        outcome.description = Some(component::to_wit(&Component::text("hello")));
+        outcome.favicon = Some(None);
+        outcome.player_sample = Some(Vec::new());
+        event.apply(we::EventOutcome::ProxyPing(outcome));
+        assert_eq!(event.response.description, Component::text("hello"));
+        assert_eq!(event.response.favicon, None);
+        assert!(event.response.player_sample.is_empty());
+    }
+
+    #[test]
+    fn a_backend_health_change_names_its_servers() {
+        let event = BackendHealthEvent::new(
+            infrarust_api::types::ServerAddress {
+                host: "10.0.0.2".into(),
+                port: 25565,
+            },
+            vec![ServerId::new("lobby")],
+            BackendState::Draining,
+        );
+        let we::Event::BackendHealth(record) = event.to_wit() else {
+            panic!("a backend health change is sent as backend-health");
+        };
+        assert_eq!(record.servers, ["lobby"]);
+        assert_eq!(record.state, we::BackendState::Draining);
+        assert_eq!(record.address.port, 25565);
+    }
+}

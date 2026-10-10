@@ -43,6 +43,35 @@ pub struct Listener {
     shutdown: CancellationToken,
 }
 
+#[derive(Debug)]
+pub struct PendingConnection {
+    connection: ClientConnection,
+    receive_proxy_protocol: bool,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl PendingConnection {
+    pub const fn peer_addr(&self) -> SocketAddr {
+        self.connection.peer_addr()
+    }
+
+    pub async fn resolve(self) -> Result<AcceptedConnection, TransportError> {
+        let Self {
+            mut connection,
+            receive_proxy_protocol,
+            permit,
+        } = self;
+        if receive_proxy_protocol {
+            let (info, leftover) = decode_proxy_protocol(connection.stream_mut()).await?;
+            if let Some(info) = info {
+                connection = connection.with_proxy_protocol(&info);
+            }
+            connection.inject_buffered_data(&leftover);
+        }
+        Ok(AcceptedConnection { connection, permit })
+    }
+}
+
 /// An accepted connection with its semaphore permit.
 ///
 /// The permit is held for the lifetime of the connection.
@@ -104,8 +133,7 @@ impl Listener {
     /// Accepts the next connection.
     ///
     /// Acquires a semaphore permit (if connection limiting is enabled),
-    /// waits for an incoming connection, configures the socket, and
-    /// optionally decodes the proxy protocol header.
+    /// waits for an incoming connection, and configures the socket.
     ///
     /// Transient errors (EMFILE, ENOMEM) are retried with backoff.
     /// Returns `TransportError::Shutdown` when the shutdown token is cancelled.
@@ -116,7 +144,7 @@ impl Listener {
     /// cancelled, [`TransportError::Accept`] on a non-transient accept
     /// error, or [`TransportError::SocketConfig`] if socket configuration
     /// fails.
-    pub async fn accept(&self) -> Result<AcceptedConnection, TransportError> {
+    pub async fn accept(&self) -> Result<PendingConnection, TransportError> {
         let mut backoff = std::time::Duration::from_millis(100);
         loop {
             // Acquire permit before accepting
@@ -163,7 +191,7 @@ impl Listener {
                 .set_nonblocking(true)
                 .map_err(TransportError::SocketConfig)?;
             let std_stream: std::net::TcpStream = socket.into();
-            let mut stream = tokio::net::TcpStream::from_std(std_stream)
+            let stream = tokio::net::TcpStream::from_std(std_stream)
                 .map_err(TransportError::SocketConfig)?;
 
             let local_addr = self
@@ -171,23 +199,9 @@ impl Listener {
                 .local_addr()
                 .map_err(TransportError::SocketConfig)?;
 
-            // Decode proxy protocol if enabled
-            let conn = if self.config.receive_proxy_protocol {
-                let (info, leftover) = decode_proxy_protocol(&mut stream).await?;
-                let mut conn = ClientConnection::new(stream, peer_addr, local_addr);
-                if let Some(ref pp_info) = info {
-                    conn = conn.with_proxy_protocol(pp_info);
-                }
-                if !leftover.is_empty() {
-                    conn.inject_buffered_data(&leftover);
-                }
-                conn
-            } else {
-                ClientConnection::new(stream, peer_addr, local_addr)
-            };
-
-            return Ok(AcceptedConnection {
-                connection: conn,
+            return Ok(PendingConnection {
+                connection: ClientConnection::new(stream, peer_addr, local_addr),
+                receive_proxy_protocol: self.config.receive_proxy_protocol,
                 permit,
             });
         }

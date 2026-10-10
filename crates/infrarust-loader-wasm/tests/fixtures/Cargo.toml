@@ -2,33 +2,64 @@
 resolver = "2"
 members = [
     "fixture-common",
-    "hello",
+    "scripted",
+    "scripted-peer",
     "trap-on-purpose",
     "cpu-spin",
     "memory-bomb",
-    "event-subscriber",
-    "event-modifier",
-    "multi-handler",
     "host-caller",
     "command-plugin",
     "capability-denied",
-    "sdk-smoke",
     "codec-modify",
     "codec-stateful",
+    "codec-std",
     "limbo-handler",
+    "slow-handler",
+    "deadline-probe",
+    "old-world",
+    "provider",
+    "net-probe",
+    "net-codec",
+    "fault-lab",
+    "fault-lab-peer",
+    "metadata-trap",
+    "metadata-sleep",
+    "sec-probe",
+    "sec-peer",
+    "node-probe",
+    "lif-probe",
+    "perf-probe",
+    "perf-raw",
+    "sem-probe",
+    "wrong-outcome",
+    "doc-hello",
 ]
 
 [workspace.dependencies]
-wit-bindgen = "0.51"
+wit-bindgen = "0.62.0"
+wasip2 = "2.0.1"
 infrarust-plugin-sdk = { path = "../../../infrarust-plugin-sdk" }
 infrarust-plugin-macros = { path = "../../../infrarust-plugin-macros" }
 fixture-common = { path = "fixture-common" }
 
 [profile.release]
-opt-level = "s"
-lto = true
+opt-level = 1
+lto = false
+codegen-units = 16
 strip = true
 panic = "abort"
 
+[profile.release.package.fixture-codec-modify]
+opt-level = 3
+codegen-units = 1
+
 [profile.dev]
 panic = "abort"
+
+[profile.release.package.fixture-perf-probe]
+opt-level = 3
+codegen-units = 1
+
+[profile.release.package.fixture-perf-raw]
+opt-level = 3
+codegen-units = 1

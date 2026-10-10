@@ -5,7 +5,7 @@
 //! backend relay or synthesized for contextual MOTDs (sleeping, starting, etc.).
 
 use infrarust_config::MotdEntry;
-use infrarust_protocol::CURRENT_MC_PROTOCOL;
+use infrarust_protocol::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 
 /// Parsed Minecraft status response.
@@ -60,7 +60,7 @@ impl ServerPingResponse {
         Self {
             version: PingVersion {
                 name: version_name.unwrap_or("Infrarust").to_string(),
-                protocol: CURRENT_MC_PROTOCOL,
+                protocol: ProtocolVersion::CURRENT.0,
             },
             players: PingPlayers {
                 max: max_players.unwrap_or(0),
