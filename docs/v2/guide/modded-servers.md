@@ -25,7 +25,7 @@ Forwarding modes never parse past the Login Start, so any loader and any version
 Forge and NeoForge clients append a marker to the host in the handshake. Infrarust ignores the marker when it routes the connection and keeps it on the way to the backend:
 
 - With no `domain_rewrite`, the original handshake bytes are forwarded.
-- With a `domain_rewrite`, the rewritten host is followed by the client's marker.
+- With a `domain_rewrite`, the rewritten host is followed by the client's marker, and by nothing else the client appended.
 - With BungeeCord or BungeeGuard forwarding, the marker becomes the `forgeClient` and `extraData` profile properties, the convention Waterfall introduced and that Forge-side BungeeCord forwarding mods read.
 
 See [FML markers](./routing#fml-markers) for the details.

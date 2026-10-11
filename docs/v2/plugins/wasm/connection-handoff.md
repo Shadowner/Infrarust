@@ -89,6 +89,8 @@ With `replay` on, the target receives `prefix` and then what the connection alre
 - after a handshake, the handshake as the proxy forwards it in passthrough without identity forwarding (the target server's [`domain_rewrite`](../../configuration/servers#fields-reference) applies and the Forge marker stays), then every byte the client sent after it;
 - after a login claim, the same handshake, the Login Start packet as received, then every byte the client sent after it.
 
+The replayed handshake never carries more than the host and a Forge marker. When the client put anything else after its host (from the first `\0`), such as fields shaped like BungeeCord forwarding (`\0<ip>\0<uuid>\0<properties>`) or a marker of its own like `\0XFER\0`, the proxy rebuilds the handshake with the host as the client sent it, or the rewritten host, and drops that suffix, so a client cannot hand a backend that trusts BungeeCord forwarding an identity of its choosing. A handshake whose host has no suffix or only a Forge marker (`\0FML\0`, `\0FML2\0`, `\0FML3\0`, `\0FORGE`) is replayed byte for byte when no `domain_rewrite` applies. A plugin still reads the whole host in `raw_host`; if the target needs what the client put there, pass it in `prefix`.
+
 With `replay` off the target only gets `prefix` and then whatever the client sends next.
 
 ### Bans

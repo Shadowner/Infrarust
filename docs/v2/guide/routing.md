@@ -82,7 +82,7 @@ A player using a Forge client connecting to `mc.example.com` sends `mc.example.c
 The backend still needs the marker: without it a Forge server treats the client as vanilla and refuses it. Infrarust keeps it on the way to the backend:
 
 - With no `domain_rewrite`, the handshake reaches the backend exactly as the client sent it.
-- With a `domain_rewrite`, everything from the first `\0` of the client's hostname is appended to the rewritten hostname, so `{ explicit = "backend.internal" }` sends `backend.internal\0FML2\0`.
+- With a `domain_rewrite`, the client's Forge marker is appended to the rewritten hostname, so `{ explicit = "backend.internal" }` sends `backend.internal\0FML2\0`. Anything else the client put after its hostname (from the first `\0`) is dropped, so a client cannot slip BungeeCord-style forwarding fields (`\0<ip>\0<uuid>\0<properties>`) through the rewrite. A suffix that mixes a marker with other fields is dropped whole.
 - With BungeeCord or BungeeGuard forwarding, the hostname field carries the forwarded IP, UUID and properties, so the client's suffix is never copied into it. When the suffix holds a Forge marker, Infrarust adds the two profile properties Waterfall uses instead: `forgeClient` set to `true`, and `extraData` set to the suffix with every `\0` replaced by `\1` (`\1FML2\1`). Backend mods such as BungeeForge read them back. The BungeeGuard token is unaffected.
 - Velocity modern forwarding does not touch the hostname, so the marker passes as with no forwarding.
 
