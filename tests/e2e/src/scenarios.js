@@ -1,4 +1,4 @@
-import { BIG_PACKET_CHANNEL, BIG_PACKET_MIN_PROTOCOL, HOLEPUNCH_PROTOCOLS, LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
+import { BIG_PACKET_CHANNEL, BIG_PACKET_MIN_PROTOCOL, MODERN_LAYOUT_PROTOCOLS, LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
 
 export const BACKENDS = {
   plain: { port: 25700, kind: 'plain' },
@@ -197,16 +197,16 @@ export const SCENARIOS = [
     expect: { reachesPlay: true, interceptedByProxy: true, forgeMarker: { properties: true } },
   },
   {
-    id: 'holepunch-login-start',
-    domain: 'holepunch.test',
+    id: 'modern-layout-login-start',
+    domain: 'modern-layout.test',
     proxyMode: 'passthrough',
     forwardingMode: 'none',
     backend: 'raw',
     mockOnly: true,
     rawClient: true,
-    minProtocol: HOLEPUNCH_PROTOCOLS.min,
-    maxProtocol: HOLEPUNCH_PROTOCOLS.max,
-    protocolReason: `the 1.20.2 Login Start layout only differs from the native one for protocols ${HOLEPUNCH_PROTOCOLS.min}-${HOLEPUNCH_PROTOCOLS.max}`,
+    minProtocol: MODERN_LAYOUT_PROTOCOLS.min,
+    maxProtocol: MODERN_LAYOUT_PROTOCOLS.max,
+    protocolReason: `the 1.20.2 Login Start layout only differs from the native one for protocols ${MODERN_LAYOUT_PROTOCOLS.min}-${MODERN_LAYOUT_PROTOCOLS.max}`,
     expect: { rawLoginStartForwarded: true, interceptedByProxy: false },
   },
 ];

@@ -14,7 +14,7 @@ export const LOGIN_QUERIES = [
   },
   {
     messageId: -101,
-    channel: 'automodpack:handshake',
+    channel: 'e2e:handshake',
     request: Buffer.from([0xc3, 0x28, 0xff, 0xfe, 0x00, 0x80]),
     answer: Buffer.from([0xa0, 0xa1, 0xed, 0xa0, 0x80, 0x00, 0xff]),
   },
@@ -59,7 +59,7 @@ export function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex');
 }
 
-export const HOLEPUNCH_PROTOCOLS = { min: 759, max: 763 };
+export const MODERN_LAYOUT_PROTOCOLS = { min: 759, max: 763 };
 export const RAW_TAIL = Buffer.from('\x16\x03\x01\x00\x05hello', 'latin1');
 export const RAW_REPLY = Buffer.from('e2e-raw-backend-reply');
 

@@ -119,7 +119,7 @@ removed.
 | `big-packet-client-only` | client_only | none | 1.8+; a 3 MiB play packet; needs `--session-server` |
 | `forge-rewrite` | passthrough | none | `domain_rewrite` with a Forge marker in the host |
 | `forge-bungeecord` | offline | bungee_cord | Forge marker turned into profile properties |
-| `holepunch-login-start` | passthrough | none | protocols 759–763 only; raw socket, no nmp |
+| `modern-layout-login-start` | passthrough | none | protocols 759–763 only; raw socket, no nmp |
 
 Velocity forwarding cannot be negotiated below protocol 393, because
 `login_plugin_request` does not exist before 1.13. Those cells are skipped, not

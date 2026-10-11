@@ -170,7 +170,7 @@ await check('expectations: a forge marker lost by a rewrite or by bungeecord for
   assert.equal(evaluate(props, forwarded([good[0], { name: 'extraData', value: '\u0000FML3\u0000' }])).status, 'fail');
 });
 
-await check('expectations: a holepunch opening altered on the way is caught', () => {
+await check('expectations: a modern-layout opening altered on the way is caught', () => {
   const sent = modernLoginStartOpening({ protocol: 759, host: 'hp.test', port: 25565, username: 'Steve' }).toString('hex');
   const forwarded = (received) => ({ client: { sent, replied: true }, backend: { received } });
   assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(sent)).status, 'pass');
@@ -206,7 +206,7 @@ await check('loopback: the big packet reaches a client with no proxy involved', 
   }
 });
 
-await check('loopback: the raw backend echoes the holepunch opening with no proxy involved', async () => {
+await check('loopback: the raw backend echoes the modern-layout opening with no proxy involved', async () => {
   const port = 26122;
   const backend = await startBackend({ port, kind: 'raw', raw: true });
   try {
