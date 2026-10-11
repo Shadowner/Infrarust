@@ -45,6 +45,10 @@ interface events {
         player-resource-pack-status,
         named-event,
         raw-packet,
+        raw-connection,
+        login-claim,
+        login-plugin-request,
+        login-plugin-response,
     }
 
     record pre-login-event {
@@ -292,10 +296,26 @@ interface events {
         %result: connection-handshake-result,
     }
 
+    variant handoff-target {
+        route,
+        server(server-id),
+        server-port(tuple<server-id, u16>),
+        address(server-address),
+    }
+
+    record handoff {
+        target: handoff-target,
+        replay: bool,
+        prefix: list<u8>,
+        reply: list<u8>,
+        proxy-protocol: option<bool>,
+    }
+
     variant connection-handshake-result {
         allow,
         deny(option<component>),
         drop-silently,
+        handoff(handoff),
     }
 
     variant reject-reason {
@@ -473,6 +493,77 @@ interface events {
         drop,
     }
 
+    record raw-connection-event {
+        connection-id: u64,
+        remote-addr: socket-address,
+        local-addr: socket-address,
+        prefix: list<u8>,
+        data: list<u8>,
+        %result: raw-connection-result,
+    }
+
+    variant raw-connection-result {
+        pass,
+        need-more(u32),
+        handoff(handoff),
+        reject,
+    }
+
+    record login-claim-event {
+        remote-addr: socket-address,
+        virtual-host: option<string>,
+        raw-host: string,
+        port: u16,
+        protocol: protocol-version,
+        server: option<server-id>,
+        username: string,
+        uuid: option<uuid>,
+        login-start: list<u8>,
+        layout-matches: bool,
+        %result: login-claim-result,
+    }
+
+    variant login-claim-result {
+        pass,
+        handoff(handoff),
+    }
+
+    record login-plugin-request-event {
+        player: player-ref,
+        server: server-id,
+        message-id: s32,
+        channel: string,
+        data: list<u8>,
+        client-reachable: bool,
+        %result: login-plugin-request-result,
+    }
+
+    variant login-plugin-request-result {
+        forward,
+        replace(list<u8>),
+        respond(option<list<u8>>),
+    }
+
+    record login-plugin-response-event {
+        player: player-ref,
+        server: server-id,
+        message-id: s32,
+        channel: string,
+        successful: bool,
+        data: list<u8>,
+        %result: login-plugin-response-result,
+    }
+
+    record login-plugin-response-replacement {
+        successful: bool,
+        data: list<u8>,
+    }
+
+    variant login-plugin-response-result {
+        forward,
+        replace(login-plugin-response-replacement),
+    }
+
     variant event {
         pre-login(pre-login-event),
         post-login(post-login-event),
@@ -510,6 +601,10 @@ interface events {
         player-resource-pack-status(player-resource-pack-status-event),
         named-event(named-event-event),
         raw-packet(raw-packet-event),
+        raw-connection(raw-connection-event),
+        login-claim(login-claim-event),
+        login-plugin-request(login-plugin-request-event),
+        login-plugin-response(login-plugin-response-event),
     }
 
     variant event-outcome {
@@ -529,6 +624,10 @@ interface events {
         pre-transfer(pre-transfer-result),
         named-event(named-event-result),
         raw-packet(raw-packet-result),
+        raw-connection(raw-connection-result),
+        login-claim(login-claim-result),
+        login-plugin-request(login-plugin-request-result),
+        login-plugin-response(login-plugin-response-result),
     }
 
     ping-description: func() -> option<component>;

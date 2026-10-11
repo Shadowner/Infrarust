@@ -21,6 +21,7 @@ world plugin {
     import permissions;
     import permission-nodes;
     import providers;
+    import connection-claims;
 
     export guest;
     export codec-filter;

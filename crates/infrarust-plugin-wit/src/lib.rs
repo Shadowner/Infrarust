@@ -15,7 +15,7 @@ pub const WIT_DIR: &str = "wit";
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    const FROZEN_WIT_HASH: u64 = 0xe76b_f153_9e51_eb30;
+    const FROZEN_WIT_HASH: u64 = 0x36ea_2f4d_ca72_ddb2;
 
     fn fnv1a(hash: u64, bytes: &[u8]) -> u64 {
         bytes.iter().fold(hash, |hash, byte| {
