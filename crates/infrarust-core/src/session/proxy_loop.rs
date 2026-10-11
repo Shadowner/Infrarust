@@ -7,7 +7,7 @@
 //!
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 use infrarust_api::command::{CommandSource, Suggestion};
@@ -17,6 +17,7 @@ use infrarust_api::player::Player;
 use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, ServerId};
 use tokio::time::Instant;
 
+use infrarust_protocol::codec::McBufReadExt;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
@@ -111,11 +112,13 @@ struct HotIds {
     s_keepalive: Option<i32>,
     c_start_config: Option<i32>,
     s_ack_config: Option<i32>,
+    s_login_answer: Option<i32>,
 }
 
 impl HotIds {
     fn resolve(registry: &PacketRegistry, version: ProtocolVersion) -> Self {
         Self {
+            s_login_answer: registry.get_packet_id::<SLoginPluginResponse>(version),
             s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(version),
             s_tab_request: registry.get_packet_id::<STabCompleteRequest>(version),
             c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(version),
@@ -283,6 +286,7 @@ pub async fn proxy_loop(
         join,
         codec_closed: None,
         login: LoginMessages::new(ctx, server.clone()),
+        relayed: HashSet::new(),
     }
     .run()
     .await
@@ -328,6 +332,7 @@ struct Loop<'a> {
     join: &'a mut Option<ServerJoin>,
     codec_closed: Option<String>,
     login: LoginMessages<'a>,
+    relayed: HashSet<i32>,
 }
 
 impl Loop<'_> {
@@ -706,6 +711,10 @@ impl Loop<'_> {
             return Ok(());
         }
 
+        if state == ConnectionState::Login && Some(frame.id) == self.ids.s_login_answer {
+            return self.on_login_answer(frame).await;
+        }
+
         if state == ConnectionState::Config {
             match self.chain.serverbound(frame, state).await {
                 Some(next) => frame = next,
@@ -742,15 +751,6 @@ impl Loop<'_> {
                     return Ok(());
                 }
 
-                if packet
-                    .as_any()
-                    .downcast_ref::<SLoginPluginResponse>()
-                    .is_some()
-                    && let Some(replaced) = self.login.response(&frame).await
-                {
-                    frame = replaced;
-                }
-
                 self.backend.queue_frame(&frame)?;
             }
             Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
@@ -759,6 +759,24 @@ impl Loop<'_> {
         }
 
         Ok(())
+    }
+
+    async fn on_login_answer(&mut self, mut frame: PacketFrame) -> Result<(), CoreError> {
+        let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
+            tracing::debug!("dropping a malformed login plugin response from the client");
+            return Ok(());
+        };
+        if !self.relayed.remove(&message_id.0) {
+            tracing::debug!(
+                message_id = message_id.0,
+                "dropping a login plugin response to a request the client was never sent"
+            );
+            return Ok(());
+        }
+        if let Some(replaced) = self.login.response(&frame).await {
+            frame = replaced;
+        }
+        self.backend.queue_frame(&frame)
     }
 
     async fn on_backend(&mut self, frame: PacketFrame) -> Result<Step, CoreError> {
@@ -922,6 +940,7 @@ impl Loop<'_> {
                             self.io
                                 .client
                                 .queue_frame(replaced.as_ref().unwrap_or(&frame))?;
+                            self.relayed.insert(request.message_id.0);
                         }
                         Routed::Backend(answer) => {
                             let answer = encode_for_state(

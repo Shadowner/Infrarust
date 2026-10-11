@@ -341,6 +341,7 @@ mod tests {
         requests: Vec<CLoginPluginRequest>,
         reaching_client: usize,
         answer: Answer,
+        forged: Vec<SLoginPluginResponse>,
     }
 
     impl Script {
@@ -349,6 +350,7 @@ mod tests {
                 requests,
                 reaching_client,
                 answer: from_client,
+                forged: Vec::new(),
             }
         }
     }
@@ -478,10 +480,14 @@ mod tests {
             requests,
             reaching_client,
             answer,
+            forged,
         } = script;
 
         let backend_side = tokio::spawn(play_backend(listener, requests));
         let client_side = tokio::spawn(async move {
+            for response in &forged {
+                peer.send(response).await;
+            }
             let exchanged = answer_requests(&mut peer, reaching_client, answer).await;
             match path {
                 Path::Bridged => {
@@ -721,6 +727,7 @@ mod tests {
                 ],
                 reaching_client: 2,
                 answer: handshake_only_client,
+                forged: Vec::new(),
             };
             let outcome = run(path, &services, script).await;
 
@@ -751,6 +758,51 @@ mod tests {
                     outcome.response(-101, DATA, false, b""),
                     outcome.response(-100, HANDSHAKE, true, b"ready"),
                 ],
+                "{path:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_answer_to_a_request_the_client_never_got_does_not_reach_the_backend() {
+        for path in CLIENT_PATHS {
+            let services = test_proxy_services();
+            register(&services, &[HANDSHAKE, DATA]);
+            on_requests(&services, |channel| {
+                if channel == HANDSHAKE {
+                    Respond(Some(Bytes::from_static(b"proxy")))
+                } else {
+                    Forward
+                }
+            });
+
+            let script = Script {
+                requests: vec![
+                    plugin_request(-100, HANDSHAKE, b"hello"),
+                    plugin_request(-101, DATA, b"data"),
+                ],
+                reaching_client: 1,
+                answer: from_client,
+                forged: vec![
+                    plugin_response(-100, b"forged"),
+                    plugin_response(42, b"stray"),
+                ],
+            };
+            let outcome = run(path, &services, script).await;
+
+            assert_eq!(outcome.client_got(-101).channel, DATA, "{path:?}");
+            let answers: Vec<SLoginPluginResponse> = outcome
+                .at_backend
+                .iter()
+                .map(|frame| SLoginPluginResponse::decode(&mut frame.payload.as_ref(), V).unwrap())
+                .collect();
+            assert_eq!(answers.len(), 2, "{path:?}");
+            let plugin = outcome.backend_got(-100);
+            assert!(plugin.successful, "{path:?}");
+            assert_eq!(plugin.data, b"proxy", "{path:?}");
+            assert_eq!(outcome.backend_got(-101).data, b"from client", "{path:?}");
+            assert!(
+                answers.iter().all(|answer| answer.message_id.0 != 42),
                 "{path:?}"
             );
         }
