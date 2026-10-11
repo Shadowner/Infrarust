@@ -113,6 +113,7 @@ export default
               { text: 'Proxy Modes', link: '/guide/proxy-modes' },
               { text: 'Routing & Wildcards', link: '/guide/routing' },
               { text: 'Authentication & Encryption', link: '/guide/authentication' },
+              { text: 'Modded Servers', link: '/guide/modded-servers' },
             ],
           },
           {
