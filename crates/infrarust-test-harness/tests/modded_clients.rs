@@ -58,7 +58,7 @@ async fn a_mismatched_login_start_is_forwarded_byte_for_byte(mode: ProxyMode) {
     let domain = proxy.domain("lobby").unwrap().to_string();
 
     for version in MISMATCHED_VERSIONS {
-        let mut sent = modern_layout_opening(&domain, version, &format!("amp{version}"));
+        let mut sent = modern_layout_opening(&domain, version, &format!("lane{version}"));
         sent.extend_from_slice(PIPELINED);
         let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
         client.write_all(&sent).await.unwrap();
@@ -110,7 +110,7 @@ async fn a_mismatched_login_start_is_refused(spec: ServerSpec) {
     for version in MISMATCHED_VERSIONS {
         let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
         client
-            .write_all(&modern_layout_opening(&domain, version, "amp"))
+            .write_all(&modern_layout_opening(&domain, version, "lane"))
             .await
             .unwrap();
         let mut rest = Vec::new();
