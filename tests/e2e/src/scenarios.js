@@ -1,4 +1,4 @@
-import { BIG_PACKET_CHANNEL, BIG_PACKET_MIN_PROTOCOL, LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
+import { BIG_PACKET_CHANNEL, BIG_PACKET_MIN_PROTOCOL, HOLEPUNCH_PROTOCOLS, LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
 
 export const BACKENDS = {
   plain: { port: 25700, kind: 'plain' },
@@ -7,6 +7,7 @@ export const BACKENDS = {
   query: { port: 25703, kind: 'query', loginQueries: true },
   queryVelocity: { port: 25704, kind: 'query-velocity', velocity: true, loginQueries: true },
   bigPacket: { port: 25705, kind: 'big-packet', bigPacket: true },
+  raw: { port: 25706, kind: 'raw', raw: true },
 };
 
 const VELOCITY_MIN_PROTOCOL = 393;
@@ -195,6 +196,19 @@ export const SCENARIOS = [
     forgeMarker: true,
     expect: { reachesPlay: true, interceptedByProxy: true, forgeMarker: { properties: true } },
   },
+  {
+    id: 'holepunch-login-start',
+    domain: 'holepunch.test',
+    proxyMode: 'passthrough',
+    forwardingMode: 'none',
+    backend: 'raw',
+    mockOnly: true,
+    rawClient: true,
+    minProtocol: HOLEPUNCH_PROTOCOLS.min,
+    maxProtocol: HOLEPUNCH_PROTOCOLS.max,
+    protocolReason: `the 1.20.2 Login Start layout only differs from the native one for protocols ${HOLEPUNCH_PROTOCOLS.min}-${HOLEPUNCH_PROTOCOLS.max}`,
+    expect: { rawLoginStartForwarded: true, interceptedByProxy: false },
+  },
 ];
 
 export function skipReason(scenario, protocol, opts = {}) {
@@ -206,6 +220,9 @@ export function skipReason(scenario, protocol, opts = {}) {
   }
   if (scenario.minProtocol && protocol < scenario.minProtocol) {
     return scenario.protocolReason ?? `velocity forwarding needs protocol >= ${scenario.minProtocol} (login plugin request is 1.13+)`;
+  }
+  if (scenario.maxProtocol && protocol > scenario.maxProtocol) {
+    return scenario.protocolReason;
   }
   if (scenario.needsAuth && !opts.authAvailable) {
     return 'no session server configured';

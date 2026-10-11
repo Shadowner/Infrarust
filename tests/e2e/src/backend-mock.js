@@ -1,6 +1,8 @@
+import net from 'node:net';
+
 import mc from 'minecraft-protocol';
 
-import { BIG_PACKET_CHANNEL, bigPacketData, LOGIN_QUERIES, LOGIN_QUERY_TIMEOUT_MS } from './modded.js';
+import { BIG_PACKET_CHANNEL, bigPacketData, LOGIN_QUERIES, LOGIN_QUERY_TIMEOUT_MS, RAW_REPLY, RAW_TAIL } from './modded.js';
 import { MAX_FORWARDING_VERSION, VELOCITY_CHANNEL, verifyAndDecode } from './velocity.js';
 
 function velocityExchange(client, observation, secret) {
@@ -69,7 +71,9 @@ function holdLoginStart(client, observation, steps) {
   });
 }
 
-export function startBackend({ version, port, kind, secret, velocity = false, loginQueries: queries = false, bigPacket = false, host = '127.0.0.1' }) {
+export function startBackend({ version, port, kind, secret, velocity = false, loginQueries: queries = false, bigPacket = false, raw = false, host = '127.0.0.1' }) {
+  if (raw) return startRawBackend({ port, kind, host });
+
   return new Promise((resolve, reject) => {
     const state = { last: null, connections: 0 };
 
@@ -144,6 +148,60 @@ export function startBackend({ version, port, kind, secret, velocity = false, lo
             } catch {
               done();
             }
+            setTimeout(done, 3000);
+          });
+        },
+      }),
+    );
+  });
+}
+
+function startRawBackend({ port, kind, host }) {
+  return new Promise((resolve, reject) => {
+    const state = { last: null };
+    const sockets = new Set();
+
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      const chunks = [];
+      let observation = null;
+
+      socket.on('data', (chunk) => {
+        chunks.push(chunk);
+        const received = Buffer.concat(chunks);
+        if (!observation) {
+          observation = { kind, replied: false };
+          state.last = observation;
+        }
+        observation.received = received.toString('hex');
+        observation.receivedLength = received.length;
+        if (!observation.replied && received.length >= RAW_TAIL.length && received.subarray(-RAW_TAIL.length).equals(RAW_TAIL)) {
+          observation.replied = true;
+          socket.write(RAW_REPLY);
+        }
+      });
+      socket.on('error', (err) => {
+        if (observation) observation.error = observation.error ?? String(err.message ?? err);
+      });
+    });
+
+    server.on('error', (err) => reject(err));
+    server.listen(port, host, () =>
+      resolve({
+        kind,
+        port,
+        server,
+        reset() {
+          state.last = null;
+        },
+        observation() {
+          return state.last;
+        },
+        close() {
+          return new Promise((done) => {
+            for (const socket of sockets) socket.destroy();
+            server.close(() => done());
             setTimeout(done, 3000);
           });
         },

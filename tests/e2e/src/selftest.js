@@ -7,7 +7,8 @@ import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate } from './expectations.js';
 import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
-import { BIG_PACKET_CHANNEL, LOGIN_QUERIES } from './modded.js';
+import { BIG_PACKET_CHANNEL, LOGIN_QUERIES, modernLoginStartOpening } from './modded.js';
+import { rawLoginStart } from './raw-client.js';
 import { SCENARIOS } from './scenarios.js';
 import { verifyAndDecode, writeVarInt } from './velocity.js';
 
@@ -169,6 +170,14 @@ await check('expectations: a forge marker lost by a rewrite or by bungeecord for
   assert.equal(evaluate(props, forwarded([good[0], { name: 'extraData', value: '\u0000FML3\u0000' }])).status, 'fail');
 });
 
+await check('expectations: a holepunch opening altered on the way is caught', () => {
+  const sent = modernLoginStartOpening({ protocol: 759, host: 'hp.test', port: 25565, username: 'Steve' }).toString('hex');
+  const forwarded = (received) => ({ client: { sent, replied: true }, backend: { received } });
+  assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(sent)).status, 'pass');
+  assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(sent.slice(0, -2))).status, 'fail');
+  assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(null)).status, 'fail');
+});
+
 await check('loopback: the query backend and client agree with no proxy involved', async () => {
   const port = 26120;
   const backend = await startBackend({ version: '1.20.1', port, kind: 'query', loginQueries: true, secret: SECRET });
@@ -191,6 +200,18 @@ await check('loopback: the big packet reaches a client with no proxy involved', 
   try {
     const client = await connectOnce({ port, version: '1.21.4', domain: 'selftest.local', username: 'SelfTest', awaitPayload: BIG_PACKET_CHANNEL });
     const { status, checks } = evaluate(only('bigPacketIntact'), { client, backend: backend.observation() });
+    assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
+  } finally {
+    await backend.close();
+  }
+});
+
+await check('loopback: the raw backend echoes the holepunch opening with no proxy involved', async () => {
+  const port = 26122;
+  const backend = await startBackend({ port, kind: 'raw', raw: true });
+  try {
+    const client = await rawLoginStart({ port, protocol: 761, domain: 'selftest.local', username: 'SelfTest' });
+    const { status, checks } = evaluate(only('rawLoginStartForwarded'), { client, backend: backend.observation() });
     assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
   } finally {
     await backend.close();

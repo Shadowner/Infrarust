@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { writeVarInt } from './velocity.js';
+
 export const LOGIN_QUERY_MIN_PROTOCOL = 393;
 
 export const LOGIN_QUERIES = [
@@ -55,4 +57,33 @@ export function bigPacketDigest() {
 
 export function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex');
+}
+
+export const HOLEPUNCH_PROTOCOLS = { min: 759, max: 763 };
+export const RAW_TAIL = Buffer.from('\x16\x03\x01\x00\x05hello', 'latin1');
+export const RAW_REPLY = Buffer.from('e2e-raw-backend-reply');
+
+function frame(id, payload) {
+  const body = Buffer.concat([writeVarInt(id), payload]);
+  return Buffer.concat([writeVarInt(body.length), body]);
+}
+
+function string(s) {
+  const b = Buffer.from(s, 'utf8');
+  return Buffer.concat([writeVarInt(b.length), b]);
+}
+
+function offlineUuid(username) {
+  const md5 = createHash('md5').update(`OfflinePlayer:${username}`).digest();
+  md5[6] = (md5[6] & 0x0f) | 0x30;
+  md5[8] = (md5[8] & 0x3f) | 0x80;
+  return md5;
+}
+
+export function modernLoginStartOpening({ protocol, host, port, username }) {
+  const portBytes = Buffer.alloc(2);
+  portBytes.writeUInt16BE(port);
+  const handshake = frame(0x00, Buffer.concat([writeVarInt(protocol), string(host), portBytes, writeVarInt(2)]));
+  const loginStart = frame(0x00, Buffer.concat([string(username), offlineUuid(username)]));
+  return Buffer.concat([handshake, loginStart, RAW_TAIL]);
 }

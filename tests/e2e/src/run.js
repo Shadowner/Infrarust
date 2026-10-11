@@ -10,6 +10,7 @@ import { evaluate, KNOWN_FINDINGS } from './expectations.js';
 import { FORWARDING_SECRET, writeLab } from './lab.js';
 import { forgeMarkerFor } from './modded.js';
 import { Proxy, sleep, waitForPlayer, waitForPort } from './proxy.js';
+import { rawLoginStart } from './raw-client.js';
 import { writeReport } from './report.js';
 import { BACKENDS, SCENARIOS, skipReason } from './scenarios.js';
 import { allVersions, TIER_B_ANCHORS } from './versions.js';
@@ -127,17 +128,20 @@ async function main() {
         const username = `E${versions.indexOf(v)}_${scenario.id.replace(/[^a-zA-Z0-9]/g, '')}`.slice(0, 16);
 
         let proxyPlayer = null;
-        const client = await connectOnce({
-          version: v.version,
-          domain: scenario.forgeMarker ? `${scenario.domain}${forgeMarkerFor(v.protocol)}` : scenario.domain,
-          username,
-          session: scenario.needsAuth ? await yggdrasil.session(username) : null,
-          sessionServer: scenario.needsAuth ? yggdrasil.sessionServer : null,
-          onPlay: async () => {
-            proxyPlayer = await waitForPlayer(username);
-          },
-          ...scenario.client,
-        });
+        const viewFromProxy = async () => {
+          proxyPlayer = await waitForPlayer(username);
+        };
+        const client = scenario.rawClient
+          ? await rawLoginStart({ protocol: v.protocol, domain: scenario.domain, username, onRelayed: viewFromProxy })
+          : await connectOnce({
+              version: v.version,
+              domain: scenario.forgeMarker ? `${scenario.domain}${forgeMarkerFor(v.protocol)}` : scenario.domain,
+              username,
+              session: scenario.needsAuth ? await yggdrasil.session(username) : null,
+              sessionServer: scenario.needsAuth ? yggdrasil.sessionServer : null,
+              onPlay: viewFromProxy,
+              ...scenario.client,
+            });
 
         const observations = { client, backend: backend.observation(), proxyPlayer, protocol: v.protocol };
         const { status, checks } = evaluate(scenario, observations, { backendObservable: useMocks });

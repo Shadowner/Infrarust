@@ -228,6 +228,24 @@ const CHECKS = {
       detail: problems.length ? problems.join('; ') : `forgeClient=true, extraData=${JSON.stringify(extraData)}`,
     };
   },
+
+  rawLoginStartForwarded: ({ client, backend }) => {
+    const sentLength = (client.sent?.length ?? 0) / 2;
+    if (!backend?.received) {
+      return { ok: false, detail: `the backend received nothing (${client.error ?? 'no client error'})` };
+    }
+    if (backend.received !== client.sent) {
+      const a = Buffer.from(client.sent, 'hex');
+      const b = Buffer.from(backend.received, 'hex');
+      let at = 0;
+      while (at < a.length && at < b.length && a[at] === b[at]) at++;
+      return { ok: false, detail: `the backend received ${b.length} bytes for ${a.length} sent, first difference at byte ${at}` };
+    }
+    if (!client.replied) {
+      return { ok: false, detail: `bytes arrived intact but the backend's reply never reached the client (${client.error ?? 'no error'})` };
+    }
+    return { ok: true, detail: `${sentLength} bytes forwarded byte-for-byte, reply relayed back` };
+  },
 };
 
 export function evaluate(scenario, observations, { backendObservable = true } = {}) {
@@ -243,6 +261,7 @@ export function evaluate(scenario, observations, { backendObservable = true } = 
     'loginQueriesRelayed',
     'loginSuccessAfterBackend',
     'forgeMarker',
+    'rawLoginStartForwarded',
   ]);
 
   for (const [name, expected] of Object.entries(scenario.expect)) {
