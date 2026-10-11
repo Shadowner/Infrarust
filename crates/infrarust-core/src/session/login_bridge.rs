@@ -252,11 +252,11 @@ impl Relay<'_> {
         let id = Some(frame.id);
         if id == self.ids.plugin_response {
             let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
-                tracing::warn!("dropping a malformed login plugin response from the client");
+                tracing::debug!("dropping a malformed login plugin response from the client");
                 return Ok(());
             };
             if !self.plugin_requests.remove(&message_id.0) {
-                tracing::warn!(
+                tracing::debug!(
                     message_id = message_id.0,
                     "dropping a login plugin response the backend did not ask for"
                 );
@@ -268,7 +268,7 @@ impl Relay<'_> {
                 .await
         } else if id == self.ids.cookie_response {
             if self.cookie_requests == 0 {
-                tracing::warn!("dropping a login cookie response the backend did not ask for");
+                tracing::debug!("dropping a login cookie response the backend did not ask for");
                 return Ok(());
             }
             self.cookie_requests -= 1;
@@ -298,6 +298,7 @@ mod tests {
 
     use std::sync::Arc;
 
+    use bytes::Bytes;
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
 
@@ -624,6 +625,118 @@ mod tests {
         bridge(&ctx, &mut io, &config).await.unwrap();
         let _conn = backend_side.await.unwrap();
         let _peer = client_side.await.unwrap();
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    struct PerEventInterest;
+
+    impl tracing::Subscriber for PerEventInterest {
+        fn register_callsite(
+            &self,
+            _: &'static tracing::Metadata<'static>,
+        ) -> tracing::subscriber::Interest {
+            tracing::subscriber::Interest::sometimes()
+        }
+
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            false
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+        fn event(&self, _: &tracing::Event<'_>) {}
+
+        fn enter(&self, _: &tracing::span::Id) {}
+
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    static PER_EVENT_INTEREST: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+
+    #[tokio::test]
+    async fn stray_client_answers_are_not_logged_as_warnings() {
+        PER_EVENT_INTEREST.get_or_init(|| tracing::Dispatch::new(PerEventInterest));
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "");
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            let answer = conn.expect::<SLoginPluginResponse>().await;
+            finish_backend_login(&mut conn).await;
+            (answer, conn)
+        });
+        let client_side = tokio::spawn(async move {
+            let request = peer.expect::<CLoginPluginRequest>().await;
+            let response = peer.id::<SLoginPluginResponse>();
+            for _ in 0..20 {
+                peer.send_frame(&PacketFrame::new(response, Bytes::new()))
+                    .await;
+                peer.send(&plugin_response(42, b"stray")).await;
+                peer.send(&SLoginCookieResponse {
+                    key: "example:token".to_string(),
+                    payload: None,
+                })
+                .await;
+            }
+            peer.send(&plugin_response(request.message_id.0, b"real"))
+                .await;
+            finish_client_login(&mut peer).await;
+            peer
+        });
+
+        bridge(&ctx, &mut io, &config).await.unwrap();
+        let (answer, _conn) = backend_side.await.unwrap();
+        let _peer = client_side.await.unwrap();
+
+        assert_eq!(answer.data, b"real");
+        let logged = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            !logged.contains("did not ask for") && !logged.contains("malformed"),
+            "{logged}"
+        );
     }
 
     #[tokio::test]
