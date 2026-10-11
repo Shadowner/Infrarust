@@ -757,6 +757,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         docker,
         unknown_domain_behavior: Default::default(),
         announce_proxy_commands: crate::defaults::true_val(),
+        compression_threshold: crate::defaults::compression_threshold(),
         forwarding: None,
         auth: Default::default(),
         ip_filter: None,

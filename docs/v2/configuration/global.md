@@ -90,6 +90,18 @@ announce_proxy_commands = true
 
 When `true` (the default), the proxy adds its built-in `/ir` command tree and the plugin commands each player may run to the Minecraft command graph packet the backend sends, and replaces any backend command with the same name. When a plugin registers or removes a command, connected players get the updated tree right away. Set to `false` to hide the proxy command suggestions from the player's tab completion; the commands still run.
 
+## Client compression
+
+```toml
+compression_threshold = 256
+```
+
+Compression threshold, in bytes, for the link between the proxy and the client in the intercepted modes (`client_only` and `offline`). Packets at least this large are zlib-compressed. `-1` turns compression off, `0` compresses every packet, and values below `-1` are rejected.
+
+The proxy applies it whenever it finishes the client's login itself, which is every `client_only` login and every `offline` login with forwarding, a rewritten profile or a limbo. An `offline` login the proxy relays untouched keeps the threshold the backend picks. The link between the proxy and the backend always uses the backend's own threshold.
+
+Keep compression on for modded servers: a modpack's tags, recipes and registries often go over the 2 MiB a single uncompressed packet may carry, and the session ends when such a packet cannot be sent to the client.
+
 ## Proxy protocol
 
 ```toml
@@ -590,6 +602,7 @@ worker_threads = 0
 unknown_domain_behavior = "default_motd"
 so_reuseport = false
 announce_proxy_commands = true
+compression_threshold = 256
 
 [rate_limit]
 enabled = false

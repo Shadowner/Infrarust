@@ -82,6 +82,10 @@ pub const fn true_val() -> bool {
     true
 }
 
+pub const fn compression_threshold() -> i32 {
+    256
+}
+
 pub const fn metrics_export_interval() -> Duration {
     Duration::from_secs(15)
 }
