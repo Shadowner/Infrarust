@@ -6,7 +6,7 @@ outline: [2, 3]
 
 # Connection Handoff
 
-Some mods open their own protocol on the Minecraft port. AutoModpack, for example, connects to the server address to download the modpack before the game logs in, and expects to reach its own file server, not a Minecraft login. A plugin can recognise such a connection and tell the proxy to stop treating it as Minecraft: the proxy then pipes it, byte for byte, to another target.
+Some mods open their own protocol on the Minecraft port. A mod that transfers files before the game logs in, for example, connects to the server address and expects to reach its own file server, not a Minecraft login. A plugin can recognise such a connection and tell the proxy to stop treating it as Minecraft: the proxy then pipes it, byte for byte, to another target.
 
 The plugin decides, the host relays. The plugin only sees the first bytes and the parsed handshake or Login Start; the traffic of a handed-off connection never crosses into the plugin, so a download of hundreds of megabytes costs the plugin nothing.
 
@@ -24,7 +24,7 @@ The first three end with a [handoff](#the-handoff). The login plugin messages do
 Claiming prefixes, subscribing to `RawConnectionEvent` and `LoginClaimEvent`, and answering `ConnectionHandshakeEvent` with a handoff need the opt-in `connection-handoff` capability:
 
 ```toml
-[plugins.automodpack-bridge]
+[plugins.transfer-bridge]
 permissions = ["connection-handoff"]
 ```
 
@@ -38,7 +38,7 @@ A `Handoff` names where the connection goes and what the proxy writes before it 
 use infrarust_plugin_sdk::prelude::*;
 
 let handoff = Handoff::to(HandoffTarget::server_port("modded", 30037))
-    .with_prefix(b"AMMH".to_vec())
+    .with_prefix(b"XFER".to_vec())
     .with_reply(b"OK".to_vec())
     .without_replay()
     .with_proxy_protocol(false);
@@ -84,7 +84,7 @@ The proxy writes `reply` to the client and `prefix` and the replay to the target
 A raw claim catches a connection before the proxy parses it as Minecraft. A plugin registers the byte prefixes its protocol starts with, usually in `on_enable`:
 
 ```rust
-ConnectionClaims::register_prefix(b"AMMH")?;
+ConnectionClaims::register_prefix(b"XFER")?;
 ```
 
 As long as no plugin holds a prefix, the proxy reads nothing extra. Once one does, it reads the first bytes of each connection until they either start with a registered prefix or can no longer match any. A Minecraft client is told apart by its very first bytes, so it waits for nothing. A client that sent part of a prefix and stops is given 5 seconds, then handled as Minecraft.
@@ -116,14 +116,14 @@ The IP filter and the global IP bans run before the event, as for any connection
 use infrarust_plugin_sdk::prelude::*;
 
 #[derive(Default)]
-struct ModpackBridge;
+struct TransferBridge;
 
-#[plugin(id = "modpack-bridge", name = "Modpack Bridge")]
-impl Plugin for ModpackBridge {
+#[plugin(id = "transfer-bridge", name = "Transfer Bridge")]
+impl Plugin for TransferBridge {
     fn on_enable(&self, ctx: &Context) -> Result<(), PluginError> {
-        ConnectionClaims::register_prefix(b"AMMH")?;
+        ConnectionClaims::register_prefix(b"XFER")?;
         ctx.on::<RawConnectionEvent>(EventPriority::NORMAL, |event| {
-            if event.prefix != b"AMMH" {
+            if event.prefix != b"XFER" {
                 return;
             }
             if event.data.len() < 8 {
@@ -143,7 +143,7 @@ impl Plugin for ModpackBridge {
 
 ```rust
 ctx.on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
-    if event.raw_host.ends_with("\0AMMH\0") {
+    if event.raw_host.ends_with("\0XFER\0") {
         event.handoff(Handoff::route());
     }
 })?;
@@ -189,11 +189,11 @@ use infrarust_api::prelude::*;
 
 if let Some(claims) = ctx.connection_claims() {
     claims
-        .register_prefix(b"AMMH")
+        .register_prefix(b"XFER")
         .map_err(|error| PluginError::InitFailed(error.to_string()))?;
 }
 ctx.event_bus().subscribe::<RawConnectionEvent, _>(EventPriority::NORMAL, |event| {
-    if event.prefix.as_ref() == b"AMMH" {
+    if event.prefix.as_ref() == b"XFER" {
         event.handoff(Handoff::to(HandoffTarget::server_port("modded", 30037)));
     }
 });

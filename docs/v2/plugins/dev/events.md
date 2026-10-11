@@ -340,11 +340,11 @@ use infrarust_api::prelude::*;
 
 if let Some(claims) = ctx.connection_claims() {
     claims
-        .register_prefix(b"AMMH")
+        .register_prefix(b"XFER")
         .map_err(|error| PluginError::InitFailed(error.to_string()))?;
 }
 ctx.event_bus().subscribe::<RawConnectionEvent, _>(EventPriority::NORMAL, |event| {
-    if event.prefix.as_ref() == b"AMMH" {
+    if event.prefix.as_ref() == b"XFER" {
         event.handoff(Handoff::to(HandoffTarget::server_port("modded", 30037)));
     }
 });
