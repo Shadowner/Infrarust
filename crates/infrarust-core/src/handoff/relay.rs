@@ -37,9 +37,15 @@ impl HandoffLevel {
     }
 }
 
+pub const MAX_HANDOFF_BYTES: usize = 64 * 1024;
+
+const ADDRESS_LABEL: &str = "handoff:address";
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HandoffError {
+    #[error("the handoff {what} holds {len} bytes, more than the {MAX_HANDOFF_BYTES} allowed")]
+    TooLarge { what: &'static str, len: usize },
     #[error("the connection has no route yet, so it cannot be handed off to it")]
     NoRoute,
     #[error("no configured server is named `{0}`")]
@@ -107,6 +113,8 @@ impl HandoffRelay {
         level: HandoffLevel,
         shutdown: CancellationToken,
     ) -> Result<ForwardResult, HandoffError> {
+        bounded("prefix", &handoff.prefix)?;
+        bounded("reply", &handoff.reply)?;
         let resolved = self.resolve(&ctx, &handoff)?;
         let replay = if handoff.replay {
             replay_bytes(&ctx, level, resolved.server.as_deref())?
@@ -122,8 +130,18 @@ impl HandoffRelay {
         drop(ticket);
         let address = backend.server_address().clone();
         let mut target = backend.into_stream();
-        write_all(&mut target, &[&handoff.prefix[..], &replay[..]]).await?;
-        write_all(ctx.stream_mut(), &[&handoff.reply[..]]).await?;
+        let opening = [&handoff.prefix[..], &replay[..]];
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Err(HandoffError::Shutdown),
+            written = write_all(&mut target, &opening) => written?,
+        }
+        let reply = [&handoff.reply[..]];
+        tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Err(HandoffError::Shutdown),
+            written = write_all(ctx.stream_mut(), &reply) => written?,
+        }
         tracing::debug!(
             client = %ctx.client_addr(),
             target = %handoff.target,
@@ -203,12 +221,11 @@ impl HandoffRelay {
                 for address in &mut resolved.addresses {
                     address.port = *port;
                 }
-                resolved.label = format!("{}:{port}", routing.config_id);
                 resolved.balanced = false;
                 Ok(resolved)
             }
             HandoffTarget::Address { host, port } => Ok(Resolved {
-                label: format!("{host}:{port}"),
+                label: ADDRESS_LABEL.to_owned(),
                 addresses: vec![ServerAddress {
                     host: host.clone(),
                     port: *port,
@@ -323,6 +340,16 @@ impl HandoffRelay {
     }
 }
 
+const fn bounded(what: &'static str, bytes: &[u8]) -> Result<(), HandoffError> {
+    if bytes.len() > MAX_HANDOFF_BYTES {
+        return Err(HandoffError::TooLarge {
+            what,
+            len: bytes.len(),
+        });
+    }
+    Ok(())
+}
+
 fn replay_bytes(
     ctx: &ConnectionContext,
     level: HandoffLevel,
@@ -352,4 +379,64 @@ async fn write_all(stream: &mut TcpStream, parts: &[&[u8]]) -> std::io::Result<(
         stream.write_all(part).await?;
     }
     stream.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use tokio::net::TcpListener;
+
+    use super::*;
+    use crate::limbo::test_helpers::test_proxy_services;
+    use crate::provider::ProviderId;
+
+    #[tokio::test]
+    async fn metric_labels_never_carry_a_plugin_chosen_address_or_port() {
+        let services = test_proxy_services();
+        services.domain_router.add(
+            ProviderId::file("modded"),
+            toml::from_str(
+                "name = \"modded\"\ndomains = [\"modded.test\"]\naddresses = [\"127.0.0.1:25565\"]\n",
+            )
+            .unwrap(),
+        );
+        let relay = HandoffRelay::new(
+            services.clone(),
+            Arc::new(BackendConnector::new(
+                Duration::from_secs(2),
+                infrarust_config::KeepaliveConfig::default(),
+            )),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = listener.local_addr().unwrap();
+        let _peer = TcpStream::connect(local).await.unwrap();
+        let (stream, remote) = listener.accept().await.unwrap();
+        let mut ctx = ConnectionContext::new_for_test(stream, remote, remote.ip(), local);
+        let (server_config, load_balancer) = services
+            .domain_router
+            .find_route_by_server_id("modded")
+            .unwrap();
+        ctx.extensions.insert(RoutingData {
+            server_config,
+            config_id: "modded".into(),
+            load_balancer,
+        });
+
+        for (target, label) in [
+            (HandoffTarget::Route, "modded"),
+            (HandoffTarget::server("modded"), "modded"),
+            (HandoffTarget::server_port("modded", 30037), "modded"),
+            (
+                HandoffTarget::address("files.example", 30037),
+                "handoff:address",
+            ),
+            (
+                HandoffTarget::address("198.51.100.7", 40001),
+                "handoff:address",
+            ),
+        ] {
+            let resolved = relay.resolve(&ctx, &Handoff::to(target.clone())).unwrap();
+            assert_eq!(resolved.label, label, "{target}");
+        }
+    }
 }

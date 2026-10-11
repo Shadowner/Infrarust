@@ -14,7 +14,7 @@ use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{BackendConnector, ForwardEndReason, ForwardResult};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -549,6 +549,107 @@ async fn the_proxy_shutdown_ends_a_relay() {
     shutdown.cancel();
     let result = finish(task).await;
     assert!(matches!(result.reason, ForwardEndReason::Shutdown));
+}
+
+const CAP: usize = 64 * 1024;
+
+async fn small_buffered_client() -> Client {
+    let socket = TcpSocket::new_v4().unwrap();
+    socket.set_send_buffer_size(4096).unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let listener = socket.listen(16).unwrap();
+    let local = listener.local_addr().unwrap();
+    let peer = TcpSocket::new_v4().unwrap();
+    peer.set_recv_buffer_size(4096).unwrap();
+    let peer = peer.connect(local).await.unwrap();
+    let (stream, remote) = listener.accept().await.unwrap();
+    let ctx = ConnectionContext::new_for_test(stream, remote, remote.ip(), local);
+    Client { peer, ctx }
+}
+
+#[tokio::test]
+async fn a_prefix_or_a_reply_over_64_kib_is_refused_before_anything_is_sent() {
+    for (prefix, reply) in [(CAP + 1, 0), (0, CAP + 1)] {
+        let (backend, addr) = listener().await;
+        let Client { mut peer, mut ctx } = client().await;
+        ctx.buffered_data = BytesMut::from(&b"XFER"[..]);
+        let refused = tokio::time::timeout(
+            WAIT,
+            relay(test_proxy_services()).relay(
+                ctx,
+                Handoff::to(HandoffTarget::address("127.0.0.1", addr.port()))
+                    .with_prefix(vec![b'P'; prefix])
+                    .with_reply(vec![b'R'; reply]),
+                HandoffLevel::Raw,
+                CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("an oversized handoff was relayed");
+        assert!(
+            matches!(
+                &refused,
+                Err(HandoffError::TooLarge { len, .. }) if *len == CAP + 1
+            ),
+            "{refused:?}"
+        );
+        let accepted = tokio::time::timeout(Duration::from_millis(200), backend.accept()).await;
+        assert!(accepted.is_err(), "the target must not be reached");
+        let mut rest = Vec::new();
+        peer.read_to_end(&mut rest).await.unwrap();
+        assert!(rest.is_empty(), "the client must get nothing");
+    }
+}
+
+#[tokio::test]
+async fn a_prefix_and_a_reply_of_64_kib_are_relayed_whole() {
+    let (backend, addr) = listener().await;
+    let Client { mut peer, mut ctx } = client().await;
+    ctx.buffered_data = BytesMut::from(&b"XFER"[..]);
+    let task = spawn(
+        relay(test_proxy_services()),
+        ctx,
+        Handoff::to(HandoffTarget::address("127.0.0.1", addr.port()))
+            .with_prefix(vec![b'P'; CAP])
+            .with_reply(vec![b'R'; CAP]),
+        HandoffLevel::Raw,
+        CancellationToken::new(),
+    );
+    let mut backend = accept(&backend).await;
+    assert_eq!(read_exact(&mut backend, CAP).await, vec![b'P'; CAP]);
+    assert_eq!(read_exact(&mut backend, 4).await, b"XFER");
+    assert_eq!(read_exact(&mut peer, CAP).await, vec![b'R'; CAP]);
+    ping_pong(&mut peer, &mut backend).await;
+    hang_up(peer, backend).await;
+    finish(task).await;
+}
+
+#[tokio::test]
+async fn the_proxy_shutdown_ends_a_relay_still_writing_its_reply() {
+    let (backend, addr) = listener().await;
+    let Client { peer, ctx } = small_buffered_client().await;
+    let shutdown = CancellationToken::new();
+    let task = spawn(
+        relay(test_proxy_services()),
+        ctx,
+        Handoff::to(HandoffTarget::address("127.0.0.1", addr.port())).with_reply(vec![b'R'; CAP]),
+        HandoffLevel::Raw,
+        shutdown.clone(),
+    );
+    let _backend = accept(&backend).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !task.is_finished(),
+        "the reply should still wait for a client that does not read"
+    );
+
+    shutdown.cancel();
+    let ended = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("the shutdown did not end the reply write")
+        .unwrap();
+    assert!(matches!(ended, Err(HandoffError::Shutdown)), "{ended:?}");
+    drop(peer);
 }
 
 struct Pattern(u64);
