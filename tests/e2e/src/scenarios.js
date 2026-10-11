@@ -1,10 +1,15 @@
+import { LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
+
 export const BACKENDS = {
   plain: { port: 25700, kind: 'plain' },
-  velocity: { port: 25701, kind: 'velocity' },
+  velocity: { port: 25701, kind: 'velocity', velocity: true },
   bungee: { port: 25702, kind: 'bungee' },
+  query: { port: 25703, kind: 'query', loginQueries: true },
+  queryVelocity: { port: 25704, kind: 'query-velocity', velocity: true, loginQueries: true },
 };
 
 const VELOCITY_MIN_PROTOCOL = 393;
+const LOGIN_QUERY_REASON = `login plugin requests need protocol >= ${LOGIN_QUERY_MIN_PROTOCOL} (1.13+)`;
 
 export const SCENARIOS = [
   {
@@ -100,14 +105,74 @@ export const SCENARIOS = [
     backend: 'plain',
     expect: { reachesPlay: true, interceptedByProxy: false },
   },
+  {
+    id: 'login-query-offline',
+    domain: 'lq-off.test',
+    proxyMode: 'offline',
+    forwardingMode: 'none',
+    backend: 'query',
+    mockOnly: true,
+    minProtocol: LOGIN_QUERY_MIN_PROTOCOL,
+    protocolReason: LOGIN_QUERY_REASON,
+    client: { answerLoginQueries: true },
+    expect: {
+      reachesPlay: true,
+      interceptedByProxy: true,
+      loginQueriesRelayed: true,
+      loginSuccessAfterBackend: true,
+      clientCompression: 'backend',
+    },
+  },
+  {
+    id: 'login-query-velocity',
+    domain: 'lq-velo.test',
+    proxyMode: 'offline',
+    forwardingMode: 'velocity',
+    backend: 'queryVelocity',
+    mockOnly: true,
+    minProtocol: LOGIN_QUERY_MIN_PROTOCOL,
+    protocolReason: LOGIN_QUERY_REASON,
+    client: { answerLoginQueries: true },
+    expect: {
+      reachesPlay: true,
+      interceptedByProxy: true,
+      velocitySigned: true,
+      loginQueriesRelayed: true,
+      loginSuccessAfterBackend: true,
+      clientCompression: 'proxy',
+    },
+  },
+  {
+    id: 'login-query-client-only',
+    domain: 'lq-co.test',
+    proxyMode: 'client_only',
+    forwardingMode: 'none',
+    backend: 'query',
+    needsAuth: true,
+    mockOnly: true,
+    minProtocol: LOGIN_QUERY_MIN_PROTOCOL,
+    protocolReason: LOGIN_QUERY_REASON,
+    client: { answerLoginQueries: true },
+    expect: {
+      reachesPlay: true,
+      interceptedByProxy: true,
+      encrypted: true,
+      loginQueriesRelayed: true,
+      loginSuccessAfterBackend: true,
+      clientCompression: 'proxy',
+    },
+  },
 ];
 
 export function skipReason(scenario, protocol, opts = {}) {
   if (scenario.linuxOnly && process.platform !== 'linux') {
     return 'zero_copy is Linux-only';
   }
+  if (scenario.mockOnly && opts.realBackends) {
+    return 'needs the mock backend, which is the side that drives this scenario';
+  }
   if (scenario.minProtocol && protocol < scenario.minProtocol) {
-    return `velocity forwarding needs protocol >= ${scenario.minProtocol} (login plugin request is 1.13+)`;
+    return scenario.protocolReason ?? `velocity forwarding needs protocol >= ${scenario.minProtocol} (login plugin request is 1.13+)`;
   }
   if (scenario.needsAuth && !opts.authAvailable) {
     return 'no session server configured';

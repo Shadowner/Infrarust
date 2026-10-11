@@ -7,6 +7,7 @@ import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate } from './expectations.js';
 import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
+import { LOGIN_QUERIES } from './modded.js';
 import { SCENARIOS } from './scenarios.js';
 import { verifyAndDecode, writeVarInt } from './velocity.js';
 
@@ -105,6 +106,45 @@ await check('expectations: a known finding that stops reproducing is reported as
 });
 
 const only = (name, expected = true) => ({ id: `selftest-${name}`, expect: { [name]: expected } });
+const relayedQueries = () => ({
+  client: {
+    loginQueries: LOGIN_QUERIES.map((q) => ({ messageId: q.messageId, channel: q.channel, data: q.request.toString('hex'), at: 1 })),
+    loginSuccessAt: 3,
+  },
+  backend: {
+    loginQueries: {
+      complete: true,
+      responses: LOGIN_QUERIES.map((q) => ({ messageId: q.messageId, data: q.answer ? q.answer.toString('hex') : null })),
+    },
+    loginSuccessSentAt: 2,
+  },
+});
+
+await check('expectations: login queries relayed unchanged pass', () => {
+  assert.equal(evaluate(only('loginQueriesRelayed'), relayedQueries()).status, 'pass');
+  assert.equal(evaluate(only('loginSuccessAfterBackend'), relayedQueries()).status, 'pass');
+});
+
+await check('expectations: login queries the proxy answers itself are caught', () => {
+  const obs = relayedQueries();
+  obs.client.loginQueries = [];
+  obs.backend.loginQueries.responses = LOGIN_QUERIES.map((q) => ({ messageId: q.messageId, data: null }));
+  const { status, checks } = evaluate(only('loginQueriesRelayed'), obs);
+  assert.equal(status, 'fail');
+  assert.match(checks[0].detail, /client saw .* 0 times/);
+});
+
+await check('expectations: a renumbered login query is caught', () => {
+  const obs = relayedQueries();
+  obs.client.loginQueries[1].messageId = 0;
+  assert.equal(evaluate(only('loginQueriesRelayed'), obs).status, 'fail');
+});
+
+await check('expectations: a LoginSuccess the proxy sends before the backend is caught', () => {
+  const obs = relayedQueries();
+  obs.client.loginSuccessAt = 1;
+  assert.equal(evaluate(only('loginSuccessAfterBackend'), obs).status, 'fail');
+});
 
 await check("expectations: the backend's threshold on a login the proxy finishes is caught", () => {
   const client = { loginPackets: ['compress', 'success'], setCompression: BACKEND_COMPRESSION_THRESHOLD };
@@ -114,6 +154,22 @@ await check("expectations: the backend's threshold on a login the proxy finishes
   client.loginPackets = ['success', 'compress'];
   assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'fail');
   assert.equal(evaluate(only('clientCompression', 'proxy'), { client: { loginPackets: ['success'] }, protocol: 769 }).status, 'fail');
+});
+
+await check('loopback: the query backend and client agree with no proxy involved', async () => {
+  const port = 26120;
+  const backend = await startBackend({ version: '1.20.1', port, kind: 'query', loginQueries: true, secret: SECRET });
+  try {
+    const client = await connectOnce({ port, version: '1.20.1', domain: 'selftest.local', username: 'SelfTest', answerLoginQueries: true });
+    assert.equal(client.reachedPlay, true, `did not reach play: ${client.error ?? client.kick}`);
+    const { status, checks } = evaluate(
+      { id: 'selftest-loopback', expect: { loginQueriesRelayed: true, loginSuccessAfterBackend: true } },
+      { client, backend: backend.observation() },
+    );
+    assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
+  } finally {
+    await backend.close();
+  }
 });
 
 let selfPort = 26100;

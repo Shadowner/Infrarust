@@ -1,5 +1,7 @@
 import mc from 'minecraft-protocol';
 
+import { LOGIN_QUERIES } from './modded.js';
+
 const DEFAULT_TIMEOUT_MS = 20000;
 
 function sessionAuth({ username, uuid, accessToken }) {
@@ -27,6 +29,7 @@ export function connectOnce({
   session = null,
   sessionServer = null,
   onPlay = null,
+  answerLoginQueries = false,
 }) {
   return new Promise((resolve) => {
     const obs = {
@@ -41,6 +44,7 @@ export function connectOnce({
       loginPackets: [],
       setCompression: null,
       loginSuccessAt: null,
+      loginQueries: [],
       error: null,
       kick: null,
     };
@@ -84,7 +88,25 @@ export function connectOnce({
       obs.loginPackets.push(meta.name);
       if (meta.name === 'compress') obs.setCompression = data.threshold;
       else if (meta.name === 'success') obs.loginSuccessAt = performance.now();
+      else if (meta.name === 'login_plugin_request') {
+        obs.loginQueries.push({
+          messageId: data.messageId,
+          channel: data.channel,
+          data: data.data ? data.data.toString('hex') : '',
+          at: performance.now(),
+        });
+      }
     });
+
+    if (answerLoginQueries) {
+      client.removeAllListeners('login_plugin_request');
+      client.on('login_plugin_request', (packet) => {
+        const query = LOGIN_QUERIES.find((q) => q.channel === packet.channel);
+        const response = query?.answer ? { messageId: packet.messageId, data: query.answer } : { messageId: packet.messageId };
+        if (query?.answerDelayMs) setTimeout(() => client.write('login_plugin_response', response), query.answerDelayMs);
+        else client.write('login_plugin_response', response);
+      });
+    }
 
     client.on('state', (newState) => {
       obs.states.push(newState);

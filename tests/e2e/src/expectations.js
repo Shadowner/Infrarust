@@ -1,4 +1,5 @@
 import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
+import { LOGIN_QUERIES } from './modded.js';
 
 const COMPRESSION_MIN_PROTOCOL = 47;
 
@@ -124,6 +125,54 @@ const CHECKS = {
       detail: problems.length ? `${problems.join('; ')} (login: ${sequence})` : `SetCompression(${expected}) from the ${source} before LoginSuccess (login: ${sequence})`,
     };
   },
+
+  loginQueriesRelayed: ({ client, backend }) => {
+    const sent = backend?.loginQueries;
+    if (!sent) return { ok: false, detail: 'the backend never sent its login queries' };
+    const problems = [];
+
+    const seen = client.loginQueries ?? [];
+    for (const query of LOGIN_QUERIES) {
+      const got = seen.filter((r) => r.channel === query.channel);
+      if (got.length !== 1) {
+        problems.push(`client saw ${query.channel} ${got.length} times`);
+        continue;
+      }
+      if (got[0].messageId !== query.messageId) problems.push(`${query.channel} reached the client as id ${got[0].messageId}, sent as ${query.messageId}`);
+      if (got[0].data !== query.request.toString('hex')) problems.push(`${query.channel} payload changed on the way to the client (${got[0].data})`);
+    }
+    const foreign = seen.filter((r) => !LOGIN_QUERIES.some((q) => q.channel === r.channel));
+    if (foreign.length) problems.push(`client also saw ${foreign.map((r) => r.channel).join(', ')}`);
+
+    for (const query of LOGIN_QUERIES) {
+      const got = sent.responses.filter((r) => r.messageId === query.messageId);
+      const want = query.answer ? query.answer.toString('hex') : null;
+      if (got.length !== 1) {
+        problems.push(`backend got ${got.length} responses for id ${query.messageId}`);
+        continue;
+      }
+      if (got[0].data !== want) problems.push(`id ${query.messageId} reached the backend as ${got[0].data ?? 'not understood'}, client sent ${want ?? 'not understood'}`);
+    }
+    const stray = sent.responses.filter((r) => !LOGIN_QUERIES.some((q) => q.messageId === r.messageId));
+    if (stray.length) problems.push(`backend got responses for ids it never used: ${stray.map((r) => r.messageId).join(', ')}`);
+
+    return {
+      ok: problems.length === 0,
+      detail: problems.length
+        ? problems.join('; ')
+        : `${LOGIN_QUERIES.length} queries (ids ${LOGIN_QUERIES.map((q) => q.messageId).join(', ')}) relayed and answered byte-for-byte`,
+    };
+  },
+
+  loginSuccessAfterBackend: ({ client, backend }) => {
+    if (client.loginSuccessAt == null) return { ok: false, detail: 'the client never received LoginSuccess' };
+    if (backend?.loginSuccessSentAt == null) return { ok: false, detail: 'the client got LoginSuccess but the backend never sent its own' };
+    const lag = client.loginSuccessAt - backend.loginSuccessSentAt;
+    const lateQueries = (client.loginQueries ?? []).filter((q) => q.at > client.loginSuccessAt);
+    if (lag < 0) return { ok: false, detail: `the client got LoginSuccess ${(-lag).toFixed(1)} ms before the backend sent its own` };
+    if (lateQueries.length) return { ok: false, detail: `${lateQueries.length} login queries reached the client after its LoginSuccess` };
+    return { ok: true, detail: `client LoginSuccess ${lag.toFixed(1)} ms after the backend's` };
+  },
 };
 
 export function evaluate(scenario, observations, { backendObservable = true } = {}) {
@@ -132,7 +181,13 @@ export function evaluate(scenario, observations, { backendObservable = true } = 
   let known = false;
   let fixed = false;
 
-  const BACKEND_CHECKS = new Set(['velocitySigned', 'bungeeInjected', 'bungeeGuardToken']);
+  const BACKEND_CHECKS = new Set([
+    'velocitySigned',
+    'bungeeInjected',
+    'bungeeGuardToken',
+    'loginQueriesRelayed',
+    'loginSuccessAfterBackend',
+  ]);
 
   for (const [name, expected] of Object.entries(scenario.expect)) {
     if (!backendObservable && BACKEND_CHECKS.has(name)) {

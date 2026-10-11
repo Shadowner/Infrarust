@@ -1,12 +1,10 @@
 import mc from 'minecraft-protocol';
 
+import { LOGIN_QUERIES, LOGIN_QUERY_TIMEOUT_MS } from './modded.js';
 import { MAX_FORWARDING_VERSION, VELOCITY_CHANNEL, verifyAndDecode } from './velocity.js';
 
-function installVelocityExchange(client, observation, secret) {
-  const nmpListeners = client.listeners('login_start');
-  client.removeAllListeners('login_start');
-
-  client.once('login_start', (packet) => {
+function velocityExchange(client, observation, secret) {
+  return new Promise((resolve) => {
     const messageId = 1;
     observation.velocityRequested = true;
 
@@ -19,8 +17,7 @@ function installVelocityExchange(client, observation, secret) {
       } else {
         observation.velocity = verifyAndDecode(response.data, secret);
       }
-
-      for (const listener of nmpListeners) listener.call(client, packet);
+      resolve();
     });
 
     client.write('login_plugin_request', {
@@ -31,7 +28,48 @@ function installVelocityExchange(client, observation, secret) {
   });
 }
 
-export function startBackend({ version, port, kind, secret, host = '127.0.0.1' }) {
+function loginQueries(client, observation) {
+  const queries = { sent: LOGIN_QUERIES.map((q) => q.messageId), responses: [], complete: false };
+  observation.loginQueries = queries;
+
+  return new Promise((resolve) => {
+    let timer = null;
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    client.on('login_plugin_response', (response) => {
+      queries.responses.push({
+        messageId: response.messageId,
+        data: response.data ? response.data.toString('hex') : null,
+      });
+      if (queries.responses.length === LOGIN_QUERIES.length) {
+        queries.complete = true;
+        done();
+      }
+    });
+    timer = setTimeout(done, LOGIN_QUERY_TIMEOUT_MS);
+
+    client.socket.cork();
+    for (const q of LOGIN_QUERIES) {
+      client.write('login_plugin_request', { messageId: q.messageId, channel: q.channel, data: q.request });
+    }
+    setImmediate(() => client.socket.uncork());
+  });
+}
+
+function holdLoginStart(client, observation, steps) {
+  const nmpListeners = client.listeners('login_start');
+  client.removeAllListeners('login_start');
+
+  client.once('login_start', async (packet) => {
+    for (const step of steps) await step();
+    observation.loginSuccessSentAt = performance.now();
+    for (const listener of nmpListeners) listener.call(client, packet);
+  });
+}
+
+export function startBackend({ version, port, kind, secret, velocity = false, loginQueries: queries = false, host = '127.0.0.1' }) {
   return new Promise((resolve, reject) => {
     const state = { last: null, connections: 0 };
 
@@ -60,7 +98,10 @@ export function startBackend({ version, port, kind, secret, host = '127.0.0.1' }
         observation.nextState = packet.nextState;
       });
 
-      if (kind === 'velocity') installVelocityExchange(client, observation, secret);
+      const steps = [];
+      if (velocity) steps.push(() => velocityExchange(client, observation, secret));
+      if (queries) steps.push(() => loginQueries(client, observation));
+      if (steps.length) holdLoginStart(client, observation, steps);
 
       client.on('error', (err) => {
         observation.error = observation.error ?? String(err.message ?? err);
