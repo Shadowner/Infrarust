@@ -247,7 +247,7 @@ These events are queued, not awaited: they can arrive after the player left. See
 
 ## Login plugin messages
 
-During the login, before the player reaches the configuration or play state, a backend can ask the client questions with Login Plugin Request packets, and the client answers each one with a Login Plugin Response carrying the same message id. Forge and several modpack tools negotiate this way. On `offline` and `client_only` servers the proxy reads the login, and two events let a plugin take part; the login waits for their handlers:
+During the login, before the player reaches the configuration or play state, a backend can ask the client questions with Login Plugin Request packets, and the client answers each one with a Login Plugin Response carrying the same message id. Forge and other mods that send login queries negotiate this way. On `offline` and `client_only` servers the proxy reads the login, and two events let a plugin take part; the login waits for their handlers:
 
 | Event | Fields | Results |
 |-------|--------|---------|
@@ -261,9 +261,9 @@ During the login, before the player reaches the configuration or play state, a b
 Both events fire only for channels some plugin registered with `Messaging::register`, like `PluginMessageEvent`, so a channel nobody registered costs nothing: register `fml:loginwrapper` only if you need Forge's login messages. `velocity:player_info` never fires, even registered, since the proxy owns it. Message ids reach each side as the backend sent them, negative ones included, and the backend may keep several requests open and get their answers in any order. Subscribing needs `plugin-messaging`.
 
 ```rust
-Messaging::register(&ChannelId::modern("automodpack:handshake"))?;
+Messaging::register(&ChannelId::modern("example:handshake"))?;
 ctx.on::<LoginPluginRequestEvent>(EventPriority::NORMAL, |event| {
-    if event.channel == "automodpack:handshake" && !event.client_reachable {
+    if event.channel == "example:handshake" && !event.client_reachable {
         event.respond(b"\x00".to_vec());
     }
 })?;

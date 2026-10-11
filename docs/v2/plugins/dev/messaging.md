@@ -205,9 +205,9 @@ Both fire only for channels registered in the channel registry, the same rule as
 ```rust
 use infrarust_api::events::messaging::LoginPluginRequestEvent;
 
-ctx.channel_registrar().register(ChannelId::modern("automodpack:handshake")?);
+ctx.channel_registrar().register(ChannelId::modern("example:handshake")?);
 ctx.event_bus().subscribe::<LoginPluginRequestEvent, _>(EventPriority::NORMAL, |event| {
-    if event.channel == "automodpack:handshake" && !event.client_reachable {
+    if event.channel == "example:handshake" && !event.client_reachable {
         event.respond(&b"\x00"[..]);
     }
 });
