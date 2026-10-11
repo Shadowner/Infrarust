@@ -64,8 +64,8 @@ let handoff = Handoff::to(HandoffTarget::server_port("modded", 30037))
 | --- | --- | --- |
 | `target` | | Where the connection goes, see [Targets](#targets) |
 | `replay` | `true` | Send the bytes the connection already sent to the target, see [Replay](#replay) |
-| `prefix` | empty | Bytes written to the target before the replay |
-| `reply` | empty | Bytes written to the client before the relay starts |
+| `prefix` | empty | Bytes written to the target before the replay, at most 64 KiB |
+| `reply` | empty | Bytes written to the client before the relay starts, at most 64 KiB |
 | `proxy_protocol` | `None` | `Some(true)` sends a PROXY protocol v2 header to the target, `Some(false)` never does, `None` follows the target server's `send_proxy_protocol` |
 
 `Handoff::to(target)` builds one with the defaults, `Handoff::route()` is `Handoff::to(HandoffTarget::Route)`, and `with_prefix`, `with_reply`, `without_replay`, `with_replay` and `with_proxy_protocol` change a field. The native `infrarust_api::handoff::Handoff` has the same builders and takes anything that converts into `Bytes`.
@@ -79,7 +79,7 @@ let handoff = Handoff::to(HandoffTarget::server_port("modded", 30037))
 | `ServerPort { server, port }` | The host of the address the load balancer picks for `server`, on `port` instead of the Minecraft port. Meant for a file server that runs next to the Minecraft backend |
 | `Address { host, port }` | An explicit address. For a WASM plugin, the host checks it against the plugin's [network allow-list](./network) when it reads the answer, see [Address targets](#address-targets) |
 
-The connection uses the target server's `timeouts.connect`, or the proxy's `connect_timeout` for an `Address`. A handoff that cannot be carried out (a target that cannot be reached, an unknown server, `Route` on a raw claim) logs the warning `connection handoff failed, closing the connection` and closes the client connection without sending it anything.
+The connection uses the target server's `timeouts.connect`, or the proxy's `connect_timeout` for an `Address`. A handoff that cannot be carried out (a `prefix` or a `reply` over 64 KiB, a target that cannot be reached, an unknown server, `Route` on a raw claim) logs the warning `connection handoff failed, closing the connection` and closes the client connection without sending it anything. The size check comes first, so an oversized handoff never reaches the target.
 
 ### Replay
 
@@ -105,7 +105,7 @@ A handoff skips the login, so the proxy checks the client's address against the 
 
 ### The relay
 
-The proxy writes `prefix` and the replay to the target, then `reply` to the client, then relays both directions until either side closes or the proxy shuts down. On Linux it uses `splice(2)`, so the bytes stay in the kernel. A handed-off connection is not a player: there is no `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `DisconnectEvent` for it, it never appears in the player registry, and the telemetry counts it as a connection with the mode `handoff`, not as a login. It keeps its slot under `max_connections` until it closes, and the transport filters see it close like any connection. The proxy logs `connection handed off` at debug level with the target and the level (`raw`, `handshake` or `login`).
+The proxy writes `prefix` and the replay to the target, then `reply` to the client, then relays both directions until either side closes or the proxy shuts down. A proxy shutdown also ends a handoff still writing `prefix` or `reply` to a peer that does not read. On Linux it uses `splice(2)`, so the bytes stay in the kernel. A handed-off connection is not a player: there is no `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `DisconnectEvent` for it, it never appears in the player registry, and the telemetry counts it as a connection with the mode `handoff`, not as a login. Its `server` label is the target server's id for `Route`, `Server` and `ServerPort` (the port is not part of it), and the fixed `handoff:address` for every `Address` target, so a plugin choosing hosts and ports cannot grow the number of metric series. It keeps its slot under `max_connections` until it closes, and the transport filters see it close like any connection. The proxy logs `connection handed off` at debug level with the target and the level (`raw`, `handshake` or `login`).
 
 ## Claiming raw connections
 
