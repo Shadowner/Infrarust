@@ -22,12 +22,62 @@ use crate::forwarding::velocity::{build_velocity_response, is_velocity_request};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::acknowledge_login;
 use crate::session::client_bridge::ClientBridge;
-use crate::session::client_login::complete_login;
+use crate::session::client_login::complete_login_within;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::BackendKick;
 use crate::session::login_messages::{LoginMessages, Routed};
 
-const DEFAULT_IDLE: Duration = Duration::from_secs(30);
+pub(crate) const CLIENT_WAIT_CAP: Duration = Duration::from_secs(5 * 60);
+
+pub(crate) fn read_timeout(config: &ServerConfig) -> Duration {
+    config
+        .timeouts
+        .as_ref()
+        .map_or_else(infrarust_config::defaults::read_timeout, |t| t.read)
+}
+
+pub(crate) struct LoginClock {
+    idle: Duration,
+    waiting: bool,
+    deadline: Instant,
+}
+
+impl LoginClock {
+    pub(crate) fn start(idle: Duration) -> Self {
+        Self {
+            idle,
+            waiting: false,
+            deadline: Instant::now() + idle,
+        }
+    }
+
+    pub(crate) const fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    pub(crate) fn backend_spoke(&mut self, waiting: bool) {
+        if !self.waiting {
+            let allowed = if waiting { CLIENT_WAIT_CAP } else { self.idle };
+            self.deadline = Instant::now() + allowed;
+        }
+        self.waiting = waiting;
+    }
+
+    pub(crate) fn client_answered(&mut self, waiting: bool) {
+        if self.waiting && !waiting {
+            self.deadline = Instant::now() + self.idle;
+        }
+        self.waiting = waiting;
+    }
+
+    pub(crate) fn expired(&self) -> CoreError {
+        CoreError::Timeout(if self.waiting {
+            "the client did not answer the backend's login messages in time".to_string()
+        } else {
+            "the backend did not finish the login".to_string()
+        })
+    }
+}
 
 pub(crate) async fn bridge_login(
     ctx: &SessionContext<'_>,
@@ -37,7 +87,7 @@ pub(crate) async fn bridge_login(
     config: &ServerConfig,
     velocity: Option<(&ForwardingData, &[u8])>,
 ) -> Result<(), CoreError> {
-    let idle = config.timeouts.as_ref().map_or(DEFAULT_IDLE, |t| t.read);
+    let idle = read_timeout(config);
     let mut relay = Relay {
         registry: ctx.registry(),
         version: ctx.version(),
@@ -47,7 +97,9 @@ pub(crate) async fn bridge_login(
         cookie_requests: 0,
         messages: LoginMessages::new(ctx, ServerId::new(server)),
     };
-    relay.run(ctx, &mut io.client, backend, idle).await?;
+    relay
+        .run(ctx, &mut io.client, backend, LoginClock::start(idle))
+        .await?;
     if !relay.plugin_requests.is_empty() {
         tracing::warn!(
             unanswered = relay.plugin_requests.len(),
@@ -58,7 +110,9 @@ pub(crate) async fn bridge_login(
     if let Some(threshold) = backend.compression_threshold() {
         io.server_codec.notify_compression_change(threshold);
     }
-    complete_login(ctx, io).await.map_err(client_gone)
+    complete_login_within(ctx, io, idle)
+        .await
+        .map_err(client_gone)
 }
 
 struct LoginIds {
@@ -89,7 +143,7 @@ impl LoginIds {
 
 enum Event {
     Cancelled,
-    Idle,
+    Expired,
     Client(Result<Option<PacketFrame>, CoreError>),
     Backend(Result<Option<PacketFrame>, CoreError>),
 }
@@ -119,18 +173,17 @@ impl Relay<'_> {
         ctx: &SessionContext<'_>,
         client: &mut ClientBridge,
         backend: &mut BackendBridge,
-        idle: Duration,
+        mut clock: LoginClock,
     ) -> Result<(), CoreError> {
-        let deadline = tokio::time::sleep(idle);
+        let deadline = tokio::time::sleep_until(clock.deadline());
         tokio::pin!(deadline);
         loop {
-            let waiting = self.waiting_on_client();
             let event = tokio::select! {
                 biased;
                 () = ctx.token.cancelled() => Event::Cancelled,
+                () = &mut deadline => Event::Expired,
                 frame = backend.read_frame() => Event::Backend(frame),
                 frame = client.read_frame() => Event::Client(frame),
-                () = &mut deadline, if !waiting => Event::Idle,
             };
             match event {
                 Event::Cancelled => {
@@ -138,23 +191,25 @@ impl Relay<'_> {
                         "the session ended during the backend login".to_string(),
                     ));
                 }
-                Event::Idle => {
-                    return Err(CoreError::Timeout(
-                        "the backend did not finish the login".to_string(),
-                    ));
-                }
+                Event::Expired => return Err(clock.expired()),
                 Event::Backend(Ok(Some(frame))) => {
                     if let Progress::LoggedIn = self.on_backend(frame, client, backend).await? {
                         return Ok(());
                     }
+                    clock.backend_spoke(self.waiting_on_client());
                 }
                 Event::Backend(Ok(None)) => return Err(CoreError::ConnectionClosed),
                 Event::Backend(Err(e)) => return Err(e),
-                Event::Client(Ok(Some(frame))) => self.on_client(frame, backend).await?,
+                Event::Client(Ok(Some(frame))) => {
+                    self.on_client(frame, backend).await?;
+                    clock.client_answered(self.waiting_on_client());
+                }
                 Event::Client(Ok(None)) => return Err(CoreError::ClientLeft),
                 Event::Client(Err(e)) => return Err(client_gone(e)),
             }
-            deadline.as_mut().reset(Instant::now() + idle);
+            if deadline.deadline() != clock.deadline() {
+                deadline.as_mut().reset(clock.deadline());
+            }
         }
     }
 
@@ -596,7 +651,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_backend_waiting_on_the_client_is_given_no_deadline() {
+    async fn a_client_may_answer_after_the_read_timeout() {
         let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = server_config(&backend, "[timeouts]\nread = \"150ms\"");
         let services = test_proxy_services();
@@ -625,6 +680,127 @@ mod tests {
         bridge(&ctx, &mut io, &config).await.unwrap();
         let _conn = backend_side.await.unwrap();
         let _peer = client_side.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_client_that_never_answers_ends_the_login_at_the_wait_cap() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "[timeouts]\nread = \"150ms\"");
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            conn.next().await
+        });
+        let client_side = tokio::spawn(async move {
+            peer.expect::<CLoginPluginRequest>().await;
+            tokio::time::pause();
+            peer.next().await
+        });
+
+        let started = Instant::now();
+        let result = bridge(&ctx, &mut io, &config).await;
+        let waited = started.elapsed();
+        drop(io);
+
+        assert!(
+            matches!(result, Err(CoreError::Timeout(_))),
+            "{:?}",
+            result.err()
+        );
+        assert!(waited >= CLIENT_WAIT_CAP, "ended after {waited:?}");
+        assert!(backend_side.await.unwrap().is_none());
+        assert!(client_side.await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn client_packets_do_not_hold_off_the_backend_read_timeout() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "[timeouts]\nread = \"150ms\"");
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+        let (stop, stopped) = oneshot::channel::<()>();
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.next().await
+        });
+        let client_side = tokio::spawn(async move {
+            let junk = async {
+                loop {
+                    peer.send(&plugin_response(42, b"junk")).await;
+                    peer.send_frame(&PacketFrame::new(0x7F, Bytes::from_static(b"?")))
+                        .await;
+                    tokio::time::sleep(Duration::from_millis(30)).await;
+                }
+            };
+            tokio::select! {
+                _ = stopped => {}
+                _ = junk => {}
+            }
+            peer
+        });
+
+        let started = Instant::now();
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), bridge(&ctx, &mut io, &config)).await;
+        let waited = started.elapsed();
+        stop.send(()).unwrap();
+        let _peer = client_side.await.unwrap();
+
+        assert!(
+            matches!(result, Ok(Err(CoreError::Timeout(_)))),
+            "{:?}",
+            result.map(|r| r.err())
+        );
+        assert!(waited < Duration::from_secs(2), "ended after {waited:?}");
+        assert!(backend_side.await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_client_that_never_acknowledges_the_login_is_let_go() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "[timeouts]\nread = \"150ms\"");
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            finish_backend_login(&mut conn).await;
+            conn
+        });
+        let client_side = tokio::spawn(async move {
+            let compression = peer.expect::<CSetCompression>().await;
+            peer.set_compression(compression.threshold.0);
+            peer.expect::<CLoginSuccess>().await;
+            peer
+        });
+
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), bridge(&ctx, &mut io, &config)).await;
+        let _conn = backend_side.await.unwrap();
+        let _peer = client_side.await.unwrap();
+
+        assert!(
+            matches!(result, Ok(Err(CoreError::ClientLeft))),
+            "{:?}",
+            result.map(|r| r.err())
+        );
     }
 
     #[derive(Clone, Default)]

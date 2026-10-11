@@ -1,4 +1,5 @@
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use infrarust_protocol::VarInt;
 use infrarust_protocol::packets::login::{
@@ -14,6 +15,14 @@ use crate::session::context::{SessionContext, SessionIo};
 pub(crate) async fn complete_login(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,
+) -> Result<(), CoreError> {
+    complete_login_within(ctx, io, infrarust_config::defaults::read_timeout()).await
+}
+
+pub(crate) async fn complete_login_within(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    acknowledgement: Duration,
 ) -> Result<(), CoreError> {
     let version = ctx.version();
     let registry = ctx.registry();
@@ -48,7 +57,14 @@ pub(crate) async fn complete_login(
     .await?;
 
     if version.no_less_than(ProtocolVersion::V1_20_2) {
-        consume_login_acknowledged(client, version, registry).await?;
+        tokio::time::timeout(
+            acknowledgement,
+            consume_login_acknowledged(client, version, registry),
+        )
+        .await
+        .map_err(|_| {
+            CoreError::Timeout("the client did not acknowledge its login in time".to_string())
+        })??;
     } else {
         client.set_state(ConnectionState::Play);
     }
