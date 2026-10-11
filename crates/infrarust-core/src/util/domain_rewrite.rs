@@ -39,7 +39,10 @@ pub fn rewrite_handshake(
     server_config: &ServerConfig,
 ) -> Result<Vec<u8>, CoreError> {
     match backend_host(server_config) {
-        Some(host) => encode_handshake_with_domain(handshake_data, &host),
+        Some(host) => encode_handshake_with_domain(
+            handshake_data,
+            &format!("{host}{}", handshake_data.host_suffix()),
+        ),
         None => Ok(first_raw_packet(handshake_data)),
     }
 }

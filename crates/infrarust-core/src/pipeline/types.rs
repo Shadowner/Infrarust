@@ -31,6 +31,12 @@ pub struct HandshakeData {
     pub raw_packets: Vec<BytesMut>,
 }
 
+impl HandshakeData {
+    pub fn host_suffix(&self) -> &str {
+        crate::util::host_suffix(&self.raw_host)
+    }
+}
+
 /// Data resolved by the domain router middleware.
 #[derive(Clone)]
 pub struct RoutingData {
