@@ -445,6 +445,7 @@ impl ForwardedLogin<'_> {
                     handshake,
                     config,
                     &data,
+                    &ctx.buffered_data,
                 )
                 .await
             }
@@ -545,6 +546,7 @@ async fn send_initial_packets(
     handshake: &HandshakeData,
     server_config: &ServerConfig,
     data: &ForwardingData,
+    pipelined: &[u8],
 ) -> Result<(), CoreError> {
     let handler = services.resolve_forwarding_handler(server_config);
 
@@ -560,13 +562,14 @@ async fn send_initial_packets(
     }
 
     if handler.modifies_handshake() {
-        return send_with_forwarding(backend, handshake, server_config, data, &handler).await;
+        send_with_forwarding(backend, handshake, server_config, data, &handler).await?;
+    } else {
+        backend
+            .write_all(&rewrite_handshake(handshake, server_config)?)
+            .await?;
+        send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
     }
-
-    backend
-        .write_all(&rewrite_handshake(handshake, server_config)?)
-        .await?;
-    send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
+    backend.write_all(pipelined).await?;
     backend.flush().await?;
     Ok(())
 }
@@ -598,6 +601,5 @@ async fn send_with_forwarding(
     encoder.append_raw(0x00, &payload)?;
     backend.write_all(&encoder.take()).await?;
     send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
-    backend.flush().await?;
     Ok(())
 }
