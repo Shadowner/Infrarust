@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use infrarust_api::__private::caller_deadline;
 use infrarust_api::event::BoxFuture;
+use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginRuntimeStatus;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -23,6 +24,7 @@ use crate::deadline::{Deadline, inside};
 use crate::error::WasmLoaderError;
 use crate::events::AccessListeners;
 use crate::instance::InstanceFactory;
+use crate::network::NetworkPolicy;
 use crate::rate_limit::SharedRateLimit;
 use crate::snapshots::PermissionSnapshots;
 use crate::status::StatusBoard;
@@ -283,6 +285,8 @@ struct ActorInfo {
     snapshots: Arc<PermissionSnapshots>,
     access: Arc<AccessListeners>,
     board: StatusBoard,
+    capabilities: CapabilitySet,
+    network: Arc<NetworkPolicy>,
 }
 
 impl ActorInfo {
@@ -290,6 +294,8 @@ impl ActorInfo {
         plugin_id: String,
         sandbox: &SandboxLimits,
         snapshots: Arc<PermissionSnapshots>,
+        capabilities: CapabilitySet,
+        network: Arc<NetworkPolicy>,
     ) -> Self {
         Self {
             plugin_id,
@@ -304,6 +310,8 @@ impl ActorInfo {
             snapshots,
             access: Arc::default(),
             board: StatusBoard::new(sandbox.queue_capacity, sandbox.recovery),
+            capabilities,
+            network,
         }
     }
 
@@ -353,6 +361,14 @@ pub(crate) struct InstanceRef {
 impl InstanceRef {
     #[cfg(test)]
     pub(crate) fn detached() -> Self {
+        Self::detached_with(
+            CapabilitySet::default(),
+            crate::network::probe_policy(String::new()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detached_with(capabilities: CapabilitySet, network: Arc<NetworkPolicy>) -> Self {
         let (jobs, _) = mpsc::channel(1);
         Self {
             jobs: jobs.downgrade(),
@@ -360,10 +376,20 @@ impl InstanceRef {
                 String::new(),
                 &SandboxLimits::default(),
                 Arc::default(),
+                capabilities,
+                network,
             )),
             kind: CallKind::Callback,
             generation: None,
         }
+    }
+
+    pub(crate) fn capabilities(&self) -> &CapabilitySet {
+        &self.info.capabilities
+    }
+
+    pub(crate) fn network(&self) -> &NetworkPolicy {
+        &self.info.network
     }
 
     pub(crate) fn plugin_id(&self) -> &str {
@@ -513,6 +539,8 @@ impl PluginActor {
             factory.plugin_id().to_owned(),
             &sandbox,
             Arc::clone(factory.registrations().snapshots()),
+            factory.capabilities().clone(),
+            Arc::clone(factory.network()),
         ));
         let instance = InstanceRef {
             jobs: jobs.downgrade(),

@@ -2,9 +2,9 @@ use wasmtime::Engine;
 use wasmtime::component::{HasSelf, Linker};
 
 use crate::bindings::infrarust::plugin::{
-    ban_service, codec_registry, command_manager, config_service, event_bus, events, limbo,
-    load_balancer, log, messaging, permission_nodes, permissions, players, plugin_registry,
-    providers, proxy_info, scheduler, server_manager, text,
+    ban_service, codec_registry, command_manager, config_service, connection_claims, event_bus,
+    events, limbo, load_balancer, log, messaging, permission_nodes, permissions, players,
+    plugin_registry, providers, proxy_info, scheduler, server_manager, text,
 };
 use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
@@ -65,6 +65,7 @@ pub(crate) fn build_linker(
     link!(linker, plugin_id, permissions);
     link!(linker, plugin_id, permission_nodes);
     link!(linker, plugin_id, providers);
+    link!(linker, plugin_id, connection_claims);
 
     Ok(linker)
 }

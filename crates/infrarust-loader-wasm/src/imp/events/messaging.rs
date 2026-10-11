@@ -1,12 +1,95 @@
 use bytes::Bytes;
 use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::messaging::{PluginMessageEvent, PluginMessageResult};
+use infrarust_api::events::messaging::{
+    LoginPluginRequestEvent, LoginPluginRequestResult, LoginPluginResponseEvent,
+    LoginPluginResponseResult, PluginMessageEvent, PluginMessageResult,
+};
 use infrarust_api::events::named::{NamedEvent, NamedEventResponse};
 use infrarust_api::messaging::{Endpoint, MessagePhase};
 
 use super::{Applied, WasmEvent, unmatched};
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::convert;
+
+impl WasmEvent for LoginPluginRequestEvent {
+    const KIND: EventKind = EventKind::LoginPluginRequest;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::LoginPluginRequest(we::LoginPluginRequestEvent {
+            player: convert::player_ref(&*self.player),
+            server: self.server.as_str().to_owned(),
+            message_id: self.message_id,
+            channel: self.channel.clone(),
+            data: self.data.to_vec(),
+            client_reachable: self.client_reachable,
+            result: match self.result() {
+                LoginPluginRequestResult::Replace(data) => {
+                    we::LoginPluginRequestResult::Replace(data.to_vec())
+                }
+                LoginPluginRequestResult::Respond(data) => {
+                    we::LoginPluginRequestResult::Respond(data.as_ref().map(|data| data.to_vec()))
+                }
+                _ => we::LoginPluginRequestResult::Forward,
+            },
+        })
+    }
+
+    fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        let we::EventOutcome::LoginPluginRequest(result) = outcome else {
+            return unmatched(&outcome);
+        };
+        self.set_result(match result {
+            we::LoginPluginRequestResult::Forward => LoginPluginRequestResult::Forward,
+            we::LoginPluginRequestResult::Replace(data) => {
+                LoginPluginRequestResult::Replace(Bytes::from(data))
+            }
+            we::LoginPluginRequestResult::Respond(data) => {
+                LoginPluginRequestResult::Respond(data.map(Bytes::from))
+            }
+        });
+        Applied::Set
+    }
+}
+
+impl WasmEvent for LoginPluginResponseEvent {
+    const KIND: EventKind = EventKind::LoginPluginResponse;
+
+    fn to_wit(&self) -> we::Event {
+        we::Event::LoginPluginResponse(we::LoginPluginResponseEvent {
+            player: convert::player_ref(&*self.player),
+            server: self.server.as_str().to_owned(),
+            message_id: self.message_id,
+            channel: self.channel.clone(),
+            successful: self.successful,
+            data: self.data.to_vec(),
+            result: match self.result() {
+                LoginPluginResponseResult::Replace { successful, data } => {
+                    we::LoginPluginResponseResult::Replace(we::LoginPluginResponseReplacement {
+                        successful: *successful,
+                        data: data.to_vec(),
+                    })
+                }
+                _ => we::LoginPluginResponseResult::Forward,
+            },
+        })
+    }
+
+    fn apply(&mut self, outcome: we::EventOutcome) -> Applied {
+        let we::EventOutcome::LoginPluginResponse(result) = outcome else {
+            return unmatched(&outcome);
+        };
+        self.set_result(match result {
+            we::LoginPluginResponseResult::Forward => LoginPluginResponseResult::Forward,
+            we::LoginPluginResponseResult::Replace(replacement) => {
+                LoginPluginResponseResult::Replace {
+                    successful: replacement.successful,
+                    data: Bytes::from(replacement.data),
+                }
+            }
+        });
+        Applied::Set
+    }
+}
 
 fn endpoint(source: &Endpoint) -> we::MessageEndpoint {
     match source {
@@ -110,6 +193,105 @@ mod tests {
             Bytes::from_static(b"\x00\x07Connect"),
             MessagePhase::Play,
         )
+    }
+
+    #[test]
+    fn a_login_plugin_request_round_trips_every_answer() {
+        let mut event = LoginPluginRequestEvent::new(
+            steve(),
+            ServerId::new("modded"),
+            4,
+            "automodpack:handshake",
+            Bytes::from_static(b"\x01"),
+            true,
+        );
+        let we::Event::LoginPluginRequest(record) = event.to_wit() else {
+            panic!("a login plugin request is sent as login-plugin-request");
+        };
+        assert_eq!(record.server, "modded");
+        assert_eq!(record.message_id, 4);
+        assert_eq!(record.channel, "automodpack:handshake");
+        assert_eq!(record.data, b"\x01");
+        assert!(record.client_reachable);
+        assert_eq!(record.result, we::LoginPluginRequestResult::Forward);
+
+        for (answer, expected) in [
+            (
+                we::LoginPluginRequestResult::Replace(b"new".to_vec()),
+                LoginPluginRequestResult::Replace(Bytes::from_static(b"new")),
+            ),
+            (
+                we::LoginPluginRequestResult::Respond(Some(b"ok".to_vec())),
+                LoginPluginRequestResult::Respond(Some(Bytes::from_static(b"ok"))),
+            ),
+            (
+                we::LoginPluginRequestResult::Respond(None),
+                LoginPluginRequestResult::Respond(None),
+            ),
+            (
+                we::LoginPluginRequestResult::Forward,
+                LoginPluginRequestResult::Forward,
+            ),
+        ] {
+            assert_eq!(
+                event.apply(we::EventOutcome::LoginPluginRequest(answer.clone())),
+                Applied::Set
+            );
+            assert_eq!(event.result(), &expected);
+            let we::Event::LoginPluginRequest(record) = event.to_wit() else {
+                panic!("a login plugin request is sent as login-plugin-request");
+            };
+            assert_eq!(record.result, answer);
+        }
+        assert_eq!(
+            event.apply(we::EventOutcome::PluginMessage(
+                we::PluginMessageResult::Handled
+            )),
+            Applied::Mismatched
+        );
+    }
+
+    #[test]
+    fn a_login_plugin_response_can_be_replaced() {
+        let mut event = LoginPluginResponseEvent::new(
+            steve(),
+            ServerId::new("modded"),
+            4,
+            "automodpack:handshake",
+            true,
+            Bytes::from_static(b"\x02"),
+        );
+        let we::Event::LoginPluginResponse(record) = event.to_wit() else {
+            panic!("a login plugin response is sent as login-plugin-response");
+        };
+        assert!(record.successful);
+        assert_eq!(record.channel, "automodpack:handshake");
+        assert_eq!(record.result, we::LoginPluginResponseResult::Forward);
+
+        let replacement =
+            we::LoginPluginResponseResult::Replace(we::LoginPluginResponseReplacement {
+                successful: false,
+                data: Vec::new(),
+            });
+        assert_eq!(
+            event.apply(we::EventOutcome::LoginPluginResponse(replacement.clone())),
+            Applied::Set
+        );
+        assert_eq!(
+            event.result(),
+            &LoginPluginResponseResult::Replace {
+                successful: false,
+                data: Bytes::new()
+            }
+        );
+        let we::Event::LoginPluginResponse(record) = event.to_wit() else {
+            panic!("a login plugin response is sent as login-plugin-response");
+        };
+        assert_eq!(record.result, replacement);
+        event.apply(we::EventOutcome::LoginPluginResponse(
+            we::LoginPluginResponseResult::Forward,
+        ));
+        assert_eq!(event.result(), &LoginPluginResponseResult::Forward);
     }
 
     #[test]

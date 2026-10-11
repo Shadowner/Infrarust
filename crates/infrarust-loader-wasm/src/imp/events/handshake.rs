@@ -4,7 +4,9 @@ use infrarust_api::events::handshake::{
     RejectReason,
 };
 
+use super::claim::{HANDOFF_NEEDS_GRANTS, admitted_handoff, handoff_to_wit};
 use super::{Applied, Texts, WasmEvent, unmatched};
+use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::component;
 use crate::convert::{self, wit_enum_map};
@@ -33,6 +35,9 @@ impl WasmEvent for ConnectionHandshakeEvent {
                 ConnectionHandshakeResult::DropSilently => {
                     we::ConnectionHandshakeResult::DropSilently
                 }
+                ConnectionHandshakeResult::Handoff(handoff) => {
+                    we::ConnectionHandshakeResult::Handoff(handoff_to_wit(handoff))
+                }
                 _ => we::ConnectionHandshakeResult::Allow,
             },
         })
@@ -49,8 +54,26 @@ impl WasmEvent for ConnectionHandshakeEvent {
                 reason: reason.as_ref().map(|reason| texts.convert(reason)),
             },
             we::ConnectionHandshakeResult::DropSilently => ConnectionHandshakeResult::DropSilently,
+            we::ConnectionHandshakeResult::Handoff(_) => {
+                return Applied::Refused(HANDOFF_NEEDS_GRANTS);
+            }
         });
         texts.applied()
+    }
+
+    fn apply_for(&mut self, outcome: we::EventOutcome, instance: &InstanceRef) -> Applied {
+        let we::EventOutcome::ConnectionHandshake(we::ConnectionHandshakeResult::Handoff(handoff)) =
+            outcome
+        else {
+            return self.apply(outcome);
+        };
+        match admitted_handoff(handoff, instance) {
+            Ok(handoff) => {
+                self.set_result(ConnectionHandshakeResult::Handoff(handoff));
+                Applied::Set
+            }
+            Err(reason) => Applied::Refused(reason),
+        }
     }
 }
 
@@ -132,6 +155,52 @@ mod tests {
             event.result(),
             ConnectionHandshakeResult::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn a_handshake_handoff_needs_the_connection_handoff_capability() {
+        use infrarust_api::handoff::{Handoff, HandoffTarget};
+        use infrarust_api::permissions::{Capability, CapabilitySet};
+
+        let outcome = || {
+            we::EventOutcome::ConnectionHandshake(we::ConnectionHandshakeResult::Handoff(
+                we::Handoff {
+                    target: we::HandoffTarget::Server("modded".into()),
+                    replay: true,
+                    prefix: Vec::new(),
+                    reply: Vec::new(),
+                    proxy_protocol: None,
+                },
+            ))
+        };
+        let without = InstanceRef::detached();
+        let mut event = handshake();
+        assert_eq!(
+            event.apply_for(outcome(), &without),
+            Applied::Refused(super::super::claim::HANDOFF_NEEDS_CAPABILITY)
+        );
+        assert_eq!(event.result(), &ConnectionHandshakeResult::Allow);
+
+        let with = InstanceRef::detached_with(
+            CapabilitySet::default().with(Capability::ConnectionHandoff),
+            crate::network::probe_policy(String::new()),
+        );
+        assert_eq!(event.apply_for(outcome(), &with), Applied::Set);
+        assert_eq!(
+            event.result(),
+            &ConnectionHandshakeResult::Handoff(Handoff::to(HandoffTarget::server("modded")))
+        );
+        let we::Event::ConnectionHandshake(record) = event.to_wit() else {
+            panic!("a handshake is sent as connection-handshake");
+        };
+        assert!(matches!(
+            record.result,
+            we::ConnectionHandshakeResult::Handoff(_)
+        ));
+        assert_eq!(
+            event.apply(outcome()),
+            Applied::Refused(HANDOFF_NEEDS_GRANTS)
+        );
     }
 
     #[test]

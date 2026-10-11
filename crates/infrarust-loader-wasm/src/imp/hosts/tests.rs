@@ -47,9 +47,9 @@ use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::{
-    ban_service, codec_registry, command_manager, config_service, event_bus, events, limbo,
-    load_balancer, log, messaging, permission_nodes, permissions, players, plugin_registry,
-    providers, proxy_info, scheduler, server_manager, text, types as wt,
+    ban_service, codec_registry, command_manager, config_service, connection_claims, event_bus,
+    events, limbo, load_balancer, log, messaging, permission_nodes, permissions, players,
+    plugin_registry, providers, proxy_info, scheduler, server_manager, text, types as wt,
 };
 use crate::component;
 use crate::config::SandboxLimits;
@@ -540,6 +540,32 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
             denied!(
                 "subscribe(plugin-message)",
                 event_bus::Host::subscribe(s, EventKind::PluginMessage, 128).await
+            );
+            denied!(
+                "subscribe(login-plugin-request)",
+                event_bus::Host::subscribe(s, EventKind::LoginPluginRequest, 128).await
+            );
+            denied!(
+                "subscribe(login-plugin-response)",
+                event_bus::Host::subscribe(s, EventKind::LoginPluginResponse, 128).await
+            );
+        }
+        Capability::ConnectionHandoff => {
+            denied!(
+                "register-prefix",
+                connection_claims::Host::register_prefix(s, b"AMMH".to_vec()).await
+            );
+            denied!(
+                "unregister-prefix",
+                connection_claims::Host::unregister_prefix(s, b"AMMH".to_vec()).await
+            );
+            denied!(
+                "subscribe(raw-connection)",
+                event_bus::Host::subscribe(s, EventKind::RawConnection, 128).await
+            );
+            denied!(
+                "subscribe(login-claim)",
+                event_bus::Host::subscribe(s, EventKind::LoginClaim, 128).await
             );
         }
         Capability::PlayerRead => {
@@ -1360,6 +1386,72 @@ impl CodecFilterInstance for Pass {
     fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
         CodecVerdict::Pass
     }
+}
+
+#[tokio::test]
+async fn a_plugin_claims_prefixes_until_its_instance_is_released() {
+    let services = PluginServices::for_tests();
+    let claims = Arc::clone(&services.connection_claims);
+    let factory = PluginContextFactoryImpl::new(
+        services,
+        HashMap::from([(
+            "claimer".to_owned(),
+            PluginPermissions {
+                permissions: vec![Capability::ConnectionHandoff.to_kebab().to_owned()],
+                ..PluginPermissions::default()
+            },
+        )]),
+    );
+    let mut state = build_probe_state("claimer".to_owned(), &SandboxLimits::default())
+        .with_capabilities(CapabilitySet::baseline().with(Capability::ConnectionHandoff))
+        .with_ctx(factory.create_context("claimer"));
+    let s = &mut state;
+
+    connection_claims::Host::register_prefix(s, b"AMMH".to_vec())
+        .await
+        .unwrap()
+        .unwrap();
+    connection_claims::Host::register_prefix(s, b"AMMH".to_vec())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claims.len(), 1);
+    assert_eq!(s.claim_prefix_count(), 1);
+
+    let invalid = connection_claims::Host::register_prefix(s, vec![0x10, 0x00])
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(invalid.kind, wt::ErrorKind::InvalidArgument);
+    let unknown = connection_claims::Host::unregister_prefix(s, b"NOPE".to_vec())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(unknown.kind, wt::ErrorKind::NotFound);
+
+    for at in 1..16u8 {
+        connection_claims::Host::register_prefix(s, vec![b'B', b'A' + at])
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let full = connection_claims::Host::register_prefix(s, b"ZZ".to_vec())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(full.kind, wt::ErrorKind::LimitExceeded);
+    assert_eq!(claims.len(), 16);
+
+    connection_claims::Host::unregister_prefix(s, b"AMMH".to_vec())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claims.len(), 15);
+    assert_eq!(s.claim_prefix_count(), 15);
+
+    s.release_host_resources();
+    assert!(claims.is_empty(), "a released instance keeps no claim");
+    assert_eq!(s.claim_prefix_count(), 0);
 }
 
 fn codec_state(factory: &PluginContextFactoryImpl, plugin_id: &str) -> PluginStoreState {

@@ -1,6 +1,7 @@
 use infrarust_api::command::CommandError;
 use infrarust_api::error::{PlayerError, ServiceError};
 use infrarust_api::filter::FilterRegistryError;
+use infrarust_api::handoff::ClaimError;
 use infrarust_api::limbo::LimboHandlerError;
 use infrarust_api::messaging::MessagingError;
 use infrarust_api::permissions::{Capability, PermissionNodeError};
@@ -101,6 +102,10 @@ pub(crate) fn balancer_error(error: &LbError) -> HostError {
 }
 
 pub(crate) fn config_write_error(error: &ConfigWriteError) -> HostError {
+    host_error(kind_to_wit(error.kind()), error.to_string())
+}
+
+pub(crate) fn claim_error(error: &ClaimError) -> HostError {
     host_error(kind_to_wit(error.kind()), error.to_string())
 }
 

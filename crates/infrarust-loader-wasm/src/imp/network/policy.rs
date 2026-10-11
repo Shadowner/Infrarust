@@ -398,6 +398,27 @@ impl NetworkPolicy {
         Err(Refusal::AllowList)
     }
 
+    pub(crate) fn permits_handoff(&self, host: &str, port: u16) -> Result<(), Refusal> {
+        let rules = match &self.mode {
+            Mode::Off(refusal) => return Err(*refusal),
+            Mode::On { rules, .. } => rules,
+        };
+        let permitted = match ip_literal(host) {
+            Some(ip) => rules
+                .iter()
+                .any(|rule| rule.matches_ip(ip.to_canonical(), port)),
+            None => {
+                let name = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+                rules.iter().any(|rule| rule.matches_name(&name, port))
+            }
+        };
+        if permitted {
+            Ok(())
+        } else {
+            Err(Refusal::AllowList)
+        }
+    }
+
     pub(crate) async fn resolve_http(
         &self,
         route: HttpRoute,

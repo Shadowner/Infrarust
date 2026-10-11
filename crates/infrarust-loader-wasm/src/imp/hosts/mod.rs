@@ -5,6 +5,7 @@ macro_rules! gate {
 }
 
 mod bans;
+mod claims;
 mod codec;
 mod commands;
 mod config;
