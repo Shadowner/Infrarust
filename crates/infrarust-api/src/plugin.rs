@@ -15,6 +15,7 @@ use crate::error::PluginError;
 use crate::event::BoxFuture;
 use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
+use crate::handoff::ConnectionClaimRegistry;
 use crate::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use crate::permissions::{
     PermissionNode, PermissionNodeError, PermissionNodeInfo, PermissionProvider,
@@ -406,6 +407,10 @@ pub trait PluginContext: Send + Sync + private::Sealed {
     ///
     /// [`Capability::TransportFilter`]: crate::permissions::Capability::TransportFilter
     fn transport_filters(&self) -> Option<&dyn TransportFilterRegistry>;
+
+    fn connection_claims(&self) -> Option<&dyn ConnectionClaimRegistry> {
+        None
+    }
 
     fn plugin_registry(&self) -> Arc<dyn PluginRegistry>;
 

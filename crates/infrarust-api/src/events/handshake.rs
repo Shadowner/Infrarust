@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::event::Event;
+use crate::handoff::Handoff;
 use crate::types::{Component, ProtocolVersion, ServerId};
 
 pub use infrarust_plugin_common::enums::HandshakeIntent;
@@ -14,6 +15,7 @@ pub enum ConnectionHandshakeResult {
         reason: Option<Component>,
     },
     DropSilently,
+    Handoff(Handoff),
 }
 
 #[non_exhaustive]
@@ -85,6 +87,10 @@ impl ConnectionHandshakeEvent {
 
     pub fn drop_silently(&mut self) {
         self.result = ConnectionHandshakeResult::DropSilently;
+    }
+
+    pub fn handoff(&mut self, handoff: Handoff) {
+        self.result = ConnectionHandshakeResult::Handoff(handoff);
     }
 }
 
@@ -172,6 +178,11 @@ mod tests {
         );
         event.drop_silently();
         assert_eq!(event.result(), &ConnectionHandshakeResult::DropSilently);
+        event.handoff(Handoff::route().with_prefix(&b"AM"[..]));
+        assert_eq!(
+            event.result(),
+            &ConnectionHandshakeResult::Handoff(Handoff::route().with_prefix(&b"AM"[..]))
+        );
         event.allow();
         assert_eq!(event.result(), &ConnectionHandshakeResult::Allow);
     }

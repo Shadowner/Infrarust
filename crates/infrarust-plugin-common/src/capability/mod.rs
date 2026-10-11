@@ -45,6 +45,7 @@ capabilities! {
     ChatIntercept => "chat-intercept",
     BanProvider => "ban-provider",
     PluginMessaging => "plugin-messaging",
+    ConnectionHandoff => "connection-handoff",
 }
 
 impl Capability {
@@ -111,7 +112,7 @@ mod tests {
             assert_eq!(name.parse::<Capability>(), Ok(capability));
             assert_eq!(capability.to_string(), name);
         }
-        assert_eq!(Capability::ALL.len(), 20);
+        assert_eq!(Capability::ALL.len(), 21);
         assert_eq!(names.len(), Capability::ALL.len());
     }
 
