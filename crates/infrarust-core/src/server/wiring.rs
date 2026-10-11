@@ -277,7 +277,10 @@ impl ProxyServer {
         login_pipeline.add(Box::new(LoginStartParserMiddleware::with_login_claims(
             Arc::clone(&event_bus),
         )));
-        login_pipeline.add(Box::new(LoginClaimMiddleware::new(Arc::clone(&event_bus))));
+        login_pipeline.add(Box::new(LoginClaimMiddleware::new(
+            Arc::clone(&event_bus),
+            Arc::clone(&ban_manager),
+        )));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
         login_pipeline.add(Box::new(TelemetryMiddleware));
         login_pipeline.add(Box::new(

@@ -6,21 +6,24 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::claim::{LoginClaimEvent, LoginClaimResult};
 use infrarust_api::types::{ProtocolVersion, ServerId};
 
+use crate::ban::BanManager;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
+use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::{
-    ClaimedLogin, HandshakeData, LayoutRefusal, LoginData, LoginStartLayout, RoutingData,
+    ClaimedLogin, HandshakeData, LayoutRefusal, LoginData, LoginStartLayout, Refused, RoutingData,
 };
 
 pub struct LoginClaimMiddleware {
     bus: Arc<EventBusImpl>,
+    bans: Arc<BanManager>,
 }
 
 impl LoginClaimMiddleware {
-    pub const fn new(bus: Arc<EventBusImpl>) -> Self {
-        Self { bus }
+    pub const fn new(bus: Arc<EventBusImpl>, bans: Arc<BanManager>) -> Self {
+        Self { bus, bans }
     }
 }
 
@@ -40,6 +43,10 @@ impl Middleware for LoginClaimMiddleware {
             {
                 let event = self.bus.fire(event).await;
                 if let LoginClaimResult::Handoff(handoff) = event.result() {
+                    if let Some(refusal) = admission::refuse_handoff(&self.bans, ctx).await {
+                        ctx.extensions.insert(Refused(refusal.reason));
+                        return Ok(MiddlewareResult::Kick(refusal.message));
+                    }
                     tracing::debug!(
                         client = %ctx.client_addr(),
                         username = %event.username,
@@ -94,14 +101,18 @@ mod tests {
     use bytes::{Bytes, BytesMut};
     use infrarust_api::event::EventPriority;
     use infrarust_api::event::bus::{EventBus, EventBusExt};
+    use infrarust_api::events::handshake::RejectReason;
     use infrarust_api::handoff::{Handoff, HandoffTarget};
+    use infrarust_api::services::ban_service::{BanRequest, BanTarget};
     use infrarust_config::{ProxyMode, ServerConfig};
     use infrarust_protocol::ProtocolError;
     use tokio::net::{TcpListener, TcpStream};
     use uuid::Uuid;
 
     use super::*;
-    use crate::pipeline::types::ConnectionIntent;
+    use crate::ban::{BAN_CHECK_UNAVAILABLE, FileBanStorage};
+    use crate::pipeline::types::{ConnectionIntent, Refused};
+    use crate::session::connection_registry::ConnectionRegistry;
 
     const UUID: Uuid = Uuid::from_u128(0xa7c3_5e10_9b2d_4f6e_8a01_c4d2_e3f4_a5b6);
     const PAYLOAD: &[u8] = b"\x05probe0123456789abcdef";
@@ -183,11 +194,98 @@ mod tests {
         seen
     }
 
+    fn no_bans() -> Arc<BanManager> {
+        Arc::new(BanManager::disabled(
+            Arc::new(ConnectionRegistry::new()),
+            Arc::new(EventBusImpl::new()),
+        ))
+    }
+
+    async fn bans(dir: &tempfile::TempDir, target: BanTarget) -> Arc<BanManager> {
+        let bans = Arc::new(BanManager::builtin(
+            Arc::new(FileBanStorage::new(dir.path().join("bans.json"))),
+            Arc::new(ConnectionRegistry::new()),
+            Arc::new(EventBusImpl::new()),
+        ));
+        bans.issue(BanRequest::new(target).reason("griefing"))
+            .await
+            .unwrap();
+        bans
+    }
+
+    fn middleware(bus: Arc<EventBusImpl>) -> LoginClaimMiddleware {
+        LoginClaimMiddleware::new(bus, no_bans())
+    }
+
+    async fn claimed_by(
+        bans: Arc<BanManager>,
+    ) -> (Result<MiddlewareResult, CoreError>, ConnectionContext) {
+        let bus = Arc::new(EventBusImpl::new());
+        listening(&bus, |event| {
+            event.handoff(Handoff::to(HandoffTarget::server_port("lobby", 30037)));
+        });
+        let (mut ctx, _client) = claim_ctx(LoginStartLayout::Declared, false).await;
+        let result = LoginClaimMiddleware::new(bus, bans).process(&mut ctx).await;
+        (result, ctx)
+    }
+
+    #[tokio::test]
+    async fn a_claim_from_a_banned_address_is_kicked_like_a_banned_login() {
+        let dir = tempfile::tempdir().unwrap();
+        let bans = bans(&dir, BanTarget::Ip(IpAddr::V4(Ipv4Addr::LOCALHOST))).await;
+        let (result, ctx) = claimed_by(bans).await;
+
+        match result.unwrap() {
+            MiddlewareResult::Kick(message) => {
+                assert!(message.to_plain().contains("griefing"), "{message:?}");
+            }
+            other => panic!("a banned address must not be handed off, got {other:?}"),
+        }
+        assert_eq!(
+            ctx.extensions.get::<Refused>(),
+            Some(&Refused(RejectReason::IpBanned))
+        );
+        assert!(!ctx.extensions.contains::<ClaimedLogin>());
+    }
+
+    #[tokio::test]
+    async fn a_claim_is_refused_while_the_ban_provider_cannot_answer() {
+        let bans = Arc::new(BanManager::plugin(
+            "absent",
+            Arc::new(ConnectionRegistry::new()),
+            Arc::new(EventBusImpl::new()),
+        ));
+        let (result, ctx) = claimed_by(bans).await;
+
+        match result.unwrap() {
+            MiddlewareResult::Kick(message) => {
+                assert_eq!(message.to_plain(), BAN_CHECK_UNAVAILABLE);
+            }
+            other => panic!("an unchecked address must not be handed off, got {other:?}"),
+        }
+        assert_eq!(
+            ctx.extensions.get::<Refused>(),
+            Some(&Refused(RejectReason::Banned))
+        );
+        assert!(!ctx.extensions.contains::<ClaimedLogin>());
+    }
+
+    #[tokio::test]
+    async fn only_the_address_is_checked_before_a_claim_is_handed_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let bans = bans(&dir, BanTarget::Username("probe".into())).await;
+        let (result, ctx) = claimed_by(bans).await;
+
+        assert!(matches!(result.unwrap(), MiddlewareResult::ShortCircuit));
+        assert!(ctx.extensions.contains::<ClaimedLogin>());
+        assert!(!ctx.extensions.contains::<Refused>());
+    }
+
     #[tokio::test]
     async fn an_unheard_login_goes_on_without_building_the_event() {
         let bus = Arc::new(EventBusImpl::new());
         let (mut ctx, _client) = claim_ctx(LoginStartLayout::Declared, false).await;
-        let result = LoginClaimMiddleware::new(bus).process(&mut ctx).await;
+        let result = middleware(bus).process(&mut ctx).await;
         assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
         assert!(!ctx.extensions.contains::<ClaimedLogin>());
     }
@@ -201,7 +299,7 @@ mod tests {
         let (mut ctx, _client) = claim_ctx(LoginStartLayout::Mismatched, true).await;
         let remote_addr = ctx.client_addr();
 
-        let result = LoginClaimMiddleware::new(bus).process(&mut ctx).await;
+        let result = middleware(bus).process(&mut ctx).await;
 
         assert!(matches!(result.unwrap(), MiddlewareResult::ShortCircuit));
         assert_eq!(
@@ -232,7 +330,7 @@ mod tests {
         let seen = listening(&bus, LoginClaimEvent::pass);
         let (mut ctx, _client) = claim_ctx(LoginStartLayout::Mismatched, true).await;
 
-        let result = LoginClaimMiddleware::new(bus).process(&mut ctx).await;
+        let result = middleware(bus).process(&mut ctx).await;
 
         match result {
             Err(CoreError::Protocol(error)) => {
@@ -248,7 +346,7 @@ mod tests {
     async fn a_held_refusal_applies_even_once_the_listener_is_gone() {
         let bus = Arc::new(EventBusImpl::new());
         let (mut ctx, _client) = claim_ctx(LoginStartLayout::Mismatched, true).await;
-        let result = LoginClaimMiddleware::new(bus).process(&mut ctx).await;
+        let result = middleware(bus).process(&mut ctx).await;
         assert!(matches!(result, Err(CoreError::Protocol(_))));
     }
 
@@ -261,7 +359,7 @@ mod tests {
             counted.fetch_add(1, Ordering::SeqCst);
         });
         let (mut ctx, _client) = claim_ctx(LoginStartLayout::Declared, false).await;
-        let result = LoginClaimMiddleware::new(bus).process(&mut ctx).await;
+        let result = middleware(bus).process(&mut ctx).await;
         assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
         assert_eq!(fired.load(Ordering::SeqCst), 1);
     }

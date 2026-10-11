@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use infrarust_api::event::EventPriority;
 use infrarust_api::events::claim::{LoginClaimEvent, RawConnectionEvent};
-use infrarust_api::events::handshake::ConnectionHandshakeEvent;
+use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent};
 use infrarust_api::handoff::{Handoff, HandoffTarget, validate_claim_prefix};
 use infrarust_api::services::ban_service::{BanRequest, BanTarget};
 use infrarust_protocol::packets::handshake::SHandshake;
@@ -108,6 +108,48 @@ async fn closed_silently(stream: &mut TcpStream) {
     let mut rest = Vec::new();
     let read = timeout(T, stream.read_to_end(&mut rest)).await.unwrap();
     assert!(read.is_err() || rest.is_empty(), "{rest:?}");
+}
+
+async fn closed(stream: &mut TcpStream) {
+    let mut rest = Vec::new();
+    let read = timeout(T, stream.read_to_end(&mut rest)).await;
+    assert!(read.is_ok(), "the connection was never closed");
+}
+
+fn proxy_header(ip: &str, port: u16) -> Vec<u8> {
+    format!("PROXY TCP4 {ip} 127.0.0.1 {port} 25565\r\n").into_bytes()
+}
+
+fn receive_proxy_protocol(table: &mut toml::Table) {
+    table.insert("receive_proxy_protocol".into(), toml::Value::Boolean(true));
+}
+
+fn select_ban_provider(table: &mut toml::Table, provider: &str) {
+    table
+        .get_mut("ban")
+        .and_then(toml::Value::as_table_mut)
+        .expect("the harness writes a [ban] table")
+        .insert("provider".into(), toml::Value::String(provider.into()));
+}
+
+async fn ban_ip(proxy: &TestProxy, ip: &str) {
+    proxy
+        .services()
+        .ban_manager
+        .issue(BanRequest::new(BanTarget::Ip(ip.parse().unwrap())).reason("griefing"))
+        .await
+        .unwrap();
+}
+
+async fn login_disconnect(client: TcpStream) -> String {
+    let mut conn = FramedConn::new(client).unwrap();
+    let frame = timeout(T, conn.read_frame())
+        .await
+        .expect("no login disconnect came")
+        .unwrap()
+        .expect("the connection closed without a login disconnect");
+    assert_eq!(frame.id, 0x00);
+    String::from_utf8_lossy(&frame.payload).into_owned()
 }
 
 async fn both_ways(client: &mut TcpStream, upstream: &mut TcpStream) {
@@ -393,12 +435,15 @@ async fn filtered_and_banned_peers_are_never_claimed_and_a_rejected_claim_is_clo
         ("198.51.100.1", 50003, 1),
     ] {
         let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
-        let header = format!("PROXY TCP4 {ip} 127.0.0.1 {port} 25565\r\n");
         client
-            .write_all(&[header.as_bytes(), XFER, b"\x00\x01"].concat())
+            .write_all(&[proxy_header(ip, port).as_slice(), XFER, b"\x00\x01"].concat())
             .await
             .unwrap();
-        closed_silently(&mut client).await;
+        if ip == "203.0.113.66" {
+            closed(&mut client).await;
+        } else {
+            closed_silently(&mut client).await;
+        }
         assert_eq!(seen_count(&seen), claimed, "{ip}");
     }
     nothing_accepted(&files).await;
@@ -412,6 +457,185 @@ async fn filtered_and_banned_peers_are_never_claimed_and_a_rejected_claim_is_clo
             json!({ "remote_addr": "198.51.100.1:50003", "virtual_host": null, "reason": "plugin", "plugin": BRIDGE }),
         ]
     );
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_filtered_peer_is_refused_at_once_while_prefixes_are_registered() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let (plugin, seen) = bridge(vec![XFER.to_vec()], RawConnectionEvent::reject);
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .plugin(plugin)
+        .plugin(recorder.plugin())
+        .patch_config(|table| {
+            receive_proxy_protocol(table);
+            let ip_filter: toml::Table =
+                toml::from_str("blacklist = [\"203.0.113.66/32\"]").unwrap();
+            table.insert("ip_filter".into(), ip_filter.into());
+        })
+        .start()
+        .await
+        .unwrap();
+
+    let started = Instant::now();
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client
+        .write_all(&[proxy_header("203.0.113.66", 50001).as_slice(), b"XF"].concat())
+        .await
+        .unwrap();
+    closed(&mut client).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "a filtered peer held its slot for {:?}",
+        started.elapsed()
+    );
+    assert_eq!(seen_count(&seen), 0);
+
+    settle(&proxy).await;
+    assert_eq!(
+        rejections(&recorder),
+        [
+            json!({ "remote_addr": "203.0.113.66:50001", "virtual_host": null, "reason": "ip_filter", "plugin": null }),
+        ]
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+fn handshake_gate(intent: ConnectionState) -> ScriptedPlugin {
+    ScriptedPlugin::new("gate").on::<ConnectionHandshakeEvent>(
+        EventPriority::NORMAL,
+        move |event| {
+            let status = event.intent == HandshakeIntent::Status;
+            if status == (intent == ConnectionState::Status) {
+                event.handoff(Handoff::route());
+            }
+        },
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_claim_from_a_banned_address_is_refused_like_a_banned_login() {
+    let (backend, backend_addr) = listener().await;
+    let (plugin, claims) = login_bridge(Some(HandoffTarget::Route));
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend_addr))
+        .plugin(plugin)
+        .plugin(recorder.plugin())
+        .patch_config(receive_proxy_protocol)
+        .start()
+        .await
+        .unwrap();
+    ban_ip(&proxy, "203.0.113.7").await;
+
+    let mut sent = proxy_header("203.0.113.7", 50007);
+    sent.extend(handshake("lobby.test", CURRENT, ConnectionState::Login));
+    sent.extend(frame(&declared_login_start("xferSteve", CURRENT)));
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+
+    let reason = login_disconnect(client).await;
+    assert!(reason.contains("griefing"), "{reason}");
+    nothing_accepted(&backend).await;
+    assert_eq!(claims.lock().unwrap().len(), 1);
+
+    settle(&proxy).await;
+    assert_eq!(
+        rejections(&recorder),
+        [
+            json!({ "remote_addr": "203.0.113.7:50007", "virtual_host": "lobby.test", "reason": "ip_banned", "plugin": null }),
+        ]
+    );
+    assert_eq!(recorder.count(EventKind::PreLogin), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handshake_handoff_from_a_banned_address_is_refused_like_a_banned_login() {
+    let (backend, backend_addr) = listener().await;
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend_addr))
+        .plugin(handshake_gate(ConnectionState::Login))
+        .plugin(recorder.plugin())
+        .patch_config(receive_proxy_protocol)
+        .start()
+        .await
+        .unwrap();
+    ban_ip(&proxy, "203.0.113.7").await;
+
+    let mut sent = proxy_header("203.0.113.7", 50008);
+    sent.extend(handshake("lobby.test", CURRENT, ConnectionState::Login));
+    sent.extend(frame(&declared_login_start("Steve", CURRENT)));
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+    let reason = login_disconnect(client).await;
+    assert!(reason.contains("griefing"), "{reason}");
+    nothing_accepted(&backend).await;
+
+    settle(&proxy).await;
+    assert_eq!(
+        rejections(&recorder),
+        [
+            json!({ "remote_addr": "203.0.113.7:50008", "virtual_host": "lobby.test", "reason": "ip_banned", "plugin": null }),
+        ]
+    );
+    assert_eq!(recorder.count(EventKind::ConnectionHandshake), 1);
+    assert_eq!(recorder.count(EventKind::PreLogin), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handoffs_are_refused_while_the_ban_provider_cannot_answer() {
+    let (backend, backend_addr) = listener().await;
+    let (plugin, claims) = login_bridge(Some(HandoffTarget::Route));
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend_addr))
+        .plugin(plugin)
+        .plugin(handshake_gate(ConnectionState::Status))
+        .plugin(recorder.plugin())
+        .patch_config(|table| {
+            receive_proxy_protocol(table);
+            select_ban_provider(table, "absent");
+        })
+        .start()
+        .await
+        .unwrap();
+
+    let mut sent = proxy_header("203.0.113.9", 50010);
+    sent.extend(handshake("lobby.test", CURRENT, ConnectionState::Status));
+    sent.extend(frame(&[]));
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+    closed_silently(&mut client).await;
+
+    let mut sent = proxy_header("203.0.113.9", 50011);
+    sent.extend(handshake("lobby.test", CURRENT, ConnectionState::Login));
+    sent.extend(frame(&declared_login_start("xferSteve", CURRENT)));
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+    let reason = login_disconnect(client).await;
+    assert!(reason.contains("cannot be checked"), "{reason}");
+
+    nothing_accepted(&backend).await;
+    assert_eq!(claims.lock().unwrap().len(), 1);
+    settle(&proxy).await;
+    assert_eq!(
+        rejections(&recorder),
+        [
+            json!({ "remote_addr": "203.0.113.9:50010", "virtual_host": "lobby.test", "reason": "banned", "plugin": null }),
+            json!({ "remote_addr": "203.0.113.9:50011", "virtual_host": "lobby.test", "reason": "banned", "plugin": null }),
+        ]
+    );
+    assert_eq!(recorder.count(EventKind::ProxyPing), 0);
+    assert_eq!(recorder.count(EventKind::PreLogin), 0);
 
     proxy.shutdown().await.unwrap();
 }

@@ -6,8 +6,11 @@ use infrarust_api::events::handshake::{
     RejectReason,
 };
 use infrarust_api::handoff::Handoff;
+use infrarust_api::services::ban_service::{LoginAttempt, LoginStage};
 use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
+use crate::ban::BanManager;
+use crate::ban::manager::Refusal;
 use crate::event_bus::{CORE_OWNER, EventBusImpl};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused, RoutingData};
@@ -45,6 +48,22 @@ pub fn reject_refused(bus: &EventBusImpl, ctx: &ConnectionContext) {
             .map(|h| h.domain.clone());
         reject(bus, ctx.client_addr(), virtual_host, reason.clone());
     }
+}
+
+pub fn handoff_attempt(ctx: &ConnectionContext) -> LoginAttempt {
+    let mut attempt = LoginAttempt::status(ctx.client_ip);
+    attempt.stage = LoginStage::PreAuth;
+    if let Some(handshake) = ctx.extensions.get::<HandshakeData>() {
+        attempt = attempt.virtual_host(handshake.domain.clone());
+    }
+    if let Some(routing) = ctx.extensions.get::<RoutingData>() {
+        attempt = attempt.server(ServerId::new(routing.config_id.clone()));
+    }
+    attempt
+}
+
+pub async fn refuse_handoff(bans: &BanManager, ctx: &ConnectionContext) -> Option<Refusal> {
+    bans.refuse(&handoff_attempt(ctx)).await
 }
 
 pub fn handshake_event(

@@ -19,7 +19,8 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::pipeline::types::{
-    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyDetected, RoutingData, UnknownDomain,
+    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyDetected, Refused, RoutingData,
+    UnknownDomain,
 };
 use crate::player::SHUTDOWN_REASON;
 
@@ -174,6 +175,19 @@ impl ProxyServer {
             }
             Admission::Dropped => return Ok(()),
             Admission::Handoff(handoff) => {
+                let refused = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return Ok(()),
+                    refused = admission::refuse_handoff(&self.services.ban_manager, &ctx) => refused,
+                };
+                if let Some(refusal) = refused {
+                    ctx.extensions.insert(Refused(refusal.reason));
+                    admission::reject_refused(&self.services.event_bus, &ctx);
+                    if intent != ConnectionIntent::Status {
+                        self.send_kick(&mut ctx, &refusal.message).await.ok();
+                    }
+                    return Ok(());
+                }
                 self.hand_off(ctx, handoff, HandoffLevel::Handshake, &shutdown)
                     .await;
                 return Ok(());

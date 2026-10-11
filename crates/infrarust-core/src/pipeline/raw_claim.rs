@@ -9,7 +9,6 @@ use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::claim::{RawConnectionEvent, RawConnectionResult};
 use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::handoff::Handoff;
-use infrarust_api::services::ban_service::LoginAttempt;
 
 use crate::event_bus::CORE_OWNER;
 use crate::handoff::ClaimMatch;
@@ -62,6 +61,9 @@ pub async fn claim_raw(
     limits: RawClaimLimits,
     shutdown: &CancellationToken,
 ) -> RawClaim {
+    if filtered(services, ctx) {
+        return RawClaim::Minecraft;
+    }
     let claims = &services.connection_claims;
     let deadline = Instant::now() + limits.partial_match;
     let prefix = loop {
@@ -84,15 +86,15 @@ pub async fn claim_raw(
     let screened = tokio::select! {
         biased;
         () = shutdown.cancelled() => return RawClaim::Closed,
-        refused = refused_address(services, ctx) => refused,
+        refused = admission::refuse_handoff(&services.ban_manager, ctx) => refused,
     };
-    if let Some(reason) = screened {
+    if let Some(refusal) = screened {
         tracing::debug!(
             client = %ctx.client_addr(),
-            reason = reason.as_str(),
+            reason = refusal.reason.as_str(),
             "raw connection refused before its claim"
         );
-        admission::reject(bus, ctx.client_addr(), None, reason);
+        admission::reject(bus, ctx.client_addr(), None, refusal.reason);
         return RawClaim::Closed;
     }
 
@@ -157,20 +159,12 @@ pub async fn claim_raw(
     }
 }
 
-async fn refused_address(
-    services: &ProxyServices,
-    ctx: &ConnectionContext,
-) -> Option<RejectReason> {
-    if let Some(filter) = &services.config.ip_filter
-        && !filter.is_allowed(&ctx.client_ip)
-    {
-        return Some(RejectReason::IpFilter);
-    }
+fn filtered(services: &ProxyServices, ctx: &ConnectionContext) -> bool {
     services
-        .ban_manager
-        .refuse(&LoginAttempt::status(ctx.client_ip))
-        .await
-        .map(|refusal| refusal.reason)
+        .config
+        .ip_filter
+        .as_ref()
+        .is_some_and(|filter| !filter.is_allowed(&ctx.client_ip))
 }
 
 async fn read_more(
@@ -503,17 +497,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_filtered_address_is_never_claimed() {
+    async fn a_filtered_address_is_left_to_the_pipeline_without_a_peek() {
         let mut services = claiming(&[b"XFER"]);
         services.config =
             Arc::new(toml::from_str("[ip_filter]\nblacklist = [\"127.0.0.1/32\"]\n").unwrap());
         let seen = on_raw(&services, RawConnectionEvent::pass);
+        let rejected = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&rejected);
+        let listeners: &dyn EventBus = &*services.event_bus;
+        listeners.subscribe::<ConnectionRejectedEvent, _>(EventPriority::NORMAL, move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        });
+
+        for sent in [&b""[..], b"XF", b"XFER"] {
+            let mut peer = peer(sent).await;
+            let started = Instant::now();
+            let claimed = claim(&services, &mut peer, RawClaimLimits::default()).await;
+            assert_eq!(claimed, RawClaim::Minecraft, "{sent:?}");
+            assert!(started.elapsed() < Duration::from_secs(1), "{sent:?}");
+            assert!(peer.ctx.buffered_data.is_empty(), "{sent:?}");
+        }
+
+        services.event_bus.flush().await;
+        assert_eq!(rejected.load(Ordering::SeqCst), 0);
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_ban_check_that_cannot_answer_closes_the_claim() {
+        let mut services = claiming(&[b"XFER"]);
+        services.ban_manager = Arc::new(BanManager::plugin(
+            "absent",
+            Arc::new(ConnectionRegistry::new()),
+            Arc::new(crate::event_bus::EventBusImpl::new()),
+        ));
+        let seen = on_raw(&services, |event| {
+            event.handoff(Handoff::to(HandoffTarget::address("127.0.0.1", 30037)));
+        });
         let mut peer = peer(b"XFER").await;
 
-        assert_eq!(
-            refused(&services, &mut peer).await,
-            [RejectReason::IpFilter]
-        );
+        assert_eq!(refused(&services, &mut peer).await, [RejectReason::Banned]);
         assert!(seen.lock().unwrap().is_empty());
     }
 
