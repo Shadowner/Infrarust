@@ -160,7 +160,7 @@ fn routed(services: &ProxyServices, ctx: &mut ConnectionContext, server: &str) {
 async fn raw_bytes_are_replayed_after_the_prefix_and_the_reply_reaches_the_client() {
     let (backend, addr) = listener().await;
     let Client { mut peer, mut ctx } = client().await;
-    ctx.buffered_data = BytesMut::from(&b"AMMH\x00\x01hello"[..]);
+    ctx.buffered_data = BytesMut::from(&b"XFER\x00\x01hello"[..]);
     let task = spawn(
         relay(test_proxy_services()),
         ctx,
@@ -172,7 +172,7 @@ async fn raw_bytes_are_replayed_after_the_prefix_and_the_reply_reaches_the_clien
     );
 
     let mut backend = accept(&backend).await;
-    assert_eq!(read_exact(&mut backend, 14).await, b"PREAMMH\x00\x01hello");
+    assert_eq!(read_exact(&mut backend, 14).await, b"PREXFER\x00\x01hello");
     assert_eq!(read_exact(&mut peer, 5).await, b"REPLY");
     ping_pong(&mut peer, &mut backend).await;
 
@@ -187,7 +187,7 @@ async fn raw_bytes_are_replayed_after_the_prefix_and_the_reply_reaches_the_clien
 async fn without_replay_only_the_prefix_and_the_live_bytes_reach_the_target() {
     let (backend, addr) = listener().await;
     let Client { mut peer, mut ctx } = client().await;
-    ctx.buffered_data = BytesMut::from(&b"AMMH-peeked"[..]);
+    ctx.buffered_data = BytesMut::from(&b"XFER-peeked"[..]);
     let task = spawn(
         relay(test_proxy_services()),
         ctx,
@@ -220,7 +220,7 @@ async fn an_address_target_sends_a_proxy_header_only_when_asked() {
         let (backend, addr) = listener().await;
         let Client { mut peer, mut ctx } = client().await;
         let client_addr = ctx.client_addr();
-        ctx.buffered_data = BytesMut::from(&b"AMMH"[..]);
+        ctx.buffered_data = BytesMut::from(&b"XFER"[..]);
         let mut handoff = Handoff::to(HandoffTarget::address("127.0.0.1", addr.port()));
         if let Some(asked) = asked {
             handoff = handoff.with_proxy_protocol(asked);
@@ -246,7 +246,7 @@ async fn an_address_target_sends_a_proxy_header_only_when_asked() {
                 "the header names the client"
             );
         }
-        assert_eq!(read_exact(&mut backend, 4).await, b"AMMH", "{asked:?}");
+        assert_eq!(read_exact(&mut backend, 4).await, b"XFER", "{asked:?}");
         ping_pong(&mut peer, &mut backend).await;
         hang_up(peer, backend).await;
         finish(task).await;
@@ -263,7 +263,7 @@ async fn a_server_target_follows_its_proxy_protocol_setting_unless_overridden() 
             server("modded", addr, |config| config.send_proxy_protocol = true),
         );
         let Client { mut peer, mut ctx } = client().await;
-        ctx.buffered_data = BytesMut::from(&b"AMMH"[..]);
+        ctx.buffered_data = BytesMut::from(&b"XFER"[..]);
         let mut handoff = Handoff::to(HandoffTarget::server("modded"));
         if let Some(asked) = asked {
             handoff = handoff.with_proxy_protocol(asked);
@@ -282,9 +282,9 @@ async fn a_server_target_follows_its_proxy_protocol_setting_unless_overridden() 
             let rest = read_exact(&mut backend, 12).await;
             let len = usize::from(u16::from_be_bytes([rest[10], rest[11]]));
             read_exact(&mut backend, len).await;
-            assert_eq!(read_exact(&mut backend, 4).await, b"AMMH");
+            assert_eq!(read_exact(&mut backend, 4).await, b"XFER");
         } else {
-            assert_eq!(first, b"AMMH");
+            assert_eq!(first, b"XFER");
         }
         ping_pong(&mut peer, &mut backend).await;
         hang_up(peer, backend).await;
@@ -299,7 +299,7 @@ async fn a_server_port_target_reaches_the_picked_host_on_the_other_port() {
     let (files, files_addr) = listener().await;
     add(&services, server("modded", minecraft_addr, |_| {}));
     let Client { mut peer, mut ctx } = client().await;
-    ctx.buffered_data = BytesMut::from(&b"AMMH"[..]);
+    ctx.buffered_data = BytesMut::from(&b"XFER"[..]);
     let task = spawn(
         relay(services),
         ctx,
@@ -308,7 +308,7 @@ async fn a_server_port_target_reaches_the_picked_host_on_the_other_port() {
         CancellationToken::new(),
     );
     let mut backend = accept(&files).await;
-    assert_eq!(read_exact(&mut backend, 4).await, b"AMMH");
+    assert_eq!(read_exact(&mut backend, 4).await, b"XFER");
     ping_pong(&mut peer, &mut backend).await;
     hang_up(peer, backend).await;
     finish(task).await;
@@ -467,7 +467,7 @@ async fn a_route_handoff_uses_the_addresses_already_picked_for_the_connection() 
             port: picked_addr.port(),
         }],
     });
-    ctx.buffered_data = BytesMut::from(&b"AMMH"[..]);
+    ctx.buffered_data = BytesMut::from(&b"XFER"[..]);
     let task = spawn(
         relay(services),
         ctx,
@@ -476,7 +476,7 @@ async fn a_route_handoff_uses_the_addresses_already_picked_for_the_connection() 
         CancellationToken::new(),
     );
     let mut backend = accept(&picked).await;
-    assert_eq!(read_exact(&mut backend, 4).await, b"AMMH");
+    assert_eq!(read_exact(&mut backend, 4).await, b"XFER");
     ping_pong(&mut peer, &mut backend).await;
     hang_up(peer, backend).await;
     finish(task).await;

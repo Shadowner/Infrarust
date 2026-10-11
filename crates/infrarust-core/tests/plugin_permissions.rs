@@ -70,8 +70,8 @@ fn connection_claims_need_the_connection_handoff_capability() {
     let registry = granted
         .connection_claims()
         .expect("connection-handoff is grantable from config");
-    registry.register_prefix(b"AMMH").unwrap();
-    registry.register_prefix(b"AMOK").unwrap();
+    registry.register_prefix(b"XFER").unwrap();
+    registry.register_prefix(b"XFOK").unwrap();
     assert_eq!(claims.len(), 2);
     assert_eq!(
         registry.register_prefix(&[0x10, 0x00]),

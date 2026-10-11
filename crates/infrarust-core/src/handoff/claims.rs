@@ -177,24 +177,24 @@ mod tests {
         let claims = ConnectionClaims::new();
         assert!(claims.is_empty());
         assert_eq!(claims.matches(b""), ClaimMatch::NoMatchPossible);
-        assert_eq!(claims.matches(b"AMMH"), ClaimMatch::NoMatchPossible);
+        assert_eq!(claims.matches(b"XFER"), ClaimMatch::NoMatchPossible);
     }
 
     #[test]
     fn bytes_match_wait_or_give_up_against_the_registered_prefixes() {
         let claims = ConnectionClaims::new();
-        claims.register("automodpack", b"AMMH").unwrap();
+        claims.register("transfer", b"XFER").unwrap();
         assert!(!claims.is_empty());
 
         assert_eq!(claims.matches(b""), ClaimMatch::NeedMoreBytes);
         assert_eq!(claims.matches(b"AM"), ClaimMatch::NeedMoreBytes);
         assert_eq!(
-            claims.matches(b"AMMH"),
-            ClaimMatch::Match(Bytes::from_static(b"AMMH"))
+            claims.matches(b"XFER"),
+            ClaimMatch::Match(Bytes::from_static(b"XFER"))
         );
         assert_eq!(
-            claims.matches(b"AMMH\x00\x01rest"),
-            ClaimMatch::Match(Bytes::from_static(b"AMMH"))
+            claims.matches(b"XFER\x00\x01rest"),
+            ClaimMatch::Match(Bytes::from_static(b"XFER"))
         );
         assert_eq!(claims.matches(b"AMX"), ClaimMatch::NoMatchPossible);
         assert_eq!(claims.matches(&[0x10, 0x00]), ClaimMatch::NoMatchPossible);
@@ -219,28 +219,28 @@ mod tests {
     #[test]
     fn two_plugins_may_claim_the_same_prefix() {
         let claims = ConnectionClaims::new();
-        claims.register("one", b"AMMH").unwrap();
-        claims.register("two", b"AMMH").unwrap();
+        claims.register("one", b"XFER").unwrap();
+        claims.register("two", b"XFER").unwrap();
         assert_eq!(claims.len(), 2);
-        assert_eq!(claims.prefixes(), [Bytes::from_static(b"AMMH")]);
-        claims.unregister("one", b"AMMH").unwrap();
+        assert_eq!(claims.prefixes(), [Bytes::from_static(b"XFER")]);
+        claims.unregister("one", b"XFER").unwrap();
         assert_eq!(
-            claims.matches(b"AMMH"),
-            ClaimMatch::Match(Bytes::from_static(b"AMMH"))
+            claims.matches(b"XFER"),
+            ClaimMatch::Match(Bytes::from_static(b"XFER"))
         );
-        claims.unregister("two", b"AMMH").unwrap();
+        claims.unregister("two", b"XFER").unwrap();
         assert!(claims.is_empty());
     }
 
     #[test]
     fn registering_twice_is_idempotent_and_unregistering_twice_is_not_found() {
         let claims = ConnectionClaims::new();
-        claims.register("one", b"AMMH").unwrap();
-        claims.register("one", b"AMMH").unwrap();
+        claims.register("one", b"XFER").unwrap();
+        claims.register("one", b"XFER").unwrap();
         assert_eq!(claims.len(), 1);
-        assert_eq!(claims.unregister("one", b"AMMH"), Ok(()));
-        assert_eq!(claims.unregister("one", b"AMMH"), Err(ClaimError::NotFound));
-        assert_eq!(claims.unregister("two", b"AMOK"), Err(ClaimError::NotFound));
+        assert_eq!(claims.unregister("one", b"XFER"), Ok(()));
+        assert_eq!(claims.unregister("one", b"XFER"), Err(ClaimError::NotFound));
+        assert_eq!(claims.unregister("two", b"XFOK"), Err(ClaimError::NotFound));
     }
 
     #[test]
@@ -277,12 +277,12 @@ mod tests {
         let claims = Arc::new(ConnectionClaims::new());
         let one = claims.for_plugin("one");
         let two = claims.for_plugin("two");
-        one.register_prefix(b"AMMH").unwrap();
-        one.register_prefix(b"AMOK").unwrap();
-        two.register_prefix(b"HOLE").unwrap();
-        assert_eq!(two.unregister_prefix(b"AMMH"), Err(ClaimError::NotFound));
+        one.register_prefix(b"XFER").unwrap();
+        one.register_prefix(b"XFOK").unwrap();
+        two.register_prefix(b"XFRQ").unwrap();
+        assert_eq!(two.unregister_prefix(b"XFER"), Err(ClaimError::NotFound));
         assert_eq!(one.unregister_all(), 2);
-        assert_eq!(claims.prefixes(), [Bytes::from_static(b"HOLE")]);
+        assert_eq!(claims.prefixes(), [Bytes::from_static(b"XFRQ")]);
         assert_eq!(one.unregister_all(), 0);
         assert!(Arc::ptr_eq(two.registry(), &claims));
     }
