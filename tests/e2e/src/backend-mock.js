@@ -1,6 +1,6 @@
 import mc from 'minecraft-protocol';
 
-import { LOGIN_QUERIES, LOGIN_QUERY_TIMEOUT_MS } from './modded.js';
+import { BIG_PACKET_CHANNEL, bigPacketData, LOGIN_QUERIES, LOGIN_QUERY_TIMEOUT_MS } from './modded.js';
 import { MAX_FORWARDING_VERSION, VELOCITY_CHANNEL, verifyAndDecode } from './velocity.js';
 
 function velocityExchange(client, observation, secret) {
@@ -69,7 +69,7 @@ function holdLoginStart(client, observation, steps) {
   });
 }
 
-export function startBackend({ version, port, kind, secret, velocity = false, loginQueries: queries = false, host = '127.0.0.1' }) {
+export function startBackend({ version, port, kind, secret, velocity = false, loginQueries: queries = false, bigPacket = false, host = '127.0.0.1' }) {
   return new Promise((resolve, reject) => {
     const state = { last: null, connections: 0 };
 
@@ -116,8 +116,12 @@ export function startBackend({ version, port, kind, secret, velocity = false, lo
       }
     });
 
-    server.on('playerJoin', () => {
+    server.on('playerJoin', (client) => {
       if (state.last) state.last.reachedPlay = true;
+      if (bigPacket) {
+        client.write('custom_payload', { channel: BIG_PACKET_CHANNEL, data: bigPacketData() });
+        if (state.last) state.last.bigPacketSent = true;
+      }
     });
 
     server.on('error', (err) => reject(err));

@@ -1,4 +1,4 @@
-import { LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
+import { BIG_PACKET_CHANNEL, BIG_PACKET_MIN_PROTOCOL, LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
 
 export const BACKENDS = {
   plain: { port: 25700, kind: 'plain' },
@@ -6,6 +6,7 @@ export const BACKENDS = {
   bungee: { port: 25702, kind: 'bungee' },
   query: { port: 25703, kind: 'query', loginQueries: true },
   queryVelocity: { port: 25704, kind: 'query-velocity', velocity: true, loginQueries: true },
+  bigPacket: { port: 25705, kind: 'big-packet', bigPacket: true },
 };
 
 const VELOCITY_MIN_PROTOCOL = 393;
@@ -161,6 +162,19 @@ export const SCENARIOS = [
       loginSuccessAfterBackend: true,
       clientCompression: 'proxy',
     },
+  },
+  {
+    id: 'big-packet-client-only',
+    domain: 'big-co.test',
+    proxyMode: 'client_only',
+    forwardingMode: 'none',
+    backend: 'bigPacket',
+    needsAuth: true,
+    mockOnly: true,
+    minProtocol: BIG_PACKET_MIN_PROTOCOL,
+    protocolReason: `packet compression needs protocol >= ${BIG_PACKET_MIN_PROTOCOL} (1.8+); without it no packet may exceed 2 MiB`,
+    client: { awaitPayload: BIG_PACKET_CHANNEL },
+    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, clientCompression: 'proxy', bigPacketIntact: true },
   },
 ];
 

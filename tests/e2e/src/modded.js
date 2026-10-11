@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const LOGIN_QUERY_MIN_PROTOCOL = 393;
 
 export const LOGIN_QUERIES = [
@@ -23,3 +25,27 @@ export const LOGIN_QUERIES = [
 ];
 
 export const LOGIN_QUERY_TIMEOUT_MS = 5000;
+
+export const BIG_PACKET_MIN_PROTOCOL = 47;
+export const BIG_PACKET_CHANNEL = 'e2e:big';
+export const BIG_PACKET_SIZE = 3 * 1024 * 1024;
+
+let bigPacket = null;
+let bigPacketHash = null;
+
+export function bigPacketData() {
+  if (!bigPacket) {
+    bigPacket = Buffer.alloc(BIG_PACKET_SIZE);
+    for (let i = 0; i < BIG_PACKET_SIZE; i++) bigPacket[i] = (i * 31 + (i >>> 13)) & 0xff;
+  }
+  return bigPacket;
+}
+
+export function bigPacketDigest() {
+  bigPacketHash ??= sha256(bigPacketData());
+  return bigPacketHash;
+}
+
+export function sha256(buf) {
+  return createHash('sha256').update(buf).digest('hex');
+}

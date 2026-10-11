@@ -1,8 +1,9 @@
 import mc from 'minecraft-protocol';
 
-import { LOGIN_QUERIES } from './modded.js';
+import { LOGIN_QUERIES, sha256 } from './modded.js';
 
 const DEFAULT_TIMEOUT_MS = 20000;
+const PAYLOAD_TIMEOUT_MS = 10000;
 
 function sessionAuth({ username, uuid, accessToken }) {
   return (client, options) => {
@@ -30,6 +31,7 @@ export function connectOnce({
   sessionServer = null,
   onPlay = null,
   answerLoginQueries = false,
+  awaitPayload = null,
 }) {
   return new Promise((resolve) => {
     const obs = {
@@ -45,6 +47,7 @@ export function connectOnce({
       setCompression: null,
       loginSuccessAt: null,
       loginQueries: [],
+      payload: null,
       error: null,
       kick: null,
     };
@@ -83,7 +86,19 @@ export function connectOnce({
       return;
     }
 
+    let payloadArrived = null;
+    const payload = awaitPayload
+      ? new Promise((done) => {
+          payloadArrived = done;
+        })
+      : null;
+
     client.on('packet', (data, meta) => {
+      if (meta.name === 'custom_payload' && awaitPayload && data.channel === awaitPayload) {
+        obs.payload = { channel: data.channel, length: data.data.length, sha256: sha256(data.data) };
+        payloadArrived();
+        return;
+      }
       if (meta.state !== 'login') return;
       obs.loginPackets.push(meta.name);
       if (meta.name === 'compress') obs.setCompression = data.threshold;
@@ -113,16 +128,17 @@ export function connectOnce({
       if (newState !== 'play') return;
       obs.reachedPlay = true;
       obs.compressionThreshold = client.compressionThreshold ?? null;
-      if (!onPlay) {
+      if (!onPlay && !payload) {
         finish();
         return;
       }
-      Promise.resolve()
-        .then(() => onPlay(obs))
+      const viewed = Promise.resolve()
+        .then(() => onPlay?.(obs))
         .catch((err) => {
           obs.onPlayError = String(err?.message ?? err);
-        })
-        .finally(finish);
+        });
+      const received = payload ? Promise.race([payload, new Promise((done) => setTimeout(done, PAYLOAD_TIMEOUT_MS))]) : null;
+      Promise.all([viewed, received]).finally(finish);
     });
 
     client.on('login', (packet) => {

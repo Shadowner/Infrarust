@@ -7,7 +7,7 @@ import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate } from './expectations.js';
 import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
-import { LOGIN_QUERIES } from './modded.js';
+import { BIG_PACKET_CHANNEL, LOGIN_QUERIES } from './modded.js';
 import { SCENARIOS } from './scenarios.js';
 import { verifyAndDecode, writeVarInt } from './velocity.js';
 
@@ -166,6 +166,18 @@ await check('loopback: the query backend and client agree with no proxy involved
       { id: 'selftest-loopback', expect: { loginQueriesRelayed: true, loginSuccessAfterBackend: true } },
       { client, backend: backend.observation() },
     );
+    assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
+  } finally {
+    await backend.close();
+  }
+});
+
+await check('loopback: the big packet reaches a client with no proxy involved', async () => {
+  const port = 26121;
+  const backend = await startBackend({ version: '1.21.4', port, kind: 'big-packet', bigPacket: true, secret: SECRET });
+  try {
+    const client = await connectOnce({ port, version: '1.21.4', domain: 'selftest.local', username: 'SelfTest', awaitPayload: BIG_PACKET_CHANNEL });
+    const { status, checks } = evaluate(only('bigPacketIntact'), { client, backend: backend.observation() });
     assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
   } finally {
     await backend.close();

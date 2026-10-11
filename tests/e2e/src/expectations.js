@@ -1,5 +1,5 @@
 import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
-import { LOGIN_QUERIES } from './modded.js';
+import { BIG_PACKET_CHANNEL, BIG_PACKET_SIZE, bigPacketDigest, LOGIN_QUERIES } from './modded.js';
 
 const COMPRESSION_MIN_PROTOCOL = 47;
 
@@ -172,6 +172,21 @@ const CHECKS = {
     if (lag < 0) return { ok: false, detail: `the client got LoginSuccess ${(-lag).toFixed(1)} ms before the backend sent its own` };
     if (lateQueries.length) return { ok: false, detail: `${lateQueries.length} login queries reached the client after its LoginSuccess` };
     return { ok: true, detail: `client LoginSuccess ${lag.toFixed(1)} ms after the backend's` };
+  },
+
+  bigPacketIntact: ({ client, backend }) => {
+    const got = client.payload;
+    if (!got) {
+      return {
+        ok: false,
+        detail: `no ${BIG_PACKET_CHANNEL} payload reached the client${backend?.bigPacketSent ? ' although the backend sent it' : ''}`,
+      };
+    }
+    const ok = got.length === BIG_PACKET_SIZE && got.sha256 === bigPacketDigest();
+    return {
+      ok,
+      detail: ok ? `${got.length} bytes arrived intact` : `${got.length} bytes arrived (sha256 ${got.sha256.slice(0, 12)}), expected ${BIG_PACKET_SIZE}`,
+    };
   },
 };
 
