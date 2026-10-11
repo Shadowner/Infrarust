@@ -2,8 +2,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use infrarust_protocol::VarInt;
+use infrarust_protocol::packets::cookie::SLoginCookieResponse;
 use infrarust_protocol::packets::login::{
-    CLoginSuccess, CSetCompression, Property, SLoginAcknowledged,
+    CLoginSuccess, CSetCompression, Property, SLoginAcknowledged, SLoginPluginResponse,
 };
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
@@ -126,10 +127,23 @@ async fn consume_login_acknowledged(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let frame = client
-        .read_frame()
-        .await?
-        .ok_or(CoreError::ConnectionClosed)?;
+    let late = [
+        registry.get_packet_id::<SLoginPluginResponse>(version),
+        registry.get_packet_id::<SLoginCookieResponse>(version),
+    ];
+    let frame = loop {
+        let frame = client
+            .read_frame()
+            .await?
+            .ok_or(CoreError::ConnectionClosed)?;
+        if !late.contains(&Some(frame.id)) {
+            break frame;
+        }
+        tracing::debug!(
+            id = frame.id,
+            "dropping a late login answer sent before the client's LoginAcknowledged"
+        );
+    };
 
     let decoded = registry.decode_frame(
         &frame,

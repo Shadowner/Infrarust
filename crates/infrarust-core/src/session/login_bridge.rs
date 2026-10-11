@@ -803,6 +803,51 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn late_login_answers_before_the_acknowledgement_are_dropped() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "");
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            conn.send(&CLoginCookieRequest {
+                key: "example:token".to_string(),
+            })
+            .await;
+            finish_backend_login(&mut conn).await;
+            conn
+        });
+        let client_side = tokio::spawn(async move {
+            peer.expect::<CLoginPluginRequest>().await;
+            peer.expect::<CLoginCookieRequest>().await;
+            let compression = peer.expect::<CSetCompression>().await;
+            peer.set_compression(compression.threshold.0);
+            peer.expect::<CLoginSuccess>().await;
+            peer.send(&plugin_response(-100, b"late")).await;
+            peer.send(&SLoginCookieResponse {
+                key: "example:token".to_string(),
+                payload: None,
+            })
+            .await;
+            peer.send(&SLoginAcknowledged).await;
+            peer
+        });
+
+        bridge(&ctx, &mut io, &config).await.unwrap();
+        let _conn = backend_side.await.unwrap();
+        let _peer = client_side.await.unwrap();
+
+        assert_eq!(io.client.state(), ConnectionState::Config);
+    }
+
     #[derive(Clone, Default)]
     struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
 
