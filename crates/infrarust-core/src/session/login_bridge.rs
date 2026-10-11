@@ -345,8 +345,8 @@ mod tests {
             let (mut conn, _) = backend_login(&backend).await;
             let mut requests = Vec::new();
             for (id, channel) in [
-                (-100, "automodpack:handshake"),
-                (-101, "automodpack:data"),
+                (-100, "example:handshake"),
+                (-101, "example:data"),
                 (7, "fml:loginwrapper"),
             ] {
                 requests.push(conn.send(&plugin_request(id, channel, b"ask")).await);
@@ -497,7 +497,7 @@ mod tests {
         let backend_side = tokio::spawn(async move {
             let (mut conn, _) = backend_login(&backend).await;
             conn.send(&CLoginCookieRequest {
-                key: "automodpack:token".to_string(),
+                key: "example:token".to_string(),
             })
             .await;
             let answer = conn.frame().await;
@@ -520,7 +520,7 @@ mod tests {
         let (received, _conn) = backend_side.await.unwrap();
         let (request, sent, _peer) = client_side.await.unwrap();
 
-        assert_eq!(request.key, "automodpack:token");
+        assert_eq!(request.key, "example:token");
         assert_eq!(received.id, sent.id);
         assert_eq!(received.payload, sent.payload);
     }
@@ -601,7 +601,7 @@ mod tests {
 
         let backend_side = tokio::spawn(async move {
             let (mut conn, _) = backend_login(&backend).await;
-            conn.send(&plugin_request(-100, "automodpack:handshake", b"hello"))
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
                 .await;
             conn.expect::<SLoginPluginResponse>().await;
             finish_backend_login(&mut conn).await;

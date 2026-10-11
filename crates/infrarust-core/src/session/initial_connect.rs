@@ -671,7 +671,7 @@ mod tests {
         let backend_side = tokio::spawn(async move {
             let (mut conn, _) = backend_login(&backend).await;
             let request = conn
-                .send(&plugin_request(-100, "automodpack:handshake", b"hello"))
+                .send(&plugin_request(-100, "example:handshake", b"hello"))
                 .await;
             let answer = conn.frame().await;
             finish_backend_login(&mut conn).await;
@@ -679,7 +679,7 @@ mod tests {
         });
         let client_side = tokio::spawn(async move {
             let request = peer.frame().await;
-            let answer = peer.send(&plugin_response(-100, b"modpack")).await;
+            let answer = peer.send(&plugin_response(-100, b"ready")).await;
             let threshold = finish_client_login(&mut peer).await;
             (request, answer, threshold, peer)
         });
@@ -841,7 +841,7 @@ mod tests {
 
         let backend_side = tokio::spawn(async move {
             let (mut conn, _) = backend_login(&backend).await;
-            conn.send(&plugin_request(-100, "automodpack:handshake", b"hello"))
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
                 .await;
             conn.recv().await.is_none()
         });
