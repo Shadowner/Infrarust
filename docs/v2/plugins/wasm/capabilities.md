@@ -244,7 +244,7 @@ A handoff takes a connection away from the Minecraft pipeline, before authentica
 permissions = ["connection-handoff"]
 ```
 
-Without it the registrations and subscriptions return `permission-denied`, and a `handoff` returned for `connection-handshake` is ignored with a rate-limited warning: the event keeps the result it had. An `address` target is also checked against the plugin's network allow-list. Unlike `transport-filter`, it can be granted from config. See [Connection Handoff](./connection-handoff).
+Without it the registrations and subscriptions return `permission-denied`, and a `handoff` returned for `connection-handshake` is ignored with a rate-limited warning: the event keeps the result it had. An `address` target, and a `server-port` target off the server's own port, are also checked against the plugin's network allow-list. Unlike `transport-filter`, it can be granted from config. See [Connection Handoff](./connection-handoff).
 
 ### `config-read` sees only the plugin's own block
 

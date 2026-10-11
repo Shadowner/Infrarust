@@ -78,7 +78,7 @@ let handoff = Handoff::to(HandoffTarget::server_port("modded", 30037))
 | --- | --- |
 | `Route` | The server the connection was routed to by its domain. The backend address is chosen by the server's load balancer exactly as for a normal connection, with the same health checks. Not available on a raw claim, which has no route yet: the connection is closed with a warning |
 | `Server(id)` | Another configured server, chosen the same way. An unknown id closes the connection with a warning |
-| `ServerPort { server, port }` | The host of the address the load balancer picks for `server`, on `port` instead of the Minecraft port. Meant for a file server that runs next to the Minecraft backend |
+| `ServerPort { server, port }` | The host of the address the load balancer picks for `server`, on `port` instead of the Minecraft port. Meant for a file server that runs next to the Minecraft backend. For a WASM plugin, a port other than the server's own needs the plugin's [network allow-list](./network#connection-handoffs) for every address of that server |
 | `Address { host, port }` | An explicit address. For a WASM plugin, the host checks it against the plugin's [network allow-list](./network) when it reads the answer, see [Address targets](#address-targets) |
 
 The connection uses the target server's `timeouts.connect`, or the proxy's `connect_timeout` for an `Address`. A handoff that cannot be carried out (a `prefix` or a `reply` over 64 KiB, a target that cannot be reached, an unknown server, `Route` on a raw claim) logs the warning `connection handoff failed, closing the connection` and closes the client connection without sending it anything. The size check comes first, so an oversized handoff never reaches the target.
@@ -204,7 +204,7 @@ Some modded clients send a Login Start that does not match their declared protoc
 
 ## Address targets
 
-For a WASM plugin, the host checks an `Address` target against `[plugins.<id>.wasm.network] allow` when it reads the plugin's answer. An IP address needs an IP or range rule that covers it and the port; a hostname needs a hostname rule for that name and port, and the proxy resolves the name itself when it connects. Without the `network` capability, or with an empty allow list, every address is refused. A refused address leaves the result as it was and logs the same rate-limited warning as a missing capability. `Route`, `Server` and `ServerPort` only reach configured servers and are not checked. Native plugins are not restricted.
+For a WASM plugin, the host checks an `Address` target against `[plugins.<id>.wasm.network] allow` when it reads the plugin's answer. An IP address needs an IP or range rule that covers it and the port; a hostname needs a hostname rule for that name and port, and the proxy resolves the name itself when it connects. Without the `network` capability, or with an empty allow list, every address is refused. A refused address leaves the result as it was and logs the same rate-limited warning as a missing capability. `Route` and `Server` only reach configured servers and are not checked. A `ServerPort` on a port the server's addresses already use is not checked either; on any other port, every address configured for that server needs a rule for its host on that port, and a `ServerPort` naming a server the proxy does not know is refused, with the same warning. Native plugins are not restricted.
 
 ## Security
 
@@ -237,6 +237,6 @@ ctx.event_bus().subscribe::<RawConnectionEvent, _>(EventPriority::NORMAL, |event
 
 - [Events](./events): subscribing and the result pattern.
 - [Plugin Messaging](./messaging#login-plugin-messages): the login plugin message events.
-- [Network & Extra Folders](./network): the allow-list that bounds `Address` targets.
+- [Network & Extra Folders](./network): the allow-list that bounds `Address` targets and `ServerPort` targets off the server's own port.
 - [Capabilities](./capabilities): granting `connection-handoff`.
 - [WIT API reference](./api-reference#handoffs-and-login-plugin-messages): the records behind these types.
