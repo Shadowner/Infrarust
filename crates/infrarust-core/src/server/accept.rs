@@ -173,6 +173,11 @@ impl ProxyServer {
                 return Ok(());
             }
             Admission::Dropped => return Ok(()),
+            Admission::Handoff(handoff) => {
+                self.hand_off(ctx, handoff, HandoffLevel::Handshake, &shutdown)
+                    .await;
+                return Ok(());
+            }
         }
 
         match intent {

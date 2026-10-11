@@ -75,6 +75,10 @@ impl LegacyHandler {
                 return Ok(());
             }
             Admission::Dropped => return Ok(()),
+            Admission::Handoff(_) => {
+                tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
+                return Ok(());
+            }
         }
 
         let attempt = LoginAttempt::pre_auth(ctx.client_ip, handshake.username.clone())

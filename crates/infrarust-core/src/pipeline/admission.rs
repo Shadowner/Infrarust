@@ -5,6 +5,7 @@ use infrarust_api::events::handshake::{
     ConnectionHandshakeEvent, ConnectionHandshakeResult, ConnectionRejectedEvent, HandshakeIntent,
     RejectReason,
 };
+use infrarust_api::handoff::Handoff;
 use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
 use crate::event_bus::{CORE_OWNER, EventBusImpl};
@@ -18,6 +19,7 @@ pub enum Admission {
     Admitted,
     Denied(Component),
     Dropped,
+    Handoff(Handoff),
 }
 
 pub fn reject(
@@ -67,6 +69,7 @@ pub async fn screen(
                 .unwrap_or_else(|| Component::text(DENIED_MESSAGE)),
         ),
         ConnectionHandshakeResult::DropSilently => Admission::Dropped,
+        ConnectionHandshakeResult::Handoff(handoff) => return Admission::Handoff(handoff.clone()),
         _ => return Admission::Admitted,
     };
     let plugin_id = decided_by
@@ -113,6 +116,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::cell::Cell;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use infrarust_api::event::EventPriority;
     use infrarust_api::event::bus::{EventBus, EventBusExt};
@@ -169,5 +174,27 @@ mod tests {
             screen(&bus, || build(&built)).await,
             Admission::Denied(Component::text(DENIED_MESSAGE))
         );
+    }
+
+    #[tokio::test]
+    async fn a_handoff_hands_the_connection_over_without_a_rejection() {
+        let bus = EventBusImpl::new();
+        let listeners: &dyn EventBus = &bus;
+        listeners.subscribe::<ConnectionHandshakeEvent, _>(EventPriority::NORMAL, |event| {
+            event.handoff(Handoff::route().with_prefix(&b"AM"[..]));
+        });
+        let rejected = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&rejected);
+        listeners.subscribe::<ConnectionRejectedEvent, _>(EventPriority::NORMAL, move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        });
+        let built = Cell::new(0);
+
+        assert_eq!(
+            screen(&bus, || build(&built)).await,
+            Admission::Handoff(Handoff::route().with_prefix(&b"AM"[..]))
+        );
+        bus.flush().await;
+        assert_eq!(rejected.load(Ordering::SeqCst), 0);
     }
 }
