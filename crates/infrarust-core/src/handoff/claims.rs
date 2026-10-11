@@ -187,7 +187,7 @@ mod tests {
         assert!(!claims.is_empty());
 
         assert_eq!(claims.matches(b""), ClaimMatch::NeedMoreBytes);
-        assert_eq!(claims.matches(b"AM"), ClaimMatch::NeedMoreBytes);
+        assert_eq!(claims.matches(b"XF"), ClaimMatch::NeedMoreBytes);
         assert_eq!(
             claims.matches(b"XFER"),
             ClaimMatch::Match(Bytes::from_static(b"XFER"))
@@ -196,7 +196,7 @@ mod tests {
             claims.matches(b"XFER\x00\x01rest"),
             ClaimMatch::Match(Bytes::from_static(b"XFER"))
         );
-        assert_eq!(claims.matches(b"AMX"), ClaimMatch::NoMatchPossible);
+        assert_eq!(claims.matches(b"XFX"), ClaimMatch::NoMatchPossible);
         assert_eq!(claims.matches(&[0x10, 0x00]), ClaimMatch::NoMatchPossible);
     }
 

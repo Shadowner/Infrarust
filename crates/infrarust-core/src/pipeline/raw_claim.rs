@@ -344,7 +344,7 @@ mod tests {
     async fn a_partial_prefix_that_stalls_goes_on_as_minecraft() {
         let services = claiming(&[b"XFER"]);
         let seen = on_raw(&services, RawConnectionEvent::reject);
-        let mut peer = peer(b"AM").await;
+        let mut peer = peer(b"XF").await;
 
         let started = Instant::now();
         assert_eq!(
@@ -353,7 +353,7 @@ mod tests {
         );
 
         assert!(started.elapsed() >= SHORT.partial_match);
-        assert_eq!(peer.ctx.buffered_data.as_ref(), b"AM");
+        assert_eq!(peer.ctx.buffered_data.as_ref(), b"XF");
         assert!(seen.lock().unwrap().is_empty());
     }
 
@@ -364,7 +364,7 @@ mod tests {
         let Peer {
             mut client,
             mut ctx,
-        } = peer(b"AM").await;
+        } = peer(b"XF").await;
         let writer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
             client.write_all(b"X").await.unwrap();
@@ -380,7 +380,7 @@ mod tests {
         .await;
 
         assert_eq!(claimed, RawClaim::Minecraft);
-        assert_eq!(ctx.buffered_data.as_ref(), b"AMX");
+        assert_eq!(ctx.buffered_data.as_ref(), b"XFX");
         assert!(seen.lock().unwrap().is_empty());
         drop(writer.await.unwrap());
     }
@@ -543,7 +543,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_closes_a_connection_still_sending_its_prefix() {
         let services = claiming(&[b"XFER"]);
-        let mut peer = peer(b"AM").await;
+        let mut peer = peer(b"XF").await;
         let shutdown = CancellationToken::new();
         let cancel = shutdown.clone();
         tokio::spawn(async move {
