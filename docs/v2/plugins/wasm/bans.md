@@ -101,7 +101,7 @@ A real provider keeps its bans in its data directory (`/` inside the sandbox), s
 
 ### What the proxy asks
 
-`check` runs up to three times per connection, like for a native provider: at a status ping (`LoginStage::Status`, address only), before authentication (`PreAuth`, with the username) and after it (`PostAuth`, with the UUID and whether it was verified). `BanTarget::matches` tests a target against an attempt: exact and v4-mapped addresses, CIDR ranges, case-insensitive usernames and UUIDs. A verdict without `message` gets the proxy's default kick text built from the reason and the expiry.
+`check` runs up to three times per connection, like for a native provider: at a status ping (`LoginStage::Status`, address only), before authentication (`PreAuth`, with the username) and after it (`PostAuth`, with the UUID and whether it was verified). A connection a plugin hands off is checked before the relay, at `PreAuth` with the address only and no username; a failed check refuses it like a login. `BanTarget::matches` tests a target against an attempt: exact and v4-mapped addresses, CIDR ranges, case-insensitive usernames and UUIDs. A verdict without `message` gets the proxy's default kick text built from the reason and the expiry.
 
 `ban` receives the request and who issued it (`BanSource::Console`, `Player`, `Plugin`, `WebApi` or `System`). The proxy has already turned targets into their canonical form. It posts `BanIssuedEvent` and kicks matching online players after `ban` answers, so the provider only stores. `unban` answers the removed record, `get` and `list` read. `BanRecord` carries the typed source, and the proxy keeps it on the native `BanEntry`.
 

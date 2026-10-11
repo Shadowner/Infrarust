@@ -129,7 +129,7 @@ Every method returns a boxed future, so a provider can query a database, call a 
 |-------|---------|
 | `stage` | `Status` (server list ping), `PreAuth` (login start, before authentication) or `PostAuth` (the final profile is known) |
 | `ip` | The player's real address: the PROXY protocol source when `receive_proxy_protocol` is on. IPv4-mapped IPv6 addresses are already turned into plain IPv4. |
-| `username` | The name the client sent. `None` for `Status`. |
+| `username` | The name the client sent. `None` for `Status` and for the address check before a connection handoff. |
 | `uuid` | At `PostAuth`, the profile UUID. At `PreAuth`, the UUID the client claimed, if any. |
 | `uuid_verified` | `true` only when Mojang authenticated the profile (client-only mode). Offline and forwarded profiles are not verified. |
 | `virtual_host` | The domain the client connected to |
@@ -142,6 +142,7 @@ The proxy checks at these points:
 | Server list ping, modern and legacy | `Status` | The connection is closed without an answer |
 | Login pipeline, after the login start packet | `PreAuth` | The client is disconnected in the login state with the verdict's message |
 | Legacy (pre-1.7) login | `PreAuth` | Legacy kick with the verdict's message |
+| Before a [connection handoff](../wasm/connection-handoff#bans) (raw claim, handshake, login claim) | `PreAuth`, address only | The connection is closed, or disconnected in the login state with the verdict's message when it is a login |
 | Client-only and offline modes, after authentication and `GameProfileRequestEvent` | `PostAuth` | Login-state disconnect with the verdict's message |
 | Passthrough, zero-copy, server-only and legacy logins, after `GameProfileRequestEvent` | `PostAuth` | Login-state disconnect with the verdict's message |
 

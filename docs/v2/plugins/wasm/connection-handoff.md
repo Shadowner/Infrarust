@@ -24,14 +24,14 @@ The three hooks sit at these points of a connection:
 ```
 connection accepted, PROXY protocol header read
   → transport filters
-  → raw claim, only while a plugin holds a prefix:
+  → raw claim, only while a plugin holds a prefix and the global IP filter lets the address in:
       first bytes read until they match a prefix or cannot
-      on a match: global IP filter, global IP bans, RawConnectionEvent
+      on a match: global IP bans, RawConnectionEvent ── Handoff ──▶ relayed
   → global IP filter, handshake, IP ban for a ping, rate limit, routing
-  → ConnectionHandshakeEvent ─────────── Handoff ──▶ relayed
+  → ConnectionHandshakeEvent ─── Handoff ──▶ IP bans ──▶ relayed
   → server list ping: ProxyPingEvent
   → login: Login Start read
-      → LoginClaimEvent, only while someone listens ─ Handoff ──▶ relayed
+      → LoginClaimEvent, only while someone listens ─ Handoff ──▶ IP bans ──▶ relayed
       → name and IP bans, PreLoginEvent and the rest of the login
 ```
 
@@ -91,6 +91,16 @@ With `replay` on, the target receives `prefix` and then what the connection alre
 
 With `replay` off the target only gets `prefix` and then whatever the client sends next.
 
+### Bans
+
+A handoff skips the login, so the proxy checks the client's address against the IP and range bans before it relays one, at every level. It asks the ban provider at the `PreAuth` stage with the address only (no name, no UUID: name and UUID bans do not apply to a handoff), and a provider that cannot answer refuses the handoff, as it refuses a login. A refused connection posts a `ConnectionRejectedEvent` with the reason `ip_banned`, or `banned` when the provider could not answer, and the virtual host once the handshake was read. What the client gets mirrors the normal path:
+
+| Level | Checked | A refused client gets |
+| --- | --- | --- |
+| Raw claim | Before `RawConnectionEvent`, so a banned address never reaches the plugin | Nothing: the connection is closed |
+| Handshake | Once a listener answered `Handoff` | A login is disconnected in the login state with the ban message, as a banned login is; a server list ping is closed without an answer |
+| Login claim | Once a listener answered `Handoff` | A login-state disconnect with the ban message, as a banned login |
+
 ### The relay
 
 The proxy writes `prefix` and the replay to the target, then `reply` to the client, then relays both directions until either side closes or the proxy shuts down. On Linux it uses `splice(2)`, so the bytes stay in the kernel. A handed-off connection is not a player: there is no `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `DisconnectEvent` for it, it never appears in the player registry, and the telemetry counts it as a connection with the mode `handoff`, not as a login. It keeps its slot under `max_connections` until it closes, and the transport filters see it close like any connection. The proxy logs `connection handed off` at debug level with the target and the level (`raw`, `handshake` or `login`).
@@ -103,7 +113,7 @@ A raw claim catches a connection before the proxy parses it as Minecraft. A plug
 ConnectionClaims::register_prefix(b"XFER")?;
 ```
 
-As long as no plugin holds a prefix, the proxy reads nothing extra and the accept path is the one it always was. Once one does, it reads the first bytes of each connection, after the PROXY protocol header and the transport filters, until they either start with a registered prefix or can no longer match any. The bytes it reads stay in front of the stream, and the handshake parser starts from them. A Minecraft client is told apart by its very first read, since no prefix can start a handshake, so it waits for nothing. A client that sent part of a prefix and stops is given 5 seconds, then handled as Minecraft; so is one that closes or fails while the proxy waits. When two prefixes match, the longer one is reported.
+As long as no plugin holds a prefix, the proxy reads nothing extra and the accept path is the one it always was. Once one does, it reads the first bytes of each connection, after the PROXY protocol header and the transport filters, until they either start with a registered prefix or can no longer match any. An address the global [`ip_filter`](../../configuration/global#ip-filter) refuses is not read at all: it goes straight to the usual pipeline, which refuses it at once exactly as without a prefix and posts a `ConnectionRejectedEvent` with the reason `ip_filter`. The bytes it reads stay in front of the stream, and the handshake parser starts from them. A Minecraft client is told apart by its very first read, since no prefix can start a handshake, so it waits for nothing. A client that sent part of a prefix and stops is given 5 seconds, then handled as Minecraft; so is one that closes or fails while the proxy waits. When two prefixes match, the longer one is reported.
 
 A prefix must be 2 to 16 bytes long and must not be able to start a Minecraft handshake, a pre-1.7 ping or login, or a PROXY protocol header: the host refuses a prefix that starts with `0xFE` or `0x02`, with one byte from `0x01` to `0x7F` followed by `0x00`, with one byte from `0x80` up followed by `0x01` to `0x03` and then `0x00` (or nothing), and one that matches the start of `PROXY ` or of the PROXY v2 signature. Such a prefix answers `InvalidArgument`. A plugin holds at most 16 prefixes (`LimitExceeded` past that); registering one it holds again succeeds, and `unregister_prefix` of one it does not hold answers `NotFound`. Two plugins may register the same prefix. The host drops a plugin's prefixes when it is disabled or unloaded, and when a fault replaces its instance, before the fresh instance runs `on_enable` and registers them again.
 
@@ -128,7 +138,7 @@ The event goes to every listener of `RawConnectionEvent`, whichever plugin regis
 
 `NeedMore(n)` reads exactly up to `n` bytes: whatever the client sent beyond stays in the socket and reaches the target after the replay. The client has 5 seconds from the answer to send them, otherwise the proxy closes the connection. The event fires at most 8 times for a connection and `data` never holds more than 4096 bytes: a `NeedMore` on the eighth event, or one asking for more than 4096 bytes, closes the connection. A `NeedMore(n)` that `data` already satisfies fires the event again at once and counts as a round. None of these closures post a `ConnectionRejectedEvent`.
 
-When the bytes match a prefix and some plugin listens to `RawConnectionEvent`, the proxy first applies the global [`ip_filter`](../../configuration/global#ip-filter) and the global IP and range bans, the same check a server list ping gets (a ban provider that cannot answer lets the connection through). A refused connection is closed without an answer, posts a `ConnectionRejectedEvent` (`ip_filter` or `ip_banned`, with no `virtual_host`) and never reaches the event. When nobody listens, a match is handled as Minecraft and these checks run in the usual pipeline. The rate limiter does not apply to a raw claim: it counts Minecraft handshakes, and a claimed connection never sends one. A connection a listener passes goes through the whole Minecraft pipeline, IP filter and rate limit included. Keep prefixes specific to your protocol, since every connection that starts with one reaches the plugin before any rate limit.
+When the bytes match a prefix and some plugin listens to `RawConnectionEvent`, the proxy first checks the global IP and range bans, as before any handoff (see [Bans](#bans)): a ban provider that cannot answer refuses the connection. A refused connection is closed without an answer, posts a `ConnectionRejectedEvent` (`ip_banned`, or `banned` when the provider could not answer, with no `virtual_host`) and never reaches the event. When nobody listens, a match is handled as Minecraft and the bans are checked in the usual pipeline. The rate limiter does not apply to a raw claim: it counts Minecraft handshakes, and a claimed connection never sends one. A connection a listener passes goes through the whole Minecraft pipeline, IP filter and rate limit included. Keep prefixes specific to your protocol, since every connection that starts with one reaches the plugin before any rate limit.
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -157,7 +167,7 @@ impl Plugin for TransferBridge {
 
 ## Handing off at the handshake
 
-`ConnectionHandshakeEvent` fires once the handshake is parsed and routed, after the IP filter, the rate limit and, for a ping, the IP ban check. `handoff(h)` relays the connection instead of going on, whatever its intent: a server list ping can be handed off too, and no `ProxyPingEvent` fires for it. The replay holds the handshake, then every byte the client already sent after it (the status request, or the Login Start the proxy has not read yet). A handoff is not a refusal: no `ConnectionRejectedEvent` is posted. A client older than 1.7 cannot be handed off: the proxy closes it. The event keeps its other rules; see [ConnectionHandshakeEvent](../dev/events#connectionhandshakeevent).
+`ConnectionHandshakeEvent` fires once the handshake is parsed and routed, after the IP filter, the rate limit and, for a ping, the IP ban check. `handoff(h)` relays the connection instead of going on, whatever its intent: a server list ping can be handed off too, and no `ProxyPingEvent` fires for it. The address is checked against the IP bans before the relay, see [Bans](#bans). The replay holds the handshake, then every byte the client already sent after it (the status request, or the Login Start the proxy has not read yet). A handoff is not a refusal: no `ConnectionRejectedEvent` is posted for a relayed connection. A client older than 1.7 cannot be handed off: the proxy closes it. The event keeps its other rules; see [ConnectionHandshakeEvent](../dev/events#connectionhandshakeevent).
 
 ```rust
 ctx.on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
@@ -184,7 +194,7 @@ ctx.on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
 | `login_start` | `Vec<u8>` | The Login Start payload as sent, without its length and packet id |
 | `layout_matches` | `bool` | `false` when the payload does not match the layout of the client's protocol and only a lenient decode read the name |
 
-`pass()` keeps the normal login, `handoff(h)` relays the connection. The event fires on every route, whatever its proxy mode, for a login and for a transfer. A claimed login skips the name and IP ban checks, `PreLoginEvent`, admission, the telemetry login span and the proxy mode's login: it never becomes a player, and the target gets the handshake, the Login Start as the client sent it, and every byte the client sent after it. A WASM listener that does not answer leaves `Pass`: a claim bypasses authentication, so the safe default is no claim.
+`pass()` keeps the normal login, `handoff(h)` relays the connection. The event fires on every route, whatever its proxy mode, for a login and for a transfer. A claimed login skips the name ban check, `PreLoginEvent`, admission, the telemetry login span and the proxy mode's login: it never becomes a player, and the target gets the handshake, the Login Start as the client sent it, and every byte the client sent after it. Its address is still checked against the IP bans before the relay, and a banned one is disconnected like a banned login, see [Bans](#bans). A WASM listener that does not answer leaves `Pass`: a claim bypasses authentication, so the safe default is no claim.
 
 Some modded clients send a Login Start that does not match their declared protocol. While someone listens to `LoginClaimEvent`, the proxy reads such a packet with a lenient decode on every route so the plugin can claim it, with `layout_matches` set to `false`. A connection the plugin leaves alone is then refused on an `offline` or `client_only` route with exactly the protocol error it gets without a listener, before any ban check or `PreLoginEvent`; on a forwarding route it is forwarded unchanged, as without a listener. A Login Start that even the lenient decode cannot read is refused on every route before the event.
 
@@ -194,7 +204,7 @@ For a WASM plugin, the host checks an `Address` target against `[plugins.<id>.wa
 
 ## Security
 
-A handoff skips authentication. The proxy does not check a claimed login against Mojang, runs no ban check and sends no forwarding data (no Velocity or BungeeCord identity): the target sees an unauthenticated client. Only hand a connection to a target that takes it over itself, such as a file server, or a backend that authenticates its own players. Never hand a login off to a backend that trusts the proxy to have authenticated it.
+A handoff skips authentication. The proxy does not check a claimed login against Mojang, checks no name or UUID ban (only the IP bans) and sends no forwarding data (no Velocity or BungeeCord identity): the target sees an unauthenticated client. Only hand a connection to a target that takes it over itself, such as a file server, or a backend that authenticates its own players. Never hand a login off to a backend that trusts the proxy to have authenticated it.
 
 `reply` goes to a client nobody authenticated, and a raw claim runs before the rate limiter: keep what the plugin does on these events cheap and bounded.
 
