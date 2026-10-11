@@ -8,12 +8,14 @@ use infrarust_api::events::lifecycle::PreLoginEvent;
 use infrarust_api::services::ban_service::{BanRequest, BanTarget};
 use infrarust_api::types::{Component, NamedColor};
 use infrarust_core::auth::game_profile::offline_uuid;
-use infrarust_test_harness::legacy::LEGACY_PROTOCOL;
+use infrarust_test_harness::legacy::{LEGACY_PROTOCOL, string16};
 use infrarust_test_harness::{
     DEFAULT_TIMEOUT, EventKind, FakeLegacyBackend, HarnessError, LegacyClient, LegacyPing,
     Recorded, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
 };
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 const T: Duration = DEFAULT_TIMEOUT;
 const NOTCH: &str = "Notch";
@@ -224,6 +226,72 @@ async fn a_legacy_ping_is_relayed_from_the_backend() {
         .unwrap();
 
     assert_eq!(ping, backend_ping());
+    proxy.shutdown().await.unwrap();
+}
+
+fn claiming_prefix() -> ScriptedPlugin {
+    ScriptedPlugin::new("bridge").on_enable(|ctx| {
+        ctx.connection_claims()
+            .expect("the bridge holds connection-handoff")
+            .register_prefix(b"XFER")
+            .unwrap();
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_clients_are_served_while_a_claim_prefix_is_registered() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let proxy = legacy_proxy(&backend, vec![claiming_prefix()]).await;
+    assert!(!proxy.services().connection_claims.is_empty());
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    assert_eq!(client.ping().await.unwrap(), backend_ping());
+    assert_eq!(client.ping_beta().await.unwrap().motd, "An Infrarust Proxy");
+
+    let session = client.login(NOTCH).await.unwrap().forwarded().unwrap();
+    let mut conn = backend.next_connection(T).await.unwrap();
+    assert_eq!(conn.username(), NOTCH);
+    assert_eq!(conn.handshake().hostname, "old.test");
+    session.quit().await;
+    conn.closed(T).await.unwrap();
+    conn.close().await;
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_legacy_login_sent_with_its_proxy_header_in_one_write_is_forwarded() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("old").backend(backend.addr()))
+        .patch_config(|table| {
+            table.insert("receive_proxy_protocol".into(), toml::Value::Boolean(true));
+        })
+        .start()
+        .await
+        .unwrap();
+
+    let mut sent = b"PROXY TCP4 198.51.100.4 127.0.0.1 50004 25565\r\n".to_vec();
+    sent.extend([0x02, LEGACY_PROTOCOL]);
+    sent.extend(string16(NOTCH));
+    sent.extend(string16("old.test"));
+    sent.extend(25565_i32.to_be_bytes());
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+
+    let mut first = [0u8; 1];
+    tokio::time::timeout(T, client.read_exact(&mut first))
+        .await
+        .expect("the legacy login was never forwarded")
+        .unwrap();
+    assert_eq!(first[0], 0xFD);
+    let mut conn = backend.next_connection(T).await.unwrap();
+    assert_eq!(conn.username(), NOTCH);
+    assert_eq!(conn.handshake().hostname, "old.test");
+
+    drop(client);
+    conn.closed(T).await.unwrap();
+    conn.close().await;
     proxy.shutdown().await.unwrap();
 }
 

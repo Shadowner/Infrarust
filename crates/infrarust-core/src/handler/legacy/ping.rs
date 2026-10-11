@@ -9,7 +9,7 @@ use infrarust_protocol::legacy::{LegacyPingRequest, LegacyPingVariant, parse_leg
 use infrarust_protocol::{LegacyPingResponse, ProtocolVersion};
 use infrarust_server_manager::ServerState;
 
-use super::LegacyHandler;
+use super::{LegacyHandler, LegacyReader};
 use crate::error::CoreError;
 use crate::loadbalancer::peek_backend_addresses;
 use crate::pipeline::admission::{self, Admission};
@@ -269,27 +269,16 @@ impl LegacyHandler {
         &self,
         ctx: &mut ConnectionContext,
     ) -> Result<Vec<u8>, CoreError> {
+        let mut reader = LegacyReader::new(ctx);
         let mut data = Vec::with_capacity(128);
+        let wait = std::time::Duration::from_millis(100);
 
-        if ctx.buffered_data.len() > 1 {
-            data.extend_from_slice(&ctx.buffered_data[1..]);
-        }
+        if let Ok(Ok(next)) = tokio::time::timeout(wait, reader.read_u8()).await {
+            data.push(next);
 
-        let mut next = [0u8; 1];
-        if let Ok(Ok(_)) = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            ctx.stream_mut().read_exact(&mut next),
-        )
-        .await
-        {
-            data.push(next[0]);
-
-            if next[0] == 0x01
-                && let Ok(Ok(more)) = tokio::time::timeout(
-                    std::time::Duration::from_millis(100),
-                    self.read_remaining_v1_6_data(ctx),
-                )
-                .await
+            if next == 0x01
+                && let Ok(Ok(more)) =
+                    tokio::time::timeout(wait, read_remaining_v1_6_data(&mut reader)).await
             {
                 data.extend_from_slice(&more);
             }
@@ -298,45 +287,34 @@ impl LegacyHandler {
         Ok(data)
     }
 
-    async fn read_remaining_v1_6_data(
-        &self,
-        ctx: &mut ConnectionContext,
-    ) -> Result<Vec<u8>, CoreError> {
-        let mut data = Vec::new();
-
-        let mut byte = [0u8; 1];
-        ctx.stream_mut().read_exact(&mut byte).await?;
-        data.push(byte[0]);
-
-        if byte[0] != 0xFA {
-            return Ok(data);
-        }
-
-        let mut len_bytes = [0u8; 2];
-        ctx.stream_mut().read_exact(&mut len_bytes).await?;
-        data.extend_from_slice(&len_bytes);
-        let str_len = u16::from_be_bytes(len_bytes) as usize;
-
-        let mut str_data = vec![0u8; str_len * 2];
-        ctx.stream_mut().read_exact(&mut str_data).await?;
-        data.extend_from_slice(&str_data);
-
-        let mut data_len_bytes = [0u8; 2];
-        ctx.stream_mut().read_exact(&mut data_len_bytes).await?;
-        data.extend_from_slice(&data_len_bytes);
-        let data_len = u16::from_be_bytes(data_len_bytes) as usize;
-
-        let mut remaining = vec![0u8; data_len];
-        ctx.stream_mut().read_exact(&mut remaining).await?;
-        data.extend_from_slice(&remaining);
-
-        Ok(data)
-    }
-
     fn default_motd_text(&self) -> String {
         default_entry(&self.services.config)
             .map_or_else(|| DEFAULT_PROXY_MOTD.to_string(), |e| e.text.clone())
     }
+}
+
+async fn read_remaining_v1_6_data(reader: &mut LegacyReader<'_>) -> std::io::Result<Vec<u8>> {
+    let mut data = Vec::new();
+
+    let marker = reader.read_u8().await?;
+    data.push(marker);
+    if marker != 0xFA {
+        return Ok(data);
+    }
+
+    let mut channel_len = [0u8; 2];
+    reader.read_exact(&mut channel_len).await?;
+    data.extend_from_slice(&channel_len);
+    let channel_chars = usize::from(u16::from_be_bytes(channel_len));
+    data.extend_from_slice(&reader.read_vec(channel_chars * 2).await?);
+
+    let mut payload_len = [0u8; 2];
+    reader.read_exact(&mut payload_len).await?;
+    data.extend_from_slice(&payload_len);
+    let payload = usize::from(u16::from_be_bytes(payload_len));
+    data.extend_from_slice(&reader.read_vec(payload).await?);
+
+    Ok(data)
 }
 
 fn reconstruct_ping_packet(raw_data: &[u8]) -> Vec<u8> {
@@ -422,11 +400,79 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::sync::Arc;
 
+    use std::net::{IpAddr, Ipv4Addr};
+
     use infrarust_transport::BackendConnector;
+    use tokio::net::{TcpListener, TcpStream};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::limbo::test_helpers::test_proxy_services;
+
+    fn utf16be(s: &str) -> Vec<u8> {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let mut out = u16::try_from(units.len()).unwrap().to_be_bytes().to_vec();
+        for unit in units {
+            out.extend_from_slice(&unit.to_be_bytes());
+        }
+        out
+    }
+
+    fn v1_6_ping(hostname: &str, port: i32) -> Vec<u8> {
+        let mut data = vec![78];
+        data.extend_from_slice(&utf16be(hostname));
+        data.extend_from_slice(&port.to_be_bytes());
+        let mut ping = vec![0xFE, 0x01, 0xFA];
+        ping.extend_from_slice(&utf16be("MC|PingHost"));
+        ping.extend_from_slice(&u16::try_from(data.len()).unwrap().to_be_bytes());
+        ping.extend_from_slice(&data);
+        ping
+    }
+
+    async fn read_ping(sent: &[u8], read_ahead: usize) -> LegacyPingRequest {
+        let handler = LegacyHandler::new(
+            test_proxy_services(),
+            Arc::new(BackendConnector::new(
+                std::time::Duration::from_secs(2),
+                infrarust_config::KeepaliveConfig::default(),
+            )),
+            CancellationToken::new(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(local).await.unwrap();
+        let (stream, peer) = listener.accept().await.unwrap();
+        let mut ctx =
+            ConnectionContext::new_for_test(stream, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+        ctx.buffered_data.extend_from_slice(&sent[..read_ahead]);
+        client.write_all(&sent[read_ahead..]).await.unwrap();
+        let raw = handler.read_legacy_ping_data(&mut ctx).await.unwrap();
+        assert_eq!(raw, sent[1..], "read ahead {read_ahead}");
+        drop(client);
+        parse_legacy_ping(&raw).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_v1_6_ping_is_read_whole_however_much_was_read_ahead() {
+        let ping = v1_6_ping("lobby.test", 25565);
+        for read_ahead in [1, 2, 3, 4, 7, 20, ping.len() - 1, ping.len()] {
+            let request = read_ping(&ping, read_ahead).await;
+            assert_eq!(request.variant, LegacyPingVariant::V1_6, "{read_ahead}");
+            assert_eq!(request.hostname.as_deref(), Some("lobby.test"));
+            assert_eq!(request.port, Some(25565));
+            assert_eq!(request.protocol_version, Some(78));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_v1_4_and_a_beta_ping_are_read_from_what_was_read_ahead() {
+        for read_ahead in [1, 2] {
+            let request = read_ping(&[0xFE, 0x01], read_ahead).await;
+            assert_eq!(request.variant, LegacyPingVariant::V1_4, "{read_ahead}");
+        }
+        let request = read_ping(&[0xFE], 1).await;
+        assert_eq!(request.variant, LegacyPingVariant::Beta);
+    }
 
     #[test]
     fn legacy_and_modern_state_motds_report_the_same_max_players_and_text() {
