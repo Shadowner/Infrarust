@@ -1,20 +1,27 @@
 export const KNOWN_FINDINGS = [
   {
-    id: 'bungee-forwarding-is-a-noop-in-offline-mode',
-    scenarios: ['offline-bungeecord', 'offline-bungeeguard'],
-    relaxes: ['bungeeInjected', 'bungeeGuardToken'],
-    relaxesWithRealBackend: ['reachesPlay', 'interceptedByProxy'],
-    summary:
-      'BungeeCord and BungeeGuard forwarding inject nothing into the handshake when proxy_mode = offline.',
+    id: 'full-mode-is-refused-at-validation',
+    scenarios: ['full-fallback'],
+    relaxes: ['reachesPlay', 'interceptedByProxy'],
+    summary: 'proxy_mode = "full" no longer falls back to passthrough: the server file is refused when the proxy loads it.',
     detail:
-      'handler/intercepted/initial_connect.rs applies handler.apply_handshake() only when login_completed is true, ' +
-      'and requires_proxy_completed_login() forces login completion for Velocity alone. In offline mode the proxy ' +
-      'therefore sends a plain handshake, the backend never learns the real IP, and the operator still sees the ' +
-      '"BungeeCord legacy mode is insecure" warning that suggests forwarding is active. The same config under ' +
-      'passthrough injects all four fields, which is what makes this a silent inconsistency rather than a design ' +
-      'choice. Confirmed against Paper 1.21.4 with settings.bungeecord = true, which rejects the login with ' +
-      '"If you wish to use IP forwarding, please enable it in your BungeeCord config as well!" - so this is not ' +
-      'merely a missing field, it stops players connecting at all.',
+      'Since 60329025 (fix(config): reject the reserved full proxy mode at validation) the file provider logs ' +
+      '"skipping invalid config ... proxy_mode = \\"full\\" is reserved and not implemented", so full.test is an ' +
+      'unknown domain and domain_router disconnects the client. This is intended behaviour that postdates the ' +
+      'scenario, which still asserts the old fallback; it should become a refusal check or be dropped.',
+  },
+  {
+    id: 'velocity-on-passthrough-is-refused-at-validation',
+    scenarios: ['passthrough-velocity-fallback'],
+    relaxes: ['reachesPlay', 'interceptedByProxy', 'bungeeInjected'],
+    summary:
+      'forwarding_mode = "velocity" on a passthrough server no longer falls back to BungeeCord: the server file is refused when the proxy loads it.',
+    detail:
+      'Since 79e333cd (fix(config): reject velocity forwarding on forwarding-mode servers), now ' +
+      'ConfigError::VelocityOnForwardingServer, the file provider skips the server ("Passthrough mode does not ' +
+      'parse the login, but ... is velocity"), so pt-velo.test is an unknown domain and the client is ' +
+      'disconnected before any backend is contacted. Intended behaviour that postdates the scenario, which still ' +
+      'asserts the documented fallback to BungeeCord.',
   },
 ];
 

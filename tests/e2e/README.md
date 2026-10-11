@@ -111,8 +111,8 @@ removed.
 | `offline-bungeeguard` | offline | bungee_guard | |
 | `client-only` | client_only | none | needs `--session-server` |
 | `client-only-velocity` | client_only | velocity | needs `--session-server` |
-| `passthrough-velocity-fallback` | passthrough | velocity | asserts the documented fallback to BungeeCord |
-| `full-fallback` | full | none | asserts `full` still falls back to passthrough |
+| `passthrough-velocity-fallback` | passthrough | velocity | known finding: the proxy now refuses this server file |
+| `full-fallback` | full | none | known finding: the proxy now refuses this server file |
 
 Velocity forwarding cannot be negotiated below protocol 393, because
 `login_plugin_request` does not exist before 1.13. Those cells are skipped, not
@@ -329,15 +329,22 @@ Running this bench found three things, all reproducible:
    other nine, because it does not depend on a third-party library supporting
    the version.
 
-2. **BungeeCord/BungeeGuard forwarding does nothing in `offline` mode**, and
-   against a real backend that means players cannot connect at all. Tracked as a
-   known finding.
+2. **BungeeCord/BungeeGuard forwarding did nothing in `offline` mode**, and
+   against a real backend that meant players could not connect at all. *Fixed*:
+   with any forwarding the proxy now runs the backend login itself and keeps the
+   client in login until the backend accepts it, so the forwarded handshake is
+   built on that path. The known finding reported 🎉 and was removed.
 
 3. **`mode = "bungeecord"` and `"bungeeguard"`, as the docs spelled them, do not
    parse.** serde expects `bungee_cord` / `bungee_guard`. Fixed in the docs.
 
-Finding 2 is proxy behaviour and is left alone here: this bench reports, it does
-not decide. Finding 1 was fixed once the sweep had measured its full extent.
+Finding 1 was fixed once the sweep had measured its full extent.
+
+Two scenarios now stand as known findings because the proxy changed under them
+on purpose: `full-fallback` and `passthrough-velocity-fallback` assert
+fallbacks that config validation has since replaced with a refusal, so the
+server file is skipped at load and the domain is unknown. They stay in the
+matrix until someone decides whether they become refusal checks.
 
 Tier C then added four more, all from launching the actual game:
 

@@ -83,23 +83,22 @@ await check('expectations: a broken admin API is not reported as an absent playe
 });
 
 await check('expectations: a known finding downgrades a failure but does not hide it', () => {
-  const scenario = SCENARIOS.find((s) => s.id === 'offline-bungeecord');
+  const scenario = SCENARIOS.find((s) => s.id === 'full-fallback');
   const { status, checks } = evaluate(scenario, {
-    client: { reachedPlay: true },
-    backend: { handshakeHost: 'off-bungee.test' },
-    proxyPlayer: { is_active: true },
+    client: { reachedPlay: false, error: 'connection ended before reaching play' },
+    backend: null,
+    proxyPlayer: null,
   });
   assert.equal(status, 'known');
-  assert.ok(checks.some((c) => c.known === 'bungee-forwarding-is-a-noop-in-offline-mode'));
+  assert.ok(checks.some((c) => c.known === 'full-mode-is-refused-at-validation'));
 });
 
 await check('expectations: a known finding that stops reproducing is reported as fixed', () => {
-  const scenario = SCENARIOS.find((s) => s.id === 'offline-bungeecord');
-  const injected = ['off-bungee.test', '127.0.0.1', 'abc', '[{"name":"bungeeguard-token"}]'].join('\u0000');
+  const scenario = SCENARIOS.find((s) => s.id === 'full-fallback');
   const { status } = evaluate(scenario, {
     client: { reachedPlay: true },
-    backend: { handshakeHost: injected },
-    proxyPlayer: { is_active: true },
+    backend: {},
+    proxyPlayer: { is_active: false },
   });
   assert.equal(status, 'fixed');
 });
