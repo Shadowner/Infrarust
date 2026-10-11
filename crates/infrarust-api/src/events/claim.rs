@@ -164,8 +164,8 @@ mod tests {
             42,
             "203.0.113.7:50000".parse().unwrap(),
             "0.0.0.0:25565".parse().unwrap(),
-            &b"AMMH"[..],
-            &b"AMMH\x00\x01"[..],
+            &b"XFER"[..],
+            &b"XFER\x00\x01"[..],
         )
     }
 
@@ -174,7 +174,7 @@ mod tests {
         let mut event = raw();
         assert_eq!(event.result(), &RawConnectionResult::Pass);
         assert_eq!(event.connection_id, 42);
-        assert_eq!(event.prefix, Bytes::from_static(b"AMMH"));
+        assert_eq!(event.prefix, Bytes::from_static(b"XFER"));
         assert_eq!(event.data.len(), 6);
 
         event.need_more(64);

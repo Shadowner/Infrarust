@@ -377,7 +377,7 @@ mod tests {
                 player: steve(),
                 server: "modded".into(),
                 message_id: 4,
-                channel: "automodpack:handshake".into(),
+                channel: "example:handshake".into(),
                 data: b"\x01".to_vec(),
                 client_reachable: true,
                 result,
@@ -436,7 +436,7 @@ mod tests {
                 player: steve(),
                 server: "modded".into(),
                 message_id: 4,
-                channel: "automodpack:handshake".into(),
+                channel: "example:handshake".into(),
                 successful: true,
                 data: b"\x02".to_vec(),
                 result: we::LoginPluginResponseResult::Forward,
@@ -444,7 +444,7 @@ mod tests {
         ))
         .unwrap();
         assert!(event.successful);
-        assert_eq!(event.channel, "automodpack:handshake");
+        assert_eq!(event.channel, "example:handshake");
         event.replace(false, Vec::new());
         assert_eq!(
             event.into_outcome(),

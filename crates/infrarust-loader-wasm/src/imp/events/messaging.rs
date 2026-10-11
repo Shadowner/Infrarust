@@ -201,7 +201,7 @@ mod tests {
             steve(),
             ServerId::new("modded"),
             4,
-            "automodpack:handshake",
+            "example:handshake",
             Bytes::from_static(b"\x01"),
             true,
         );
@@ -210,7 +210,7 @@ mod tests {
         };
         assert_eq!(record.server, "modded");
         assert_eq!(record.message_id, 4);
-        assert_eq!(record.channel, "automodpack:handshake");
+        assert_eq!(record.channel, "example:handshake");
         assert_eq!(record.data, b"\x01");
         assert!(record.client_reachable);
         assert_eq!(record.result, we::LoginPluginRequestResult::Forward);
@@ -257,7 +257,7 @@ mod tests {
             steve(),
             ServerId::new("modded"),
             4,
-            "automodpack:handshake",
+            "example:handshake",
             true,
             Bytes::from_static(b"\x02"),
         );
@@ -265,7 +265,7 @@ mod tests {
             panic!("a login plugin response is sent as login-plugin-response");
         };
         assert!(record.successful);
-        assert_eq!(record.channel, "automodpack:handshake");
+        assert_eq!(record.channel, "example:handshake");
         assert_eq!(record.result, we::LoginPluginResponseResult::Forward);
 
         let replacement =

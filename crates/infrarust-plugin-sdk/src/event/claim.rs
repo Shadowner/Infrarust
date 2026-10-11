@@ -172,8 +172,8 @@ mod tests {
             connection_id: 3,
             remote_addr: socket(50_000),
             local_addr: socket(25_565),
-            prefix: b"AMMH".to_vec(),
-            data: b"AMMH\x00\x01".to_vec(),
+            prefix: b"XFER".to_vec(),
+            data: b"XFER\x00\x01".to_vec(),
             result,
         }))
         .unwrap()
@@ -183,8 +183,8 @@ mod tests {
     fn an_untouched_raw_connection_answers_unchanged() {
         let event = raw(we::RawConnectionResult::NeedMore(8));
         assert_eq!(event.connection_id, 3);
-        assert_eq!(event.prefix, b"AMMH");
-        assert_eq!(event.data, b"AMMH\x00\x01");
+        assert_eq!(event.prefix, b"XFER");
+        assert_eq!(event.data, b"XFER\x00\x01");
         assert_eq!(event.local_addr.port(), 25_565);
         assert_eq!(event.result(), &RawConnectionResult::NeedMore(8));
         assert_eq!(event.into_outcome(), EventOutcome::Unchanged);

@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(handoff.proxy_protocol, None);
 
         let handoff = Handoff::to(HandoffTarget::server_port("lobby", 30037))
-            .with_prefix(&b"AMMH"[..])
+            .with_prefix(&b"XFER"[..])
             .with_reply(vec![1, 2, 3])
             .without_replay()
             .with_proxy_protocol(true);
@@ -212,7 +212,7 @@ mod tests {
             }
         );
         assert!(!handoff.replay);
-        assert_eq!(handoff.prefix, Bytes::from_static(b"AMMH"));
+        assert_eq!(handoff.prefix, Bytes::from_static(b"XFER"));
         assert_eq!(handoff.reply, Bytes::from_static(&[1, 2, 3]));
         assert_eq!(handoff.proxy_protocol, Some(true));
         assert!(handoff.with_replay(true).replay);
@@ -239,8 +239,8 @@ mod tests {
     #[test]
     fn prefixes_that_cannot_open_a_minecraft_connection_are_accepted() {
         for prefix in [
-            &b"AMMH"[..],
-            b"AMOK",
+            &b"XFER"[..],
+            b"XFOK",
             &[0x00, 0x00],
             &[0x00, 0x01, 0x02],
             &[0x80, 0x04, 0x00],

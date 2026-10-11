@@ -236,12 +236,12 @@ mod tests {
             steve(),
             ServerId::new("modded"),
             3,
-            "automodpack:handshake",
+            "example:handshake",
             true,
             &b"\x00"[..],
         );
         assert_eq!(event.result(), &LoginPluginResponseResult::Forward);
-        assert_eq!(event.channel, "automodpack:handshake");
+        assert_eq!(event.channel, "example:handshake");
         assert!(event.successful);
 
         event.replace(false, Bytes::new());

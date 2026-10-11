@@ -44,8 +44,8 @@ fn log_lines(dir: &Path) -> Vec<String> {
 fn enable_block(phase: &str, granted: &str) -> Vec<String> {
     let mut lines = vec![format!("enable {phase}")];
     if phase == "initial" {
-        lines.push(format!("register [65, 77, 77, 72] {granted}"));
-        lines.push(format!("register [65, 77, 79, 75] {granted}"));
+        lines.push(format!("register [88, 70, 69, 82] {granted}"));
+        lines.push(format!("register [88, 70, 79, 75] {granted}"));
         lines.push(format!(
             "register [16, 0] {}",
             if granted == "ok" {
@@ -55,7 +55,7 @@ fn enable_block(phase: &str, granted: &str) -> Vec<String> {
             }
         ));
     } else {
-        lines.push(format!("register [65, 77, 79, 75] {granted}"));
+        lines.push(format!("register [88, 70, 79, 75] {granted}"));
     }
     lines.push(format!(
         "unregister-unknown {}",
@@ -78,13 +78,13 @@ fn steve() -> Arc<dyn Player> {
 }
 
 async fn raw(bus: &EventBusImpl, command: u8) -> RawConnectionResult {
-    let mut data = b"AMMH".to_vec();
+    let mut data = b"XFER".to_vec();
     data.push(command);
     let event = RawConnectionEvent::new(
         1,
         "203.0.113.7:50000".parse().unwrap(),
         "0.0.0.0:25565".parse().unwrap(),
-        &b"AMMH"[..],
+        &b"XFER"[..],
         data,
     );
     bus.fire(event).await.result().clone()
@@ -173,7 +173,7 @@ async fn a_granted_guest_claims_prefixes_and_answers_every_new_hook() {
     assert_eq!(log_lines(&dir), enable_block("initial", "ok"));
     assert_eq!(
         prefixes(&claims),
-        [Bytes::from_static(b"AMMH"), Bytes::from_static(b"AMOK")]
+        [Bytes::from_static(b"XFER"), Bytes::from_static(b"XFOK")]
     );
 
     assert_eq!(raw(&bus, b'P').await, RawConnectionResult::Pass);
@@ -277,7 +277,7 @@ async fn a_granted_guest_claims_prefixes_and_answers_every_new_hook() {
     assert_eq!(log_lines(&dir), both);
     assert_eq!(
         prefixes(&claims),
-        [Bytes::from_static(b"AMOK")],
+        [Bytes::from_static(b"XFOK")],
         "a recovered instance starts from no claim and keeps only what it registers again"
     );
     assert_eq!(raw(&bus, b'R').await, RawConnectionResult::Reject);

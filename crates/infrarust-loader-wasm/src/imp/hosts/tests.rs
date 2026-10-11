@@ -553,11 +553,11 @@ async fn unrefused_calls(capability: Capability) -> Vec<String> {
         Capability::ConnectionHandoff => {
             denied!(
                 "register-prefix",
-                connection_claims::Host::register_prefix(s, b"AMMH".to_vec()).await
+                connection_claims::Host::register_prefix(s, b"XFER".to_vec()).await
             );
             denied!(
                 "unregister-prefix",
-                connection_claims::Host::unregister_prefix(s, b"AMMH".to_vec()).await
+                connection_claims::Host::unregister_prefix(s, b"XFER".to_vec()).await
             );
             denied!(
                 "subscribe(raw-connection)",
@@ -1407,11 +1407,11 @@ async fn a_plugin_claims_prefixes_until_its_instance_is_released() {
         .with_ctx(factory.create_context("claimer"));
     let s = &mut state;
 
-    connection_claims::Host::register_prefix(s, b"AMMH".to_vec())
+    connection_claims::Host::register_prefix(s, b"XFER".to_vec())
         .await
         .unwrap()
         .unwrap();
-    connection_claims::Host::register_prefix(s, b"AMMH".to_vec())
+    connection_claims::Host::register_prefix(s, b"XFER".to_vec())
         .await
         .unwrap()
         .unwrap();
@@ -1442,7 +1442,7 @@ async fn a_plugin_claims_prefixes_until_its_instance_is_released() {
     assert_eq!(full.kind, wt::ErrorKind::LimitExceeded);
     assert_eq!(claims.len(), 16);
 
-    connection_claims::Host::unregister_prefix(s, b"AMMH".to_vec())
+    connection_claims::Host::unregister_prefix(s, b"XFER".to_vec())
         .await
         .unwrap()
         .unwrap();

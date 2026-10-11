@@ -17,9 +17,9 @@ impl Plugin for ClaimProbe {
             if recovered { "recovered" } else { "initial" }
         )];
         let prefixes: &[&[u8]] = if recovered {
-            &[b"AMOK"]
+            &[b"XFOK"]
         } else {
-            &[b"AMMH", b"AMOK", &[0x10, 0x00]]
+            &[b"XFER", b"XFOK", &[0x10, 0x00]]
         };
         for prefix in prefixes {
             let answer = ConnectionClaims::register_prefix(prefix);

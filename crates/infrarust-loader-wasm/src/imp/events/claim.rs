@@ -204,8 +204,8 @@ mod tests {
             9,
             "203.0.113.7:50000".parse().unwrap(),
             "0.0.0.0:25565".parse().unwrap(),
-            &b"AMMH"[..],
-            &b"AMMH\x00"[..],
+            &b"XFER"[..],
+            &b"XFER\x00"[..],
         )
     }
 
@@ -273,8 +273,8 @@ mod tests {
             panic!("a raw connection is sent as raw-connection");
         };
         assert_eq!(record.connection_id, 9);
-        assert_eq!(record.prefix, b"AMMH");
-        assert_eq!(record.data, b"AMMH\x00");
+        assert_eq!(record.prefix, b"XFER");
+        assert_eq!(record.data, b"XFER\x00");
         assert_eq!(record.result, we::RawConnectionResult::Pass);
         assert_eq!(record.remote_addr.port, 50000);
         assert_eq!(record.local_addr.port, 25565);
