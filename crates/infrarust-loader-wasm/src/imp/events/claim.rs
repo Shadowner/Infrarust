@@ -22,6 +22,12 @@ pub(crate) const HANDOFF_ADDRESS_REFUSED: &str =
 pub(crate) const HANDOFF_NEEDS_GRANTS: &str =
     "a handoff outcome is only accepted from a listening plugin";
 
+pub(crate) const HANDOFF_SERVER_UNKNOWN: &str =
+    "the handoff names a server-port target on a server the proxy does not know";
+
+pub(crate) const HANDOFF_PORT_REFUSED: &str = "the plugin's network allow-list does not permit \
+     the server-port target on every address of that server";
+
 pub(crate) fn handoff_to_wit(handoff: &Handoff) -> we::Handoff {
     we::Handoff {
         target: match &handoff.target {
@@ -74,15 +80,44 @@ pub(crate) fn admitted_handoff(
     if !instance.capabilities().has(Capability::ConnectionHandoff) {
         return Err(HANDOFF_NEEDS_CAPABILITY);
     }
-    if let we::HandoffTarget::Address(address) = &handoff.target
-        && instance
-            .network()
-            .permits_handoff(&address.host, address.port)
-            .is_err()
-    {
-        return Err(HANDOFF_ADDRESS_REFUSED);
+    match &handoff.target {
+        we::HandoffTarget::Address(address) => {
+            if instance
+                .network()
+                .permits_handoff(&address.host, address.port)
+                .is_err()
+            {
+                return Err(HANDOFF_ADDRESS_REFUSED);
+            }
+        }
+        we::HandoffTarget::ServerPort((server, port)) => {
+            admitted_server_port(server, *port, instance)?;
+        }
+        we::HandoffTarget::Route | we::HandoffTarget::Server(_) => {}
     }
     Ok(handoff_from_wit(handoff))
+}
+
+fn admitted_server_port(
+    server: &str,
+    port: u16,
+    instance: &InstanceRef,
+) -> Result<(), &'static str> {
+    let config = instance
+        .servers()
+        .get_server_config(&ServerId::from(server))
+        .ok_or(HANDOFF_SERVER_UNKNOWN)?;
+    let network = instance.network();
+    let permitted = config
+        .addresses
+        .iter()
+        .filter(|address| address.port != port)
+        .all(|address| network.permits_handoff(&address.host, port).is_ok());
+    if permitted {
+        Ok(())
+    } else {
+        Err(HANDOFF_PORT_REFUSED)
+    }
 }
 
 impl WasmEvent for RawConnectionEvent {
@@ -192,7 +227,9 @@ mod tests {
     use std::time::Duration;
 
     use infrarust_api::permissions::CapabilitySet;
-    use infrarust_api::types::ProtocolVersion;
+    use infrarust_api::services::config_service::{ConfigService, ServerConfig};
+    use infrarust_api::test_util::MockConfigService;
+    use infrarust_api::types::{ProtocolVersion, ServerAddress};
     use infrarust_config::WasmNetworkConfig;
 
     use super::*;
@@ -236,11 +273,40 @@ mod tests {
         ))
     }
 
-    fn granted(allow: &[&str]) -> InstanceRef {
-        InstanceRef::detached_with(
-            CapabilitySet::default().with(Capability::ConnectionHandoff),
-            policy(allow),
+    fn server(id: &str, addresses: &[(&str, u16)]) -> ServerConfig {
+        MockConfigService::server(id).addresses(
+            addresses
+                .iter()
+                .map(|(host, port)| ServerAddress {
+                    host: (*host).to_owned(),
+                    port: *port,
+                })
+                .collect(),
         )
+    }
+
+    fn servers() -> Arc<dyn ConfigService> {
+        Arc::new(
+            MockConfigService::new()
+                .with_server(server("modded", &[("10.0.0.5", 25565)]))
+                .with_server(server("pair", &[("10.0.0.5", 25565), ("10.0.0.6", 25565)]))
+                .with_server(server(
+                    "mixed",
+                    &[("10.0.0.5", 25565), ("MC.example.", 25566)],
+                )),
+        )
+    }
+
+    fn granted_with(network: Arc<NetworkPolicy>) -> InstanceRef {
+        InstanceRef::detached_serving(
+            CapabilitySet::default().with(Capability::ConnectionHandoff),
+            network,
+            servers(),
+        )
+    }
+
+    fn granted(allow: &[&str]) -> InstanceRef {
+        granted_with(policy(allow))
     }
 
     fn wit_handoff(target: we::HandoffTarget) -> we::Handoff {
@@ -282,7 +348,7 @@ mod tests {
 
     #[test]
     fn each_raw_connection_outcome_sets_the_native_one() {
-        let instance = granted(&[]);
+        let instance = granted(&["10.0.0.5:30037"]);
         let mut event = raw();
         event.apply_for(
             we::EventOutcome::RawConnection(we::RawConnectionResult::NeedMore(64)),
@@ -394,6 +460,85 @@ mod tests {
             ),
             Applied::Refused(HANDOFF_ADDRESS_REFUSED)
         );
+    }
+
+    fn server_port(instance: &InstanceRef, server: &str, port: u16) -> Applied {
+        let mut event = raw();
+        let applied = event.apply_for(
+            we::EventOutcome::RawConnection(we::RawConnectionResult::Handoff(wit_handoff(
+                we::HandoffTarget::ServerPort((server.into(), port)),
+            ))),
+            instance,
+        );
+        let handed_off = matches!(event.result(), RawConnectionResult::Handoff(_));
+        assert_eq!(handed_off, applied == Applied::Set, "{server}:{port}");
+        applied
+    }
+
+    #[test]
+    fn a_server_port_off_the_minecraft_port_follows_the_network_allow_list() {
+        let instance = granted(&["10.0.0.5:30037", "mc.example:30000-31000"]);
+        for (server, port, expected) in [
+            ("modded", 25565, Applied::Set),
+            ("modded", 30037, Applied::Set),
+            ("modded", 22, Applied::Refused(HANDOFF_PORT_REFUSED)),
+            ("modded", 30038, Applied::Refused(HANDOFF_PORT_REFUSED)),
+            ("pair", 25565, Applied::Set),
+            ("pair", 30037, Applied::Refused(HANDOFF_PORT_REFUSED)),
+            ("mixed", 30037, Applied::Set),
+            ("mixed", 25565, Applied::Refused(HANDOFF_PORT_REFUSED)),
+            ("mixed", 25566, Applied::Refused(HANDOFF_PORT_REFUSED)),
+            ("unknown", 25565, Applied::Refused(HANDOFF_SERVER_UNKNOWN)),
+            ("unknown", 30037, Applied::Refused(HANDOFF_SERVER_UNKNOWN)),
+        ] {
+            assert_eq!(
+                server_port(&instance, server, port),
+                expected,
+                "{server}:{port}"
+            );
+        }
+
+        let no_network = granted_with(crate::network::probe_policy("p".to_owned()));
+        assert_eq!(server_port(&no_network, "modded", 25565), Applied::Set);
+        assert_eq!(server_port(&no_network, "pair", 25565), Applied::Set);
+        assert_eq!(
+            server_port(&no_network, "modded", 30037),
+            Applied::Refused(HANDOFF_PORT_REFUSED)
+        );
+        assert_eq!(
+            server_port(&no_network, "unknown", 25565),
+            Applied::Refused(HANDOFF_SERVER_UNKNOWN)
+        );
+
+        let mut event = login();
+        assert_eq!(
+            event.apply_for(
+                we::EventOutcome::LoginClaim(we::LoginClaimResult::Handoff(wit_handoff(
+                    we::HandoffTarget::ServerPort(("modded".into(), 3306)),
+                ))),
+                &instance,
+            ),
+            Applied::Refused(HANDOFF_PORT_REFUSED)
+        );
+        assert_eq!(event.result(), &LoginClaimResult::Pass);
+    }
+
+    #[test]
+    fn a_server_target_is_not_checked_against_the_allow_list() {
+        let instance = granted_with(crate::network::probe_policy("p".to_owned()));
+        for server in ["modded", "unknown"] {
+            let mut event = raw();
+            assert_eq!(
+                event.apply_for(
+                    we::EventOutcome::RawConnection(we::RawConnectionResult::Handoff(wit_handoff(
+                        we::HandoffTarget::Server(server.into())
+                    ))),
+                    &instance,
+                ),
+                Applied::Set,
+                "{server}"
+            );
+        }
     }
 
     #[test]

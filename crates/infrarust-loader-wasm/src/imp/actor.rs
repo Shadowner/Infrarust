@@ -9,6 +9,7 @@ use infrarust_api::__private::caller_deadline;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginRuntimeStatus;
+use infrarust_api::services::config_service::ConfigService;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -287,6 +288,7 @@ struct ActorInfo {
     board: StatusBoard,
     capabilities: CapabilitySet,
     network: Arc<NetworkPolicy>,
+    servers: Arc<dyn ConfigService>,
 }
 
 impl ActorInfo {
@@ -296,6 +298,7 @@ impl ActorInfo {
         snapshots: Arc<PermissionSnapshots>,
         capabilities: CapabilitySet,
         network: Arc<NetworkPolicy>,
+        servers: Arc<dyn ConfigService>,
     ) -> Self {
         Self {
             plugin_id,
@@ -312,6 +315,7 @@ impl ActorInfo {
             board: StatusBoard::new(sandbox.queue_capacity, sandbox.recovery),
             capabilities,
             network,
+            servers,
         }
     }
 
@@ -369,6 +373,19 @@ impl InstanceRef {
 
     #[cfg(test)]
     pub(crate) fn detached_with(capabilities: CapabilitySet, network: Arc<NetworkPolicy>) -> Self {
+        Self::detached_serving(
+            capabilities,
+            network,
+            Arc::new(infrarust_api::test_util::MockConfigService::new()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detached_serving(
+        capabilities: CapabilitySet,
+        network: Arc<NetworkPolicy>,
+        servers: Arc<dyn ConfigService>,
+    ) -> Self {
         let (jobs, _) = mpsc::channel(1);
         Self {
             jobs: jobs.downgrade(),
@@ -378,6 +395,7 @@ impl InstanceRef {
                 Arc::default(),
                 capabilities,
                 network,
+                servers,
             )),
             kind: CallKind::Callback,
             generation: None,
@@ -390,6 +408,10 @@ impl InstanceRef {
 
     pub(crate) fn network(&self) -> &NetworkPolicy {
         &self.info.network
+    }
+
+    pub(crate) fn servers(&self) -> &dyn ConfigService {
+        self.info.servers.as_ref()
     }
 
     pub(crate) fn plugin_id(&self) -> &str {
@@ -541,6 +563,7 @@ impl PluginActor {
             Arc::clone(factory.registrations().snapshots()),
             factory.capabilities().clone(),
             Arc::clone(factory.network()),
+            factory.ctx().config_service(),
         ));
         let instance = InstanceRef {
             jobs: jobs.downgrade(),

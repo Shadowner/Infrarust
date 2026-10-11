@@ -21,8 +21,8 @@ use infrarust_api::events::messaging::{
 };
 use infrarust_api::handoff::{Handoff, HandoffTarget};
 use infrarust_api::player::Player;
-use infrarust_api::test_util::MockPlayer;
-use infrarust_api::types::{ProtocolVersion, ServerId};
+use infrarust_api::test_util::{MockConfigService, MockPlayer};
+use infrarust_api::types::{ProtocolVersion, ServerAddress, ServerId};
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::PluginManager;
 use infrarust_core::services::command_manager::DispatchOutcome;
@@ -31,7 +31,20 @@ use support::{EnvOptions, console, loader_from_toml, make_env_with, stage};
 
 const PROBE: &str = "claim-probe";
 
-const NETWORK: &str = "[plugins.claim-probe.wasm.network]\nallow = [\"files.example:443\"]\n";
+const NETWORK: &str =
+    "[plugins.claim-probe.wasm.network]\nallow = [\"files.example:443\", \"10.0.0.5:30037\"]\n";
+
+const FILES_ONLY: &str = "[plugins.claim-probe.wasm.network]\nallow = [\"files.example:443\"]\n";
+
+fn modded_at(port: u16) -> MockConfigService {
+    MockConfigService::new().with_server(MockConfigService::server_at(
+        "modded",
+        ServerAddress {
+            host: "10.0.0.5".to_owned(),
+            port,
+        },
+    ))
+}
 
 fn log_lines(dir: &Path) -> Vec<String> {
     std::fs::read_to_string(dir.join(PROBE).join("claims.log"))
@@ -156,10 +169,13 @@ async fn a_granted_guest_claims_prefixes_and_answers_every_new_hook() {
     let (_tmp, dir) = stage(PROBE);
     let env = make_env_with(
         dir.clone(),
-        EnvOptions::default()
-            .grant(PROBE, "connection-handoff")
-            .grant(PROBE, "plugin-messaging")
-            .grant(PROBE, "network"),
+        EnvOptions {
+            config_service: Arc::new(modded_at(25565)),
+            ..EnvOptions::default()
+        }
+        .grant(PROBE, "connection-handoff")
+        .grant(PROBE, "plugin-messaging")
+        .grant(PROBE, "network"),
     );
     let bus = Arc::clone(&env.event_bus);
     let claims = Arc::clone(&env.connection_claims);
@@ -320,4 +336,47 @@ async fn a_guest_without_connection_handoff_cannot_claim_or_hand_off() {
     );
 
     manager.disable_plugin(PROBE).await.unwrap();
+}
+
+async fn server_port_handoff(servers: MockConfigService) -> RawConnectionResult {
+    let (_tmp, dir) = stage(PROBE);
+    let env = make_env_with(
+        dir.clone(),
+        EnvOptions {
+            config_service: Arc::new(servers),
+            ..EnvOptions::default()
+        }
+        .grant(PROBE, "connection-handoff")
+        .grant(PROBE, "network"),
+    );
+    let bus = Arc::clone(&env.event_bus);
+    let factory = Arc::new(env.factory);
+    let mut manager = PluginManager::new(vec![Box::new(loader_from_toml(FILES_ONLY))]);
+    manager.discover_all(&dir).await.unwrap();
+    let errors = manager.load_and_enable_all(Arc::clone(&factory)).await;
+    assert!(errors.is_empty(), "{errors:?}");
+    let result = raw(&bus, b'H').await;
+    manager.disable_plugin(PROBE).await.unwrap();
+    result
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_port_handoff_off_the_minecraft_port_needs_the_allow_list() {
+    assert_eq!(
+        server_port_handoff(modded_at(25565)).await,
+        RawConnectionResult::Pass,
+        "port 30037 of the server's host is not in the allow-list"
+    );
+    assert!(
+        matches!(
+            server_port_handoff(modded_at(30037)).await,
+            RawConnectionResult::Handoff(_)
+        ),
+        "the server's own port is reached like a server target"
+    );
+    assert_eq!(
+        server_port_handoff(MockConfigService::new()).await,
+        RawConnectionResult::Pass,
+        "a server the proxy does not know is refused"
+    );
 }
