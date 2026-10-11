@@ -132,6 +132,10 @@ impl BackendBridge {
         self.encoder.set_compression(threshold);
     }
 
+    pub const fn compression_threshold(&self) -> Option<i32> {
+        self.encoder.compression_threshold()
+    }
+
     /// Changes the protocol state.
     pub const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;

@@ -8,7 +8,6 @@ use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::event_bus::conversion::protocol_state_to_api;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 
@@ -56,11 +55,9 @@ pub(crate) async fn complete_login(
 
     if let Some(threshold) = io.client.compression_threshold() {
         io.client_codec.notify_compression_change(threshold);
-        io.server_codec.notify_compression_change(threshold);
     }
-    let state = protocol_state_to_api(io.client.state());
-    io.client_codec.notify_state_change(state);
-    io.server_codec.notify_state_change(state);
+    let state = io.client.state();
+    io.entered(state);
     Ok(())
 }
 

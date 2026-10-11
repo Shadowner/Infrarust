@@ -1,13 +1,19 @@
 #![cfg(test)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use infrarust_api::event::ConnectionState as ApiState;
+use infrarust_api::filter::{
+    CodecFilterFactory, CodecFilterInstance, CodecSessionInit, CodecVerdict, ConnectionSide,
+    FilterMetadata, FrameOutput,
+};
+use infrarust_api::types::RawPacket;
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
@@ -139,16 +145,24 @@ pub(crate) fn with_handshake(mut ctx: SessionContext<'_>) -> SessionContext<'_> 
     ctx
 }
 
-pub(crate) fn with_login_start(mut ctx: SessionContext<'_>) -> SessionContext<'_> {
+pub(crate) fn with_login_start(ctx: SessionContext<'_>) -> SessionContext<'_> {
+    with_login_start_at(ctx, V)
+}
+
+pub(crate) fn with_login_start_at(
+    mut ctx: SessionContext<'_>,
+    version: ProtocolVersion,
+) -> SessionContext<'_> {
     let start = SLoginStart {
         name: "TestPlayer".to_string(),
         uuid: Some(uuid::Uuid::nil()),
         profile_key: None,
     };
-    let frame = build_frame(&start, V, &build_default_registry());
+    let frame = build_frame(&start, version, &build_default_registry());
     let mut encoder = PacketEncoder::new();
     encoder.append_raw(frame.id, &frame.payload).unwrap();
-    ctx.handshake.raw_packets = vec![raw_handshake(V, "origin.test"), encoder.take()];
+    ctx.handshake.protocol_version = version;
+    ctx.handshake.raw_packets = vec![raw_handshake(version, "origin.test"), encoder.take()];
     ctx
 }
 
@@ -223,4 +237,72 @@ pub(crate) fn var_int(value: i32) -> Vec<u8> {
 
 pub(crate) fn oversized_payload() -> Bytes {
     Bytes::from(vec![7u8; MAX_PACKET_SIZE + 1024 * 1024])
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Notice {
+    State(ApiState),
+    Compression(i32),
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct Notices(Arc<Mutex<Vec<(ConnectionSide, Notice)>>>);
+
+impl Notices {
+    pub(crate) fn install(services: &ProxyServices) -> Self {
+        let notices = Self::default();
+        services
+            .codec_filter_registry
+            .register_builtin(Box::new(NoticeFactory(notices.clone())))
+            .unwrap();
+        notices
+    }
+
+    pub(crate) fn of(&self, side: ConnectionSide) -> Vec<Notice> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(heard_by, _)| *heard_by == side)
+            .map(|(_, notice)| *notice)
+            .collect()
+    }
+
+    fn push(&self, side: ConnectionSide, notice: Notice) {
+        self.0.lock().unwrap().push((side, notice));
+    }
+}
+
+struct NoticeFactory(Notices);
+
+impl CodecFilterFactory for NoticeFactory {
+    fn metadata(&self) -> FilterMetadata {
+        FilterMetadata::new("notices")
+    }
+
+    fn create(&self, ctx: &CodecSessionInit) -> Box<dyn CodecFilterInstance> {
+        Box::new(NoticeFilter {
+            side: ctx.side,
+            notices: self.0.clone(),
+        })
+    }
+}
+
+struct NoticeFilter {
+    side: ConnectionSide,
+    notices: Notices,
+}
+
+impl CodecFilterInstance for NoticeFilter {
+    fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
+        CodecVerdict::Pass
+    }
+
+    fn on_state_change(&mut self, state: ApiState) {
+        self.notices.push(self.side, Notice::State(state));
+    }
+
+    fn on_compression_change(&mut self, threshold: i32) {
+        self.notices.push(self.side, Notice::Compression(threshold));
+    }
 }

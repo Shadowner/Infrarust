@@ -40,7 +40,6 @@ use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::event_bus::conversion::protocol_state_to_api;
 use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
 use crate::player::commands::CommandOutcome;
 use crate::player::packets::encode_for_state;
@@ -613,9 +612,7 @@ impl Loop<'_> {
                 self.backend.set_state(ConnectionState::Config);
                 self.io.client.reconfiguration_acknowledged();
                 self.state.reconfiguring = false;
-                self.io
-                    .client_codec
-                    .notify_state_change(protocol_state_to_api(ConnectionState::Config));
+                self.io.entered(ConnectionState::Config);
                 tracing::debug!("state transition: Play → Config (AcknowledgeConfiguration)");
                 return Ok(());
             }
@@ -726,9 +723,7 @@ impl Loop<'_> {
                     self.backend.queue_frame(&frame)?;
                     self.io.client.set_state(ConnectionState::Config);
                     self.backend.set_state(ConnectionState::Config);
-                    self.io
-                        .client_codec
-                        .notify_state_change(protocol_state_to_api(ConnectionState::Config));
+                    self.io.entered(ConnectionState::Config);
                     tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
                     return Ok(());
                 }
@@ -742,9 +737,7 @@ impl Loop<'_> {
                     self.io.client.set_state(ConnectionState::Play);
                     self.backend.set_state(ConnectionState::Play);
                     self.state.config_closing = false;
-                    self.io
-                        .client_codec
-                        .notify_state_change(protocol_state_to_api(ConnectionState::Play));
+                    self.io.entered(ConnectionState::Play);
                     tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
                     return Ok(());
                 }
@@ -886,9 +879,12 @@ impl Loop<'_> {
                     self.backend.set_compression(threshold);
                     self.io.client.queue_frame(&frame)?;
                     self.io.client.set_compression(threshold);
+                    if let Some(backend) = self.backend.compression_threshold() {
+                        self.io.server_codec.notify_compression_change(backend);
+                    }
                     match self.io.client.compression_threshold() {
                         Some(effective) => {
-                            self.io.server_codec.notify_compression_change(effective);
+                            self.io.client_codec.notify_compression_change(effective);
                             tracing::debug!(threshold = effective, "compression activated");
                         }
                         None => {
@@ -903,9 +899,7 @@ impl Loop<'_> {
                     if version.less_than(ProtocolVersion::V1_20_2) {
                         self.io.client.set_state(ConnectionState::Play);
                         self.backend.set_state(ConnectionState::Play);
-                        self.io
-                            .server_codec
-                            .notify_state_change(protocol_state_to_api(ConnectionState::Play));
+                        self.io.entered(ConnectionState::Play);
                         tracing::debug!("state transition: Login → Play (pre-1.20.2)");
                     }
                     return Ok(BackendAction::Continue);
@@ -1163,5 +1157,158 @@ impl TabReply {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use tokio::net::TcpListener;
+
+    use infrarust_api::event::ConnectionState as ApiState;
+    use infrarust_api::filter::ConnectionSide;
+    use infrarust_config::ServerConfig;
+    use infrarust_protocol::VarInt;
+    use infrarust_protocol::packets::handshake::SHandshake;
+    use infrarust_protocol::packets::login::SLoginStart;
+
+    use super::*;
+    use crate::limbo::test_helpers::test_proxy_services;
+    use crate::provider::ProviderId;
+    use crate::session::backend_login::{Login, connect_backend};
+    use crate::session::context::test_helpers::{test_connector, test_context, test_io};
+    use crate::session::test_peer::{
+        Notice, Notices, Peer, V, backend_login, backend_success, client_pair, server_config,
+        with_login_start, with_login_start_at,
+    };
+
+    fn origin(services: &ProxyServices, listener: &TcpListener, extra: &str) -> ServerConfig {
+        let config = server_config(listener, extra);
+        services
+            .domain_router
+            .add(ProviderId::file("origin"), config.clone());
+        config
+    }
+
+    async fn relayed(ctx: &SessionContext<'_>, config: &ServerConfig) -> BackendBridge {
+        let addresses = vec![config.addresses[0].address.clone()];
+        connect_backend(ctx, "origin", config, &addresses, Login::Relay)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn every_relayed_transition_reaches_both_codec_chains() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let notices = Notices::install(&services);
+        let config = origin(&services, &listener, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&listener).await;
+            conn.send(&CSetCompression {
+                threshold: VarInt(64),
+            })
+            .await;
+            conn.set_compression(64);
+            conn.send(&backend_success()).await;
+            conn.expect::<SLoginAcknowledged>().await;
+            conn.send(&CFinishConfig).await;
+            conn.expect::<SAcknowledgeFinishConfig>().await;
+            conn.send(&CStartConfiguration).await;
+            conn.expect::<SAcknowledgeConfiguration>().await;
+            conn.send(&CFinishConfig).await;
+            conn.expect::<SAcknowledgeFinishConfig>().await;
+            conn
+        });
+        let client_side = tokio::spawn(async move {
+            let compression = peer.expect::<CSetCompression>().await;
+            peer.set_compression(compression.threshold.0);
+            peer.expect::<CLoginSuccess>().await;
+            peer.send(&SLoginAcknowledged).await;
+            peer.expect::<CFinishConfig>().await;
+            peer.send(&SAcknowledgeFinishConfig).await;
+            peer.expect::<CStartConfiguration>().await;
+            peer.send(&SAcknowledgeConfiguration).await;
+            peer.expect::<CFinishConfig>().await;
+            peer.send(&SAcknowledgeFinishConfig).await;
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let mut join = None;
+        let loop_side = proxy_loop(&ctx, &mut io, &mut backend, &server, &mut join);
+        let (outcome, sent) = tokio::join!(loop_side, client_side);
+        sent.unwrap();
+        let _conn = backend_side.await.unwrap();
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::ClientDisconnected),
+            "{outcome:?}"
+        );
+        let expected = [
+            Notice::Compression(64),
+            Notice::State(ApiState::Configuration),
+            Notice::State(ApiState::Play),
+            Notice::State(ApiState::Configuration),
+            Notice::State(ApiState::Play),
+        ];
+        assert_eq!(notices.of(ConnectionSide::ClientSide), expected);
+        assert_eq!(notices.of(ConnectionSide::ServerSide), expected);
+    }
+
+    #[tokio::test]
+    async fn a_relayed_login_before_1_20_2_tells_both_chains_it_entered_play() {
+        const OLD: ProtocolVersion = ProtocolVersion::V1_20;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let notices = Notices::install(&services);
+        let config = origin(&services, &listener, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start_at(test_context(&services, &connector, player), OLD);
+        let (client, mut peer) = client_pair(OLD).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let mut conn = Peer::accept(&listener, OLD).await;
+            conn.expect::<SHandshake>().await;
+            conn.expect::<SLoginStart>().await;
+            conn.send(&CSetCompression {
+                threshold: VarInt(64),
+            })
+            .await;
+            conn.set_compression(64);
+            conn.send(&backend_success()).await;
+            conn.next().await
+        });
+        let client_side = tokio::spawn(async move {
+            let compression = peer.expect::<CSetCompression>().await;
+            peer.set_compression(compression.threshold.0);
+            peer.expect::<CLoginSuccess>().await;
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let mut join = None;
+        let loop_side = proxy_loop(&ctx, &mut io, &mut backend, &server, &mut join);
+        let (outcome, received) = tokio::join!(loop_side, client_side);
+        received.unwrap();
+        drop(backend);
+        assert!(backend_side.await.unwrap().is_none());
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::ClientDisconnected),
+            "{outcome:?}"
+        );
+        let expected = [Notice::Compression(64), Notice::State(ApiState::Play)];
+        assert_eq!(notices.of(ConnectionSide::ClientSide), expected);
+        assert_eq!(notices.of(ConnectionSide::ServerSide), expected);
     }
 }

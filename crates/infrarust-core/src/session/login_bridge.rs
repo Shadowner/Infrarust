@@ -55,6 +55,9 @@ pub(crate) async fn bridge_login(
         );
     }
     acknowledge_login(ctx, backend).await?;
+    if let Some(threshold) = backend.compression_threshold() {
+        io.server_codec.notify_compression_change(threshold);
+    }
     complete_login(ctx, io).await.map_err(client_gone)
 }
 
@@ -298,7 +301,10 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
 
+    use infrarust_api::event::ConnectionState as ApiState;
+    use infrarust_api::filter::ConnectionSide;
     use infrarust_api::types::ServerId;
+    use infrarust_protocol::packets::config::{CFinishConfig, SAcknowledgeFinishConfig};
     use infrarust_protocol::packets::login::SLoginAcknowledged;
     use infrarust_protocol::{ProtocolError, VarInt};
 
@@ -310,9 +316,9 @@ mod tests {
     use crate::session::context::test_helpers::{test_connector, test_context, test_io};
     use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
     use crate::session::test_peer::{
-        V, backend_login, backend_success, client_pair, finish_backend_login, finish_client_login,
-        oversized_payload, plugin_request, plugin_response, server_config, var_int,
-        velocity_services, with_handshake,
+        Notice, Notices, V, backend_login, backend_success, client_pair, finish_backend_login,
+        finish_client_login, oversized_payload, plugin_request, plugin_response, server_config,
+        var_int, velocity_services, with_handshake,
     };
 
     async fn bridge(
@@ -618,6 +624,66 @@ mod tests {
         bridge(&ctx, &mut io, &config).await.unwrap();
         let _conn = backend_side.await.unwrap();
         let _peer = client_side.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn each_codec_chain_hears_its_own_threshold_and_every_state() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "");
+        let services = test_proxy_services();
+        let notices = Notices::install(&services);
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&CSetCompression {
+                threshold: VarInt(64),
+            })
+            .await;
+            conn.set_compression(64);
+            finish_backend_login(&mut conn).await;
+            conn.send(&CFinishConfig).await;
+            conn.expect::<SAcknowledgeFinishConfig>().await;
+            conn
+        });
+        let client_side = tokio::spawn(async move {
+            finish_client_login(&mut peer).await;
+            peer.expect::<CFinishConfig>().await;
+            peer.send(&SAcknowledgeFinishConfig).await;
+        });
+
+        let mut backend_bridge = bridge(&ctx, &mut io, &config).await.unwrap();
+        let server = ServerId::new("origin");
+        let mut join = None;
+        let loop_side = proxy_loop(&ctx, &mut io, &mut backend_bridge, &server, &mut join);
+        let (outcome, sent) = tokio::join!(loop_side, client_side);
+        sent.unwrap();
+        let _conn = backend_side.await.unwrap();
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::ClientDisconnected),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            notices.of(ConnectionSide::ClientSide),
+            [
+                Notice::Compression(256),
+                Notice::State(ApiState::Configuration),
+                Notice::State(ApiState::Play),
+            ]
+        );
+        assert_eq!(
+            notices.of(ConnectionSide::ServerSide),
+            [
+                Notice::Compression(64),
+                Notice::State(ApiState::Configuration),
+                Notice::State(ApiState::Play),
+            ]
+        );
     }
 
     async fn oversized_backend(backend: TcpListener) {

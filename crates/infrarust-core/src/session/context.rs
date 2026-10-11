@@ -4,10 +4,11 @@ use std::sync::Arc;
 use infrarust_api::player::Player;
 use infrarust_api::types::{GameProfile, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
-use infrarust_protocol::version::ProtocolVersion;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::{BackendConnector, ConnectionInfo};
 use tokio_util::sync::CancellationToken;
 
+use crate::event_bus::conversion::protocol_state_to_api;
 use crate::filter::codec_chain::CodecFilterChain;
 use crate::forwarding::ForwardingData;
 use crate::pipeline::types::HandshakeData;
@@ -90,6 +91,12 @@ impl SessionIo {
     pub(crate) fn close(&mut self) {
         self.client_codec.close();
         self.server_codec.close();
+    }
+
+    pub(crate) fn entered(&mut self, state: ConnectionState) {
+        let state = protocol_state_to_api(state);
+        self.client_codec.notify_state_change(state);
+        self.server_codec.notify_state_change(state);
     }
 }
 
