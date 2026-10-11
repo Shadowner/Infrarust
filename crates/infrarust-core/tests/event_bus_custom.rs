@@ -10,6 +10,7 @@ use infrarust_api::event::bus::{EventBus, EventBusExt, FireError};
 use infrarust_api::event::{Event, EventPriority};
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::claim::{LoginClaimEvent, RawConnectionEvent};
 use infrarust_api::events::client::{
     PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
 };
@@ -24,7 +25,9 @@ use infrarust_api::events::lifecycle::{
     PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
-use infrarust_api::events::messaging::PluginMessageEvent;
+use infrarust_api::events::messaging::{
+    LoginPluginRequestEvent, LoginPluginResponseEvent, PluginMessageEvent,
+};
 use infrarust_api::events::named::{NamedEvent, NamedEventResponse};
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::plugin::{
@@ -234,8 +237,18 @@ async fn a_failing_handler_names_the_plugin_that_fired_the_event() {
 
 type Probe = (&'static str, fn() -> TypeId);
 
-const BUILTIN_NAMES: [Probe; 36] = [
+const BUILTIN_NAMES: [Probe; 40] = [
     ("PreLoginEvent", TypeId::of::<PreLoginEvent>),
+    ("RawConnectionEvent", TypeId::of::<RawConnectionEvent>),
+    ("LoginClaimEvent", TypeId::of::<LoginClaimEvent>),
+    (
+        "LoginPluginRequestEvent",
+        TypeId::of::<LoginPluginRequestEvent>,
+    ),
+    (
+        "LoginPluginResponseEvent",
+        TypeId::of::<LoginPluginResponseEvent>,
+    ),
     (
         "GameProfileRequestEvent",
         TypeId::of::<GameProfileRequestEvent>,

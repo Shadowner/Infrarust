@@ -247,6 +247,7 @@ impl ProxyServer {
             transport_filter_registry: Arc::new(
                 crate::filter::transport_registry::TransportFilterRegistryImpl::new(),
             ),
+            connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
             limbo_handler_registry,
             registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
                 Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
@@ -282,6 +283,11 @@ impl ProxyServer {
             )
             .with_pending(Arc::clone(&pending_backends)),
         ));
+
+        let handoff =
+            crate::handoff::HandoffRelay::new(services.clone(), Arc::clone(&backend_connector));
+        #[cfg(feature = "telemetry")]
+        let handoff = handoff.with_metrics(Arc::clone(&proxy_metrics));
 
         let legacy_handler = LegacyHandler::new(
             services.clone(),
@@ -319,6 +325,7 @@ impl ProxyServer {
             passthrough_handler,
             offline_handler,
             client_only_handler,
+            handoff,
             services,
             backend_health,
             unknown_domain_behavior: config.unknown_domain_behavior,

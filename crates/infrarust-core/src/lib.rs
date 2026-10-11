@@ -13,6 +13,7 @@ pub mod event_bus;
 pub mod filter;
 pub mod forwarding;
 pub mod handler;
+pub mod handoff;
 pub(crate) mod limbo;
 pub mod loadbalancer;
 pub mod middleware;

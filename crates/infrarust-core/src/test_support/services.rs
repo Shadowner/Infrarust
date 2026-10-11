@@ -39,6 +39,7 @@ impl PluginServices {
             plugin_registry: Arc::new(PluginRegistryImpl::new()),
             codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
             transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
+            connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
             provider_activator: Arc::new(PluginProviderActivator::new(
                 provider_events,
                 Arc::new(DomainRouter::new()),
