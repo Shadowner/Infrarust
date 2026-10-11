@@ -10,9 +10,12 @@ pub(crate) mod context;
 pub(crate) mod frame_chain;
 pub(crate) mod initial_connect;
 pub mod kick;
+pub(crate) mod login_bridge;
 pub(crate) mod presentation;
 pub(crate) mod proxy_loop;
 pub(crate) mod server_join;
 pub(crate) mod server_switch;
 pub(crate) mod session_loop;
+#[cfg(test)]
+pub(crate) mod test_peer;
 pub(crate) mod wake;

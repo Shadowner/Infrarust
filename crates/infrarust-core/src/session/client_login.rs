@@ -1,19 +1,34 @@
 use std::sync::OnceLock;
 
-use infrarust_api::types::GameProfile;
-use infrarust_protocol::packets::login::{CLoginSuccess, Property, SLoginAcknowledged};
+use infrarust_protocol::VarInt;
+use infrarust_protocol::packets::login::{
+    CLoginSuccess, CSetCompression, Property, SLoginAcknowledged,
+};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::event_bus::conversion::protocol_state_to_api;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 
 pub(crate) async fn complete_login(
-    client: &mut ClientBridge,
-    profile: &GameProfile,
-    version: ProtocolVersion,
-    registry: &PacketRegistry,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
 ) -> Result<(), CoreError> {
+    let version = ctx.version();
+    let registry = ctx.registry();
+    let client = &mut io.client;
+
+    enable_compression(
+        client,
+        ctx.services.config.compression_threshold,
+        version,
+        registry,
+    )
+    .await?;
+
+    let profile = ctx.profile();
     let properties: Vec<Property> = profile
         .properties
         .iter()
@@ -34,11 +49,37 @@ pub(crate) async fn complete_login(
     .await?;
 
     if version.no_less_than(ProtocolVersion::V1_20_2) {
-        consume_login_acknowledged(client, version, registry).await
+        consume_login_acknowledged(client, version, registry).await?;
     } else {
         client.set_state(ConnectionState::Play);
-        Ok(())
     }
+
+    if let Some(threshold) = io.client.compression_threshold() {
+        io.client_codec.notify_compression_change(threshold);
+        io.server_codec.notify_compression_change(threshold);
+    }
+    let state = protocol_state_to_api(io.client.state());
+    io.client_codec.notify_state_change(state);
+    io.server_codec.notify_state_change(state);
+    Ok(())
+}
+
+async fn enable_compression(
+    client: &mut ClientBridge,
+    threshold: i32,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    if threshold < 0 || version.less_than(ProtocolVersion::V1_8) {
+        return Ok(());
+    }
+    let packet = CSetCompression {
+        threshold: VarInt(threshold),
+    };
+    client.send_packet(&packet, registry).await?;
+    client.set_compression(threshold);
+    tracing::debug!(threshold, "client compression activated");
+    Ok(())
 }
 
 async fn send_login_success(
