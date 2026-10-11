@@ -21,6 +21,9 @@ permissions:
   contents: read
   packages: write
 
+env:
+  DOCKERHUB_IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/infrarust
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
@@ -35,14 +38,14 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             arch: arm64
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
 
       - name: Set image name
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.4.1
@@ -53,22 +56,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Determine tags
-        id: determine-tags
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAGS="${{ github.event.inputs.tag }}"
-          elif [ "${{ github.event_name }}" = "workflow_call" ]; then
-            TAGS="${{ inputs.tag }}"
-          elif [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-            TAGS="${VERSION},latest"
-          else
-            TAGS="latest"
-          fi
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-      
+
+      - uses: docker/login-action@v4.6.0
+        name: Login to Docker Hub
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7.4.0
@@ -78,16 +72,20 @@ jobs:
           build-args: |
             RUST_VERSION=1.99.0
             ALPINE_VERSION=3.24
-          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          tags: |
+            ${{ steps.image.outputs.name }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=build-${{ matrix.arch }}
           cache-to: type=gha,scope=build-${{ matrix.arch }},mode=max
-      
+
       - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-      
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
       - name: Upload digest
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -100,7 +98,7 @@ jobs:
     name: Create multi-arch manifest
     runs-on: ubuntu-latest
     needs: [build]
-    
+
     steps:
       - name: Download digests
         uses: actions/download-artifact@v8.0.1
@@ -108,10 +106,10 @@ jobs:
           path: /tmp/digests
           pattern: digests-*
           merge-multiple: true
-      
+
       - name: Set image name
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.4.1
@@ -123,35 +121,52 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: docker/login-action@v4.6.0
+        name: Login to Docker Hub
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Determine tags
         id: determine-tags
+        env:
+          REQUESTED_TAGS: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAGS="${{ github.event.inputs.tag }}"
-          elif [ "${{ github.event_name }}" = "workflow_call" ]; then
-            TAGS="${{ inputs.tag }}"
-          elif [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-            TAGS="${VERSION},latest"
+          if [ -n "$REQUESTED_TAGS" ]; then
+            TAGS="$REQUESTED_TAGS"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            TAGS="${GITHUB_REF#refs/tags/v},latest"
           else
             TAGS="latest"
           fi
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
-      
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        env:
+          TAGS: ${{ steps.determine-tags.outputs.tags }}
+          GHCR_IMAGE: ${{ steps.image.outputs.name }}
         run: |
-          TAGS="${{ steps.determine-tags.outputs.tags }}"
           IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
-          TAG_FLAGS=""
+          TAG_FLAGS=()
           for tag in "${TAG_ARRAY[@]}"; do
-            TAG_FLAGS="$TAG_FLAGS -t ${{ steps.image.outputs.name }}:$tag"
+            tag="${tag//[[:space:]]/}"
+            [ -n "$tag" ] || continue
+            TAG_FLAGS+=(-t "$GHCR_IMAGE:$tag" -t "$DOCKERHUB_IMAGE:$tag")
           done
-          docker buildx imagetools create $TAG_FLAGS \
-            $(printf '${{ steps.image.outputs.name }}@sha256:%s ' *)
-      
+          SOURCES=()
+          for digest in *; do
+            SOURCES+=("$GHCR_IMAGE@sha256:$digest")
+          done
+          docker buildx imagetools create "${TAG_FLAGS[@]}" "${SOURCES[@]}"
+
       - name: Inspect image
+        env:
+          TAGS: ${{ steps.determine-tags.outputs.tags }}
+          GHCR_IMAGE: ${{ steps.image.outputs.name }}
         run: |
-          TAGS="${{ steps.determine-tags.outputs.tags }}"
-          FIRST_TAG=$(echo "$TAGS" | cut -d',' -f1)
-          docker buildx imagetools inspect ${{ steps.image.outputs.name }}:$FIRST_TAG
+          FIRST_TAG="${TAGS%%,*}"
+          FIRST_TAG="${FIRST_TAG//[[:space:]]/}"
+          docker buildx imagetools inspect "$GHCR_IMAGE:$FIRST_TAG"
+          docker buildx imagetools inspect "$DOCKERHUB_IMAGE:$FIRST_TAG"

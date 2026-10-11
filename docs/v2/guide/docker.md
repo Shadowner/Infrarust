@@ -5,7 +5,16 @@ description: Run Infrarust in Docker with volume mounts, exposed ports, environm
 
 # Docker Deployment
 
-Infrarust ships a minimal Docker image built from `scratch`. The image contains a statically linked binary, CA certificates, and nothing else. It supports x86_64, aarch64, and armv7.
+Infrarust ships a minimal Docker image built from `scratch`. The image contains a statically linked binary, CA certificates, and nothing else. The published image supports x86_64 and aarch64; the `Dockerfile` also builds for armv7 when you [build the image yourself](#building-the-image-yourself).
+
+The same image is published to two registries, with the same tags:
+
+| Registry | Image |
+|----------|-------|
+| GitHub Container Registry | `ghcr.io/shadowner/infrarust` |
+| Docker Hub | `shadowner/infrarust` |
+
+Each release is tagged with its version (for example `2.0.0`) and with `latest`. The examples below use the GitHub image; the Docker Hub one works the same.
 
 ## Exposed ports
 
