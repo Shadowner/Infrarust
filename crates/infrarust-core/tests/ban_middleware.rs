@@ -18,7 +18,9 @@ use infrarust_core::middleware::ban_check::BanCheckMiddleware;
 use infrarust_core::middleware::ban_ip_check::BanIpCheckMiddleware;
 use infrarust_core::pipeline::context::ConnectionContext;
 use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
-use infrarust_core::pipeline::types::{ConnectionIntent, HandshakeData, LoginData};
+use infrarust_core::pipeline::types::{
+    ConnectionIntent, HandshakeData, LoginData, LoginStartLayout,
+};
 use infrarust_core::registry::ConnectionRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
@@ -55,6 +57,8 @@ async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContex
         username: username.to_string(),
         player_uuid: None,
         profile_key: None,
+        raw_payload: bytes::Bytes::new(),
+        layout: LoginStartLayout::Declared,
     });
     ctx
 }

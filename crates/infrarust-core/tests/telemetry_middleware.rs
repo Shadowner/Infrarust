@@ -8,7 +8,9 @@ use infrarust_config::ProxyMode;
 use infrarust_core::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
 use infrarust_core::pipeline::context::ConnectionContext;
 use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
-use infrarust_core::pipeline::types::{ConnectionIntent, HandshakeData, LoginData, RoutingData};
+use infrarust_core::pipeline::types::{
+    ConnectionIntent, HandshakeData, LoginData, LoginStartLayout, RoutingData,
+};
 use infrarust_protocol::version::ProtocolVersion;
 
 /// Helper to create a minimal `ServerConfig` for tests.
@@ -108,6 +110,8 @@ async fn test_middleware_extracts_login_data() {
         username: "Notch".to_string(),
         player_uuid: None,
         profile_key: None,
+        raw_payload: bytes::Bytes::new(),
+        layout: LoginStartLayout::Declared,
     });
 
     ctx.extensions.insert(RoutingData {

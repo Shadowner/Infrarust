@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use infrarust_config::ServerConfig;
 use infrarust_protocol::ProtocolVersion;
 use infrarust_protocol::packets::ProfileKey;
@@ -65,6 +65,14 @@ pub struct LoginData {
     /// Player UUID (present in 1.20.2+).
     pub player_uuid: Option<Uuid>,
     pub profile_key: Option<ProfileKey>,
+    pub raw_payload: Bytes,
+    pub layout: LoginStartLayout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginStartLayout {
+    Declared,
+    Mismatched,
 }
 
 /// Marker type inserted into extensions when a legacy ping is detected (first byte 0xFE).
