@@ -18,6 +18,7 @@ use infrarust_api::types::GameProfile;
 use infrarust_core::ban::BanManager;
 use infrarust_core::event_bus::{EventBusConfig, EventBusImpl};
 use infrarust_core::filter::codec_registry::CodecFilterRegistryImpl;
+use infrarust_core::handoff::ConnectionClaims;
 use infrarust_core::permissions::PermissionService;
 use infrarust_core::plugin::manager::PluginServices;
 use infrarust_core::plugin::{PluginContextFactoryImpl, PluginPermissions};
@@ -29,6 +30,7 @@ pub struct TestEnv {
     pub event_bus: Arc<EventBusImpl>,
     pub command_manager: Arc<CommandManagerImpl>,
     pub codec_registry: Arc<CodecFilterRegistryImpl>,
+    pub connection_claims: Arc<ConnectionClaims>,
 }
 
 pub struct EnvOptions {
@@ -92,6 +94,7 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
         plugins_dir,
         ..PluginServices::for_tests_with(Arc::clone(&event_bus))
     };
+    let connection_claims = Arc::clone(&services.connection_claims);
     let mut factory = PluginContextFactoryImpl::new(services, options.grants);
     if let Some(bans) = options.ban_manager {
         factory = factory.with_ban_manager(bans);
@@ -104,6 +107,7 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
         event_bus,
         command_manager,
         codec_registry,
+        connection_claims,
     }
 }
 

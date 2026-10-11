@@ -12,7 +12,7 @@ wit_bindgen::generate!({
 
 pub use exports::infrarust::plugin::{codec_filter, guest};
 pub use infrarust::plugin::{
-    ban_service, codec_registry, command_manager, config_service, event_bus, events, limbo,
-    load_balancer, log, messaging, permission_nodes, permissions, players, plugin_registry,
-    providers, proxy_info, scheduler, server_manager, text, types,
+    ban_service, codec_registry, command_manager, config_service, connection_claims, event_bus,
+    events, limbo, load_balancer, log, messaging, permission_nodes, permissions, players,
+    plugin_registry, providers, proxy_info, scheduler, server_manager, text, types,
 };

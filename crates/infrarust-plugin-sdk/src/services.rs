@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
 use crate::bindings::{
-    ban_service as wb, config_service as wc, load_balancer as wl, messaging as wm,
-    plugin_registry as wr, proxy_info as wi, server_manager as ws,
+    ban_service as wb, config_service as wc, connection_claims as wcc, load_balancer as wl,
+    messaging as wm, plugin_registry as wr, proxy_info as wi, server_manager as ws,
 };
 use crate::error::Error;
 use crate::event::BackendState;
@@ -350,6 +350,18 @@ impl LoadBalancer {
 
     pub fn reset_backend(server: &ServerId, address: &ServerAddress) -> Result<(), Error> {
         Ok(wl::reset_backend(server.as_str(), &address.to_wit())?)
+    }
+}
+
+pub struct ConnectionClaims;
+
+impl ConnectionClaims {
+    pub fn register_prefix(prefix: &[u8]) -> Result<(), Error> {
+        Ok(wcc::register_prefix(prefix)?)
+    }
+
+    pub fn unregister_prefix(prefix: &[u8]) -> Result<(), Error> {
+        Ok(wcc::unregister_prefix(prefix)?)
     }
 }
 

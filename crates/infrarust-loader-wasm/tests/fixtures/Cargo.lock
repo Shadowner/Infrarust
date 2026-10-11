@@ -29,6 +29,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture-claim-probe"
+version = "0.0.0"
+dependencies = [
+ "infrarust-plugin-sdk",
+]
+
+[[package]]
 name = "fixture-codec-modify"
 version = "0.0.0"
 dependencies = [

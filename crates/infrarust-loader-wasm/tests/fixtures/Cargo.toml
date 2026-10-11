@@ -33,6 +33,7 @@ members = [
     "sem-probe",
     "wrong-outcome",
     "doc-hello",
+    "claim-probe",
 ]
 
 [workspace.dependencies]

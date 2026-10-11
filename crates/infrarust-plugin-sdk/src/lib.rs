@@ -34,6 +34,7 @@ pub mod component;
 pub mod context;
 pub mod error;
 pub mod event;
+pub mod handoff;
 mod host;
 pub mod limbo;
 pub mod log;
@@ -74,6 +75,7 @@ macro_rules! reexports {
             EventPriority, GuestEvent, NamedEvent, NamedOutcome, NamedResponse, PacketFilter,
             ResultCell,
         };
+        pub use crate::handoff::{Handoff, HandoffTarget};
         pub use crate::limbo::{
             EntryContext, HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession,
             SessionEndReason, SessionHandle, TimeoutOutcome,
@@ -88,10 +90,10 @@ macro_rules! reexports {
         };
         pub use crate::plugin::{Plugin, PluginDependency, PluginMetadata};
         pub use crate::services::{
-            BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config, KeepaliveInfo,
-            LoadBalancer, Messaging, PluginHealth, PluginInfo, Plugins, Proxy, ProxyDetails,
-            RateLimitInfo, ServerConfig, ServerSource, ServerStatus, Servers, StatusCacheInfo,
-            UnknownDomainBehavior,
+            BackendStatus, BanEntry, BanPage, BanRequest, BanTarget, Bans, Config,
+            ConnectionClaims, KeepaliveInfo, LoadBalancer, Messaging, PluginHealth, PluginInfo,
+            Plugins, Proxy, ProxyDetails, RateLimitInfo, ServerConfig, ServerSource, ServerStatus,
+            Servers, StatusCacheInfo, UnknownDomainBehavior,
         };
         pub use crate::types::{
             Capability, ChannelId, ChatMode, ClientSettings, GameProfile, MainHand,

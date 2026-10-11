@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use super::ResultCell;
 use crate::bindings::events as we;
 use crate::component::{Component, from_host};
+use crate::handoff::Handoff;
 use crate::types::{FromWit, ServerId, socket_from_wit};
 
 pub use infrarust_plugin_common::enums::HandshakeIntent;
@@ -13,6 +14,7 @@ pub enum ConnectionHandshakeResult {
     Allow,
     Deny(Option<Component>),
     DropSilently,
+    Handoff(Handoff),
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,10 @@ impl ConnectionHandshakeEvent {
     pub fn drop_silently(&mut self) {
         self.set_result(ConnectionHandshakeResult::DropSilently);
     }
+
+    pub fn handoff(&mut self, handoff: Handoff) {
+        self.set_result(ConnectionHandshakeResult::Handoff(handoff));
+    }
 }
 
 guest_event!(
@@ -76,6 +82,9 @@ guest_event!(
             we::ConnectionHandshakeResult::DropSilently => {
                 ConnectionHandshakeResult::DropSilently
             }
+            we::ConnectionHandshakeResult::Handoff(handoff) => {
+                ConnectionHandshakeResult::Handoff(Handoff::from_wit(handoff))
+            }
         }),
     },
     result,
@@ -85,6 +94,9 @@ guest_event!(
             we::ConnectionHandshakeResult::Deny(reason.as_ref().map(Component::to_arena),),
         ConnectionHandshakeResult::DropSilently => {
             we::ConnectionHandshakeResult::DropSilently
+        }
+        ConnectionHandshakeResult::Handoff(handoff) => {
+            we::ConnectionHandshakeResult::Handoff(handoff.to_wit())
         }
     }
 );
@@ -155,6 +167,40 @@ mod tests {
         assert_eq!(
             event.into_outcome(),
             EventOutcome::ConnectionHandshake(we::ConnectionHandshakeResult::DropSilently)
+        );
+    }
+
+    #[test]
+    fn a_handshake_handoff_becomes_the_outcome() {
+        let mut event = ConnectionHandshakeEvent::from_event(Event::ConnectionHandshake(
+            we::ConnectionHandshakeEvent {
+                remote_addr: wt::SocketAddress {
+                    ip: wt::IpAddress::Ipv4((203, 0, 113, 7)),
+                    port: 50_000,
+                },
+                virtual_host: Some("modded.test".into()),
+                raw_host: "modded.test".into(),
+                port: 25565,
+                protocol: 767,
+                intent: we::HandshakeIntent::Status,
+                legacy: false,
+                server: Some("modded".into()),
+                result: we::ConnectionHandshakeResult::Allow,
+            },
+        ))
+        .unwrap();
+        event.handoff(Handoff::to(crate::handoff::HandoffTarget::server("modded")));
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::ConnectionHandshake(we::ConnectionHandshakeResult::Handoff(
+                we::Handoff {
+                    target: we::HandoffTarget::Server("modded".into()),
+                    replay: true,
+                    prefix: Vec::new(),
+                    reply: Vec::new(),
+                    proxy_protocol: None,
+                }
+            ))
         );
     }
 }

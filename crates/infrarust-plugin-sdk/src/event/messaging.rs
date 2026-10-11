@@ -89,6 +89,150 @@ guest_event!(
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LoginPluginRequestResult {
+    Forward,
+    Replace(Vec<u8>),
+    Respond(Option<Vec<u8>>),
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct LoginPluginRequestEvent {
+    pub player: PlayerRef,
+    pub server: ServerId,
+    pub message_id: i32,
+    pub channel: String,
+    pub data: Vec<u8>,
+    pub client_reachable: bool,
+    result: ResultCell<LoginPluginRequestResult>,
+}
+
+impl LoginPluginRequestEvent {
+    #[must_use]
+    pub const fn result(&self) -> &LoginPluginRequestResult {
+        self.result.get()
+    }
+
+    pub fn set_result(&mut self, result: LoginPluginRequestResult) {
+        self.result.set(result);
+    }
+
+    pub fn forward(&mut self) {
+        self.set_result(LoginPluginRequestResult::Forward);
+    }
+
+    pub fn replace(&mut self, data: impl Into<Vec<u8>>) {
+        self.set_result(LoginPluginRequestResult::Replace(data.into()));
+    }
+
+    pub fn respond(&mut self, data: impl Into<Vec<u8>>) {
+        self.set_result(LoginPluginRequestResult::Respond(Some(data.into())));
+    }
+
+    pub fn respond_not_understood(&mut self) {
+        self.set_result(LoginPluginRequestResult::Respond(None));
+    }
+}
+
+guest_event!(
+    LoginPluginRequestEvent,
+    LoginPluginRequest,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        server: ServerId::from(e.server),
+        message_id: e.message_id,
+        channel: e.channel,
+        data: e.data,
+        client_reachable: e.client_reachable,
+        result: ResultCell::new(match e.result {
+            we::LoginPluginRequestResult::Forward => LoginPluginRequestResult::Forward,
+            we::LoginPluginRequestResult::Replace(data) => LoginPluginRequestResult::Replace(data),
+            we::LoginPluginRequestResult::Respond(data) => LoginPluginRequestResult::Respond(data),
+        }),
+    },
+    result,
+    |r| match r {
+        LoginPluginRequestResult::Forward => we::LoginPluginRequestResult::Forward,
+        LoginPluginRequestResult::Replace(data) => we::LoginPluginRequestResult::Replace(data),
+        LoginPluginRequestResult::Respond(data) => we::LoginPluginRequestResult::Respond(data),
+    }
+);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LoginPluginResponseResult {
+    Forward,
+    Replace { successful: bool, data: Vec<u8> },
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct LoginPluginResponseEvent {
+    pub player: PlayerRef,
+    pub server: ServerId,
+    pub message_id: i32,
+    pub channel: String,
+    pub successful: bool,
+    pub data: Vec<u8>,
+    result: ResultCell<LoginPluginResponseResult>,
+}
+
+impl LoginPluginResponseEvent {
+    #[must_use]
+    pub const fn result(&self) -> &LoginPluginResponseResult {
+        self.result.get()
+    }
+
+    pub fn set_result(&mut self, result: LoginPluginResponseResult) {
+        self.result.set(result);
+    }
+
+    pub fn forward(&mut self) {
+        self.set_result(LoginPluginResponseResult::Forward);
+    }
+
+    pub fn replace(&mut self, successful: bool, data: impl Into<Vec<u8>>) {
+        self.set_result(LoginPluginResponseResult::Replace {
+            successful,
+            data: data.into(),
+        });
+    }
+}
+
+guest_event!(
+    LoginPluginResponseEvent,
+    LoginPluginResponse,
+    |e| Self {
+        player: PlayerRef::from_wit(e.player),
+        server: ServerId::from(e.server),
+        message_id: e.message_id,
+        channel: e.channel,
+        successful: e.successful,
+        data: e.data,
+        result: ResultCell::new(match e.result {
+            we::LoginPluginResponseResult::Forward => LoginPluginResponseResult::Forward,
+            we::LoginPluginResponseResult::Replace(replacement) => {
+                LoginPluginResponseResult::Replace {
+                    successful: replacement.successful,
+                    data: replacement.data,
+                }
+            }
+        }),
+    },
+    result,
+    |r| match r {
+        LoginPluginResponseResult::Forward => we::LoginPluginResponseResult::Forward,
+        LoginPluginResponseResult::Replace { successful, data } => {
+            we::LoginPluginResponseResult::Replace(we::LoginPluginResponseReplacement {
+                successful,
+                data,
+            })
+        }
+    }
+);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedResponse {
     pub content_type: String,
     pub payload: Vec<u8>,
@@ -217,6 +361,100 @@ mod tests {
             result,
         }))
         .unwrap()
+    }
+
+    fn steve() -> crate::bindings::types::PlayerRef {
+        crate::bindings::types::PlayerRef {
+            id: 7,
+            uuid: crate::bindings::types::Uuid { hi: 0, lo: 7 },
+            username: "Steve".into(),
+        }
+    }
+
+    fn request(result: we::LoginPluginRequestResult) -> LoginPluginRequestEvent {
+        LoginPluginRequestEvent::from_event(Event::LoginPluginRequest(
+            we::LoginPluginRequestEvent {
+                player: steve(),
+                server: "modded".into(),
+                message_id: 4,
+                channel: "automodpack:handshake".into(),
+                data: b"\x01".to_vec(),
+                client_reachable: true,
+                result,
+            },
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_login_plugin_request_answers_with_each_helper() {
+        let event = request(we::LoginPluginRequestResult::Forward);
+        assert_eq!(event.player.username, "Steve");
+        assert_eq!(event.server, ServerId::new("modded"));
+        assert_eq!(event.message_id, 4);
+        assert!(event.client_reachable);
+        assert_eq!(event.into_outcome(), EventOutcome::Unchanged);
+
+        let mut event = request(we::LoginPluginRequestResult::Forward);
+        event.respond(b"ok".to_vec());
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::LoginPluginRequest(we::LoginPluginRequestResult::Respond(Some(
+                b"ok".to_vec()
+            )))
+        );
+
+        let mut event = request(we::LoginPluginRequestResult::Forward);
+        event.respond_not_understood();
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::LoginPluginRequest(we::LoginPluginRequestResult::Respond(None))
+        );
+
+        let mut event = request(we::LoginPluginRequestResult::Respond(None));
+        assert_eq!(event.result(), &LoginPluginRequestResult::Respond(None));
+        event.replace(b"new".to_vec());
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::LoginPluginRequest(we::LoginPluginRequestResult::Replace(
+                b"new".to_vec()
+            ))
+        );
+
+        let mut event = request(we::LoginPluginRequestResult::Replace(b"x".to_vec()));
+        event.forward();
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::LoginPluginRequest(we::LoginPluginRequestResult::Forward)
+        );
+    }
+
+    #[test]
+    fn a_login_plugin_response_can_be_replaced() {
+        let mut event = LoginPluginResponseEvent::from_event(Event::LoginPluginResponse(
+            we::LoginPluginResponseEvent {
+                player: steve(),
+                server: "modded".into(),
+                message_id: 4,
+                channel: "automodpack:handshake".into(),
+                successful: true,
+                data: b"\x02".to_vec(),
+                result: we::LoginPluginResponseResult::Forward,
+            },
+        ))
+        .unwrap();
+        assert!(event.successful);
+        assert_eq!(event.channel, "automodpack:handshake");
+        event.replace(false, Vec::new());
+        assert_eq!(
+            event.into_outcome(),
+            EventOutcome::LoginPluginResponse(we::LoginPluginResponseResult::Replace(
+                we::LoginPluginResponseReplacement {
+                    successful: false,
+                    data: Vec::new(),
+                }
+            ))
+        );
     }
 
     #[test]
