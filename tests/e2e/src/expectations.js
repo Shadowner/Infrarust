@@ -1,3 +1,7 @@
+import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
+
+const COMPRESSION_MIN_PROTOCOL = 47;
+
 export const KNOWN_FINDINGS = [
   {
     id: 'full-mode-is-refused-at-validation',
@@ -93,6 +97,33 @@ const CHECKS = {
       detail: props.includes('bungeeguard-token') ? 'bungeeguard-token present' : 'no bungeeguard-token property',
     };
   },
+
+  clientCompression: ({ client, protocol }, source) => {
+    const login = client.loginPackets ?? [];
+    const sequence = login.join('>') || 'nothing';
+    if (protocol < COMPRESSION_MIN_PROTOCOL) {
+      return {
+        ok: client.setCompression == null,
+        skipped: true,
+        detail: client.setCompression == null ? 'no compression before 1.8' : `SetCompression(${client.setCompression}) sent to a pre-1.8 client`,
+      };
+    }
+    const expected = source === 'proxy' ? COMPRESSION_THRESHOLD : BACKEND_COMPRESSION_THRESHOLD;
+    const compressions = login.filter((name) => name === 'compress').length;
+    const problems = [];
+    if (compressions === 0) problems.push('no SetCompression during login');
+    if (compressions > 1) problems.push(`${compressions} SetCompression packets`);
+    if (compressions && login.includes('success') && login.indexOf('compress') > login.indexOf('success')) {
+      problems.push('SetCompression after LoginSuccess');
+    }
+    if (compressions && client.setCompression !== expected) {
+      problems.push(`threshold ${client.setCompression}, expected the ${source}'s ${expected}`);
+    }
+    return {
+      ok: problems.length === 0,
+      detail: problems.length ? `${problems.join('; ')} (login: ${sequence})` : `SetCompression(${expected}) from the ${source} before LoginSuccess (login: ${sequence})`,
+    };
+  },
 };
 
 export function evaluate(scenario, observations, { backendObservable = true } = {}) {
@@ -122,7 +153,7 @@ export function evaluate(scenario, observations, { backendObservable = true } = 
         fixed = true;
         checks.push({ name, ok: true, detail: `${result.detail} — known finding "${finding.id}" no longer reproduces`, finding: finding.id });
       } else {
-        checks.push({ name, ok: true, detail: result.detail });
+        checks.push({ name, ok: true, detail: result.detail, ...(result.skipped ? { skipped: true } : {}) });
       }
     } else if (finding) {
       known = true;

@@ -70,7 +70,7 @@ A case only passes if all three agree:
 
 | Channel | What it proves |
 |---|---|
-| Client (`src/client.js`) | reached the play state, negotiated compression/encryption, was not kicked |
+| Client (`src/client.js`) | reached the play state, negotiated compression/encryption, was not kicked, and every login packet it saw, in order |
 | Backend (`src/backend-mock.js`) | what the proxy actually sent: handshake contents, and for Velocity the signed payload |
 | Proxy (`/api/v1/players`) | the proxy's own view — username, UUID, backend, protocol, and whether the session is intercepted |
 
@@ -117,6 +117,13 @@ removed.
 Velocity forwarding cannot be negotiated below protocol 393, because
 `login_plugin_request` does not exist before 1.13. Those cells are skipped, not
 failed.
+
+The lab sets `compression_threshold = 512`, on purpose not the 256 that both
+node-minecraft-protocol and Paper pick. Every login the proxy finishes itself
+(`client_only`, and `offline` with forwarding) asserts that the client received
+`SetCompression(512)` before `LoginSuccess`; plain `offline`, where the proxy
+relays the backend's login, asserts the backend's 256 instead. Below 1.8 there
+is no compression and the check only asserts that none was sent.
 
 ## client_only and the session server
 

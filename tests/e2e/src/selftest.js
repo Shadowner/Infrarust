@@ -6,6 +6,7 @@ import { createHmac } from 'node:crypto';
 import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate } from './expectations.js';
+import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
 import { SCENARIOS } from './scenarios.js';
 import { verifyAndDecode, writeVarInt } from './velocity.js';
 
@@ -101,6 +102,18 @@ await check('expectations: a known finding that stops reproducing is reported as
     proxyPlayer: { is_active: false },
   });
   assert.equal(status, 'fixed');
+});
+
+const only = (name, expected = true) => ({ id: `selftest-${name}`, expect: { [name]: expected } });
+
+await check("expectations: the backend's threshold on a login the proxy finishes is caught", () => {
+  const client = { loginPackets: ['compress', 'success'], setCompression: BACKEND_COMPRESSION_THRESHOLD };
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'fail');
+  client.setCompression = COMPRESSION_THRESHOLD;
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'pass');
+  client.loginPackets = ['success', 'compress'];
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'fail');
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client: { loginPackets: ['success'] }, protocol: 769 }).status, 'fail');
 });
 
 let selfPort = 26100;

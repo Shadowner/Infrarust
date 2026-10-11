@@ -38,7 +38,7 @@ export const SCENARIOS = [
     proxyMode: 'offline',
     forwardingMode: 'none',
     backend: 'plain',
-    expect: { reachesPlay: true, interceptedByProxy: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, clientCompression: 'backend' },
   },
   {
     id: 'offline-velocity',
@@ -47,7 +47,7 @@ export const SCENARIOS = [
     forwardingMode: 'velocity',
     backend: 'velocity',
     minProtocol: VELOCITY_MIN_PROTOCOL,
-    expect: { reachesPlay: true, interceptedByProxy: true, velocitySigned: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, velocitySigned: true, clientCompression: 'proxy' },
   },
   {
     id: 'offline-bungeecord',
@@ -55,7 +55,7 @@ export const SCENARIOS = [
     proxyMode: 'offline',
     forwardingMode: 'bungee_cord',
     backend: 'bungee',
-    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true, clientCompression: 'proxy' },
   },
   {
     id: 'offline-bungeeguard',
@@ -63,7 +63,7 @@ export const SCENARIOS = [
     proxyMode: 'offline',
     forwardingMode: 'bungee_guard',
     backend: 'bungee',
-    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true, bungeeGuardToken: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true, bungeeGuardToken: true, clientCompression: 'proxy' },
   },
   {
     id: 'client-only',
@@ -72,7 +72,7 @@ export const SCENARIOS = [
     forwardingMode: 'none',
     backend: 'plain',
     needsAuth: true,
-    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, clientCompression: 'proxy' },
   },
   {
     id: 'client-only-velocity',
@@ -82,7 +82,7 @@ export const SCENARIOS = [
     backend: 'velocity',
     needsAuth: true,
     minProtocol: VELOCITY_MIN_PROTOCOL,
-    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, velocitySigned: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, velocitySigned: true, clientCompression: 'proxy' },
   },
   {
     id: 'passthrough-velocity-fallback',

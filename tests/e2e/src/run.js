@@ -139,7 +139,7 @@ async function main() {
           },
         });
 
-        const observations = { client, backend: backend.observation(), proxyPlayer };
+        const observations = { client, backend: backend.observation(), proxyPlayer, protocol: v.protocol };
         const { status, checks } = evaluate(scenario, observations, { backendObservable: useMocks });
         results.push({
           version: v.version,

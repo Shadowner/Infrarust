@@ -38,6 +38,9 @@ export function connectOnce({
       compressionThreshold: null,
       encrypted: false,
       loginUuid: null,
+      loginPackets: [],
+      setCompression: null,
+      loginSuccessAt: null,
       error: null,
       kick: null,
     };
@@ -75,6 +78,13 @@ export function connectOnce({
       resolve(obs);
       return;
     }
+
+    client.on('packet', (data, meta) => {
+      if (meta.state !== 'login') return;
+      obs.loginPackets.push(meta.name);
+      if (meta.name === 'compress') obs.setCompression = data.threshold;
+      else if (meta.name === 'success') obs.loginSuccessAt = performance.now();
+    });
 
     client.on('state', (newState) => {
       obs.states.push(newState);
