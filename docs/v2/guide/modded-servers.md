@@ -75,6 +75,8 @@ Some mods open extra connections to the server address the player joined. They m
 
 These connections count as new connections for [rate limiting](../configuration/global#rate-limiting). If a mod opens several at once per player, raise `max_connections` accordingly.
 
+Such mods often resolve the server address again for each connection, and may pick another address family than the player's own connection did. If the address has an AAAA record, bind the proxy on `[::]` so that both IPv4 and IPv6 connections reach it, see [bind address](../configuration/global#bind-address-and-port).
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -83,3 +85,4 @@ These connections count as new connections for [rate limiting](../configuration/
 | A Forge client is treated as vanilla by the backend | The backend did not get the handshake marker: check `domain_rewrite` and forwarding, see [FML markers](./routing#fml-markers) |
 | The session ends on a large packet | `compression_threshold` is `-1`; keep compression on |
 | Switching to another modded server fails | The new backend needs a login-phase negotiation, see [Switching servers](#switching-servers) |
+| The player joins but a mod's extra connections never reach the proxy | The proxy listens on IPv4 only and the address has an AAAA record: bind `[::]`, see [Mods that open their own connections](#mods-that-open-their-own-connections) |

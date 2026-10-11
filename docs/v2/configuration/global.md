@@ -20,6 +20,14 @@ bind = "0.0.0.0:25565"
 
 The socket address the proxy listens on. The format is `ip:port`. Set the IP to `127.0.0.1` to accept connections only from localhost, or `0.0.0.0` to accept from any interface.
 
+`0.0.0.0` only accepts IPv4. To accept IPv6 clients too, bind `[::]`:
+
+```toml
+bind = "[::]:25565"
+```
+
+On Linux, `[::]` also accepts IPv4 clients, unless `net.ipv6.bindv6only` is set. Other systems may accept only IPv6 on it. Bind `[::]` whenever the address players join has an AAAA record. A client that reaches the proxy over IPv4 can still pick IPv6 for its next connection, and so can a mod that opens extra connections of its own.
+
 To run on a non-standard port:
 
 ```toml
