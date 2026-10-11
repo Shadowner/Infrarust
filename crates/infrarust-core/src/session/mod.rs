@@ -11,6 +11,7 @@ pub(crate) mod frame_chain;
 pub(crate) mod initial_connect;
 pub mod kick;
 pub(crate) mod login_bridge;
+pub(crate) mod login_messages;
 pub(crate) mod presentation;
 pub(crate) mod proxy_loop;
 pub(crate) mod server_join;

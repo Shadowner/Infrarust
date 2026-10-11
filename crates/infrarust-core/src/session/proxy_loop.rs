@@ -22,7 +22,8 @@ use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
 };
 use infrarust_protocol::packets::login::{
-    CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
+    CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression, SLoginAcknowledged,
+    SLoginPluginResponse,
 };
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::commands::CCommands;
@@ -42,6 +43,7 @@ use crate::error::CoreError;
 use crate::event_bus::conversion::protocol_state_to_api;
 use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
 use crate::player::commands::CommandOutcome;
+use crate::player::packets::encode_for_state;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::services::ProxyServices;
@@ -51,6 +53,7 @@ use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
 use crate::session::kick::BackendKick;
+use crate::session::login_messages::{LoginMessages, Routed};
 use crate::session::presentation;
 use crate::session::server_join::ServerJoin;
 use crate::util::text::encode_text_component;
@@ -280,6 +283,7 @@ pub async fn proxy_loop(
         backend_tree: None,
         join,
         codec_closed: None,
+        login: LoginMessages::new(ctx, server.clone()),
     }
     .run()
     .await
@@ -324,6 +328,7 @@ struct Loop<'a> {
     backend_tree: Option<CCommands>,
     join: &'a mut Option<ServerJoin>,
     codec_closed: Option<String>,
+    login: LoginMessages<'a>,
 }
 
 impl Loop<'_> {
@@ -744,6 +749,15 @@ impl Loop<'_> {
                     return Ok(());
                 }
 
+                if packet
+                    .as_any()
+                    .downcast_ref::<SLoginPluginResponse>()
+                    .is_some()
+                    && let Some(replaced) = self.login.response(&frame).await
+                {
+                    frame = replaced;
+                }
+
                 self.backend.queue_frame(&frame)?;
             }
             Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
@@ -906,6 +920,26 @@ impl Loop<'_> {
                     return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
                         frame, state, version,
                     ))));
+                }
+
+                if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>() {
+                    match self.login.relay(&frame, request).await {
+                        Routed::Client(replaced) => {
+                            self.io
+                                .client
+                                .queue_frame(replaced.as_ref().unwrap_or(&frame))?;
+                        }
+                        Routed::Backend(answer) => {
+                            let answer = encode_for_state(
+                                &answer,
+                                ConnectionState::Login,
+                                version,
+                                registry,
+                            )?;
+                            self.backend.queue_frame(&answer)?;
+                        }
+                    }
+                    return Ok(BackendAction::Continue);
                 }
 
                 if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {

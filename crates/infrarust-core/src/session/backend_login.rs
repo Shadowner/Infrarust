@@ -1,3 +1,4 @@
+use infrarust_api::types::ServerId;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
@@ -7,6 +8,7 @@ use crate::forwarding::{ForwardingHandler, build_handshake_for_backend};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::login_bridge::bridge_login;
+use crate::session::login_messages::LoginMessages;
 use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) enum Login<'a> {
@@ -45,8 +47,9 @@ pub(crate) async fn connect_backend(
             let handler = start_login(ctx, config, &mut backend).await?;
             let data = ctx.forwarding_data();
             let velocity = velocity_secret(ctx, &handler).map(|secret| (&data, secret));
+            let messages = LoginMessages::new(ctx, ServerId::new(server));
             backend
-                .consume_backend_login(ctx.registry(), version, velocity)
+                .consume_backend_login(ctx.registry(), version, velocity, &messages)
                 .await?;
             acknowledge_login(ctx, &mut backend).await?;
         }
@@ -54,7 +57,7 @@ pub(crate) async fn connect_backend(
             let handler = start_login(ctx, config, &mut backend).await?;
             let data = ctx.forwarding_data();
             let velocity = velocity_secret(ctx, &handler).map(|secret| (&data, secret));
-            bridge_login(ctx, io, &mut backend, config, velocity).await?;
+            bridge_login(ctx, io, &mut backend, server, config, velocity).await?;
         }
     }
 

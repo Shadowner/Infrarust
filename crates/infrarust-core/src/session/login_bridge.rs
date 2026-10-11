@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
+use infrarust_api::types::ServerId;
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
 use infrarust_protocol::codec::McBufReadExt;
@@ -24,6 +25,7 @@ use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::kick::BackendKick;
+use crate::session::login_messages::{LoginMessages, Routed};
 
 const DEFAULT_IDLE: Duration = Duration::from_secs(30);
 
@@ -31,6 +33,7 @@ pub(crate) async fn bridge_login(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,
     backend: &mut BackendBridge,
+    server: &str,
     config: &ServerConfig,
     velocity: Option<(&ForwardingData, &[u8])>,
 ) -> Result<(), CoreError> {
@@ -42,6 +45,7 @@ pub(crate) async fn bridge_login(
         ids: LoginIds::resolve(ctx.registry(), ctx.version()),
         plugin_requests: HashSet::new(),
         cookie_requests: 0,
+        messages: LoginMessages::new(ctx, ServerId::new(server)),
     };
     relay.run(ctx, &mut io.client, backend, idle).await?;
     if !relay.plugin_requests.is_empty() {
@@ -99,6 +103,7 @@ struct Relay<'a> {
     ids: LoginIds,
     plugin_requests: HashSet<i32>,
     cookie_requests: usize,
+    messages: LoginMessages<'a>,
 }
 
 impl Relay<'_> {
@@ -183,14 +188,22 @@ impl Relay<'_> {
             let request = CLoginPluginRequest::decode(&mut frame.payload.as_ref(), self.version)?;
             if is_velocity_request(&request) {
                 self.answer_velocity(&request, backend).await?;
-            } else {
-                client.write_frame(&frame).await.map_err(client_gone)?;
-                self.plugin_requests.insert(request.message_id.0);
-                tracing::debug!(
-                    channel = %request.channel,
-                    message_id = request.message_id.0,
-                    "relayed a login plugin request to the client"
-                );
+                return Ok(Progress::Continue);
+            }
+            match self.messages.relay(&frame, &request).await {
+                Routed::Client(replaced) => {
+                    client
+                        .write_frame(replaced.as_ref().unwrap_or(&frame))
+                        .await
+                        .map_err(client_gone)?;
+                    self.plugin_requests.insert(request.message_id.0);
+                    tracing::debug!(
+                        channel = %request.channel,
+                        message_id = request.message_id.0,
+                        "relayed a login plugin request to the client"
+                    );
+                }
+                Routed::Backend(answer) => backend.send_packet(&answer, self.registry).await?,
             }
         } else if id == self.ids.cookie_request {
             client.write_frame(&frame).await.map_err(client_gone)?;
@@ -246,7 +259,10 @@ impl Relay<'_> {
                 );
                 return Ok(());
             }
-            backend.write_frame(&frame).await
+            let replaced = self.messages.response(&frame).await;
+            backend
+                .write_frame(replaced.as_ref().unwrap_or(&frame))
+                .await
         } else if id == self.ids.cookie_response {
             if self.cookie_requests == 0 {
                 tracing::warn!("dropping a login cookie response the backend did not ask for");

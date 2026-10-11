@@ -23,6 +23,7 @@ use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
 use crate::player::packets::encode_for_state;
 use crate::session::kick::BackendKick;
+use crate::session::login_messages::LoginMessages;
 use crate::util::domain_rewrite::rewrite_handshake;
 
 const READ_CHUNK: usize = 16 * 1024;
@@ -214,6 +215,7 @@ impl BackendBridge {
         registry: &PacketRegistry,
         version: ProtocolVersion,
         velocity_ctx: Option<(&crate::forwarding::ForwardingData, &[u8])>,
+        messages: &LoginMessages<'_>,
     ) -> Result<(), CoreError> {
         let encryption_request = registry.get_packet_id::<CEncryptionRequest>(version);
         tokio::time::timeout(Duration::from_secs(30), async {
@@ -278,10 +280,9 @@ impl BackendBridge {
                                      configured — responding 'not understood'"
                                 );
                             } else {
-                                tracing::debug!(
-                                    channel = %request.channel,
-                                    "responding 'not understood' to LoginPluginRequest"
-                                );
+                                let response = messages.answer(&frame, request).await;
+                                self.send_packet(&response, registry).await?;
+                                continue;
                             }
 
                             let response = SLoginPluginResponse {
