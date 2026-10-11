@@ -940,6 +940,10 @@ Fired for a plugin message on a channel a plugin registered with `ctx.channel_re
 
 A client message on `BungeeCord`, `bungeecord:main` or a `velocity:` channel is dropped before this event, whoever registered the channel.
 
+### LoginPluginRequestEvent and LoginPluginResponseEvent
+
+Fired during a backend login for a Login Plugin Request on a registered channel, and for the client's answer to it. Awaited: the login waits for the listeners. `LoginPluginRequestEvent` has `player`, `server`, `message_id`, `channel`, `data` and `client_reachable`, with the results `Forward`, `Replace(Bytes)` and `Respond(Option<Bytes>)`; `LoginPluginResponseEvent` has `player`, `server`, `message_id`, `channel`, `successful` and `data`, with `Forward` and `Replace { successful, data }`. See [Login plugin messages](./messaging#login-plugin-messages) for when each fires and what the results do.
+
 ### PlayerClientBrandEvent
 
 Posted when the client sends its brand (`minecraft:brand`, `MC|Brand` before 1.13) and it differs from the last one. Informational and queued. Fields: `player`, `brand`.
