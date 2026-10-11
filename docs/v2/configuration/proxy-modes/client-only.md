@@ -78,7 +78,7 @@ text = "§6Survival - Online"
 | `disconnect_message` | string | `"Server is currently unreachable..."` | Message sent to the player when the backend is down. |
 | `limbo_handlers` | string array | `[]` | Plugin IDs for limbo handler chain, executed in order. |
 | `timeouts.connect` | duration | `"5s"` | How long to wait when connecting to the backend. |
-| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. During the backend login, the longest silence allowed between two backend packets while nothing waits on the client. |
+| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. During the backend login, the longest silence allowed between two backend packets while nothing waits on the client, and the time the client has to acknowledge the login. |
 | `timeouts.write` | duration | `"30s"` | Write timeout on the backend connection. |
 
 ::: tip
@@ -100,7 +100,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 If the backend refuses the login, its reason reaches the client as a login disconnect, unless a plugin redirects the player through `KickedFromServerEvent`. If the player goes to a limbo instead of a backend, the proxy sends `SetCompression` and `LoginSuccess` without waiting for one, and a backend reached later through a server switch gets "not understood" answers to its login plugin messages.
 
-While a relayed message waits for the client's answer, the proxy sets no deadline: a mod may take its time, or drop the connection on purpose to download files. Otherwise the backend gets `timeouts.read` (30 seconds by default) between two login packets. A backend that asks for encryption is refused at once, since it runs with `online-mode=true`.
+The backend gets `timeouts.read` (30 seconds by default) between two of its login packets; packets from the client do not extend it. While a relayed message waits for the client's answer, that deadline is suspended: a mod may show the player a prompt first, or drop the connection on purpose to download files. The client gets at most 5 minutes, counted from the first request it has not answered, and then `timeouts.read` to acknowledge the `LoginSuccess` the proxy sends (1.20.2 and later). Past any of these limits the player is disconnected. A client answer to a request the client was never sent, such as one a plugin answered itself, is dropped. A backend that asks for encryption is refused at once, since it runs with `online-mode=true`.
 
 Because the proxy parses every packet, sessions are marked as active. Plugins can inject packets into the stream, and the proxy can move the player to a different backend without dropping the client connection.
 

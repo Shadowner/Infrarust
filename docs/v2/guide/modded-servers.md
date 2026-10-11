@@ -41,6 +41,8 @@ In `client_only`, and in `offline` with forwarding or a rewritten profile, the p
 
 This covers the Forge 1.13 to 1.20.1 handshake (`fml:loginwrapper`), Fabric login queries, and any mod that negotiates during the login. Forge 1.20.2+ and NeoForge negotiate in the configuration phase, which the proxy relays as it comes.
 
+A mod may take its time to answer a relayed request, for example to ask the player something first: the client gets up to 5 minutes before the proxy ends the login, while a silent backend gets `timeouts.read`. See [login time limits](../configuration/proxy-modes/offline#login-time-limits).
+
 A plain `offline` login without forwarding is relayed untouched: the backend runs the login directly with the client.
 
 ### Backend requirements

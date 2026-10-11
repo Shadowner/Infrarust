@@ -72,7 +72,7 @@ text = "§6Lobby — Online"
 | `disconnect_message` | string | `"Server is currently unreachable..."` | Message sent to the player when the backend is down. |
 | `limbo_handlers` | string array | `[]` | Plugin IDs for limbo handler chain, executed in order. |
 | `timeouts.connect` | duration | `"5s"` | How long to wait when connecting to the backend. |
-| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. During a login the proxy relays, the longest silence allowed between two backend packets while nothing waits on the client. |
+| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. During the login, the longest silence allowed between two backend packets while nothing waits on the client, and the time the client has to acknowledge the login. See [Login time limits](#login-time-limits). |
 | `timeouts.write` | duration | `"30s"` | Write timeout on the backend connection. |
 
 ::: tip
@@ -92,6 +92,16 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 7. The proxy enters the session loop, parsing and relaying packets in both directions.
 
 If the player ends up in limbo instead (because limbo handlers are configured or a plugin redirects there), the proxy sends `SetCompression` and `LoginSuccess` itself, and a backend reached later through a server switch gets "not understood" answers to its login plugin messages. When the backend refuses the login, its reason reaches the client as a login disconnect.
+
+### Login time limits
+
+On both paths the proxy bounds the login:
+
+- The backend gets `timeouts.read` (30 seconds by default) between two of its login packets. Packets from the client do not extend it.
+- While a login plugin message relayed to the client waits for its answer, that deadline is suspended: a mod may show the player a prompt first. The client gets at most 5 minutes, counted from the first request it has not answered.
+- Once `LoginSuccess` reaches the client, the client has `timeouts.read` to acknowledge it (1.20.2 and later).
+
+Past any of these limits the player is disconnected. A client answer to a request the client was never sent, such as one a plugin answered itself, is dropped instead of reaching the backend.
 
 ### Connection lifecycle
 
