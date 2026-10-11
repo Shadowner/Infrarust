@@ -19,6 +19,22 @@ The plugin decides, the host relays. The plugin only sees the first bytes and th
 
 The first three end with a [handoff](#the-handoff). The login plugin messages do not hand anything off: they let a plugin read, answer or rewrite the messages a modded backend exchanges with the client during the login, see [Login plugin messages](./messaging#login-plugin-messages).
 
+The three hooks sit at these points of a connection:
+
+```
+connection accepted, PROXY protocol header read
+  → transport filters
+  → raw claim, only while a plugin holds a prefix:
+      first bytes read until they match a prefix or cannot
+      on a match: global IP filter, global IP bans, RawConnectionEvent
+  → global IP filter, handshake, IP ban for a ping, rate limit, routing
+  → ConnectionHandshakeEvent ─────────── Handoff ──▶ relayed
+  → server list ping: ProxyPingEvent
+  → login: Login Start read
+      → LoginClaimEvent, only while someone listens ─ Handoff ──▶ relayed
+      → name and IP bans, PreLoginEvent and the rest of the login
+```
+
 ## The `connection-handoff` capability
 
 Claiming prefixes, subscribing to `RawConnectionEvent` and `LoginClaimEvent`, and answering `ConnectionHandshakeEvent` with a handoff need the opt-in `connection-handoff` capability:
@@ -63,7 +79,7 @@ let handoff = Handoff::to(HandoffTarget::server_port("modded", 30037))
 | `ServerPort { server, port }` | The host of the address the load balancer picks for `server`, on `port` instead of the Minecraft port. Meant for a file server that runs next to the Minecraft backend |
 | `Address { host, port }` | An explicit address. For a WASM plugin, the host checks it against the plugin's [network allow-list](./network) when it reads the answer, see [Address targets](#address-targets) |
 
-The connection uses the target server's `timeouts.connect`, or the proxy's `connect_timeout` for an `Address`. A target that cannot be reached closes the client connection.
+The connection uses the target server's `timeouts.connect`, or the proxy's `connect_timeout` for an `Address`. A handoff that cannot be carried out (a target that cannot be reached, an unknown server, `Route` on a raw claim) logs the warning `connection handoff failed, closing the connection` and closes the client connection without sending it anything.
 
 ### Replay
 
@@ -77,7 +93,7 @@ With `replay` off the target only gets `prefix` and then whatever the client sen
 
 ### The relay
 
-The proxy writes `reply` to the client and `prefix` and the replay to the target, then relays both directions until either side closes or the proxy shuts down. On Linux it uses `splice(2)`, so the bytes stay in the kernel. A handed-off connection is not a player: there is no `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `DisconnectEvent` for it. It keeps its slot under `max_connections` until it closes, and the transport filters see it close like any connection.
+The proxy writes `prefix` and the replay to the target, then `reply` to the client, then relays both directions until either side closes or the proxy shuts down. On Linux it uses `splice(2)`, so the bytes stay in the kernel. A handed-off connection is not a player: there is no `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `DisconnectEvent` for it, it never appears in the player registry, and the telemetry counts it as a connection with the mode `handoff`, not as a login. It keeps its slot under `max_connections` until it closes, and the transport filters see it close like any connection. The proxy logs `connection handed off` at debug level with the target and the level (`raw`, `handshake` or `login`).
 
 ## Claiming raw connections
 
@@ -87,7 +103,7 @@ A raw claim catches a connection before the proxy parses it as Minecraft. A plug
 ConnectionClaims::register_prefix(b"XFER")?;
 ```
 
-As long as no plugin holds a prefix, the proxy reads nothing extra. Once one does, it reads the first bytes of each connection until they either start with a registered prefix or can no longer match any. A Minecraft client is told apart by its very first bytes, so it waits for nothing. A client that sent part of a prefix and stops is given 5 seconds, then handled as Minecraft.
+As long as no plugin holds a prefix, the proxy reads nothing extra and the accept path is the one it always was. Once one does, it reads the first bytes of each connection, after the PROXY protocol header and the transport filters, until they either start with a registered prefix or can no longer match any. The bytes it reads stay in front of the stream, and the handshake parser starts from them. A Minecraft client is told apart by its very first read, since no prefix can start a handshake, so it waits for nothing. A client that sent part of a prefix and stops is given 5 seconds, then handled as Minecraft; so is one that closes or fails while the proxy waits. When two prefixes match, the longer one is reported.
 
 A prefix must be 2 to 16 bytes long and must not be able to start a Minecraft handshake, a pre-1.7 ping or login, or a PROXY protocol header: the host refuses a prefix that starts with `0xFE` or `0x02`, with one byte from `0x01` to `0x7F` followed by `0x00`, with one byte from `0x80` up followed by `0x01` to `0x03` and then `0x00` (or nothing), and one that matches the start of `PROXY ` or of the PROXY v2 signature. Such a prefix answers `InvalidArgument`. A plugin holds at most 16 prefixes (`LimitExceeded` past that); registering one it holds again succeeds, and `unregister_prefix` of one it does not hold answers `NotFound`. Two plugins may register the same prefix. The host drops a plugin's prefixes when it is disabled or unloaded, and when a fault replaces its instance, before the fresh instance runs `on_enable` and registers them again.
 
@@ -106,11 +122,13 @@ The event goes to every listener of `RawConnectionEvent`, whichever plugin regis
 | Result | Helper | Effect |
 | --- | --- | --- |
 | `Pass` (default) | `pass()` | Handle the connection as Minecraft; the bytes read stay in front of the stream |
-| `NeedMore(n)` | `need_more(n)` | Read until `data` holds `n` bytes, then fire the event again with the longer `data`. At most 4096 bytes and 8 rounds; a client that does not send them within 5 seconds is closed |
-| `Handoff(handoff)` | `handoff(h)` | Relay the connection, see [The handoff](#the-handoff). `Route` is refused here |
-| `Reject` | `reject()` | Close the connection without a word |
+| `NeedMore(n)` | `need_more(n)` | Read until `data` holds `n` bytes, then fire the event again with the longer `data`, see below |
+| `Handoff(handoff)` | `handoff(h)` | Relay the connection, see [The handoff](#the-handoff). `Route` is refused here: the connection is closed with a warning |
+| `Reject` | `reject()` | Close the connection without a word. A `ConnectionRejectedEvent` with the reason `plugin` and the ID of the plugin that set the result is posted |
 
-The IP filter and the global IP bans run before the event, as for any connection. The rate limiter does not: it counts Minecraft handshakes, and a claimed connection never sends one. Keep prefixes specific to your protocol, since every connection that starts with one reaches the plugin before any rate limit.
+`NeedMore(n)` reads exactly up to `n` bytes: whatever the client sent beyond stays in the socket and reaches the target after the replay. The client has 5 seconds from the answer to send them, otherwise the proxy closes the connection. The event fires at most 8 times for a connection and `data` never holds more than 4096 bytes: a `NeedMore` on the eighth event, or one asking for more than 4096 bytes, closes the connection. A `NeedMore(n)` that `data` already satisfies fires the event again at once and counts as a round. None of these closures post a `ConnectionRejectedEvent`.
+
+When the bytes match a prefix and some plugin listens to `RawConnectionEvent`, the proxy first applies the global [`ip_filter`](../../configuration/global#ip-filter) and the global IP and range bans, the same check a server list ping gets (a ban provider that cannot answer lets the connection through). A refused connection is closed without an answer, posts a `ConnectionRejectedEvent` (`ip_filter` or `ip_banned`, with no `virtual_host`) and never reaches the event. When nobody listens, a match is handled as Minecraft and these checks run in the usual pipeline. The rate limiter does not apply to a raw claim: it counts Minecraft handshakes, and a claimed connection never sends one. A connection a listener passes goes through the whole Minecraft pipeline, IP filter and rate limit included. Keep prefixes specific to your protocol, since every connection that starts with one reaches the plugin before any rate limit.
 
 ```rust
 use infrarust_plugin_sdk::prelude::*;
@@ -139,7 +157,7 @@ impl Plugin for TransferBridge {
 
 ## Handing off at the handshake
 
-`ConnectionHandshakeEvent` fires once the handshake is parsed and routed. `handoff(h)` relays the connection instead of going on, whatever its intent: a server list ping can be handed off too. The event keeps its other rules; see [ConnectionHandshakeEvent](../dev/events#connectionhandshakeevent).
+`ConnectionHandshakeEvent` fires once the handshake is parsed and routed, after the IP filter, the rate limit and, for a ping, the IP ban check. `handoff(h)` relays the connection instead of going on, whatever its intent: a server list ping can be handed off too, and no `ProxyPingEvent` fires for it. The replay holds the handshake, then every byte the client already sent after it (the status request, or the Login Start the proxy has not read yet). A handoff is not a refusal: no `ConnectionRejectedEvent` is posted. A client older than 1.7 cannot be handed off: the proxy closes it. The event keeps its other rules; see [ConnectionHandshakeEvent](../dev/events#connectionhandshakeevent).
 
 ```rust
 ctx.on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
@@ -166,9 +184,9 @@ ctx.on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
 | `login_start` | `Vec<u8>` | The Login Start payload as sent, without its length and packet id |
 | `layout_matches` | `bool` | `false` when the payload does not match the layout of the client's protocol and only a lenient decode read the name |
 
-`pass()` keeps the normal login, `handoff(h)` relays the connection. A claimed login skips `PreLoginEvent`, the ban checks, admission and the proxy mode's login: the target gets the handshake and the Login Start as the client sent them.
+`pass()` keeps the normal login, `handoff(h)` relays the connection. The event fires on every route, whatever its proxy mode, for a login and for a transfer. A claimed login skips the name and IP ban checks, `PreLoginEvent`, admission, the telemetry login span and the proxy mode's login: it never becomes a player, and the target gets the handshake, the Login Start as the client sent it, and every byte the client sent after it. A WASM listener that does not answer leaves `Pass`: a claim bypasses authentication, so the safe default is no claim.
 
-Some modded clients send a Login Start that does not match their declared protocol. While someone listens to `LoginClaimEvent`, the proxy reads such a packet on every route so the plugin can claim it; a connection the plugin leaves alone is then refused on an `offline` or `client_only` route exactly as before.
+Some modded clients send a Login Start that does not match their declared protocol. While someone listens to `LoginClaimEvent`, the proxy reads such a packet with a lenient decode on every route so the plugin can claim it, with `layout_matches` set to `false`. A connection the plugin leaves alone is then refused on an `offline` or `client_only` route with exactly the protocol error it gets without a listener, before any ban check or `PreLoginEvent`; on a forwarding route it is forwarded unchanged, as without a listener. A Login Start that even the lenient decode cannot read is refused on every route before the event.
 
 ## Address targets
 
