@@ -37,14 +37,16 @@ connection accepted, PROXY protocol header read
 
 ## The `connection-handoff` capability
 
-Claiming prefixes, subscribing to `RawConnectionEvent` and `LoginClaimEvent`, and answering `ConnectionHandshakeEvent` with a handoff need the opt-in `connection-handoff` capability:
+For a WASM plugin, claiming prefixes, subscribing to `RawConnectionEvent` and `LoginClaimEvent`, and answering `ConnectionHandshakeEvent` with a handoff need the opt-in `connection-handoff` capability:
 
 ```toml
 [plugins.transfer-bridge]
 permissions = ["connection-handoff"]
 ```
 
-Without it, `ConnectionClaims::register_prefix` and the two subscriptions return a `PermissionDenied` error, and a handoff set on a `ConnectionHandshakeEvent` is ignored: the result the event had stays, and the host logs `wasm plugin set a result it is not allowed to set; ignoring it`, at most five times a minute per plugin. Compiled-in plugins hold the capability unless their config denies it. The login plugin message events need `plugin-messaging` instead.
+Without it, `ConnectionClaims::register_prefix` and the two subscriptions return a `PermissionDenied` error, and a handoff set on a `ConnectionHandshakeEvent` is ignored: the result the event had stays, and the host logs `wasm plugin set a result it is not allowed to set; ignoring it`, at most five times a minute per plugin. The login plugin message events need `plugin-messaging` instead.
+
+Compiled-in plugins are trusted code and are only gated on the prefixes: they hold the capability unless their config denies it, and a denied one gets `None` from `ctx.connection_claims()`, so it cannot register a prefix. The proxy does not check the capability of the native listener that decides a `RawConnectionEvent`, a `LoginClaimEvent` or a `ConnectionHandshakeEvent` handoff: a compiled-in plugin can subscribe to the claim events and hand a connection off whatever its config says. Only WASM plugins are held to the capability on those hooks.
 
 ## The handoff
 
@@ -212,7 +214,7 @@ A handoff skips authentication. The proxy does not check a claimed login against
 
 ## Native plugins
 
-A native plugin with the capability reaches the same hooks through the native API:
+A native plugin reaches the same hooks through the native API:
 
 ```rust
 use infrarust_api::prelude::*;
@@ -229,7 +231,7 @@ ctx.event_bus().subscribe::<RawConnectionEvent, _>(EventPriority::NORMAL, |event
 });
 ```
 
-`ctx.connection_claims()` answers `None` without `connection-handoff`. `register_prefix` and `unregister_prefix` answer a `ClaimError` (`InvalidPrefix`, `Limit`, `NotFound`), and the registrations go away when the plugin is disabled. See [Events](../dev/events#rawconnectionevent).
+`ctx.connection_claims()` answers `None` without `connection-handoff`; that is the only part the capability gates for a native plugin, which can subscribe to the claim events and set a handoff without it (see [the capability](#the-connection-handoff-capability)). `register_prefix` and `unregister_prefix` answer a `ClaimError` (`InvalidPrefix`, `Limit`, `NotFound`), and the registrations go away when the plugin is disabled. See [Events](../dev/events#rawconnectionevent).
 
 ## See also
 
