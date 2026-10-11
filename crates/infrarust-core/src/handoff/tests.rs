@@ -404,6 +404,56 @@ async fn a_handshake_handoff_replays_the_handshake_as_passthrough_forwards_it() 
     finish(task).await;
 }
 
+async fn replayed_host(backend: &mut TcpStream) -> SHandshake {
+    let mut decoder = PacketDecoder::new();
+    let frame = loop {
+        if let Some(frame) = decoder.try_next_frame().unwrap() {
+            break frame;
+        }
+        decoder.queue_bytes(&read_exact(backend, 1).await);
+    };
+    assert!(decoder.into_remaining().is_empty());
+    SHandshake::decode(&mut frame.payload.as_ref(), ProtocolVersion::V1_7_2).unwrap()
+}
+
+#[tokio::test]
+async fn a_handoff_never_replays_forwarding_fields_the_client_appended_to_its_host() {
+    let smuggled = "origin.test\x00198.51.100.7\x00069a79f444e94726a5befca90e38aaf5\x00[]";
+    for target in ["route", "address"] {
+        let services = test_proxy_services();
+        let (backend, addr) = listener().await;
+        add(&services, server("origin", addr, |_| {}));
+        let Client { mut peer, mut ctx } = client().await;
+        routed(&services, &mut ctx, "origin");
+        let mut handshake = handshake_data(smuggled, ProtocolVersion::V1_21);
+        let login_start = BytesMut::from(&b"\x07\x00\x05Steve"[..]);
+        handshake.raw_packets.push(login_start.clone());
+        ctx.extensions.insert(handshake);
+        let handoff = match target {
+            "route" => Handoff::route(),
+            _ => Handoff::to(HandoffTarget::address("127.0.0.1", addr.port())),
+        };
+        let task = spawn(
+            relay(services),
+            ctx,
+            handoff,
+            HandoffLevel::Login,
+            CancellationToken::new(),
+        );
+        let mut backend = accept(&backend).await;
+        let replayed = replayed_host(&mut backend).await;
+        assert_eq!(replayed.server_address, "origin.test", "{target}");
+        assert_eq!(replayed.server_port, 25565);
+        assert_eq!(
+            read_exact(&mut backend, login_start.len()).await,
+            login_start
+        );
+        ping_pong(&mut peer, &mut backend).await;
+        hang_up(peer, backend).await;
+        finish(task).await;
+    }
+}
+
 #[tokio::test]
 async fn a_login_handoff_replays_the_rewritten_handshake_then_the_login_start_as_received() {
     let services = test_proxy_services();

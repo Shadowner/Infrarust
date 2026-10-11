@@ -17,7 +17,7 @@ use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
-use crate::util::domain_rewrite::rewrite_handshake;
+use crate::util::domain_rewrite::handoff_handshake;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -335,15 +335,8 @@ fn replay_bytes(
         .extensions
         .get::<HandshakeData>()
         .ok_or(HandoffError::MissingHandshake)?;
-    let mut replay = match server {
-        Some(config) => rewrite_handshake(handshake, config)
-            .map_err(|error| HandoffError::Handshake(Box::new(error)))?,
-        None => handshake
-            .raw_packets
-            .first()
-            .map(|raw| raw.to_vec())
-            .unwrap_or_default(),
-    };
+    let mut replay = handoff_handshake(handshake, server)
+        .map_err(|error| HandoffError::Handshake(Box::new(error)))?;
     for packet in handshake.raw_packets.iter().skip(1) {
         replay.extend_from_slice(packet);
     }

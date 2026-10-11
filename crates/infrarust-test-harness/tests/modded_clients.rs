@@ -175,6 +175,31 @@ async fn a_forge_marker_survives_a_domain_rewrite() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forwarding_fields_the_client_appended_do_not_survive_a_domain_rewrite() {
+    for suffix in [
+        "\x00198.51.100.7\x00069a79f444e94726a5befca90e38aaf5\x00[]",
+        "\0FML3\0\x00198.51.100.7\x00069a79f444e94726a5befca90e38aaf5\x00[]",
+    ] {
+        let backend = FakeBackend::builder().spawn().await.unwrap();
+        let spec = ServerSpec::passthrough("lobby")
+            .backend(backend.addr())
+            .patch(|table| {
+                let mut rewrite = toml::Table::new();
+                rewrite.insert(
+                    "explicit".into(),
+                    toml::Value::String("backend.example".into()),
+                );
+                table.insert("domain_rewrite".into(), toml::Value::Table(rewrite));
+            });
+        assert_eq!(
+            forwarded_host(spec, &backend, suffix).await,
+            "backend.example",
+            "{suffix:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_forge_marker_reaches_a_bungeecord_backend_as_properties() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let spec = ServerSpec::passthrough("lobby")

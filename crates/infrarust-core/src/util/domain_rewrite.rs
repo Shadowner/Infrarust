@@ -11,6 +11,7 @@ use infrarust_protocol::{Packet, VarInt};
 
 use crate::error::CoreError;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData};
+use crate::util::{forge_suffix, host_suffix};
 
 /// Rewrites the handshake packet domain according to the server config.
 ///
@@ -41,10 +42,27 @@ pub fn rewrite_handshake(
     match backend_host(server_config) {
         Some(host) => encode_handshake_with_domain(
             handshake_data,
-            &format!("{host}{}", handshake_data.host_suffix()),
+            &format!("{host}{}", forge_suffix(&handshake_data.raw_host)),
         ),
         None => Ok(first_raw_packet(handshake_data)),
     }
+}
+
+pub(crate) fn handoff_handshake(
+    handshake_data: &HandshakeData,
+    server_config: Option<&ServerConfig>,
+) -> Result<Vec<u8>, CoreError> {
+    if let Some(config) = server_config
+        && backend_host(config).is_some()
+    {
+        return rewrite_handshake(handshake_data, config);
+    }
+    let raw_host = &handshake_data.raw_host;
+    let suffix = host_suffix(raw_host);
+    if forge_suffix(raw_host).len() == suffix.len() {
+        return Ok(first_raw_packet(handshake_data));
+    }
+    encode_handshake_with_domain(handshake_data, &raw_host[..raw_host.len() - suffix.len()])
 }
 
 fn first_raw_packet(handshake_data: &HandshakeData) -> Vec<u8> {
@@ -160,6 +178,108 @@ mod tests {
         let decoded = decode_handshake_from_framed(&result);
         assert_eq!(decoded.server_address, "new.domain.com");
         assert_eq!(decoded.server_port, 25565);
+    }
+
+    const SMUGGLED: &str = "\x00198.51.100.7\x00069a79f444e94726a5befca90e38aaf5\x00[]";
+
+    fn handshake_from(raw_host: &str) -> HandshakeData {
+        let mut hd = make_handshake_data();
+        let handshake = SHandshake {
+            protocol_version: VarInt(ProtocolVersion::V1_21.0),
+            server_address: raw_host.to_string(),
+            server_port: 25565,
+            next_state: ConnectionState::Login,
+            transfer: false,
+        };
+        let mut payload = Vec::new();
+        handshake
+            .encode(&mut payload, ProtocolVersion::V1_21)
+            .unwrap();
+        let mut encoder = PacketEncoder::new();
+        encoder.append_raw(0x00, &payload).unwrap();
+        hd.raw_host = raw_host.to_string();
+        hd.raw_packets = vec![BytesMut::from(&encoder.take()[..])];
+        hd
+    }
+
+    #[test]
+    fn a_rewrite_keeps_the_forge_marker() {
+        let hd = handshake_from("play.example.com\0FML2\0");
+        let config = make_server_config(DomainRewrite::Explicit("new.domain.com".to_string()));
+        let result = rewrite_handshake(&hd, &config).unwrap();
+        assert_eq!(
+            decode_handshake_from_framed(&result).server_address,
+            "new.domain.com\0FML2\0"
+        );
+    }
+
+    #[test]
+    fn a_rewrite_drops_forwarding_fields_the_client_appended() {
+        for raw_host in [
+            format!("play.example.com{SMUGGLED}"),
+            format!("play.example.com\0FML2\0{SMUGGLED}"),
+        ] {
+            let hd = handshake_from(&raw_host);
+            for rewrite in [
+                DomainRewrite::Explicit("new.domain.com".to_string()),
+                DomainRewrite::FromBackend,
+            ] {
+                let expected = match &rewrite {
+                    DomainRewrite::Explicit(host) => host.clone(),
+                    _ => "backend.local".to_string(),
+                };
+                let result = rewrite_handshake(&hd, &make_server_config(rewrite)).unwrap();
+                assert_eq!(
+                    decode_handshake_from_framed(&result).server_address,
+                    expected,
+                    "{raw_host:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_handoff_handshake_keeps_a_plain_or_marked_host_byte_for_byte() {
+        for raw_host in ["Play.Example.com.", "play.example.com\0FML3\0"] {
+            let hd = handshake_from(raw_host);
+            for config in [None, Some(make_server_config(DomainRewrite::None))] {
+                assert_eq!(
+                    handoff_handshake(&hd, config.as_ref()).unwrap(),
+                    hd.raw_packets[0].to_vec(),
+                    "{raw_host:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_handoff_handshake_drops_a_suffix_that_is_not_a_forge_marker() {
+        for raw_host in [
+            format!("Play.Example.com{SMUGGLED}"),
+            format!("Play.Example.com\0FML3\0{SMUGGLED}"),
+            "Play.Example.com\0XFER\0".to_string(),
+        ] {
+            let hd = handshake_from(&raw_host);
+            for config in [None, Some(make_server_config(DomainRewrite::None))] {
+                let result = handoff_handshake(&hd, config.as_ref()).unwrap();
+                let decoded = decode_handshake_from_framed(&result);
+                assert_eq!(decoded.server_address, "Play.Example.com", "{raw_host:?}");
+                assert_eq!(decoded.server_port, 25565);
+                assert_eq!(decoded.protocol_version.0, ProtocolVersion::V1_21.0);
+                assert_eq!(decoded.next_state, ConnectionState::Login);
+            }
+            let rewritten = handoff_handshake(
+                &hd,
+                Some(&make_server_config(DomainRewrite::Explicit(
+                    "new.domain.com".to_string(),
+                ))),
+            )
+            .unwrap();
+            assert_eq!(
+                decode_handshake_from_framed(&rewritten).server_address,
+                "new.domain.com"
+            );
+        }
     }
 
     #[test]

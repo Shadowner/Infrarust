@@ -688,7 +688,7 @@ async fn a_handshake_handoff_relays_a_login_byte_for_byte() {
     let gate = ScriptedPlugin::new(BRIDGE).on::<ConnectionHandshakeEvent>(
         EventPriority::NORMAL,
         |event| {
-            if event.raw_host.ends_with("\0XFER\0") {
+            if event.raw_host.ends_with("\0FML3\0") {
                 event.handoff(Handoff::route());
             }
         },
@@ -701,7 +701,7 @@ async fn a_handshake_handoff_relays_a_login_byte_for_byte() {
         .await
         .unwrap();
 
-    let mut sent = handshake("lobby.test\0XFER\0", 767, ConnectionState::Login);
+    let mut sent = handshake("lobby.test\0FML3\0", 767, ConnectionState::Login);
     sent.extend(frame(&declared_login_start("Steve", 767)));
     sent.extend_from_slice(PIPELINED);
     let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
@@ -715,6 +715,51 @@ async fn a_handshake_handoff_relays_a_login_byte_for_byte() {
     assert_eq!(recorder.count(EventKind::ConnectionHandshake), 1);
     assert_eq!(recorder.count(EventKind::PreLogin), 0);
     assert!(rejections(&recorder).is_empty());
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handshake_handoff_drops_forwarding_fields_the_client_appended_to_its_host() {
+    let (backend, backend_addr) = listener().await;
+    let gate = ScriptedPlugin::new(BRIDGE).on::<ConnectionHandshakeEvent>(
+        EventPriority::NORMAL,
+        |event| {
+            if event.raw_host.contains('\0') {
+                event.handoff(Handoff::route());
+            }
+        },
+    );
+    let proxy = TestProxy::builder()
+        .server(
+            ServerSpec::passthrough("lobby")
+                .backend(backend_addr)
+                .patch(|table| {
+                    table.insert(
+                        "forwarding_mode".into(),
+                        toml::Value::String("legacy".into()),
+                    );
+                }),
+        )
+        .plugin(gate)
+        .start()
+        .await
+        .unwrap();
+
+    let smuggled = "lobby.test\x00198.51.100.7\x00069a79f444e94726a5befca90e38aaf5\x00[]";
+    let login_start = frame(&declared_login_start("Steve", 767));
+    let mut sent = handshake(smuggled, 767, ConnectionState::Login);
+    sent.extend_from_slice(&login_start);
+    sent.extend_from_slice(PIPELINED);
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+
+    let mut upstream = accept(&backend).await;
+    let expected = handshake("lobby.test", 767, ConnectionState::Login);
+    assert_eq!(read_n(&mut upstream, expected.len()).await, expected);
+    assert_eq!(read_n(&mut upstream, login_start.len()).await, login_start);
+    assert_eq!(read_n(&mut upstream, PIPELINED.len()).await, PIPELINED);
+    both_ways(&mut client, &mut upstream).await;
 
     proxy.shutdown().await.unwrap();
 }
