@@ -26,7 +26,7 @@ Three tiers, in increasing order of what they prove and cost:
 
 | Tier | Client | Backend | Covers | Entry point |
 |---|---|---|---|---|
-| A | node-minecraft-protocol | mock | 30 versions × 11 scenarios, ~5 min | `run.sh` |
+| A | node-minecraft-protocol | mock | 30 versions × 18 scenarios, ~5 min | `run.sh` |
 | B | node-minecraft-protocol | real Paper | anchor versions | `run.sh --backends real` |
 | C | **the real Minecraft client** | real vanilla/Paper | every release 1.7.10 → latest | `realclient.sh` |
 
@@ -113,10 +113,17 @@ removed.
 | `client-only-velocity` | client_only | velocity | needs `--session-server` |
 | `passthrough-velocity-fallback` | passthrough | velocity | known finding: the proxy now refuses this server file |
 | `full-fallback` | full | none | known finding: the proxy now refuses this server file |
+| `login-query-offline` | offline | none | 1.13+; custom login queries relayed |
+| `login-query-velocity` | offline | velocity | 1.13+; the proxy answers Velocity, relays the rest |
+| `login-query-client-only` | client_only | none | 1.13+; needs `--session-server` |
+| `big-packet-client-only` | client_only | none | 1.8+; a 3 MiB play packet; needs `--session-server` |
+| `forge-rewrite` | passthrough | none | `domain_rewrite` with a Forge marker in the host |
+| `forge-bungeecord` | offline | bungee_cord | Forge marker turned into profile properties |
+| `holepunch-login-start` | passthrough | none | protocols 759–763 only; raw socket, no nmp |
 
 Velocity forwarding cannot be negotiated below protocol 393, because
 `login_plugin_request` does not exist before 1.13. Those cells are skipped, not
-failed.
+failed, and so are the other scenarios outside their protocol range.
 
 The lab sets `compression_threshold = 512`, on purpose not the 256 that both
 node-minecraft-protocol and Paper pick. Every login the proxy finishes itself
@@ -124,6 +131,43 @@ node-minecraft-protocol and Paper pick. Every login the proxy finishes itself
 `SetCompression(512)` before `LoginSuccess`; plain `offline`, where the proxy
 relays the backend's login, asserts the backend's 256 instead. Below 1.8 there
 is no compression and the check only asserts that none was sent.
+
+## Modded client openings
+
+Modded clients do things vanilla never does during login. The scenarios that
+cover them are driven by the mock backend, so they are skipped with
+`--backends real`. Their fixtures live in `src/modded.js`.
+
+**Login queries.** After Login Start, and after the Velocity exchange where
+there is one, the mock sends three Login Plugin Requests in one TCP write:
+id `7`, id `-101` with a payload that is not valid UTF-8, and id `2147483647`.
+It sends `SetCompression` and `LoginSuccess` only once all three are answered.
+The client answers from the same table, the first one 40 ms late so the answers
+reach the proxy out of order, and the last one as "not understood". The check
+passes only if the client saw each request once with its id and payload
+unchanged, the backend got exactly one answer per id with the client's bytes,
+and nothing on `velocity:player_info` reached the client. A second check
+compares the time the backend sent `LoginSuccess` with the time the client
+received one: a proxy that finishes the client's login before the backend has
+accepted it fails here.
+
+**Big packet.** Once the player is in, the mock sends a 3 MiB
+`custom_payload` — more than the 2 MiB an uncompressed packet may carry, and
+compressible, so it only fits through a compressed link. The client compares
+its length and SHA-256.
+
+**Forge markers.** The client's handshake host carries the marker of its era:
+`\0FML\0` up to 1.12, `\0FML2\0` up to 1.17, `\0FML3\0` up to 1.20.1, `\0FORGE`
+from 1.20.2. Through `domain_rewrite` the backend must see the rewritten host
+followed by the client's suffix; through BungeeCord forwarding it must see four
+fields whose properties carry `forgeClient = true` and `extraData` equal to the
+suffix with every `\0` turned into `\1`.
+
+**1.20.2 Login Start on an older protocol.** For protocols 759–763 a raw socket
+sends a handshake, a Login Start in the 1.20.2 layout (name, then a bare UUID),
+and a few bytes pipelined behind it, in one write. The backend is a plain TCP
+listener: it must receive exactly those bytes, and its reply must reach the
+client.
 
 ## client_only and the session server
 
