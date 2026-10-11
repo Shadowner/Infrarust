@@ -94,7 +94,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 5. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.
 6. It registers the player and fires a `PostLoginEvent`. The client is still in the login phase.
 7. It connects to the backend in offline mode with its own handshake (carrying the forwarding data, if any) and login start.
-8. While the backend runs its login, the proxy relays the backend's login plugin messages to the client and the client's answers back, with their message ids unchanged, so modded logins (Forge, Fabric, AutoModpack) see the real client. It answers a `velocity:player_info` request itself. Login cookie requests (1.20.5+) are relayed the same way.
+8. While the backend runs its login, the proxy relays the backend's login plugin messages to the client and the client's answers back, with their message ids unchanged, so mods that negotiate during the login (Forge, Fabric, or any other login query) see the real client. It answers a `velocity:player_info` request itself. Login cookie requests (1.20.5+) are relayed the same way.
 9. Once the backend accepts the login, the proxy sends `SetCompression` (see [`compression_threshold`](../global#client-compression)) and `LoginSuccess` with the final UUID, username, and skin properties. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and both sides move to the Configuration state; older versions go straight to Play.
 10. It enters the session loop, parsing and relaying packets in both directions.
 

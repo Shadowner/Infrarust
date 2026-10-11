@@ -240,7 +240,7 @@ Without it `Messaging::register` and the send functions return `permission-denie
 A handoff takes a connection away from the Minecraft pipeline, before authentication, and pipes it to another target. `connection-handoff` gates the `connection-claims` interface, the `raw-connection` and `login-claim` subscriptions, and a `handoff` outcome on `connection-handshake`:
 
 ```toml
-[plugins.automodpack-bridge]
+[plugins.file-transfer-bridge]
 permissions = ["connection-handoff"]
 ```
 
