@@ -84,3 +84,9 @@ pub struct UnknownDomain;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refused(pub infrarust_api::events::handshake::RejectReason);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimedLogin(pub infrarust_api::handoff::Handoff);
+
+#[derive(Debug)]
+pub struct LayoutRefusal(pub infrarust_protocol::ProtocolError);

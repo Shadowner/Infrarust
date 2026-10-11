@@ -19,7 +19,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::pipeline::types::{
-    ConnectionIntent, HandshakeData, LegacyDetected, RoutingData, UnknownDomain,
+    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyDetected, RoutingData, UnknownDomain,
 };
 use crate::player::SHUTDOWN_REASON;
 
@@ -197,7 +197,14 @@ impl ProxyServer {
 
                 match login {
                     MiddlewareResult::Continue => {}
-                    MiddlewareResult::ShortCircuit => return Ok(()),
+                    MiddlewareResult::ShortCircuit => {
+                        if let Some(ClaimedLogin(handoff)) = ctx.extensions.remove::<ClaimedLogin>()
+                        {
+                            self.hand_off(ctx, handoff, HandoffLevel::Login, &shutdown)
+                                .await;
+                        }
+                        return Ok(());
+                    }
                     MiddlewareResult::Reject(msg) => {
                         admission::reject_refused(&self.services.event_bus, &ctx);
                         self.send_kick(&mut ctx, &Component::text(msg)).await.ok();

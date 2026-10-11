@@ -27,6 +27,7 @@ use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
 use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
+use crate::middleware::login_claim::LoginClaimMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::middleware::routing_middleware::DomainRouterMiddleware;
@@ -273,7 +274,10 @@ impl ProxyServer {
         ))));
 
         let mut login_pipeline = Pipeline::new();
-        login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
+        login_pipeline.add(Box::new(LoginStartParserMiddleware::with_login_claims(
+            Arc::clone(&event_bus),
+        )));
+        login_pipeline.add(Box::new(LoginClaimMiddleware::new(Arc::clone(&event_bus))));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
         login_pipeline.add(Box::new(TelemetryMiddleware));
         login_pipeline.add(Box::new(
