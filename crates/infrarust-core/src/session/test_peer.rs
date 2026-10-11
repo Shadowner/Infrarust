@@ -139,6 +139,19 @@ pub(crate) fn with_handshake(mut ctx: SessionContext<'_>) -> SessionContext<'_> 
     ctx
 }
 
+pub(crate) fn with_login_start(mut ctx: SessionContext<'_>) -> SessionContext<'_> {
+    let start = SLoginStart {
+        name: "TestPlayer".to_string(),
+        uuid: Some(uuid::Uuid::nil()),
+        profile_key: None,
+    };
+    let frame = build_frame(&start, V, &build_default_registry());
+    let mut encoder = PacketEncoder::new();
+    encoder.append_raw(frame.id, &frame.payload).unwrap();
+    ctx.handshake.raw_packets = vec![raw_handshake(V, "origin.test"), encoder.take()];
+    ctx
+}
+
 pub(crate) fn velocity_services() -> ProxyServices {
     let mut services = test_proxy_services();
     services.forwarding_mode = Arc::new(ForwardingMode::Velocity {
