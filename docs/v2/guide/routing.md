@@ -75,9 +75,16 @@ Avoid this by giving each server unique domains.
 
 ## FML markers
 
-Forge and Fabric clients append markers to the hostname in the handshake packet: `\0FML\0`, `\0FML2\0`, or `\0FML3\0`. Infrarust strips these markers before domain resolution. You do not need to account for them in your `domains` list.
+Forge clients append a marker to the hostname in the handshake packet: `\0FML\0` (1.7 to 1.12), `\0FML2\0` (1.13 to 1.17), `\0FML3\0` (1.18 to 1.20.1, NeoForge 1.20.1 included) and `\0FORGE` (1.20.2 and later). Infrarust strips these markers before domain resolution. You do not need to account for them in your `domains` list.
 
 A player using a Forge client connecting to `mc.example.com` sends `mc.example.com\0FML2\0` in the handshake. The proxy strips the marker and resolves `mc.example.com` normally.
+
+The backend still needs the marker: without it a Forge server treats the client as vanilla and refuses it. Infrarust keeps it on the way to the backend:
+
+- With no `domain_rewrite`, the handshake reaches the backend exactly as the client sent it.
+- With a `domain_rewrite`, everything from the first `\0` of the client's hostname is appended to the rewritten hostname, so `{ explicit = "backend.internal" }` sends `backend.internal\0FML2\0`.
+- With BungeeCord or BungeeGuard forwarding, the hostname field carries the forwarded IP, UUID and properties, so the client's suffix is never copied into it. When the suffix holds a Forge marker, Infrarust adds the two profile properties Waterfall uses instead: `forgeClient` set to `true`, and `extraData` set to the suffix with every `\0` replaced by `\1` (`\1FML2\1`). Backend mods such as BungeeForge read them back. The BungeeGuard token is unaffected.
+- Velocity modern forwarding does not touch the hostname, so the marker passes as with no forwarding.
 
 ## SRV records
 
