@@ -26,6 +26,13 @@ export const LOGIN_QUERIES = [
 
 export const LOGIN_QUERY_TIMEOUT_MS = 5000;
 
+export function forgeMarkerFor(protocol) {
+  if (protocol >= 764) return '\0FORGE';
+  if (protocol >= 757) return '\0FML3\0';
+  if (protocol >= 393) return '\0FML2\0';
+  return '\0FML\0';
+}
+
 export const BIG_PACKET_MIN_PROTOCOL = 47;
 export const BIG_PACKET_CHANNEL = 'e2e:big';
 export const BIG_PACKET_SIZE = 3 * 1024 * 1024;

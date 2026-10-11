@@ -71,6 +71,7 @@ export function writeLab(dir, { sessionUrl } = {}) {
       `addresses = [${quote(`127.0.0.1:${backend.port}`)}]`,
       `proxy_mode = ${quote(scenario.proxyMode)}`,
       `forwarding_mode = ${quote(scenario.forwardingMode)}`,
+      ...(scenario.domainRewrite ? [`domain_rewrite = { explicit = ${quote(scenario.domainRewrite)} }`] : []),
       '',
     ].join('\n');
     writeFileSync(join(dir, 'servers', `${scenario.id}.toml`), server);

@@ -176,6 +176,25 @@ export const SCENARIOS = [
     client: { awaitPayload: BIG_PACKET_CHANNEL },
     expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, clientCompression: 'proxy', bigPacketIntact: true },
   },
+  {
+    id: 'forge-rewrite',
+    domain: 'forge-rw.test',
+    proxyMode: 'passthrough',
+    forwardingMode: 'none',
+    backend: 'plain',
+    domainRewrite: 'forge-backend.internal',
+    forgeMarker: true,
+    expect: { reachesPlay: true, interceptedByProxy: false, forgeMarker: { rewrite: 'forge-backend.internal' } },
+  },
+  {
+    id: 'forge-bungeecord',
+    domain: 'forge-bungee.test',
+    proxyMode: 'offline',
+    forwardingMode: 'bungee_cord',
+    backend: 'bungee',
+    forgeMarker: true,
+    expect: { reachesPlay: true, interceptedByProxy: true, forgeMarker: { properties: true } },
+  },
 ];
 
 export function skipReason(scenario, protocol, opts = {}) {

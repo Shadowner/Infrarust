@@ -8,6 +8,7 @@ import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate, KNOWN_FINDINGS } from './expectations.js';
 import { FORWARDING_SECRET, writeLab } from './lab.js';
+import { forgeMarkerFor } from './modded.js';
 import { Proxy, sleep, waitForPlayer, waitForPort } from './proxy.js';
 import { writeReport } from './report.js';
 import { BACKENDS, SCENARIOS, skipReason } from './scenarios.js';
@@ -128,7 +129,7 @@ async function main() {
         let proxyPlayer = null;
         const client = await connectOnce({
           version: v.version,
-          domain: scenario.domain,
+          domain: scenario.forgeMarker ? `${scenario.domain}${forgeMarkerFor(v.protocol)}` : scenario.domain,
           username,
           session: scenario.needsAuth ? await yggdrasil.session(username) : null,
           sessionServer: scenario.needsAuth ? yggdrasil.sessionServer : null,

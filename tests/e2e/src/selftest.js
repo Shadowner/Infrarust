@@ -156,6 +156,19 @@ await check("expectations: the backend's threshold on a login the proxy finishes
   assert.equal(evaluate(only('clientCompression', 'proxy'), { client: { loginPackets: ['success'] }, protocol: 769 }).status, 'fail');
 });
 
+await check('expectations: a forge marker lost by a rewrite or by bungeecord forwarding is caught', () => {
+  const client = { domain: 'forge.test\u0000FML3\u0000' };
+  const rewrite = only('forgeMarker', { rewrite: 'backend.internal' });
+  assert.equal(evaluate(rewrite, { client, backend: { handshakeHost: 'backend.internal\u0000FML3\u0000' } }).status, 'pass');
+  assert.equal(evaluate(rewrite, { client, backend: { handshakeHost: 'backend.internal' } }).status, 'fail');
+  const props = only('forgeMarker', { properties: true });
+  const forwarded = (properties) => ({ client, backend: { handshakeHost: ['forge.test', '127.0.0.1', 'abc', JSON.stringify(properties)].join('\u0000') } });
+  const good = [{ name: 'forgeClient', value: 'true' }, { name: 'extraData', value: '\u0001FML3\u0001', signature: '' }];
+  assert.equal(evaluate(props, forwarded(good)).status, 'pass');
+  assert.equal(evaluate(props, forwarded([])).status, 'fail');
+  assert.equal(evaluate(props, forwarded([good[0], { name: 'extraData', value: '\u0000FML3\u0000' }])).status, 'fail');
+});
+
 await check('loopback: the query backend and client agree with no proxy involved', async () => {
   const port = 26120;
   const backend = await startBackend({ version: '1.20.1', port, kind: 'query', loginQueries: true, secret: SECRET });

@@ -188,6 +188,46 @@ const CHECKS = {
       detail: ok ? `${got.length} bytes arrived intact` : `${got.length} bytes arrived (sha256 ${got.sha256.slice(0, 12)}), expected ${BIG_PACKET_SIZE}`,
     };
   },
+
+  forgeMarker: ({ client, backend }, expected) => {
+    const sent = client.domain ?? '';
+    const cut = sent.indexOf('\0');
+    const host = cut < 0 ? sent : sent.slice(0, cut);
+    const suffix = cut < 0 ? '' : sent.slice(cut);
+    const got = backend?.handshakeHost;
+    if (got == null) return { ok: false, detail: 'the backend saw no handshake' };
+
+    if (expected.rewrite) {
+      const want = `${expected.rewrite}${suffix}`;
+      return {
+        ok: got === want,
+        detail: got === want ? `backend got ${JSON.stringify(got)}` : `backend got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`,
+      };
+    }
+
+    const fields = got.split('\0');
+    const problems = [];
+    if (fields.length !== 4) problems.push(`${fields.length} NUL-separated fields instead of 4`);
+    if (fields[0] !== host) problems.push(`host field ${JSON.stringify(fields[0])}`);
+    let props = [];
+    try {
+      props = JSON.parse(fields[3] ?? '');
+    } catch {
+      problems.push('no JSON properties field');
+    }
+    const named = (name) => (Array.isArray(props) ? props.filter((p) => p.name === name) : []);
+    const extraData = suffix.replaceAll('\0', '\u0001');
+    const forgeClient = named('forgeClient');
+    const extra = named('extraData');
+    if (forgeClient.length !== 1 || forgeClient[0].value !== 'true') problems.push('no forgeClient=true property');
+    if (extra.length !== 1 || extra[0].value !== extraData) {
+      problems.push(`extraData ${JSON.stringify(extra.map((p) => p.value))}, expected ${JSON.stringify(extraData)}`);
+    }
+    return {
+      ok: problems.length === 0,
+      detail: problems.length ? problems.join('; ') : `forgeClient=true, extraData=${JSON.stringify(extraData)}`,
+    };
+  },
 };
 
 export function evaluate(scenario, observations, { backendObservable = true } = {}) {
@@ -202,6 +242,7 @@ export function evaluate(scenario, observations, { backendObservable = true } = 
     'bungeeGuardToken',
     'loginQueriesRelayed',
     'loginSuccessAfterBackend',
+    'forgeMarker',
   ]);
 
   for (const [name, expected] of Object.entries(scenario.expect)) {
