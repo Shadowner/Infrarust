@@ -343,7 +343,7 @@ async fn without_a_registered_prefix_nothing_is_claimed() {
     assert!(proxy.services().connection_claims.is_empty());
 
     let mut opening = XFER.to_vec();
-    opening.extend([0; 80]);
+    opening.extend([0; 128]);
     let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
     client.write_all(&opening).await.unwrap();
     closed_silently(&mut client).await;
