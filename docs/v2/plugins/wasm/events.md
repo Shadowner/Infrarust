@@ -39,7 +39,7 @@ pub fn on<E: GuestEvent>(
 ) -> Result<EventSubscription, Error>
 ```
 
-`on` returns an error when the host refuses the subscription: without the `event-bus` capability, for `ChatMessageEvent` or `CommandExecuteEvent` without `chat-intercept`, or for `PluginMessageEvent` without `plugin-messaging`. The error's kind is `PermissionDenied`. A plugin that already holds `[wasm.quotas] event_listeners` listeners (1024 by default) gets `LimitExceeded` instead; cancelling a subscription frees room. The `?` in `on_enable` turns either into a failed enable; drop the error instead if the plugin should run without that event.
+`on` returns an error when the host refuses the subscription: without the `event-bus` capability, for `ChatMessageEvent` or `CommandExecuteEvent` without `chat-intercept`, for `PluginMessageEvent`, `LoginPluginRequestEvent` or `LoginPluginResponseEvent` without `plugin-messaging`, or for `RawConnectionEvent` or `LoginClaimEvent` without `connection-handoff`. The error's kind is `PermissionDenied`. A plugin that already holds `[wasm.quotas] event_listeners` listeners (1024 by default) gets `LimitExceeded` instead; cancelling a subscription frees room. The `?` in `on_enable` turns either into a failed enable; drop the error instead if the plugin should run without that event.
 
 :::tip
 Subscribe in `on_enable`. The subscription stays active for the life of the plugin unless you cancel it, so you do not need to keep the returned handle.
@@ -128,7 +128,7 @@ A plugin handles its events one at a time, through one queue shared by every eve
 
 ## Event reference
 
-The SDK exposes 36 event types, one for every native event a plugin can subscribe to. Player-scoped events carry `player: PlayerRef` (`id`, `uuid`, `username`); call `event.player.handle()` for a `Player` you can message or move. The events that carry a full `GameProfile` (`uuid`, `username`, `properties`) are the ones whose native event does: `PreLoginEvent`, `GameProfileRequestEvent` and `PostLoginEvent`. `RawPacketEvent` carries only the player's id, like its native counterpart.
+The SDK exposes 40 event types, one for every native event a plugin can subscribe to. Player-scoped events carry `player: PlayerRef` (`id`, `uuid`, `username`); call `event.player.handle()` for a `Player` you can message or move. The events that carry a full `GameProfile` (`uuid`, `username`, `properties`) are the ones whose native event does: `PreLoginEvent`, `GameProfileRequestEvent` and `PostLoginEvent`. `RawPacketEvent` carries only the player's id, like its native counterpart.
 
 The events arrive in the order described in the native [player lifecycle](../dev/events#player-lifecycle), and the same guarantees hold: `PostLoginEvent` runs once the player is registered, and every player who got it gets exactly one `DisconnectEvent`.
 
@@ -173,12 +173,16 @@ The events arrive in the order described in the native [player lifecycle](../dev
 | `KickedFromServerEvent` | `player`, `server`, `reason: Option<Component>`, `cause: KickCause`, `during_connect`, `previous_server` | `KickedFromServerResult`: `disconnect(reason)`, `redirect_to(server)`, `send_to_limbo(handlers)`, `notify(message)` |
 | `ChatMessageEvent` | `player`, `message`, `signed`, `server` | `ChatMessageResult`: `allow()`, `deny(reason)`, `deny_silently()`, `modify(message)`. Needs `chat-intercept` |
 | `ProxyPingEvent` | `remote_addr`, `server`, `virtual_host`, `protocol`, `legacy` | the ping response, field by field: `max_players()`, `online_players()`, `version_name()`, `version_protocol()`, `description()`, `favicon()`, `player_sample()` and a `set_` for each; `response()` and `set_response(r)` for the whole `PingResponse` |
-| `ConnectionHandshakeEvent` | `remote_addr`, `virtual_host`, `raw_host`, `port`, `protocol`, `intent: HandshakeIntent`, `legacy`, `server` | `ConnectionHandshakeResult`: `allow()`, `deny(reason)`, `deny_silently()`, `drop_silently()` |
+| `ConnectionHandshakeEvent` | `remote_addr`, `virtual_host`, `raw_host`, `port`, `protocol`, `intent: HandshakeIntent`, `legacy`, `server` | `ConnectionHandshakeResult`: `allow()`, `deny(reason)`, `deny_silently()`, `drop_silently()`, `handoff(h)`. A handoff needs `connection-handoff` |
+| `RawConnectionEvent` | `connection_id`, `remote_addr`, `local_addr`, `prefix: Vec<u8>`, `data: Vec<u8>` | `RawConnectionResult`: `pass()`, `need_more(n)`, `handoff(h)`, `reject()`. Needs `connection-handoff`, see [Connection Handoff](./connection-handoff#claiming-raw-connections) |
+| `LoginClaimEvent` | `remote_addr`, `virtual_host`, `raw_host`, `port`, `protocol`, `server`, `username`, `uuid`, `login_start: Vec<u8>`, `layout_matches` | `LoginClaimResult`: `pass()`, `handoff(h)`. Needs `connection-handoff`, see [Claiming a login](./connection-handoff#claiming-a-login) |
 | `GameProfileRequestEvent` | `original: GameProfile`, `online_mode`, `remote_addr`, `virtual_host`, `protocol` | the profile the player gets: `profile()`, `profile_mut()`, `set_profile(p)`, `is_modified()`; the deny: `denied()`, `deny(reason)`, `allow()` |
 | `LoginEvent` | `player`, `online_mode` | `LoginResult`: `allow()`, `deny(reason)` |
 | `CommandExecuteEvent` | `player`, `command`, `signed`, `server`; `label()` is the first word | `CommandExecuteResult`: `allow()`, `deny(reason)`, `deny_silently()`, `modify(command)`, `forward_to_backend()`. Needs `chat-intercept` |
 | `PreTransferEvent` | `player`, `host`, `port`, `origin: TransferOrigin` | `PreTransferResult`: `allow()`, `deny(reason)`, `redirect(host, port)` |
 | `PluginMessageEvent` | `player`, `source: MessageEndpoint`, `channel: ChannelId`, `raw_channel`, `data: Vec<u8>`, `phase: MessagePhase` | `PluginMessageResult`: `forward()`, `handled()`, `replace(data)`. Needs `plugin-messaging` |
+| `LoginPluginRequestEvent` | `player`, `server`, `message_id`, `channel`, `data: Vec<u8>`, `client_reachable` | `LoginPluginRequestResult`: `forward()`, `replace(data)`, `respond(data)`, `respond_not_understood()`. Needs `plugin-messaging`, see [Login plugin messages](./messaging#login-plugin-messages) |
+| `LoginPluginResponseEvent` | `player`, `server`, `message_id`, `channel`, `successful`, `data: Vec<u8>` | `LoginPluginResponseResult`: `forward()`, `replace(successful, data)`. Needs `plugin-messaging` |
 | `NamedEvent` | `name`, `source_plugin`, `content_type`, `payload: Vec<u8>` | cancelled flag and response: `cancel()`, `uncancel()`, `respond(content_type, payload)`, `respond_text(text)`, `clear_response()` |
 | `RawPacketEvent` | `player: PlayerId`, `direction`, `packet_id`, `data` | `RawPacketResult`: `pass()`, `drop_packet()`, `modify(packet_id, data)`. Needs `raw-packet`, subscribed with `on_packets` |
 
@@ -212,7 +216,7 @@ ctx.on::<GameProfileRequestEvent>(EventPriority::NORMAL, |event| {
 ```
 
 :::info Capabilities
-Subscribing needs the baseline `event-bus` capability. `ChatMessageEvent` and `CommandExecuteEvent` also need the opt-in `chat-intercept` capability, `PluginMessageEvent` needs `plugin-messaging` and `RawPacketEvent` needs `raw-packet`: without it the subscription returns a `PermissionDenied` error and the handler never runs. `send_to_limbo` routes a player to a limbo handler, which needs the opt-in `limbo` capability on the plugin that registered it. See [Capabilities](./capabilities).
+Subscribing needs the baseline `event-bus` capability. `ChatMessageEvent` and `CommandExecuteEvent` also need the opt-in `chat-intercept` capability, `PluginMessageEvent` and the two login plugin message events need `plugin-messaging`, `RawConnectionEvent` and `LoginClaimEvent` need `connection-handoff` and `RawPacketEvent` needs `raw-packet`: without it the subscription returns a `PermissionDenied` error and the handler never runs. `send_to_limbo` routes a player to a limbo handler, which needs the opt-in `limbo` capability on the plugin that registered it. See [Capabilities](./capabilities).
 :::
 
 ### Chat messages
@@ -233,6 +237,10 @@ ctx.on::<PluginMessageEvent>(EventPriority::NORMAL, |event| {
     }
 })?;
 ```
+
+### Connection handoff
+
+`RawConnectionEvent`, `LoginClaimEvent` and `ConnectionHandshakeEvent::handoff` let a plugin take a connection away from the Minecraft pipeline and have the proxy relay it to another target: a raw connection by its first bytes, a handshake, or a login before `PreLoginEvent`. None of them is an access event: a listener that does not answer leaves the connection on its normal path. A handoff skips authentication, so read [Connection Handoff](./connection-handoff) before you use one.
 
 ## Named events
 

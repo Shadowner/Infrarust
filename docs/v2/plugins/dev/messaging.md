@@ -179,6 +179,34 @@ These are informational and [queued](./events#delivery): the proxy posts them an
 | `PlayerSettingsChangedEvent` | `player`, `settings` | The client sends settings that differ from the last ones |
 | `PlayerChannelRegisterEvent` | `player`, `channels`, `direction` | The client (`PacketDirection::Serverbound`) or the backend (`Clientbound`) registers channels. Unregistrations post nothing |
 
+## Login plugin messages
+
+A backend can ask the client questions during the login with Login Plugin Request packets (`message_id`, channel, data); the client answers each with a Login Plugin Response carrying the same `message_id`. On `offline` and `client_only` servers the proxy runs the login, and two awaited, resulted events from `infrarust_api::events::messaging` let a plugin take part. They fire on every path where a backend sends such requests: the first login, a login the proxy relays, and the login of a server switch or of a player leaving limbo.
+
+**`LoginPluginRequestEvent`**: `player`, `server`, `message_id: i32`, `channel: String`, `data: Bytes`, `client_reachable: bool`.
+
+| Result (`LoginPluginRequestResult`) | Description |
+|---------|-------------|
+| `Forward` (default, `forward()`) | The client gets the request. When `client_reachable` is `false` the player is past its login (a switch, a limbo exit) and the proxy answers "not understood", as without a listener |
+| `Replace(data)` (`replace(data)`) | The client gets the request with `data`, under the same message id. Behaves like `Forward` when the client is not reachable |
+| `Respond(Some(data))` (`respond(data)`) | The proxy answers the backend itself, successful with `data`; the client never sees the request |
+| `Respond(None)` (`respond_not_understood()`) | The proxy answers the backend that the channel was not understood |
+
+**`LoginPluginResponseEvent`**: `player`, `server`, `message_id`, `channel` (the request's channel: the proxy matches the response to its request by id, since the wire response has none), `successful`, `data`. `Forward` (default, `forward()`) passes the client's answer on, `Replace { successful, data }` (`replace(successful, data)`) sends the backend another one. It fires only for responses to requests that went to the client.
+
+Both fire only for channels registered in the channel registry, the same rule as `PluginMessageEvent`: Forge's `fml:loginwrapper` messages cost nothing unless a plugin registered that channel. `velocity:player_info` never fires, since the proxy answers it. WASM plugins receive both with `plugin-messaging`, see [Login plugin messages](../wasm/messaging#login-plugin-messages).
+
+```rust
+use infrarust_api::events::messaging::LoginPluginRequestEvent;
+
+ctx.channel_registrar().register(ChannelId::modern("automodpack:handshake")?);
+ctx.event_bus().subscribe::<LoginPluginRequestEvent, _>(EventPriority::NORMAL, |event| {
+    if event.channel == "automodpack:handshake" && !event.client_reachable {
+        event.respond(&b"\x00"[..]);
+    }
+});
+```
+
 ## The BungeeCord channel
 
 Bukkit, Spigot and Paper plugins ask the proxy for things on the `BungeeCord` channel (`bungeecord:main` since 1.13): move a player, list the servers, forward a message to another server. Infrarust answers them when both switches are on:

@@ -255,6 +255,7 @@ Fired once per connection, right after the proxy routed its domain and before an
 | `Allow` (default, `allow()`) | Let the connection go on |
 | `Deny { reason }` (`deny(reason)`) | Refuse the connection. A login is disconnected in the login phase with `reason`, or "You are not allowed to connect to this server" when it is `None`. A client older than 1.7 gets a legacy kick. A server list ping gets no answer: the proxy closes the connection |
 | `DropSilently` (`drop_silently()`) | Close the connection without sending anything |
+| `Handoff(handoff)` (`handoff(h)`) | Stop treating the connection as Minecraft and relay it to the handoff's target, a server list ping included. See [Connection Handoff](../wasm/connection-handoff#the-handoff). A WASM plugin needs `connection-handoff` for it |
 
 A refused connection posts a `ConnectionRejectedEvent` with the reason `Plugin`, carrying the ID of the plugin whose listener last changed the result.
 
@@ -311,7 +312,68 @@ ctx.event_bus().subscribe::<ConnectionRejectedEvent, _>(
 );
 ```
 
-WASM plugins (contract 0.3.0) receive `connection-handshake` and `connection-rejected` with the same fields and results. See [WASM events](../wasm/events).
+### RawConnectionEvent
+
+Fired for a connection whose first bytes start with a prefix a plugin registered through `ctx.connection_claims()`, before the proxy parses a Minecraft handshake. The proxy reads nothing extra while no plugin holds a prefix. The IP filter and the global IP bans run first; the rate limiter does not. Awaited. Needs the `connection-handoff` capability for the registration. See [Claiming raw connections](../wasm/connection-handoff#claiming-raw-connections).
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `u64` | The proxy's id for the connection |
+| `remote_addr` | `SocketAddr` | The client, from the PROXY protocol header when there is one |
+| `local_addr` | `SocketAddr` | The listener address the client reached |
+| `prefix` | `Bytes` | The registered prefix that matched. Every listener sees every claimed connection, so check it |
+| `data` | `Bytes` | Every byte read so far, the prefix included |
+
+**Results** (`RawConnectionResult`, `#[non_exhaustive]`):
+
+| Variant | Description |
+|---------|-------------|
+| `Pass` (default, `pass()`) | Handle the connection as Minecraft, with the bytes read still in front of the stream |
+| `NeedMore(n)` (`need_more(n)`) | Read until `data` holds `n` bytes and fire the event again; at most 4096 bytes and 8 rounds, and a client that does not send them within 5 seconds is closed |
+| `Handoff(handoff)` (`handoff(h)`) | Relay the connection to the handoff's target. `HandoffTarget::Route` is refused here: the connection has no route yet |
+| `Reject` (`reject()`) | Close the connection without a word |
+
+```rust
+use infrarust_api::prelude::*;
+
+if let Some(claims) = ctx.connection_claims() {
+    claims
+        .register_prefix(b"AMMH")
+        .map_err(|error| PluginError::InitFailed(error.to_string()))?;
+}
+ctx.event_bus().subscribe::<RawConnectionEvent, _>(EventPriority::NORMAL, |event| {
+    if event.prefix.as_ref() == b"AMMH" {
+        event.handoff(Handoff::to(HandoffTarget::server_port("modded", 30037)));
+    }
+});
+```
+
+`register_prefix` answers `ClaimError::InvalidPrefix` for a prefix shorter than 2 or longer than 16 bytes, or one a Minecraft handshake, a legacy ping or a PROXY protocol header could start with, and `ClaimError::Limit` past 16 prefixes per plugin. `unregister_prefix` answers `ClaimError::NotFound` for a prefix the plugin does not hold. A plugin's prefixes go away when it is disabled or unloaded.
+
+### LoginClaimEvent
+
+Fired once the Login Start packet is read, before `PreLoginEvent`, the ban checks and admission, and only while some plugin listens to it. Awaited. A claimed login skips the rest of the login, `PreLoginEvent` to `DisconnectEvent` included, and is relayed to the handoff's target unauthenticated. See [Claiming a login](../wasm/connection-handoff#claiming-a-login).
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `remote_addr` | `SocketAddr` | The client |
+| `virtual_host` | `Option<String>` | The domain, lowercased, without the Forge marker or trailing dot |
+| `raw_host` | `String` | The host as the client sent it |
+| `port` | `u16` | The port from the handshake |
+| `protocol_version` | `ProtocolVersion` | The client's protocol version |
+| `server` | `Option<ServerId>` | The server the domain routes to |
+| `username` | `String` | The name from the Login Start |
+| `uuid` | `Option<Uuid>` | The UUID the client claimed, when its version sends one |
+| `login_start` | `Bytes` | The Login Start payload as sent, without its length and packet id |
+| `layout_matches` | `bool` | `false` when the payload does not match the layout of the client's protocol and only a lenient decode read it |
+
+**Results** (`LoginClaimResult`, `#[non_exhaustive]`): `Pass` (default, `pass()`) keeps the normal login, `Handoff(handoff)` (`handoff(h)`) relays the connection. While a listener exists, the proxy reads a Login Start that does not match its protocol on every route; a connection nobody claims is then refused on an `offline` or `client_only` route exactly as without a listener.
+
+WASM plugins (contract 0.3.0) receive `connection-handshake` and `connection-rejected` with the same fields and results, and `raw-connection` and `login-claim` with the `connection-handoff` capability. See [WASM events](../wasm/events).
 
 ## Lifecycle events
 

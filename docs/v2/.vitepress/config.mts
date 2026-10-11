@@ -215,6 +215,7 @@ export default
               { text: 'Permissions', link: '/plugins/wasm/permissions' },
               { text: 'Bans', link: '/plugins/wasm/bans' },
               { text: 'Plugin Messaging', link: '/plugins/wasm/messaging' },
+              { text: 'Connection Handoff', link: '/plugins/wasm/connection-handoff' },
               { text: 'Host Services', link: '/plugins/wasm/services' },
               { text: 'Building & Toolchain', link: '/plugins/wasm/building' },
               { text: 'Deploying & Configuring', link: '/plugins/wasm/deploying' },

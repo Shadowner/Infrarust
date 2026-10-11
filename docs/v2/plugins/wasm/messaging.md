@@ -22,7 +22,7 @@ permissions = ["plugin-messaging"]
 | Call | Without `plugin-messaging` |
 |------|----------------------------|
 | `Messaging::register`, `unregister`, `channels`, `send_to_player`, `send_to_backend`, `send_to_server` | `Error` of kind `PermissionDenied`, `missing capability: plugin-messaging` |
-| `ctx.on::<PluginMessageEvent>(..)` | The subscription is refused with `PermissionDenied`; the handler never runs |
+| `ctx.on::<PluginMessageEvent>(..)`, `ctx.on::<LoginPluginRequestEvent>(..)`, `ctx.on::<LoginPluginResponseEvent>(..)` | The subscription is refused with `PermissionDenied`; the handler never runs |
 
 The client state events (`PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent`) and the `client_brand`, `settings` and `known_channels` fields of `PlayerInfo` only need the baseline capabilities.
 
@@ -244,6 +244,32 @@ The proxy keeps what the client said about itself and replays it to every server
 | `PlayerChannelRegisterEvent` | `player`, `channels`, `direction` | The client (`PacketDirection::Serverbound`) or the backend (`Clientbound`) registers channels |
 
 These events are queued, not awaited: they can arrive after the player left. See [Client state](../dev/messaging#client-state) for what each field holds and when the proxy replays it.
+
+## Login plugin messages
+
+During the login, before the player reaches the configuration or play state, a backend can ask the client questions with Login Plugin Request packets, and the client answers each one with a Login Plugin Response carrying the same message id. Forge and several modpack tools negotiate this way. On `offline` and `client_only` servers the proxy runs the login itself, and two events let a plugin take part:
+
+| Event | Fields | Results |
+|-------|--------|---------|
+| `LoginPluginRequestEvent` | `player`, `server`, `message_id`, `channel`, `data`, `client_reachable` | `forward()` (default), `replace(data)`, `respond(data)`, `respond_not_understood()` |
+| `LoginPluginResponseEvent` | `player`, `server`, `message_id`, `channel`, `successful`, `data` | `forward()` (default), `replace(successful, data)` |
+
+`LoginPluginRequestEvent` fires for each request the backend sends. `respond(data)` answers the backend as if the client had answered successfully with `data`, and `respond_not_understood()` answers that the client did not understand the channel; in both cases the client never sees the request. `replace(data)` sends the request to the client with other bytes under the same message id. `client_reachable` is `true` while the client is still logging in and the request can reach it, and `false` when the player is already past its login (a server switch, a player leaving limbo): there `forward` gets the proxy's usual "not understood" answer and `replace` behaves like `forward`.
+
+`LoginPluginResponseEvent` fires for the client's answer to a request that went to the client. The wire response has no channel, so the proxy matches it to its request by message id and fills `channel` with the request's. `replace(successful, data)` sends the backend another answer.
+
+Both events fire only for channels some plugin registered with `Messaging::register`, like `PluginMessageEvent`, so a channel nobody registered costs nothing: register `fml:loginwrapper` only if you need Forge's login messages. `velocity:player_info` never fires, since the proxy answers it itself. Subscribing needs `plugin-messaging`.
+
+```rust
+Messaging::register(&ChannelId::modern("automodpack:handshake"))?;
+ctx.on::<LoginPluginRequestEvent>(EventPriority::NORMAL, |event| {
+    if event.channel == "automodpack:handshake" && !event.client_reachable {
+        event.respond(b"\x00".to_vec());
+    }
+})?;
+```
+
+A plugin that wants to move such a client to another target before the login goes further can claim the login instead, see [Connection Handoff](./connection-handoff#claiming-a-login).
 
 ## See also
 
