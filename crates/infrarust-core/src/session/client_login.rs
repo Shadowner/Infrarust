@@ -1,19 +1,43 @@
 use std::sync::OnceLock;
+use std::time::Duration;
 
-use infrarust_api::types::GameProfile;
-use infrarust_protocol::packets::login::{CLoginSuccess, Property, SLoginAcknowledged};
+use infrarust_protocol::VarInt;
+use infrarust_protocol::packets::cookie::SLoginCookieResponse;
+use infrarust_protocol::packets::login::{
+    CLoginSuccess, CSetCompression, Property, SLoginAcknowledged, SLoginPluginResponse,
+};
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::context::{SessionContext, SessionIo};
 
 pub(crate) async fn complete_login(
-    client: &mut ClientBridge,
-    profile: &GameProfile,
-    version: ProtocolVersion,
-    registry: &PacketRegistry,
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
 ) -> Result<(), CoreError> {
+    complete_login_within(ctx, io, infrarust_config::defaults::read_timeout()).await
+}
+
+pub(crate) async fn complete_login_within(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    acknowledgement: Duration,
+) -> Result<(), CoreError> {
+    let version = ctx.version();
+    let registry = ctx.registry();
+    let client = &mut io.client;
+
+    enable_compression(
+        client,
+        ctx.services.config.compression_threshold,
+        version,
+        registry,
+    )
+    .await?;
+
+    let profile = ctx.profile();
     let properties: Vec<Property> = profile
         .properties
         .iter()
@@ -34,11 +58,42 @@ pub(crate) async fn complete_login(
     .await?;
 
     if version.no_less_than(ProtocolVersion::V1_20_2) {
-        consume_login_acknowledged(client, version, registry).await
+        tokio::time::timeout(
+            acknowledgement,
+            consume_login_acknowledged(client, version, registry),
+        )
+        .await
+        .map_err(|_| {
+            CoreError::Timeout("the client did not acknowledge its login in time".to_string())
+        })??;
     } else {
         client.set_state(ConnectionState::Play);
-        Ok(())
     }
+
+    if let Some(threshold) = io.client.compression_threshold() {
+        io.client_codec.notify_compression_change(threshold);
+    }
+    let state = io.client.state();
+    io.entered(state);
+    Ok(())
+}
+
+async fn enable_compression(
+    client: &mut ClientBridge,
+    threshold: i32,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    if threshold < 0 || version.less_than(ProtocolVersion::V1_8) {
+        return Ok(());
+    }
+    let packet = CSetCompression {
+        threshold: VarInt(threshold),
+    };
+    client.send_packet(&packet, registry).await?;
+    client.set_compression(threshold);
+    tracing::debug!(threshold, "client compression activated");
+    Ok(())
 }
 
 async fn send_login_success(
@@ -72,10 +127,23 @@ async fn consume_login_acknowledged(
     version: ProtocolVersion,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let frame = client
-        .read_frame()
-        .await?
-        .ok_or(CoreError::ConnectionClosed)?;
+    let late = [
+        registry.get_packet_id::<SLoginPluginResponse>(version),
+        registry.get_packet_id::<SLoginCookieResponse>(version),
+    ];
+    let frame = loop {
+        let frame = client
+            .read_frame()
+            .await?
+            .ok_or(CoreError::ConnectionClosed)?;
+        if !late.contains(&Some(frame.id)) {
+            break frame;
+        }
+        tracing::debug!(
+            id = frame.id,
+            "dropping a late login answer sent before the client's LoginAcknowledged"
+        );
+    };
 
     let decoded = registry.decode_frame(
         &frame,

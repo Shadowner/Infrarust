@@ -38,7 +38,7 @@ labels:
 ```
 
 ::: danger Backend must be offline
-Your backend Minecraft server **must** have `online-mode=false` in its `server.properties`. The proxy already verified the player's identity, so the backend doesn't need to check again. If the backend has `online-mode=true`, players will fail to connect because the backend will try to re-authenticate them.
+Your backend Minecraft server **must** have `online-mode=false` in its `server.properties`. The proxy already verified the player's identity, so the backend doesn't need to check again. If the backend has `online-mode=true`, it asks the proxy for encryption, and the proxy refuses the login right away and logs that the backend is in online mode.
 :::
 
 ### Full example
@@ -78,7 +78,7 @@ text = "§6Survival - Online"
 | `disconnect_message` | string | `"Server is currently unreachable..."` | Message sent to the player when the backend is down. |
 | `limbo_handlers` | string array | `[]` | Plugin IDs for limbo handler chain, executed in order. |
 | `timeouts.connect` | duration | `"5s"` | How long to wait when connecting to the backend. |
-| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. |
+| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. During the backend login, the longest silence allowed between two backend packets while nothing waits on the client, and the time the client has to acknowledge the login. |
 | `timeouts.write` | duration | `"30s"` | Write timeout on the backend connection. |
 
 ::: tip
@@ -92,10 +92,15 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`. If this fails, it fires `OnlineAuthFailedEvent` and disconnects the client.
 4. It fires a `GameProfileRequestEvent`, where plugins may rewrite the profile, then checks bans against the final UUID. A banned player is disconnected while still in the login phase.
 5. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.
-6. It sends `LoginSuccess` to the client with the final UUID, username, and skin properties. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and transitions to the Configuration state. For older versions, it transitions directly to Play state.
-7. It registers the player and fires a `PostLoginEvent`.
-8. It connects to the backend in offline mode, replaying the login sequence.
-9. It enters the session loop, parsing and relaying packets in both directions.
+6. It registers the player and fires a `PostLoginEvent`. The client is still in the login phase.
+7. It connects to the backend in offline mode with its own handshake (carrying the forwarding data, if any) and login start.
+8. While the backend runs its login, the proxy relays the backend's login plugin messages to the client and the client's answers back, with their message ids unchanged, so mods that negotiate during the login (Forge, Fabric, or any other login query) see the real client. It answers a `velocity:player_info` request itself. Login cookie requests (1.20.5+) are relayed the same way.
+9. Once the backend accepts the login, the proxy sends `SetCompression` (see [`compression_threshold`](../global#client-compression)) and `LoginSuccess` with the final UUID, username, and skin properties. For 1.20.2+, it waits for the client's `LoginAcknowledged` packet and both sides move to the Configuration state; older versions go straight to Play.
+10. It enters the session loop, parsing and relaying packets in both directions.
+
+If the backend refuses the login, its reason reaches the client as a login disconnect, unless a plugin redirects the player through `KickedFromServerEvent`. If the player goes to a limbo instead of a backend, the proxy sends `SetCompression` and `LoginSuccess` without waiting for one, and a backend reached later through a server switch gets "not understood" answers to its login plugin messages.
+
+The backend gets `timeouts.read` (30 seconds by default) between two of its login packets; packets from the client do not extend it. While a relayed message waits for the client's answer, that deadline is suspended: a mod may show the player a prompt first, or drop the connection on purpose to download files. The client gets at most 5 minutes, counted from the first request it has not answered, and then `timeouts.read` to acknowledge the `LoginSuccess` the proxy sends (1.20.2 and later). Past any of these limits the player is disconnected. A client answer to a request the client was never sent, such as one a plugin answered itself, is dropped. A backend that asks for encryption is refused at once, since it runs with `online-mode=true`.
 
 Because the proxy parses every packet, sessions are marked as active. Plugins can inject packets into the stream, and the proxy can move the player to a different backend without dropping the client connection.
 
@@ -116,13 +121,17 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
                    │
          GameProfileRequestEvent, ban check
          PermissionsSetupEvent, LoginEvent (plugins can deny)
-                   │
-         LoginSuccess ──▶ Client
-         (1.20.2+: waits for LoginAcknowledged)
-                   │
          PostLoginEvent (plugins notified)
                    │
-         connects to backend (offline mode)
+         handshake + login start ──▶ Backend (offline mode)
+                   │
+         Backend ──▶ login plugin requests ──▶ Client
+         Client ──▶ answers ──▶ Backend
+                   │
+         Backend ──▶ LoginSuccess (consumed)
+                   │
+         SetCompression + LoginSuccess ──▶ Client
+         (1.20.2+: waits for LoginAcknowledged)
                    │
          session loop ─────────▶ parsed packets flow
                                  both directions

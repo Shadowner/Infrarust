@@ -67,6 +67,7 @@ pub(crate) const fn capability_to_wit(capability: Capability) -> Option<wt::Capa
         Capability::ChatIntercept => wt::Capability::ChatIntercept,
         Capability::BanProvider => wt::Capability::BanProvider,
         Capability::PluginMessaging => wt::Capability::PluginMessaging,
+        Capability::ConnectionHandoff => wt::Capability::ConnectionHandoff,
         _ => return None,
     })
 }

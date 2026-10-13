@@ -81,6 +81,7 @@ fn test_proxy_defaults_minimal_config() {
     assert_eq!(config.rate_limit.max_connections, 3);
     assert_eq!(config.status_cache.ttl, Duration::from_secs(5));
     assert!(config.default_motd.is_none());
+    assert_eq!(config.compression_threshold, 256);
 }
 
 #[test]

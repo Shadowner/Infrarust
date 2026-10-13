@@ -37,6 +37,7 @@ pub enum Capability {
     ChatIntercept,
     BanProvider,
     PluginMessaging,
+    ConnectionHandoff,
 }
 ```
 
@@ -55,7 +56,8 @@ Config uses the kebab-case string for each variant. The strings are exact; `code
 | `ConfigWrite` | `config-write` | Rewrite the global `infrarust.toml` with `config-service.write-proxy-config-document` | No |
 | `RawPacket` | `raw-packet` | Send raw packets with `players.send-packet` and receive them with `event-bus.subscribe-packets` | No |
 | `ChatIntercept` | `chat-intercept` | Subscribe to `chat-message` and `command-execute`: read, deny and rewrite what players type | No |
-| `PluginMessaging` | `plugin-messaging` | Register plugin channels, send plugin messages, and subscribe to `plugin-message` | No |
+| `PluginMessaging` | `plugin-messaging` | Register plugin channels, send plugin messages, and subscribe to `plugin-message`, `login-plugin-request` and `login-plugin-response` | No |
+| `ConnectionHandoff` | `connection-handoff` | Register raw connection prefixes, subscribe to `raw-connection` and `login-claim`, and hand a connection off from `connection-handshake` (see [Connection Handoff](./connection-handoff)) | No |
 | `ServerManage` | `server-manage` | Start/stop servers and read their state; drain and reset load-balanced backends | No |
 | `Ban` | `ban` | Use the ban service | No |
 | `BanProvider` | `ban-provider` | Become the ban provider named by `[ban] provider` (`providers.register-ban-provider`, see [Bans](./bans)) | No |
@@ -172,7 +174,9 @@ Every host interface is linked for every plugin, whatever it was granted. A plug
 | `players` | `send-packet` | `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
 | `event-bus` | `subscribe`, `unsubscribe`, `subscribe-named`, `fire-named` | `event-bus` | `permission-denied: "missing capability: event-bus"` |
 | `event-bus` | `subscribe` with kind `chat-message` or `command-execute` | `event-bus` and `chat-intercept` | `permission-denied: "missing capability: chat-intercept"`: the plugin never sees a chat message or command |
-| `event-bus` | `subscribe` with kind `plugin-message` | `event-bus` and `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
+| `event-bus` | `subscribe` with kind `plugin-message`, `login-plugin-request` or `login-plugin-response` | `event-bus` and `plugin-messaging` | `permission-denied: "missing capability: plugin-messaging"` |
+| `event-bus` | `subscribe` with kind `raw-connection` or `login-claim` | `event-bus` and `connection-handoff` | `permission-denied: "missing capability: connection-handoff"` |
+| `connection-claims` | `register-prefix`, `unregister-prefix` | `connection-handoff` | `permission-denied: "missing capability: connection-handoff"` |
 | `event-bus` | `subscribe-packets`, and `subscribe` with kind `raw-packet` | `event-bus` and `raw-packet` | `permission-denied: "missing capability: raw-packet"` |
 | `command-manager` | `register`, `unregister`, `get`, `get-by-name`, `get-by-alias`, `contains`, `list`, `list-owned` | `command` | `permission-denied: "missing capability: command"` |
 | `scheduler` | `delay`, `interval`, `cancel` | `scheduler` | `permission-denied: "missing capability: scheduler"` |
@@ -207,7 +211,7 @@ WARN plugin my-plugin imports ban-service but lacks the `ban` capability; calls 
 
 The warning also carries the imported functions in its `functions` field. The report works per function, not per interface. Every component imports the `limbo` interface for its session resource types, but only `register-limbo-handler` needs `limbo`, so a plugin that never registers a limbo handler is not reported. In the same way `players` is reported against `player-write` only when the plugin imports a function that acts on a player, and against `raw-packet` only when it imports `send-packet`; `event-bus` is reported against both `event-bus` and `raw-packet` when the plugin imports `subscribe-packets`, since the call checks both, and `config-service` against `config-write` when it imports `write-proxy-config-document`.
 
-The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `chat-message`, `command-execute` or `plugin-message` subscription without its capability is only reported when the call is refused.
+The report reads imports, not arguments, so it cannot tell which event kinds a plugin subscribes to: a `chat-message`, `command-execute`, `plugin-message`, `raw-connection` or `login-claim` subscription without its capability is only reported when the call is refused.
 
 ### Chat needs `chat-intercept`
 
@@ -229,7 +233,18 @@ Plugin channels carry whatever mods and backend plugins exchange with the client
 permissions = ["plugin-messaging"]
 ```
 
-Without it `Messaging::register` and the send functions return `permission-denied`, `ctx.on::<PluginMessageEvent>` is refused, and the host logs the refusal with `capability="plugin-messaging"`. Compiled-in plugins hold it unless their config denies it.
+Without it `Messaging::register` and the send functions return `permission-denied`, `ctx.on::<PluginMessageEvent>` is refused, and the host logs the refusal with `capability="plugin-messaging"`. Compiled-in plugins hold it unless their config denies it. The same capability covers the [login plugin messages](./messaging#login-plugin-messages) a backend exchanges with the client during the login.
+
+### Handoffs need `connection-handoff`
+
+A handoff takes a connection away from the Minecraft pipeline, before authentication, and pipes it to another target. `connection-handoff` gates the `connection-claims` interface, the `raw-connection` and `login-claim` subscriptions, and a `handoff` outcome on `connection-handshake`:
+
+```toml
+[plugins.file-transfer-bridge]
+permissions = ["connection-handoff"]
+```
+
+Without it the registrations and subscriptions return `permission-denied`, and a `handoff` returned for `connection-handshake` is ignored with a rate-limited warning: the event keeps the result it had. An `address` target, and a `server-port` target off the server's own port, are also checked against the plugin's network allow-list. Unlike `transport-filter`, it can be granted from config. See [Connection Handoff](./connection-handoff).
 
 ### `config-read` sees only the plugin's own block
 

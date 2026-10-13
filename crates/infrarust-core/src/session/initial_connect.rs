@@ -12,6 +12,7 @@ use infrarust_protocol::version::ProtocolVersion;
 
 use super::session_loop::Pending;
 use crate::error::CoreError;
+use crate::forwarding::ForwardingHandler;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::middleware::backend_selection::BackendTargets;
@@ -19,6 +20,7 @@ use crate::pipeline::types::RoutingData;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::{Login, connect_backend};
 use crate::session::client_bridge::ClientBridge;
+use crate::session::client_login::complete_login;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
@@ -47,6 +49,14 @@ pub(crate) enum InitialMode {
 pub(crate) struct LoginProgress {
     pub(crate) completed: bool,
     pub(crate) rewritten: bool,
+    pub(crate) online_mode: bool,
+}
+
+impl LoginProgress {
+    const fn bridges_backend_login(&self, handler: &ForwardingHandler) -> bool {
+        !self.completed
+            && (self.online_mode || self.rewritten || !matches!(handler, ForwardingHandler::None))
+    }
 }
 
 fn kicked(reason: Component) -> InitialMode {
@@ -92,7 +102,6 @@ pub(crate) async fn resolve_initial_mode(
 ) -> Result<InitialMode, CoreError> {
     let services = ctx.services;
     let player = &ctx.session;
-    let client = &mut io.client;
     let server_config = &routing.server_config;
 
     let initial_server = ServerId::new(routing.config_id.clone());
@@ -113,10 +122,10 @@ pub(crate) async fn resolve_initial_mode(
         infrarust_api::events::connection::PlayerChooseInitialServerResult::SendToLimbo {
             limbo_handlers,
         } => {
-            prepare_client_for_limbo(ctx, client, progress, &initial_server).await?;
+            prepare_client_for_limbo(ctx, io, progress, &initial_server).await?;
             let handlers = match resolve_limbo(&services.limbo_handler_registry, limbo_handlers) {
                 Ok(handlers) => handlers,
-                Err(reason) => return deny_limbo(ctx, client, reason).await,
+                Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
             };
             initial_mode = Some(ConnectionMode::Limbo(
                 handlers,
@@ -127,7 +136,7 @@ pub(crate) async fn resolve_initial_mode(
             initial_server.clone()
         }
         infrarust_api::events::connection::PlayerChooseInitialServerResult::Denied { reason } => {
-            client.disconnect(reason, ctx.registry()).await.ok();
+            io.client.disconnect(reason, ctx.registry()).await.ok();
             return Ok(kicked(reason.clone()));
         }
         _ => initial_server.clone(),
@@ -145,13 +154,13 @@ pub(crate) async fn resolve_initial_mode(
         match pre_connect.result() {
             infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
             infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                client.disconnect(reason, ctx.registry()).await.ok();
+                io.client.disconnect(reason, ctx.registry()).await.ok();
                 return Ok(kicked(reason.clone()));
             }
             infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
                 limbo_handlers,
             } => {
-                prepare_client_for_limbo(ctx, client, progress, &target_server_id).await?;
+                prepare_client_for_limbo(ctx, io, progress, &target_server_id).await?;
                 let handler_names = if limbo_handlers.is_empty() {
                     server_config.limbo_handlers.clone()
                 } else {
@@ -160,7 +169,7 @@ pub(crate) async fn resolve_initial_mode(
                 let handlers = match resolve_limbo(&services.limbo_handler_registry, &handler_names)
                 {
                     Ok(handlers) => handlers,
-                    Err(reason) => return deny_limbo(ctx, client, reason).await,
+                    Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
                 };
                 initial_mode = Some(ConnectionMode::Limbo(
                     handlers,
@@ -189,7 +198,7 @@ pub(crate) async fn resolve_initial_mode(
                 "plugin redirected to an unknown server"
             );
             let reason = Component::text("Unknown server");
-            client.disconnect(&reason, ctx.registry()).await.ok();
+            io.client.disconnect(&reason, ctx.registry()).await.ok();
             return Ok(kicked(reason));
         };
         Some(RoutingData {
@@ -213,9 +222,9 @@ pub(crate) async fn resolve_initial_mode(
             &server_config.limbo_handlers,
         ) {
             Ok(handlers) => handlers,
-            Err(reason) => return deny_limbo(ctx, client, reason).await,
+            Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
         };
-        prepare_client_for_limbo(ctx, client, progress, &target_server_id).await?;
+        prepare_client_for_limbo(ctx, io, progress, &target_server_id).await?;
         initial_mode = Some(ConnectionMode::Limbo(
             handlers,
             LimboEntryContext::InitialConnection {
@@ -249,35 +258,37 @@ pub(crate) async fn resolve_initial_mode(
         let backend_targets = warmed.as_ref().or(backend_targets);
 
         let forwarding_handler = services.resolve_forwarding_handler(server_config);
-        if requires_proxy_completed_login(
-            &forwarding_handler,
-            progress.rewritten,
-            progress.completed,
-        ) {
-            ensure_login_complete(ctx, client, progress).await?;
-        }
+        let bridged = progress.bridges_backend_login(&forwarding_handler);
 
         let mut join = ServerJoin::new(player, target_server_id.clone());
         let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
         let login = if progress.completed {
             Login::Proxied
+        } else if bridged {
+            Login::Bridged(&mut *io)
         } else {
             Login::Relay
         };
         match connect_backend(ctx, &routing.config_id, server_config, &addresses, login).await {
             Ok(backend) => {
+                progress.completed |= bridged;
                 if progress.completed {
                     join.connected(&services.event_bus).await;
                 }
                 pending = Pending::join(join);
                 ConnectionMode::Backend(backend)
             }
+            Err(CoreError::ClientLeft) => {
+                return Ok(InitialMode::Denied(DisconnectCause::ClientQuit));
+            }
             Err(e) => {
-                tracing::info!(
-                    server = %routing.config_id,
-                    error = %e,
-                    "initial backend connection failed"
-                );
+                if !ctx.token.is_cancelled() {
+                    tracing::info!(
+                        server = %routing.config_id,
+                        error = %e,
+                        "initial backend connection failed"
+                    );
+                }
                 pending = Pending::nothing();
                 ConnectionMode::Kicked(Kick::failed(target_server_id.clone(), e, false))
             }
@@ -313,12 +324,13 @@ fn fresh_targets(
 
 async fn prepare_client_for_limbo(
     ctx: &SessionContext<'_>,
-    client: &mut ClientBridge,
+    io: &mut SessionIo,
     progress: &mut LoginProgress,
     server: &ServerId,
 ) -> Result<(), CoreError> {
-    ensure_login_complete(ctx, client, progress).await?;
+    ensure_login_complete(ctx, io, progress).await?;
 
+    let client = &mut io.client;
     let version = ctx.version();
     if version.no_less_than(ProtocolVersion::V1_20_2)
         && let Err(e) = crate::limbo::login::complete_config_for_limbo(
@@ -343,31 +355,17 @@ async fn prepare_client_for_limbo(
 
 async fn ensure_login_complete(
     ctx: &SessionContext<'_>,
-    client: &mut ClientBridge,
+    io: &mut SessionIo,
     progress: &mut LoginProgress,
 ) -> Result<(), CoreError> {
     if progress.completed {
         return Ok(());
     }
 
-    crate::session::client_login::complete_login(
-        client,
-        ctx.profile(),
-        ctx.version(),
-        ctx.registry(),
-    )
-    .await?;
+    complete_login(ctx, io).await?;
 
     progress.completed = true;
     Ok(())
-}
-
-const fn requires_proxy_completed_login(
-    handler: &crate::forwarding::ForwardingHandler,
-    profile_rewritten: bool,
-    login_completed: bool,
-) -> bool {
-    !login_completed && (handler.is_velocity() || profile_rewritten)
 }
 
 #[cfg(test)]
@@ -382,14 +380,34 @@ mod tests {
     };
     use infrarust_api::types::ServerId;
     use infrarust_config::ServerConfig;
+    use infrarust_protocol::packets::config::{
+        CFinishConfig, CKnownPacks, SAcknowledgeFinishConfig, SKnownPacks,
+    };
+    use infrarust_protocol::packets::login::{
+        CLoginDisconnect, CLoginPluginRequest, SLoginPluginResponse,
+    };
+    use infrarust_protocol::version::ConnectionState;
     use tokio::net::TcpListener;
 
     use crate::forwarding::{ForwardingHandler, ForwardingMode, build_forwarding_handler};
     use crate::loadbalancer::AddressConnectionCount;
     use crate::player::PlayerSession;
     use crate::session::context::test_helpers::{test_connector, test_context, test_io};
+    use crate::session::proxy_loop::ProxyLoopOutcome;
+    use crate::session::test_peer::{
+        V, backend_login, client_pair, finish_backend_login, finish_client_login, plugin_request,
+        plugin_response, server_config, var_int, velocity_services, with_handshake,
+    };
 
     use crate::limbo::test_helpers::{test_client_bridge, test_proxy_services};
+
+    const fn offline_login() -> LoginProgress {
+        LoginProgress {
+            completed: false,
+            rewritten: false,
+            online_mode: false,
+        }
+    }
 
     fn config(name: &str, address: &str) -> ServerConfig {
         toml::from_str(&format!(
@@ -451,10 +469,7 @@ mod tests {
             1
         );
 
-        let mut progress = LoginProgress {
-            completed: false,
-            rewritten: false,
-        };
+        let mut progress = offline_login();
         let mode = resolve_initial_mode(
             &ctx,
             &mut io,
@@ -532,10 +547,7 @@ mod tests {
             .domain_router
             .find_route_by_server_id("origin")
             .unwrap();
-        let mut progress = LoginProgress {
-            completed: false,
-            rewritten: false,
-        };
+        let mut progress = offline_login();
         let mode = resolve_initial_mode(
             &ctx,
             &mut io,
@@ -589,10 +601,7 @@ mod tests {
             .domain_router
             .find_route_by_server_id("origin")
             .unwrap();
-        let mut progress = LoginProgress {
-            completed: false,
-            rewritten: false,
-        };
+        let mut progress = offline_login();
         let mode = resolve_initial_mode(
             &ctx,
             &mut io,
@@ -617,31 +626,336 @@ mod tests {
         assert_eq!(reason.to_plain(), HANDLER_UNAVAILABLE);
     }
 
-    #[test]
-    fn velocity_requires_proxy_completed_login_for_offline_flow() {
-        let velocity = build_forwarding_handler(&ForwardingMode::Velocity {
-            secret: b"test-secret".to_vec(),
+    fn origin(
+        services: &crate::services::ProxyServices,
+        backend: &TcpListener,
+        extra: &str,
+    ) -> RoutingData {
+        services.domain_router.add(
+            crate::provider::ProviderId::file("origin"),
+            server_config(backend, extra),
+        );
+        let (server_config, load_balancer) = services
+            .domain_router
+            .find_route_by_server_id("origin")
+            .unwrap();
+        RoutingData {
+            server_config,
+            config_id: "origin".to_string(),
+            load_balancer,
+        }
+    }
+
+    async fn resolve(
+        ctx: &SessionContext<'_>,
+        io: &mut SessionIo,
+        routing: &RoutingData,
+        mut progress: LoginProgress,
+    ) -> InitialMode {
+        resolve_initial_mode(ctx, io, routing, None, &mut None, &mut progress)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_custom_login_request_reaches_the_client_and_its_answer_reaches_the_backend() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = velocity_services();
+        let routing = origin(&services, &backend, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            let request = conn
+                .send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            let answer = conn.frame().await;
+            finish_backend_login(&mut conn).await;
+            (request, answer, conn)
         });
-        assert!(requires_proxy_completed_login(&velocity, false, false));
-        assert!(!requires_proxy_completed_login(&velocity, false, true));
-        assert!(!requires_proxy_completed_login(
-            &ForwardingHandler::None,
-            false,
-            false
-        ));
+        let client_side = tokio::spawn(async move {
+            let request = peer.frame().await;
+            let answer = peer.send(&plugin_response(-100, b"ready")).await;
+            let threshold = finish_client_login(&mut peer).await;
+            (request, answer, threshold, peer)
+        });
+
+        let mode = resolve(&ctx, &mut io, &routing, offline_login()).await;
+        let (sent_request, received_answer, _conn) = backend_side.await.unwrap();
+        let (received_request, sent_answer, threshold, _peer) = client_side.await.unwrap();
+
+        assert_eq!(received_request.id, sent_request.id);
+        assert_eq!(received_request.payload, sent_request.payload);
+        assert_eq!(received_request.payload[..5], var_int(-100)[..]);
+        assert_eq!(received_answer.id, sent_answer.id);
+        assert_eq!(received_answer.payload, sent_answer.payload);
+        assert_eq!(threshold, 256);
+        let InitialMode::Connected(initial) = mode else {
+            panic!("expected a backend connection");
+        };
+        assert!(matches!(initial.mode, ConnectionMode::Backend(_)));
+        assert_eq!(io.client.state(), ConnectionState::Config);
+        assert_eq!(io.client.compression_threshold(), Some(256));
+    }
+
+    #[tokio::test]
+    async fn an_online_login_without_forwarding_is_bridged() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let routing = origin(&services, &backend, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&plugin_request(3, "fml:loginwrapper", b"mods"))
+                .await;
+            let answer = conn.expect::<SLoginPluginResponse>().await;
+            finish_backend_login(&mut conn).await;
+            (answer, conn)
+        });
+        let client_side = tokio::spawn(async move {
+            let request = peer.expect::<CLoginPluginRequest>().await;
+            peer.send(&plugin_response(request.message_id.0, b"ok"))
+                .await;
+            finish_client_login(&mut peer).await;
+            (request, peer)
+        });
+
+        let online = LoginProgress {
+            online_mode: true,
+            ..offline_login()
+        };
+        let mode = resolve(&ctx, &mut io, &routing, online).await;
+        let (answer, _conn) = backend_side.await.unwrap();
+        let (request, _peer) = client_side.await.unwrap();
+
+        assert_eq!(request.channel, "fml:loginwrapper");
+        assert_eq!(answer.message_id.0, 3);
+        assert_eq!(answer.data, b"ok");
+        assert!(matches!(mode, InitialMode::Connected(_)));
+    }
+
+    #[tokio::test]
+    async fn offline_bungeecord_forwarding_reaches_the_backend() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let routing = origin(&services, &backend, "forwarding_mode = \"bungee_cord\"");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let uuid = player.game_profile().uuid;
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, handshake) = backend_login(&backend).await;
+            finish_backend_login(&mut conn).await;
+            (handshake, conn)
+        });
+        let client_side = tokio::spawn(async move {
+            finish_client_login(&mut peer).await;
+            peer
+        });
+
+        let mode = resolve(&ctx, &mut io, &routing, offline_login()).await;
+        let (handshake, _conn) = backend_side.await.unwrap();
+        let _peer = client_side.await.unwrap();
+
+        assert_eq!(
+            handshake.server_address,
+            format!("origin.test\0127.0.0.1\0{}\0[]", uuid.as_simple())
+        );
+        assert!(matches!(mode, InitialMode::Connected(_)));
+    }
+
+    #[tokio::test]
+    async fn a_backend_kick_during_the_bridge_reaches_the_client_as_a_login_disconnect() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = velocity_services();
+        let routing = origin(&services, &backend, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+        let reason = Component::text("Missing mods: create");
+
+        let json = reason.to_json();
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&plugin_request(1, "fml:loginwrapper", b"mods"))
+                .await;
+            conn.expect::<SLoginPluginResponse>().await;
+            conn.send(&CLoginDisconnect { reason: json }).await;
+            conn
+        });
+        let client_side = tokio::spawn(async move {
+            peer.expect::<CLoginPluginRequest>().await;
+            peer.send(&plugin_response(1, b"")).await;
+            let kicked = peer.expect::<CLoginDisconnect>().await;
+            (kicked, peer)
+        });
+
+        let InitialMode::Connected(initial) =
+            resolve(&ctx, &mut io, &routing, offline_login()).await
+        else {
+            panic!("a refused bridge must leave the kick to the session loop");
+        };
+        assert!(matches!(initial.mode, ConnectionMode::Kicked(_)));
+        let outcome = crate::session::session_loop::run_session_loop(&ctx, &mut io, *initial).await;
+        let _conn = backend_side.await.unwrap();
+        let (kicked, _peer) = client_side.await.unwrap();
+
+        assert_eq!(
+            crate::util::text::decode_text_component(
+                kicked.reason.as_bytes(),
+                V,
+                ConnectionState::Login
+            ),
+            reason
+        );
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::BackendClosed { reason: Some(ref r) } if *r == reason),
+            "{outcome:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_that_leaves_during_the_bridge_ends_the_session_quietly() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = velocity_services();
+        let routing = origin(&services, &backend, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            conn.recv().await.is_none()
+        });
+        let client_side = tokio::spawn(async move {
+            peer.expect::<CLoginPluginRequest>().await;
+            drop(peer);
+        });
+
+        let mode = resolve(&ctx, &mut io, &routing, offline_login()).await;
+        client_side.await.unwrap();
+
+        assert!(
+            matches!(mode, InitialMode::Denied(DisconnectCause::ClientQuit)),
+            "a client that leaves mid-login has quit"
+        );
+        assert!(
+            backend_side.await.unwrap(),
+            "the backend connection must be closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_limbo_path_completes_the_login_with_compression() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        services
+            .limbo_handler_registry
+            .register(
+                "p",
+                Box::new(crate::limbo::test_helpers::FixedHandler {
+                    name: "lobby",
+                    result: infrarust_api::limbo::handler::HandlerResult::Accept,
+                }),
+            )
+            .unwrap();
+        let routing = origin(&services, &backend, "limbo_handlers = [\"lobby\"]");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let client_side = tokio::spawn(async move {
+            let threshold = finish_client_login(&mut peer).await;
+            let known_packs = peer.id::<CKnownPacks>();
+            let finish = peer.id::<CFinishConfig>();
+            loop {
+                let frame = peer.frame().await;
+                if frame.id == known_packs {
+                    peer.send(&SKnownPacks { packs: vec![] }).await;
+                }
+                if frame.id == finish {
+                    peer.send(&SAcknowledgeFinishConfig).await;
+                    break;
+                }
+            }
+            (threshold, peer)
+        });
+
+        let online = LoginProgress {
+            online_mode: true,
+            ..offline_login()
+        };
+        let mode = resolve(&ctx, &mut io, &routing, online).await;
+        let (threshold, _peer) = client_side.await.unwrap();
+
+        assert_eq!(threshold, 256);
+        let InitialMode::Connected(initial) = mode else {
+            panic!("expected the limbo");
+        };
+        assert!(matches!(initial.mode, ConnectionMode::Limbo(..)));
+        assert_eq!(io.client.state(), ConnectionState::Play);
+        assert_eq!(io.client.compression_threshold(), Some(256));
     }
 
     #[test]
-    fn a_rewritten_profile_requires_proxy_completed_login() {
-        assert!(requires_proxy_completed_login(
-            &ForwardingHandler::None,
-            true,
-            false
-        ));
-        assert!(!requires_proxy_completed_login(
-            &ForwardingHandler::None,
-            true,
-            true
-        ));
+    fn every_forwarding_mode_bridges_the_offline_login() {
+        for mode in [
+            ForwardingMode::BungeeCord,
+            ForwardingMode::BungeeGuard {
+                token: "token".to_string(),
+            },
+            ForwardingMode::Velocity {
+                secret: b"test-secret".to_vec(),
+            },
+        ] {
+            let handler = build_forwarding_handler(&mode);
+            assert!(offline_login().bridges_backend_login(&handler), "{mode:?}");
+            let completed = LoginProgress {
+                completed: true,
+                ..offline_login()
+            };
+            assert!(!completed.bridges_backend_login(&handler), "{mode:?}");
+        }
+        assert!(!offline_login().bridges_backend_login(&ForwardingHandler::None));
+    }
+
+    #[test]
+    fn online_mode_and_a_rewritten_profile_bridge_the_login() {
+        let online = LoginProgress {
+            online_mode: true,
+            ..offline_login()
+        };
+        let rewritten = LoginProgress {
+            rewritten: true,
+            ..offline_login()
+        };
+        for progress in [online, rewritten] {
+            assert!(progress.bridges_backend_login(&ForwardingHandler::None));
+            let completed = LoginProgress {
+                completed: true,
+                ..progress
+            };
+            assert!(!completed.bridges_backend_login(&ForwardingHandler::None));
+        }
     }
 }

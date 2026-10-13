@@ -310,6 +310,14 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
         }
     }
 
+    if config.compression_threshold < -1 {
+        return Err(ConfigError::Proxy(
+            ProxyValidationError::CompressionThreshold {
+                value: config.compression_threshold,
+            },
+        ));
+    }
+
     let warnings = validate_wasm_config(config)?;
 
     if config.rate_limit.enabled {

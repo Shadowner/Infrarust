@@ -16,6 +16,7 @@ use crate::event_bus::EventBusImpl;
 use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
+use crate::handoff::HandoffRelay;
 use crate::pipeline::Pipeline;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
@@ -32,6 +33,7 @@ pub struct ProxyServer {
     passthrough_handler: PassthroughHandler,
     offline_handler: InterceptedHandler,
     client_only_handler: InterceptedHandler,
+    handoff: HandoffRelay,
     services: ProxyServices,
     backend_health: Arc<crate::loadbalancer::PassiveBackendHealth>,
     unknown_domain_behavior: UnknownDomainBehavior,
@@ -107,6 +109,10 @@ impl ProxyServer {
 
     pub const fn services(&self) -> &ProxyServices {
         &self.services
+    }
+
+    pub const fn handoff(&self) -> &HandoffRelay {
+        &self.handoff
     }
 
     pub fn registry(&self) -> &ConnectionRegistry {

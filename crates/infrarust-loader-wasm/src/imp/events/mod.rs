@@ -1,5 +1,6 @@
 mod admin;
 mod chat;
+mod claim;
 mod client;
 mod connection;
 mod guard;
@@ -20,6 +21,7 @@ use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{BoxFuture, Event, EventPriority, ListenerHandle, PacketFilter};
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::claim::{LoginClaimEvent, RawConnectionEvent};
 use infrarust_api::events::client::{
     PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
 };
@@ -34,7 +36,9 @@ use infrarust_api::events::lifecycle::{
     PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
-use infrarust_api::events::messaging::PluginMessageEvent;
+use infrarust_api::events::messaging::{
+    LoginPluginRequestEvent, LoginPluginResponseEvent, PluginMessageEvent,
+};
 use infrarust_api::events::named::NamedEvent;
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::plugin::{PluginDisabledEvent, PluginEnabledEvent};
@@ -124,6 +128,7 @@ pub(crate) enum Applied {
     Set,
     Fallback(ArenaError),
     Degraded(SnapshotError),
+    Refused(&'static str),
     Mismatched,
 }
 
@@ -223,6 +228,10 @@ pub(crate) fn visit_kind<V: EventVisitor>(kind: EventKind, visitor: V) -> Option
         EventKind::PreTransfer => visitor.visit::<PreTransferEvent>(),
         EventKind::PlayerResourcePackStatus => visitor.visit::<PlayerResourcePackStatusEvent>(),
         EventKind::NamedEvent => visitor.visit::<NamedEvent>(),
+        EventKind::RawConnection => visitor.visit::<RawConnectionEvent>(),
+        EventKind::LoginClaim => visitor.visit::<LoginClaimEvent>(),
+        EventKind::LoginPluginRequest => visitor.visit::<LoginPluginRequestEvent>(),
+        EventKind::LoginPluginResponse => visitor.visit::<LoginPluginResponseEvent>(),
         EventKind::RawPacket => return None,
     })
 }
@@ -446,6 +455,18 @@ fn settle<E: WasmEvent>(event: &mut E, outcome: we::EventOutcome, instance: &Ins
                     "wasm plugin set a result the host cannot use as given; a safe fallback applies instead");
             }
         }
+        Applied::Refused(reason) => {
+            if let Some(suppressed) = instance.admit_warning() {
+                tracing::warn!(
+                    plugin,
+                    event = event_name,
+                    answered,
+                    reason,
+                    suppressed,
+                    "wasm plugin set a result it is not allowed to set; ignoring it"
+                );
+            }
+        }
         Applied::Mismatched => {
             if let Some(suppressed) = instance.admit_warning() {
                 tracing::warn!(
@@ -510,6 +531,10 @@ event_kinds! {
     PlayerResourcePackStatus => "player-resource-pack-status",
     NamedEvent => "named-event",
     RawPacket => "raw-packet",
+    RawConnection => "raw-connection",
+    LoginClaim => "login-claim",
+    LoginPluginRequest => "login-plugin-request",
+    LoginPluginResponse => "login-plugin-response",
 }
 
 const fn outcome_name(outcome: &we::EventOutcome) -> &'static str {
@@ -530,6 +555,10 @@ const fn outcome_name(outcome: &we::EventOutcome) -> &'static str {
         we::EventOutcome::PreTransfer(_) => "pre-transfer",
         we::EventOutcome::NamedEvent(_) => "named-event",
         we::EventOutcome::RawPacket(_) => "raw-packet",
+        we::EventOutcome::RawConnection(_) => "raw-connection",
+        we::EventOutcome::LoginClaim(_) => "login-claim",
+        we::EventOutcome::LoginPluginRequest(_) => "login-plugin-request",
+        we::EventOutcome::LoginPluginResponse(_) => "login-plugin-response",
     }
 }
 

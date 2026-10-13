@@ -50,7 +50,7 @@ ctx.channel_registrar().register(channel);
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `register(channel)` | `()` | Fire `PluginMessageEvent` for this channel, under each of its names |
+| `register(channel)` | `()` | Fire `PluginMessageEvent`, and the [login plugin message events](#login-plugin-messages), for this channel, under each of its names |
 | `unregister(&channel)` | `bool` | Stop, `true` when this plugin had registered it |
 | `channels()` | `Vec<ChannelId>` | The channels this plugin registered |
 
@@ -178,6 +178,40 @@ These are informational and [queued](./events#delivery): the proxy posts them an
 | `PlayerClientBrandEvent` | `player`, `brand` | The client sends a brand that differs from the last one |
 | `PlayerSettingsChangedEvent` | `player`, `settings` | The client sends settings that differ from the last ones |
 | `PlayerChannelRegisterEvent` | `player`, `channels`, `direction` | The client (`PacketDirection::Serverbound`) or the backend (`Clientbound`) registers channels. Unregistrations post nothing |
+
+## Login plugin messages
+
+A backend can ask the client questions during the login with Login Plugin Request packets (`message_id`, channel, data); the client answers each with a Login Plugin Response carrying the same `message_id`. On `offline` and `client_only` servers the proxy reads the login, and two awaited, resulted events from `infrarust_api::events::messaging` let a plugin take part: the login waits for the listeners. They fire on every path where a backend sends such requests:
+
+| Login | `client_reachable` | When |
+|-------|--------------------|------|
+| Bridged | `true` | The first login when the proxy logs in to the backend in the player's name: `client_only`, or `offline` with player info forwarding or a profile a plugin rewrote |
+| Relayed | `true` | The first login on `offline` without forwarding, where the client's own login goes through the proxy |
+| Past login | `false` | The login of a server switch, or of the first server after limbo: the client already finished its own login |
+
+**`LoginPluginRequestEvent`**: `player`, `server` (the backend asking), `message_id: i32`, `channel: String`, `data: Bytes`, `client_reachable: bool`.
+
+| Result (`LoginPluginRequestResult`) | Description |
+|---------|-------------|
+| `Forward` (default, `forward()`) | The client gets the request, byte for byte. When `client_reachable` is `false` the proxy answers "not understood", as without a listener |
+| `Replace(data)` (`replace(data)`) | The client gets the request with `data`, under the same message id and channel. Behaves like `Forward` when the client is not reachable |
+| `Respond(Some(data))` (`respond(data)`) | The proxy answers the backend itself, successful with `data`; the client never sees the request and the login does not wait for it |
+| `Respond(None)` (`respond_not_understood()`) | The proxy answers the backend that the channel was not understood; the client never sees the request |
+
+**`LoginPluginResponseEvent`**: `player`, `server`, `message_id`, `channel` (the request's channel: the proxy matches the response to its request by id, since the wire response has none), `successful`, `data`. `Forward` (default, `forward()`) passes the client's answer on byte for byte, `Replace { successful, data }` (`replace(successful, data)`) sends the backend another answer under the same message id. It fires only for answers to requests that went to the client (forwarded or replaced) while a `LoginPluginResponseEvent` listener was registered, so never on the past-login path nor for a request a plugin answered.
+
+Both fire only for channels registered in the channel registry, the same rule as `PluginMessageEvent`: Forge's `fml:loginwrapper` messages cost nothing unless a plugin registered that channel. `velocity:player_info` never fires, even registered: the proxy owns it, answering it itself (with the player info when it forwards with Velocity, "not understood" otherwise), except on a relayed login, where it reaches the client untouched. Message ids reach each side as the backend sent them, negative ones included, and the backend may keep several requests open and get their answers in any order. A client answer reaches the backend only when it answers a request the client was sent and has not answered yet; any other is dropped, so a client cannot answer in place of a plugin that responded. A request waiting on the client holds the login for at most 5 minutes (see [login time limits](../../configuration/proxy-modes/offline#login-time-limits)). WASM plugins receive both with `plugin-messaging`, see [Login plugin messages](../wasm/messaging#login-plugin-messages).
+
+```rust
+use infrarust_api::events::messaging::LoginPluginRequestEvent;
+
+ctx.channel_registrar().register(ChannelId::modern("example:handshake")?);
+ctx.event_bus().subscribe::<LoginPluginRequestEvent, _>(EventPriority::NORMAL, |event| {
+    if event.channel == "example:handshake" && !event.client_reachable {
+        event.respond(&b"\x00"[..]);
+    }
+});
+```
 
 ## The BungeeCord channel
 

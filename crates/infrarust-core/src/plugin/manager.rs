@@ -49,6 +49,7 @@ pub struct PluginServices {
     pub plugin_registry: Arc<dyn PluginRegistry>,
     pub codec_filter_registry: Arc<CodecFilterRegistryImpl>,
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
+    pub connection_claims: Arc<crate::handoff::ConnectionClaims>,
     pub provider_activator: Arc<PluginProviderActivator>,
     pub proxy_shutdown: CancellationToken,
     pub proxy_info: ProxyInfo,

@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use infrarust_api::command::CommandManager;
 use infrarust_api::event::bus::EventBus;
 use infrarust_api::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
+use infrarust_api::handoff::ConnectionClaimRegistry;
 use infrarust_api::limbo::{LimboHandler, LimboHandlerError, LimboHandlerRegistration};
 use infrarust_api::permissions::{
     Capability, CapabilitySet, PermissionNode, PermissionNodeError, PermissionNodeInfo,
@@ -31,6 +32,7 @@ use infrarust_api::services::{
 };
 
 use crate::ban::BanManager;
+use crate::handoff::PluginConnectionClaims;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
 use crate::plugin_messaging::PluginChannels;
@@ -76,6 +78,7 @@ pub struct PluginContextImpl {
     queued_config_providers: Mutex<Vec<Box<dyn PluginConfigProvider>>>,
     codec_filters: Arc<TrackingCodecFilterRegistry>,
     transport_filters: Arc<TrackingTransportFilterRegistry>,
+    connection_claims: PluginConnectionClaims,
     proxy_shutdown: CancellationToken,
     proxy_info: ProxyInfo,
     plugin_id: String,
@@ -143,6 +146,7 @@ impl PluginContextImpl {
             queued_config_providers: Mutex::new(Vec::new()),
             codec_filters,
             transport_filters,
+            connection_claims: host.connection_claims.for_plugin(plugin_id),
             proxy_shutdown: host.proxy_shutdown.clone(),
             proxy_info: host.proxy_info.clone(),
             plugin_id: plugin_id.to_owned(),
@@ -209,6 +213,7 @@ impl PluginContextImpl {
             queued_config_providers,
             codec_filters,
             transport_filters,
+            connection_claims,
             proxy_shutdown: _,
             proxy_info: _,
             plugin_id,
@@ -221,6 +226,7 @@ impl PluginContextImpl {
         command_manager.unregister_all();
         codec_filters.unregister_all();
         transport_filters.unregister_all();
+        connection_claims.unregister_all();
         scheduler.cancel_all();
         limbo_handlers.unregister_owner(plugin_id);
         services.withdraw_all();
@@ -364,6 +370,14 @@ impl PluginContext for PluginContextImpl {
                 .upgrade()
                 .is_some_and(|registry| registry.unregister(id))
         }))
+    }
+
+    fn connection_claims(&self) -> Option<&dyn ConnectionClaimRegistry> {
+        if self.capabilities.has(Capability::ConnectionHandoff) {
+            Some(&self.connection_claims)
+        } else {
+            None
+        }
     }
 
     fn plugin_registry(&self) -> Arc<dyn PluginRegistry> {

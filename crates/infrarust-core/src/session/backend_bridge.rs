@@ -12,8 +12,8 @@ use infrarust_protocol::Packet;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::{
-    CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression, SLoginPluginResponse,
-    SLoginStart,
+    CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
+    SLoginPluginResponse, SLoginStart,
 };
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
@@ -23,9 +23,13 @@ use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
 use crate::player::packets::encode_for_state;
 use crate::session::kick::BackendKick;
+use crate::session::login_messages::LoginMessages;
 use crate::util::domain_rewrite::rewrite_handshake;
 
 const READ_CHUNK: usize = 16 * 1024;
+
+const ONLINE_BACKEND: &str =
+    "the backend is in online mode; intercepted modes need online-mode=false";
 
 /// The backend side of a proxied connection.
 ///
@@ -128,9 +132,22 @@ impl BackendBridge {
         self.encoder.set_compression(threshold);
     }
 
+    pub const fn compression_threshold(&self) -> Option<i32> {
+        self.encoder.compression_threshold()
+    }
+
     /// Changes the protocol state.
     pub const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
+    }
+
+    pub(crate) fn online_mode_refusal(&self) -> CoreError {
+        let backend = self
+            .server_address
+            .as_ref()
+            .map_or_else(String::new, ToString::to_string);
+        tracing::warn!(%backend, "{ONLINE_BACKEND}");
+        CoreError::Auth(ONLINE_BACKEND.to_string())
     }
 
     /// Sends handshake + login start packets to the backend.
@@ -202,13 +219,19 @@ impl BackendBridge {
         registry: &PacketRegistry,
         version: ProtocolVersion,
         velocity_ctx: Option<(&crate::forwarding::ForwardingData, &[u8])>,
+        messages: &LoginMessages<'_>,
     ) -> Result<(), CoreError> {
+        let encryption_request = registry.get_packet_id::<CEncryptionRequest>(version);
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let frame = self
                     .read_frame()
                     .await?
                     .ok_or(CoreError::ConnectionClosed)?;
+
+                if Some(frame.id) == encryption_request {
+                    return Err(self.online_mode_refusal());
+                }
 
                 let decoded = registry.decode_frame(
                     &frame,
@@ -261,10 +284,9 @@ impl BackendBridge {
                                      configured — responding 'not understood'"
                                 );
                             } else {
-                                tracing::debug!(
-                                    channel = %request.channel,
-                                    "responding 'not understood' to LoginPluginRequest"
-                                );
+                                let response = messages.answer(&frame, request).await;
+                                self.send_packet(&response, registry).await?;
+                                continue;
                             }
 
                             let response = SLoginPluginResponse {

@@ -2,6 +2,7 @@ use std::any::TypeId;
 
 use infrarust_api::events::ban::{BanIssuedEvent, BanRevokedEvent};
 use infrarust_api::events::chat::ChatMessageEvent;
+use infrarust_api::events::claim::{LoginClaimEvent, RawConnectionEvent};
 use infrarust_api::events::client::{
     PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerSettingsChangedEvent,
 };
@@ -16,7 +17,9 @@ use infrarust_api::events::lifecycle::{
     PermissionsSetupEvent, PostLoginEvent, PreLoginEvent,
 };
 use infrarust_api::events::limbo::{LimboEnterEvent, LimboExitEvent};
-use infrarust_api::events::messaging::PluginMessageEvent;
+use infrarust_api::events::messaging::{
+    LoginPluginRequestEvent, LoginPluginResponseEvent, PluginMessageEvent,
+};
 use infrarust_api::events::packet::RawPacketEvent;
 use infrarust_api::events::plugin::{
     PluginDisabledEvent, PluginEnabledEvent, ServiceProvidedEvent, ServiceRemovedEvent,
@@ -66,6 +69,10 @@ pub static BUILTIN_EVENTS: &[TypeId] = &[
     TypeId::of::<ServiceRemovedEvent>(),
     TypeId::of::<PlayerResourcePackStatusEvent>(),
     TypeId::of::<PreTransferEvent>(),
+    TypeId::of::<RawConnectionEvent>(),
+    TypeId::of::<LoginClaimEvent>(),
+    TypeId::of::<LoginPluginRequestEvent>(),
+    TypeId::of::<LoginPluginResponseEvent>(),
 ];
 
 pub fn is_builtin_event(type_id: TypeId) -> bool {

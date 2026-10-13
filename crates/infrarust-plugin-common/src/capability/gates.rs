@@ -61,6 +61,7 @@ pub const GATES: &[(&str, &str, &[Capability])] = &[
         &[Capability::BanProvider],
     ),
     ("providers", "*", &[Capability::PermissionProvider]),
+    ("connection-claims", "*", &[Capability::ConnectionHandoff]),
 ];
 
 pub const UNGATED: &[(&str, &str)] = &[
@@ -105,6 +106,10 @@ pub const SUBSCRIBE_GATES: &[(&str, Capability)] = &[
     ("command-execute", Capability::ChatIntercept),
     ("plugin-message", Capability::PluginMessaging),
     ("raw-packet", Capability::RawPacket),
+    ("raw-connection", Capability::ConnectionHandoff),
+    ("login-claim", Capability::ConnectionHandoff),
+    ("login-plugin-request", Capability::PluginMessaging),
+    ("login-plugin-response", Capability::PluginMessaging),
 ];
 
 const fn same(left: &str, right: &str) -> bool {
@@ -224,6 +229,10 @@ mod tests {
             required("providers", "register-permission-provider"),
             [Capability::PermissionProvider]
         );
+        assert_eq!(
+            required("connection-claims", "register-prefix"),
+            [Capability::ConnectionHandoff]
+        );
     }
 
     #[test]
@@ -275,7 +284,7 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(interfaces.len(), unique.len());
-        assert_eq!(interfaces.len(), 13);
+        assert_eq!(interfaces.len(), 14);
         assert!(interfaces.contains(&"limbo"));
     }
 
@@ -313,6 +322,22 @@ mod tests {
             Some(Capability::PluginMessaging)
         );
         assert_eq!(subscribe_gate("raw-packet"), Some(Capability::RawPacket));
+        assert_eq!(
+            subscribe_gate("raw-connection"),
+            Some(Capability::ConnectionHandoff)
+        );
+        assert_eq!(
+            subscribe_gate("login-claim"),
+            Some(Capability::ConnectionHandoff)
+        );
+        assert_eq!(
+            subscribe_gate("login-plugin-request"),
+            Some(Capability::PluginMessaging)
+        );
+        assert_eq!(
+            subscribe_gate("login-plugin-response"),
+            Some(Capability::PluginMessaging)
+        );
         assert_eq!(subscribe_gate("post-login"), None);
     }
 }

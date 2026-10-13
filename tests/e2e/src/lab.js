@@ -9,6 +9,9 @@ export const API_KEY = 'infrarust-e2e-api-key-0123456789';
 
 export const FORWARDING_SECRET = 'e2eSecretForVelocityForwarding01';
 
+export const COMPRESSION_THRESHOLD = 512;
+export const BACKEND_COMPRESSION_THRESHOLD = 256;
+
 function quote(s) {
   return JSON.stringify(String(s));
 }
@@ -26,6 +29,7 @@ export function writeLab(dir, { sessionUrl } = {}) {
     `plugins_dir = ${quote(join(dir, 'plugins'))}`,
     'connect_timeout = "3s"',
     'connect_max_attempts = 1',
+    `compression_threshold = ${COMPRESSION_THRESHOLD}`,
     '',
     '[rate_limit]',
     'enabled = false',
@@ -67,6 +71,7 @@ export function writeLab(dir, { sessionUrl } = {}) {
       `addresses = [${quote(`127.0.0.1:${backend.port}`)}]`,
       `proxy_mode = ${quote(scenario.proxyMode)}`,
       `forwarding_mode = ${quote(scenario.forwardingMode)}`,
+      ...(scenario.domainRewrite ? [`domain_rewrite = { explicit = ${quote(scenario.domainRewrite)} }`] : []),
       '',
     ].join('\n');
     writeFileSync(join(dir, 'servers', `${scenario.id}.toml`), server);

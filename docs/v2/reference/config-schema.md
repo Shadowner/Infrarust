@@ -30,6 +30,7 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | `so_reuseport` | boolean | `false` | Enable `SO_REUSEPORT` socket option (Linux only) |
 | `unknown_domain_behavior` | string | `"default_motd"` | What to do when a player connects with an unknown domain. `"default_motd"` shows the default MOTD, `"drop"` silently closes the connection |
 | `announce_proxy_commands` | boolean | `true` | Advertise built-in `/ir` subcommands to clients that support command suggestions |
+| `compression_threshold` | integer | `256` | Compression threshold in bytes for the client link in `client_only` and `offline` modes when the proxy finishes the login. `-1` disables compression; values below `-1` are rejected |
 
 Parsing is strict. The global file deserializes with `deny_unknown_fields`, so an unknown or misspelled top-level key is a hard error rather than a silent no-op. The same applies to every table below.
 
@@ -747,6 +748,7 @@ receive_proxy_protocol = false
 so_reuseport = false
 unknown_domain_behavior = "default_motd"
 announce_proxy_commands = true
+compression_threshold = 256
 
 [rate_limit]
 enabled = true

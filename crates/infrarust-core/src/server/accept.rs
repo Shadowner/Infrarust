@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use infrarust_api::filter::TransportContext;
+use infrarust_api::handoff::Handoff;
 use infrarust_api::types::{Component, Extensions};
 use infrarust_config::{ProxyMode, UnknownDomainBehavior};
 use infrarust_protocol::version::ProtocolVersion;
@@ -11,12 +12,15 @@ use infrarust_transport::{Listener, PendingConnection};
 
 use super::ProxyServer;
 use crate::error::CoreError;
+use crate::handoff::{HandoffError, HandoffLevel};
 use crate::middleware::telemetry::ConnectionSpan;
 use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
+use crate::pipeline::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::pipeline::types::{
-    ConnectionIntent, HandshakeData, LegacyDetected, RoutingData, UnknownDomain,
+    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyDetected, Refused, RoutingData,
+    UnknownDomain,
 };
 use crate::player::SHUTDOWN_REASON;
 
@@ -93,6 +97,25 @@ impl ProxyServer {
             return Ok(());
         }
 
+        if !self.services.connection_claims.is_empty() {
+            match raw_claim::claim_raw(
+                &self.services,
+                &mut ctx,
+                RawClaimLimits::default(),
+                &shutdown,
+            )
+            .await
+            {
+                RawClaim::Minecraft => {}
+                RawClaim::Closed => return Ok(()),
+                RawClaim::Handoff(handoff) => {
+                    self.hand_off(ctx, handoff, HandoffLevel::Raw, &shutdown)
+                        .await;
+                    return Ok(());
+                }
+            }
+        }
+
         let common = tokio::select! {
             biased;
             () = shutdown.cancelled() => return Ok(()),
@@ -151,6 +174,24 @@ impl ProxyServer {
                 return Ok(());
             }
             Admission::Dropped => return Ok(()),
+            Admission::Handoff(handoff) => {
+                let refused = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return Ok(()),
+                    refused = admission::refuse_handoff(&self.services.ban_manager, &ctx) => refused,
+                };
+                if let Some(refusal) = refused {
+                    ctx.extensions.insert(Refused(refusal.reason));
+                    admission::reject_refused(&self.services.event_bus, &ctx);
+                    if intent != ConnectionIntent::Status {
+                        self.send_kick(&mut ctx, &refusal.message).await.ok();
+                    }
+                    return Ok(());
+                }
+                self.hand_off(ctx, handoff, HandoffLevel::Handshake, &shutdown)
+                    .await;
+                return Ok(());
+            }
         }
 
         match intent {
@@ -170,7 +211,14 @@ impl ProxyServer {
 
                 match login {
                     MiddlewareResult::Continue => {}
-                    MiddlewareResult::ShortCircuit => return Ok(()),
+                    MiddlewareResult::ShortCircuit => {
+                        if let Some(ClaimedLogin(handoff)) = ctx.extensions.remove::<ClaimedLogin>()
+                        {
+                            self.hand_off(ctx, handoff, HandoffLevel::Login, &shutdown)
+                                .await;
+                        }
+                        return Ok(());
+                    }
                     MiddlewareResult::Reject(msg) => {
                         admission::reject_refused(&self.services.event_bus, &ctx);
                         self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
@@ -230,6 +278,31 @@ impl ProxyServer {
         }
 
         Ok(())
+    }
+
+    async fn hand_off(
+        &self,
+        ctx: ConnectionContext,
+        handoff: Handoff,
+        level: HandoffLevel,
+        shutdown: &CancellationToken,
+    ) {
+        let client = ctx.client_addr();
+        let target = handoff.target.clone();
+        match self
+            .handoff
+            .relay(ctx, handoff, level, shutdown.child_token())
+            .await
+        {
+            Ok(_) | Err(HandoffError::Shutdown) => {}
+            Err(error) => tracing::warn!(
+                client = %client,
+                target = %target,
+                level = level.as_str(),
+                error = %error,
+                "connection handoff failed, closing the connection"
+            ),
+        }
     }
 
     async fn open_transport(

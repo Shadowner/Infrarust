@@ -4,22 +4,49 @@ use infrarust_protocol::packets::handshake::SHandshake;
 use serde::Serialize;
 
 use super::ForwardingData;
+use crate::util::{has_forge_marker, host_suffix};
+
+const FORGE_CLIENT_PROPERTY: &str = "forgeClient";
+const EXTRA_DATA_PROPERTY: &str = "extraData";
 
 pub struct LegacyForwardingHandler;
 
 impl LegacyForwardingHandler {
     pub fn apply_handshake(&self, handshake: &mut SHandshake, data: &ForwardingData) {
-        let properties_json = serde_json::to_string(&properties_to_serializable(&data.properties))
-            .unwrap_or_else(|_| "[]".to_string());
+        let address = std::mem::take(&mut handshake.server_address);
+        let suffix = host_suffix(&address);
+        let host = &address[..address.len() - suffix.len()];
+
+        let mut properties = properties_to_serializable(&data.properties);
+        if has_forge_marker(suffix) {
+            properties.extend(forge_properties(suffix));
+        }
+        let properties_json =
+            serde_json::to_string(&properties).unwrap_or_else(|_| "[]".to_string());
 
         handshake.server_address = format!(
             "{}\x00{}\x00{}\x00{}",
-            handshake.server_address,
+            host,
             data.real_ip,
             data.uuid.as_simple(),
             properties_json,
         );
     }
+}
+
+fn forge_properties(suffix: &str) -> [SerializableProperty; 2] {
+    [
+        SerializableProperty {
+            name: FORGE_CLIENT_PROPERTY.to_string(),
+            value: "true".to_string(),
+            signature: None,
+        },
+        SerializableProperty {
+            name: EXTRA_DATA_PROPERTY.to_string(),
+            value: suffix.replace('\0', "\u{1}"),
+            signature: Some(String::new()),
+        },
+    ]
 }
 
 #[derive(Serialize)]
@@ -142,5 +169,97 @@ mod tests {
         assert_eq!(json[0].name, "textures");
         assert_eq!(json[0].value, "eyJ0aW1lc3RhbXAi");
         assert_eq!(json[0].signature.as_deref(), Some("Yp4ql3MT"));
+    }
+
+    fn forwarded(server_address: &str, properties: Vec<ProfileProperty>) -> SHandshake {
+        let mut handshake = make_handshake();
+        handshake.server_address = server_address.to_string();
+        LegacyForwardingHandler.apply_handshake(&mut handshake, &make_data(properties));
+        handshake
+    }
+
+    fn forwarded_properties(handshake: &SHandshake) -> Vec<TestProperty> {
+        let parts: Vec<&str> = handshake.server_address.split('\x00').collect();
+        assert_eq!(parts.len(), 4, "{parts:?}");
+        assert_eq!(parts[1], "192.168.1.42");
+        assert_eq!(parts[2], "069a79f444e94726a5befca90e38aaf5");
+        serde_json::from_str(parts[3]).unwrap()
+    }
+
+    fn assert_forge_properties(properties: &[TestProperty], marker: &str) {
+        let [forge_client, extra_data] = properties else {
+            panic!(
+                "expected the two forge properties, got {} properties",
+                properties.len()
+            );
+        };
+        assert_eq!(forge_client.name, "forgeClient");
+        assert_eq!(forge_client.value, "true");
+        assert_eq!(forge_client.signature, None);
+        assert_eq!(extra_data.name, "extraData");
+        assert_eq!(extra_data.value, marker.replace('\0', "\u{1}"));
+        assert_eq!(extra_data.signature.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_forge_marker_becomes_profile_properties() {
+        for marker in ["\0FML\0", "\0FML2\0", "\0FML3\0", "\0FORGE"] {
+            let handshake = forwarded(&format!("play.example.com{marker}"), vec![]);
+            assert!(
+                handshake
+                    .server_address
+                    .starts_with("play.example.com\x00192.168.1.42\0")
+            );
+            assert_forge_properties(&forwarded_properties(&handshake), marker);
+        }
+    }
+
+    #[test]
+    fn forge_properties_follow_the_profile_properties() {
+        let handshake = forwarded(
+            "play.example.com\0FML3\0",
+            vec![ProfileProperty {
+                name: "textures".to_string(),
+                value: "skin".to_string(),
+                signature: Some("sig".to_string()),
+            }],
+        );
+        let properties = forwarded_properties(&handshake);
+        assert_eq!(properties.len(), 3);
+        assert_eq!(properties[0].name, "textures");
+        assert_forge_properties(&properties[1..], "\0FML3\0");
+    }
+
+    #[test]
+    fn a_suffix_without_a_forge_marker_is_dropped() {
+        let handshake = forwarded("play.example.com\0not-a-marker\0", vec![]);
+        assert!(
+            handshake
+                .server_address
+                .starts_with("play.example.com\x00192.168.1.42\0")
+        );
+        assert!(forwarded_properties(&handshake).is_empty());
+    }
+
+    #[test]
+    fn a_forged_suffix_cannot_inject_forwarding_fields() {
+        let injected = "\0FML2\0\x00198.51.100.7\x000123456789abcdef0123456789abcdef";
+        let handshake = forwarded(&format!("play.example.com{injected}"), vec![]);
+        assert_eq!(handshake.server_address.matches('\0').count(), 3);
+        assert!(
+            handshake
+                .server_address
+                .starts_with("play.example.com\x00192.168.1.42\0")
+        );
+        assert_forge_properties(&forwarded_properties(&handshake), injected);
+    }
+
+    #[test]
+    fn a_forged_suffix_without_a_marker_injects_nothing() {
+        let injected = "\x00198.51.100.7\x000123456789abcdef0123456789abcdef\0[{\"name\":\"x\",\"value\":\"y\"}]";
+        let handshake = forwarded(&format!("play.example.com{injected}"), vec![]);
+        assert_eq!(handshake.server_address.matches('\0').count(), 3);
+        assert!(!handshake.server_address.contains("198.51.100.7"));
+        assert!(forwarded_properties(&handshake).is_empty());
     }
 }

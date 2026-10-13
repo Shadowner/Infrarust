@@ -85,6 +85,8 @@ pub use crate::filter::{
     TransportFilterRegistry,
 };
 
+pub use crate::handoff::{ClaimError, ConnectionClaimRegistry, Handoff, HandoffTarget};
+
 pub use crate::provider::{
     PluginConfigProvider, PluginProviderEvent, PluginProviderSender, ServerDocument,
 };

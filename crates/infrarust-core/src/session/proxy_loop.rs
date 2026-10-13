@@ -7,7 +7,7 @@
 //!
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 use infrarust_api::command::{CommandSource, Suggestion};
@@ -17,12 +17,14 @@ use infrarust_api::player::Player;
 use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, ServerId};
 use tokio::time::Instant;
 
+use infrarust_protocol::codec::McBufReadExt;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
 };
 use infrarust_protocol::packets::login::{
-    CLoginDisconnect, CLoginSuccess, CSetCompression, SLoginAcknowledged,
+    CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression, SLoginAcknowledged,
+    SLoginPluginResponse,
 };
 use infrarust_protocol::packets::play::chat_session::SChatSessionUpdate;
 use infrarust_protocol::packets::play::commands::CCommands;
@@ -39,9 +41,9 @@ use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::event_bus::conversion::protocol_state_to_api;
 use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
 use crate::player::commands::CommandOutcome;
+use crate::player::packets::encode_for_state;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::services::ProxyServices;
@@ -51,6 +53,8 @@ use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
 use crate::session::kick::BackendKick;
+use crate::session::login_bridge::{LoginClock, read_timeout};
+use crate::session::login_messages::{LoginMessages, Routed};
 use crate::session::presentation;
 use crate::session::server_join::ServerJoin;
 use crate::util::text::encode_text_component;
@@ -109,11 +113,13 @@ struct HotIds {
     s_keepalive: Option<i32>,
     c_start_config: Option<i32>,
     s_ack_config: Option<i32>,
+    s_login_answer: Option<i32>,
 }
 
 impl HotIds {
     fn resolve(registry: &PacketRegistry, version: ProtocolVersion) -> Self {
         Self {
+            s_login_answer: registry.get_packet_id::<SLoginPluginResponse>(version),
             s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(version),
             s_tab_request: registry.get_packet_id::<STabCompleteRequest>(version),
             c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(version),
@@ -268,6 +274,16 @@ pub async fn proxy_loop(
     join: &mut Option<ServerJoin>,
 ) -> ProxyLoopOutcome {
     let in_game = io.client.state() == ConnectionState::Play && join.is_none();
+    let login_clock = (io.client.state() == ConnectionState::Login).then(|| {
+        let idle = ctx
+            .services
+            .domain_router
+            .find_by_server_id(server.as_str())
+            .map_or_else(infrarust_config::defaults::read_timeout, |config| {
+                read_timeout(&config)
+            });
+        LoginClock::start(idle)
+    });
     Loop {
         ids: HotIds::resolve(ctx.registry(), ctx.version()),
         chain: FrameChain::new(ctx, server),
@@ -280,10 +296,15 @@ pub async fn proxy_loop(
         backend_tree: None,
         join,
         codec_closed: None,
+        login: LoginMessages::new(ctx, server.clone()),
+        login_clock,
+        relayed: HashSet::new(),
     }
     .run()
     .await
 }
+
+const LOGIN_TIMED_OUT: &str = "The login took too long";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Side {
@@ -300,6 +321,7 @@ enum Step {
 enum LoopEvent {
     Command(PlayerCommand),
     Shutdown,
+    LoginExpired,
     CommandsChanged,
     Client(Result<Option<PacketFrame>, CoreError>),
     Backend(Result<Option<PacketFrame>, CoreError>),
@@ -324,6 +346,9 @@ struct Loop<'a> {
     backend_tree: Option<CCommands>,
     join: &'a mut Option<ServerJoin>,
     codec_closed: Option<String>,
+    login: LoginMessages<'a>,
+    login_clock: Option<LoginClock>,
+    relayed: HashSet<i32>,
 }
 
 impl Loop<'_> {
@@ -331,6 +356,12 @@ impl Loop<'_> {
         let registry = self.ctx.registry();
         let mut tree_updates = self.ctx.services.command_manager.subscribe();
         let mut permission_updates = self.ctx.session.subscribe_permissions();
+        let login_timer = tokio::time::sleep_until(
+            self.login_clock
+                .as_ref()
+                .map_or_else(Instant::now, LoginClock::deadline),
+        );
+        tokio::pin!(login_timer);
         if self.in_game {
             let outcome = self
                 .io
@@ -348,10 +379,17 @@ impl Loop<'_> {
             }
         }
         loop {
+            let login_deadline = self.login_clock.as_ref().map(LoginClock::deadline);
+            if let Some(deadline) = login_deadline
+                && login_timer.deadline() != deadline
+            {
+                login_timer.as_mut().reset(deadline);
+            }
             let event = tokio::select! {
                 biased;
                 Some(command) = self.io.commands.recv() => LoopEvent::Command(command),
                 () = self.ctx.token.cancelled() => LoopEvent::Shutdown,
+                () = &mut login_timer, if login_deadline.is_some() => LoopEvent::LoginExpired,
                 Ok(()) = tree_updates.changed() => LoopEvent::CommandsChanged,
                 Ok(()) = permission_updates.changed() => LoopEvent::CommandsChanged,
                 event = next_frame(&mut self.io.client, &mut *self.backend) => event,
@@ -405,6 +443,18 @@ impl Loop<'_> {
                     }
                     let _ = self.io.client.flush().await;
                     break ProxyLoopOutcome::Shutdown;
+                }
+                LoopEvent::LoginExpired => {
+                    if let Some(clock) = &self.login_clock {
+                        tracing::info!(server = %self.server, "{}", clock.expired());
+                    }
+                    let _ = self.backend.flush().await;
+                    break kick(
+                        &mut self.io.client,
+                        &Component::text(LOGIN_TIMED_OUT),
+                        registry,
+                    )
+                    .await;
                 }
                 LoopEvent::Client(Ok(Some(frame))) => {
                     if let Some(end) = self.pump(frame, Side::Client).await {
@@ -608,9 +658,7 @@ impl Loop<'_> {
                 self.backend.set_state(ConnectionState::Config);
                 self.io.client.reconfiguration_acknowledged();
                 self.state.reconfiguring = false;
-                self.io
-                    .client_codec
-                    .notify_state_change(protocol_state_to_api(ConnectionState::Config));
+                self.io.entered(ConnectionState::Config);
                 tracing::debug!("state transition: Play → Config (AcknowledgeConfiguration)");
                 return Ok(());
             }
@@ -704,6 +752,10 @@ impl Loop<'_> {
             return Ok(());
         }
 
+        if state == ConnectionState::Login && Some(frame.id) == self.ids.s_login_answer {
+            return self.on_login_answer(frame).await;
+        }
+
         if state == ConnectionState::Config {
             match self.chain.serverbound(frame, state).await {
                 Some(next) => frame = next,
@@ -721,9 +773,8 @@ impl Loop<'_> {
                     self.backend.queue_frame(&frame)?;
                     self.io.client.set_state(ConnectionState::Config);
                     self.backend.set_state(ConnectionState::Config);
-                    self.io
-                        .client_codec
-                        .notify_state_change(protocol_state_to_api(ConnectionState::Config));
+                    self.login_clock = None;
+                    self.io.entered(ConnectionState::Config);
                     tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
                     return Ok(());
                 }
@@ -737,9 +788,7 @@ impl Loop<'_> {
                     self.io.client.set_state(ConnectionState::Play);
                     self.backend.set_state(ConnectionState::Play);
                     self.state.config_closing = false;
-                    self.io
-                        .client_codec
-                        .notify_state_change(protocol_state_to_api(ConnectionState::Play));
+                    self.io.entered(ConnectionState::Play);
                     tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
                     return Ok(());
                 }
@@ -754,6 +803,27 @@ impl Loop<'_> {
         Ok(())
     }
 
+    async fn on_login_answer(&mut self, mut frame: PacketFrame) -> Result<(), CoreError> {
+        let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
+            tracing::debug!("dropping a malformed login plugin response from the client");
+            return Ok(());
+        };
+        if !self.relayed.remove(&message_id.0) {
+            tracing::debug!(
+                message_id = message_id.0,
+                "dropping a login plugin response to a request the client was never sent"
+            );
+            return Ok(());
+        }
+        if let Some(clock) = self.login_clock.as_mut() {
+            clock.client_answered(!self.relayed.is_empty());
+        }
+        if let Some(replaced) = self.login.response(&frame).await {
+            frame = replaced;
+        }
+        self.backend.queue_frame(&frame)
+    }
+
     async fn on_backend(&mut self, frame: PacketFrame) -> Result<Step, CoreError> {
         let joins = self.ids.joins_game(
             &frame,
@@ -764,6 +834,9 @@ impl Loop<'_> {
             .ids
             .milestone(&frame, self.backend, self.join.is_some());
         let action = self.forward_backend(frame).await?;
+        if let Some(clock) = self.login_clock.as_mut() {
+            clock.backend_spoke(!self.relayed.is_empty());
+        }
         self.in_game |= joins;
         self.in_game &= !self.state.reconfiguring;
         if joins {
@@ -872,9 +945,12 @@ impl Loop<'_> {
                     self.backend.set_compression(threshold);
                     self.io.client.queue_frame(&frame)?;
                     self.io.client.set_compression(threshold);
+                    if let Some(backend) = self.backend.compression_threshold() {
+                        self.io.server_codec.notify_compression_change(backend);
+                    }
                     match self.io.client.compression_threshold() {
                         Some(effective) => {
-                            self.io.server_codec.notify_compression_change(effective);
+                            self.io.client_codec.notify_compression_change(effective);
                             tracing::debug!(threshold = effective, "compression activated");
                         }
                         None => {
@@ -889,9 +965,8 @@ impl Loop<'_> {
                     if version.less_than(ProtocolVersion::V1_20_2) {
                         self.io.client.set_state(ConnectionState::Play);
                         self.backend.set_state(ConnectionState::Play);
-                        self.io
-                            .server_codec
-                            .notify_state_change(protocol_state_to_api(ConnectionState::Play));
+                        self.login_clock = None;
+                        self.io.entered(ConnectionState::Play);
                         tracing::debug!("state transition: Login → Play (pre-1.20.2)");
                     }
                     return Ok(BackendAction::Continue);
@@ -906,6 +981,27 @@ impl Loop<'_> {
                     return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
                         frame, state, version,
                     ))));
+                }
+
+                if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>() {
+                    match self.login.relay(&frame, request).await {
+                        Routed::Client(replaced) => {
+                            self.io
+                                .client
+                                .queue_frame(replaced.as_ref().unwrap_or(&frame))?;
+                            self.relayed.insert(request.message_id.0);
+                        }
+                        Routed::Backend(answer) => {
+                            let answer = encode_for_state(
+                                &answer,
+                                ConnectionState::Login,
+                                version,
+                                registry,
+                            )?;
+                            self.backend.queue_frame(&answer)?;
+                        }
+                    }
+                    return Ok(BackendAction::Continue);
                 }
 
                 if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
@@ -1129,5 +1225,305 @@ impl TabReply {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use std::time::Duration;
+
+    use tokio::net::TcpListener;
+
+    use infrarust_api::event::ConnectionState as ApiState;
+    use infrarust_api::filter::ConnectionSide;
+    use infrarust_config::ServerConfig;
+    use infrarust_protocol::VarInt;
+    use infrarust_protocol::packets::handshake::SHandshake;
+    use infrarust_protocol::packets::login::SLoginStart;
+
+    use super::*;
+    use crate::limbo::test_helpers::test_proxy_services;
+    use crate::provider::ProviderId;
+    use crate::session::backend_login::{Login, connect_backend};
+    use crate::session::context::test_helpers::{test_connector, test_context, test_io};
+    use crate::session::login_bridge::CLIENT_WAIT_CAP;
+    use crate::session::test_peer::{
+        Notice, Notices, Peer, V, backend_login, backend_success, client_pair, plugin_request,
+        plugin_response, server_config, with_login_start, with_login_start_at,
+    };
+
+    fn origin(services: &ProxyServices, listener: &TcpListener, extra: &str) -> ServerConfig {
+        let config = server_config(listener, extra);
+        services
+            .domain_router
+            .add(ProviderId::file("origin"), config.clone());
+        config
+    }
+
+    async fn relayed(ctx: &SessionContext<'_>, config: &ServerConfig) -> BackendBridge {
+        let addresses = vec![config.addresses[0].address.clone()];
+        connect_backend(ctx, "origin", config, &addresses, Login::Relay)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn every_relayed_transition_reaches_both_codec_chains() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let notices = Notices::install(&services);
+        let config = origin(&services, &listener, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&listener).await;
+            conn.send(&CSetCompression {
+                threshold: VarInt(64),
+            })
+            .await;
+            conn.set_compression(64);
+            conn.send(&backend_success()).await;
+            conn.expect::<SLoginAcknowledged>().await;
+            conn.send(&CFinishConfig).await;
+            conn.expect::<SAcknowledgeFinishConfig>().await;
+            conn.send(&CStartConfiguration).await;
+            conn.expect::<SAcknowledgeConfiguration>().await;
+            conn.send(&CFinishConfig).await;
+            conn.expect::<SAcknowledgeFinishConfig>().await;
+            conn
+        });
+        let client_side = tokio::spawn(async move {
+            let compression = peer.expect::<CSetCompression>().await;
+            peer.set_compression(compression.threshold.0);
+            peer.expect::<CLoginSuccess>().await;
+            peer.send(&SLoginAcknowledged).await;
+            peer.expect::<CFinishConfig>().await;
+            peer.send(&SAcknowledgeFinishConfig).await;
+            peer.expect::<CStartConfiguration>().await;
+            peer.send(&SAcknowledgeConfiguration).await;
+            peer.expect::<CFinishConfig>().await;
+            peer.send(&SAcknowledgeFinishConfig).await;
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let mut join = None;
+        let loop_side = proxy_loop(&ctx, &mut io, &mut backend, &server, &mut join);
+        let (outcome, sent) = tokio::join!(loop_side, client_side);
+        sent.unwrap();
+        let _conn = backend_side.await.unwrap();
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::ClientDisconnected),
+            "{outcome:?}"
+        );
+        let expected = [
+            Notice::Compression(64),
+            Notice::State(ApiState::Configuration),
+            Notice::State(ApiState::Play),
+            Notice::State(ApiState::Configuration),
+            Notice::State(ApiState::Play),
+        ];
+        assert_eq!(notices.of(ConnectionSide::ClientSide), expected);
+        assert_eq!(notices.of(ConnectionSide::ServerSide), expected);
+    }
+
+    #[tokio::test]
+    async fn a_relayed_login_before_1_20_2_tells_both_chains_it_entered_play() {
+        const OLD: ProtocolVersion = ProtocolVersion::V1_20;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let notices = Notices::install(&services);
+        let config = origin(&services, &listener, "");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start_at(test_context(&services, &connector, player), OLD);
+        let (client, mut peer) = client_pair(OLD).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let mut conn = Peer::accept(&listener, OLD).await;
+            conn.expect::<SHandshake>().await;
+            conn.expect::<SLoginStart>().await;
+            conn.send(&CSetCompression {
+                threshold: VarInt(64),
+            })
+            .await;
+            conn.set_compression(64);
+            conn.send(&backend_success()).await;
+            conn.next().await
+        });
+        let client_side = tokio::spawn(async move {
+            let compression = peer.expect::<CSetCompression>().await;
+            peer.set_compression(compression.threshold.0);
+            peer.expect::<CLoginSuccess>().await;
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let mut join = None;
+        let loop_side = proxy_loop(&ctx, &mut io, &mut backend, &server, &mut join);
+        let (outcome, received) = tokio::join!(loop_side, client_side);
+        received.unwrap();
+        drop(backend);
+        assert!(backend_side.await.unwrap().is_none());
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::ClientDisconnected),
+            "{outcome:?}"
+        );
+        let expected = [Notice::Compression(64), Notice::State(ApiState::Play)];
+        assert_eq!(notices.of(ConnectionSide::ClientSide), expected);
+        assert_eq!(notices.of(ConnectionSide::ServerSide), expected);
+    }
+
+    fn is_login_disconnect(peer: &Peer, frame: Option<&PacketFrame>) -> bool {
+        frame.is_some_and(|frame| frame.id == peer.id::<CLoginDisconnect>())
+    }
+
+    #[tokio::test]
+    async fn client_packets_do_not_keep_a_silent_backend_in_a_relayed_login() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let config = origin(&services, &listener, "[timeouts]\nread = \"150ms\"");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&listener).await;
+            conn.next().await
+        });
+        let client_side = tokio::spawn(async move {
+            let ended = loop {
+                tokio::select! {
+                    frame = peer.next() => break frame,
+                    () = tokio::time::sleep(Duration::from_millis(30)) => {
+                        peer.send(&plugin_response(42, b"junk")).await;
+                    }
+                }
+            };
+            is_login_disconnect(&peer, ended.as_ref())
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let started = Instant::now();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            proxy_loop(&ctx, &mut io, &mut backend, &server, &mut None),
+        )
+        .await
+        .expect("the relayed login never timed out");
+        let waited = started.elapsed();
+        drop(backend);
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::Kicked { .. }),
+            "{outcome:?}"
+        );
+        assert!(waited < Duration::from_secs(2), "ended after {waited:?}");
+        assert!(
+            client_side.await.unwrap(),
+            "the client got no login disconnect"
+        );
+        assert!(
+            backend_side.await.unwrap().is_none(),
+            "a stray answer reached the backend"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_relayed_login_waiting_on_the_client_ends_at_the_wait_cap() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let config = origin(&services, &listener, "[timeouts]\nread = \"150ms\"");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&listener).await;
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            conn.next().await
+        });
+        let client_side = tokio::spawn(async move {
+            peer.expect::<CLoginPluginRequest>().await;
+            tokio::time::pause();
+            let ended = peer.next().await;
+            is_login_disconnect(&peer, ended.as_ref())
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let started = Instant::now();
+        let outcome = proxy_loop(&ctx, &mut io, &mut backend, &server, &mut None).await;
+        let waited = started.elapsed();
+        drop(backend);
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::Kicked { .. }),
+            "{outcome:?}"
+        );
+        assert!(waited >= CLIENT_WAIT_CAP, "ended after {waited:?}");
+        assert!(
+            client_side.await.unwrap(),
+            "the client got no login disconnect"
+        );
+        assert!(backend_side.await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_relayed_client_may_answer_after_the_read_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let config = origin(&services, &listener, "[timeouts]\nread = \"150ms\"");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_login_start(test_context(&services, &connector, player));
+        let (client, mut peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&listener).await;
+            conn.send(&plugin_request(-100, "example:handshake", b"hello"))
+                .await;
+            let answer = conn.expect::<SLoginPluginResponse>().await;
+            conn.send(&backend_success()).await;
+            conn.expect::<SLoginAcknowledged>().await;
+            (answer, conn)
+        });
+        let client_side = tokio::spawn(async move {
+            peer.expect::<CLoginPluginRequest>().await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            peer.send(&plugin_response(-100, b"later")).await;
+            peer.expect::<CLoginSuccess>().await;
+            peer.send(&SLoginAcknowledged).await;
+        });
+
+        let mut backend = relayed(&ctx, &config).await;
+        let server = ServerId::new("origin");
+        let mut join = None;
+        let loop_side = proxy_loop(&ctx, &mut io, &mut backend, &server, &mut join);
+        let (outcome, sent) = tokio::join!(loop_side, client_side);
+        sent.unwrap();
+        let (answer, _conn) = backend_side.await.unwrap();
+
+        assert!(
+            matches!(outcome, ProxyLoopOutcome::ClientDisconnected),
+            "{outcome:?}"
+        );
+        assert_eq!(answer.data, b"later");
     }
 }

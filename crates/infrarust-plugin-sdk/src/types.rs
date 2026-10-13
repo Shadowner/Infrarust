@@ -386,7 +386,8 @@ wit_enum_map!(from wt::ParticleStatus => ParticleStatus { All, Decreased, Minima
 wit_enum_map!(from wt::Capability => Capability {
     EventBus, PlayerRead, PlayerWrite, RawPacket, ServerManage, Ban, Command, Scheduler,
     ConfigRead, ConfigWrite, CodecFilter, TransportFilter, Limbo, VirtualBackend,
-    PermissionProvider, FilesystemExtended, Network, ChatIntercept, BanProvider, PluginMessaging
+    PermissionProvider, FilesystemExtended, Network, ChatIntercept, BanProvider, PluginMessaging,
+    ConnectionHandoff
 });
 
 wit_enum_map!(from wi::UnknownDomainBehavior => UnknownDomainBehavior { DefaultMotd, Drop });

@@ -445,6 +445,35 @@ fn test_proxy_ban_check_timeout_defaults_to_five_seconds_and_rejects_zero() {
 }
 
 #[test]
+fn compression_threshold_defaults_to_256_and_accepts_minus_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("", dir.path());
+    assert_eq!(config.compression_threshold, 256);
+    assert!(validate_proxy_config(&config).is_ok());
+
+    for value in [-1, 0, 64, 1_048_576] {
+        let config = proxy_from_toml(&format!("compression_threshold = {value}"), dir.path());
+        assert_eq!(config.compression_threshold, value);
+        assert!(validate_proxy_config(&config).is_ok(), "{value}");
+    }
+}
+
+#[test]
+fn compression_threshold_below_minus_one_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("compression_threshold = -2", dir.path());
+    let err = validate_proxy_config(&config).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            ConfigError::Proxy(ProxyValidationError::CompressionThreshold { value: -2 })
+        ),
+        "{err}"
+    );
+    assert!(err.to_string().contains("compression_threshold"), "{err}");
+}
+
+#[test]
 fn test_proxy_default_wasm_section_is_valid() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml("", dir.path());

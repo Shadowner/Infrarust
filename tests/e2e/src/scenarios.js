@@ -1,10 +1,17 @@
+import { BIG_PACKET_CHANNEL, BIG_PACKET_MIN_PROTOCOL, MODERN_LAYOUT_PROTOCOLS, LOGIN_QUERY_MIN_PROTOCOL } from './modded.js';
+
 export const BACKENDS = {
   plain: { port: 25700, kind: 'plain' },
-  velocity: { port: 25701, kind: 'velocity' },
+  velocity: { port: 25701, kind: 'velocity', velocity: true },
   bungee: { port: 25702, kind: 'bungee' },
+  query: { port: 25703, kind: 'query', loginQueries: true },
+  queryVelocity: { port: 25704, kind: 'query-velocity', velocity: true, loginQueries: true },
+  bigPacket: { port: 25705, kind: 'big-packet', bigPacket: true },
+  raw: { port: 25706, kind: 'raw', raw: true },
 };
 
 const VELOCITY_MIN_PROTOCOL = 393;
+const LOGIN_QUERY_REASON = `login plugin requests need protocol >= ${LOGIN_QUERY_MIN_PROTOCOL} (1.13+)`;
 
 export const SCENARIOS = [
   {
@@ -38,7 +45,7 @@ export const SCENARIOS = [
     proxyMode: 'offline',
     forwardingMode: 'none',
     backend: 'plain',
-    expect: { reachesPlay: true, interceptedByProxy: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, clientCompression: 'backend' },
   },
   {
     id: 'offline-velocity',
@@ -47,7 +54,7 @@ export const SCENARIOS = [
     forwardingMode: 'velocity',
     backend: 'velocity',
     minProtocol: VELOCITY_MIN_PROTOCOL,
-    expect: { reachesPlay: true, interceptedByProxy: true, velocitySigned: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, velocitySigned: true, clientCompression: 'proxy' },
   },
   {
     id: 'offline-bungeecord',
@@ -55,7 +62,7 @@ export const SCENARIOS = [
     proxyMode: 'offline',
     forwardingMode: 'bungee_cord',
     backend: 'bungee',
-    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true, clientCompression: 'proxy' },
   },
   {
     id: 'offline-bungeeguard',
@@ -63,7 +70,7 @@ export const SCENARIOS = [
     proxyMode: 'offline',
     forwardingMode: 'bungee_guard',
     backend: 'bungee',
-    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true, bungeeGuardToken: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, bungeeInjected: true, bungeeGuardToken: true, clientCompression: 'proxy' },
   },
   {
     id: 'client-only',
@@ -72,7 +79,7 @@ export const SCENARIOS = [
     forwardingMode: 'none',
     backend: 'plain',
     needsAuth: true,
-    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, clientCompression: 'proxy' },
   },
   {
     id: 'client-only-velocity',
@@ -82,7 +89,7 @@ export const SCENARIOS = [
     backend: 'velocity',
     needsAuth: true,
     minProtocol: VELOCITY_MIN_PROTOCOL,
-    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, velocitySigned: true },
+    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, velocitySigned: true, clientCompression: 'proxy' },
   },
   {
     id: 'passthrough-velocity-fallback',
@@ -100,14 +107,122 @@ export const SCENARIOS = [
     backend: 'plain',
     expect: { reachesPlay: true, interceptedByProxy: false },
   },
+  {
+    id: 'login-query-offline',
+    domain: 'lq-off.test',
+    proxyMode: 'offline',
+    forwardingMode: 'none',
+    backend: 'query',
+    mockOnly: true,
+    minProtocol: LOGIN_QUERY_MIN_PROTOCOL,
+    protocolReason: LOGIN_QUERY_REASON,
+    client: { answerLoginQueries: true },
+    expect: {
+      reachesPlay: true,
+      interceptedByProxy: true,
+      loginQueriesRelayed: true,
+      loginSuccessAfterBackend: true,
+      clientCompression: 'backend',
+    },
+  },
+  {
+    id: 'login-query-velocity',
+    domain: 'lq-velo.test',
+    proxyMode: 'offline',
+    forwardingMode: 'velocity',
+    backend: 'queryVelocity',
+    mockOnly: true,
+    minProtocol: LOGIN_QUERY_MIN_PROTOCOL,
+    protocolReason: LOGIN_QUERY_REASON,
+    client: { answerLoginQueries: true },
+    expect: {
+      reachesPlay: true,
+      interceptedByProxy: true,
+      velocitySigned: true,
+      loginQueriesRelayed: true,
+      loginSuccessAfterBackend: true,
+      clientCompression: 'proxy',
+    },
+  },
+  {
+    id: 'login-query-client-only',
+    domain: 'lq-co.test',
+    proxyMode: 'client_only',
+    forwardingMode: 'none',
+    backend: 'query',
+    needsAuth: true,
+    mockOnly: true,
+    minProtocol: LOGIN_QUERY_MIN_PROTOCOL,
+    protocolReason: LOGIN_QUERY_REASON,
+    client: { answerLoginQueries: true },
+    expect: {
+      reachesPlay: true,
+      interceptedByProxy: true,
+      encrypted: true,
+      loginQueriesRelayed: true,
+      loginSuccessAfterBackend: true,
+      clientCompression: 'proxy',
+    },
+  },
+  {
+    id: 'big-packet-client-only',
+    domain: 'big-co.test',
+    proxyMode: 'client_only',
+    forwardingMode: 'none',
+    backend: 'bigPacket',
+    needsAuth: true,
+    mockOnly: true,
+    minProtocol: BIG_PACKET_MIN_PROTOCOL,
+    protocolReason: `packet compression needs protocol >= ${BIG_PACKET_MIN_PROTOCOL} (1.8+); without it no packet may exceed 2 MiB`,
+    client: { awaitPayload: BIG_PACKET_CHANNEL },
+    expect: { reachesPlay: true, interceptedByProxy: true, encrypted: true, clientCompression: 'proxy', bigPacketIntact: true },
+  },
+  {
+    id: 'forge-rewrite',
+    domain: 'forge-rw.test',
+    proxyMode: 'passthrough',
+    forwardingMode: 'none',
+    backend: 'plain',
+    domainRewrite: 'forge-backend.internal',
+    forgeMarker: true,
+    expect: { reachesPlay: true, interceptedByProxy: false, forgeMarker: { rewrite: 'forge-backend.internal' } },
+  },
+  {
+    id: 'forge-bungeecord',
+    domain: 'forge-bungee.test',
+    proxyMode: 'offline',
+    forwardingMode: 'bungee_cord',
+    backend: 'bungee',
+    forgeMarker: true,
+    expect: { reachesPlay: true, interceptedByProxy: true, forgeMarker: { properties: true } },
+  },
+  {
+    id: 'modern-layout-login-start',
+    domain: 'modern-layout.test',
+    proxyMode: 'passthrough',
+    forwardingMode: 'none',
+    backend: 'raw',
+    mockOnly: true,
+    rawClient: true,
+    minProtocol: MODERN_LAYOUT_PROTOCOLS.min,
+    maxProtocol: MODERN_LAYOUT_PROTOCOLS.max,
+    protocolReason: `the 1.20.2 Login Start layout only differs from the native one for protocols ${MODERN_LAYOUT_PROTOCOLS.min}-${MODERN_LAYOUT_PROTOCOLS.max}`,
+    expect: { rawLoginStartForwarded: true, interceptedByProxy: false },
+  },
 ];
 
 export function skipReason(scenario, protocol, opts = {}) {
   if (scenario.linuxOnly && process.platform !== 'linux') {
     return 'zero_copy is Linux-only';
   }
+  if (scenario.mockOnly && opts.realBackends) {
+    return 'needs the mock backend, which is the side that drives this scenario';
+  }
   if (scenario.minProtocol && protocol < scenario.minProtocol) {
-    return `velocity forwarding needs protocol >= ${scenario.minProtocol} (login plugin request is 1.13+)`;
+    return scenario.protocolReason ?? `velocity forwarding needs protocol >= ${scenario.minProtocol} (login plugin request is 1.13+)`;
+  }
+  if (scenario.maxProtocol && protocol > scenario.maxProtocol) {
+    return scenario.protocolReason;
   }
   if (scenario.needsAuth && !opts.authAvailable) {
     return 'no session server configured';

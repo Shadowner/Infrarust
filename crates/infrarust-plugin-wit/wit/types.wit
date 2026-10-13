@@ -64,6 +64,7 @@ interface types {
         chat-intercept,
         ban-provider,
         plugin-messaging,
+        connection-handoff,
     }
 
     enum connection-state { handshake, status, login, configuration, play }

@@ -300,6 +300,7 @@ fn plugin_services(
         plugin_registry: Arc::clone(plugin_registry) as Arc<dyn PluginRegistry>,
         codec_filter_registry: Arc::clone(&services.codec_filter_registry),
         transport_filter_registry: Arc::clone(&services.transport_filter_registry),
+        connection_claims: Arc::clone(&services.connection_claims),
         provider_activator: Arc::new(PluginProviderActivator::new(
             services.provider_event_sender.clone(),
             Arc::clone(&services.domain_router),

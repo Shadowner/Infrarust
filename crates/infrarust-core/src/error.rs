@@ -20,6 +20,9 @@ pub enum CoreError {
     #[error("connection closed")]
     ConnectionClosed,
 
+    #[error("the client left during the login")]
+    ClientLeft,
+
     #[error("connection timeout: {0}")]
     Timeout(String),
 
@@ -96,7 +99,7 @@ impl CoreError {
                     | std::io::ErrorKind::ConnectionAborted
                     | std::io::ErrorKind::UnexpectedEof
             ),
-            Self::ConnectionClosed | Self::Transport(_) => true,
+            Self::ConnectionClosed | Self::ClientLeft | Self::Transport(_) => true,
             _ => false,
         }
     }

@@ -3,6 +3,7 @@ pub mod ban_check;
 pub mod ban_ip_check;
 pub mod handshake_parser;
 pub mod ip_filter;
+pub mod login_claim;
 pub mod login_start_parser;
 pub mod rate_limiter;
 pub mod routing_middleware;

@@ -69,6 +69,33 @@ pub struct SLoginStart {
     pub profile_key: Option<ProfileKey>,
 }
 
+const LOGIN_NAME_MAX_CHARS: usize = 16;
+const UUID_LEN: usize = 16;
+
+fn read_login_name(r: &mut &[u8]) -> ProtocolResult<String> {
+    let name = r.read_string_bounded(LOGIN_NAME_MAX_CHARS)?;
+    if name.is_empty() {
+        return Err(ProtocolError::invalid("empty username in SLoginStart"));
+    }
+    Ok(name)
+}
+
+impl SLoginStart {
+    pub fn decode_lenient(r: &mut &[u8]) -> ProtocolResult<Self> {
+        let name = read_login_name(r)?;
+        let uuid = if r.len() == UUID_LEN {
+            Some(r.read_uuid()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            name,
+            uuid,
+            profile_key: None,
+        })
+    }
+}
+
 impl Packet for SLoginStart {
     const NAME: &'static str = "SLoginStart";
 
@@ -79,10 +106,7 @@ impl Packet for SLoginStart {
     ];
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
-        let name = r.read_string_bounded(16)?;
-        if name.is_empty() {
-            return Err(ProtocolError::invalid("empty username in SLoginStart"));
-        }
+        let name = read_login_name(r)?;
 
         let mut uuid = None;
         let mut profile_key = None;
@@ -884,6 +908,125 @@ mod tests {
         };
         let decoded = round_trip(&pkt, ProtocolVersion::V1_19);
         assert_eq!(decoded.profile_key, Some(key));
+    }
+
+    const MARKER_NAME: &str = "k3x9q2m7a1";
+    const MARKER_UUID: uuid::Uuid =
+        uuid::Uuid::from_u128(0xa7c3_5e10_9b2d_4f6e_8a01_c4d2_e3f4_a5b6);
+    const PRE_1_20_2_SIGNED: [ProtocolVersion; 5] = [
+        ProtocolVersion::V1_19,
+        ProtocolVersion::V1_19_1,
+        ProtocolVersion::V1_19_3,
+        ProtocolVersion::V1_19_4,
+        ProtocolVersion::V1_20,
+    ];
+
+    fn modern_layout(name: &str, uuid: uuid::Uuid) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.write_string(name).unwrap();
+        payload.write_uuid(&uuid).unwrap();
+        payload
+    }
+
+    #[test]
+    fn test_login_start_modern_layout_fails_the_strict_decode_before_1_20_2() {
+        let payload = modern_layout(MARKER_NAME, MARKER_UUID);
+        for version in PRE_1_20_2_SIGNED {
+            assert!(
+                SLoginStart::decode(&mut payload.as_slice(), version).is_err(),
+                "{version:?}"
+            );
+            let lenient = SLoginStart::decode_lenient(&mut payload.as_slice()).unwrap();
+            assert_eq!(lenient.name, MARKER_NAME);
+            assert_eq!(lenient.uuid, Some(MARKER_UUID));
+            assert!(lenient.profile_key.is_none());
+        }
+    }
+
+    #[test]
+    fn test_login_start_modern_layout_with_a_true_looking_first_uuid_byte() {
+        let uuid = uuid::Uuid::from_u128(0x01c3_5e10_9b2d_4f6e_8a01_c4d2_e3f4_a5b6);
+        let payload = modern_layout(MARKER_NAME, uuid);
+        for version in [
+            ProtocolVersion::V1_19_3,
+            ProtocolVersion::V1_19_4,
+            ProtocolVersion::V1_20,
+        ] {
+            assert!(SLoginStart::decode(&mut payload.as_slice(), version).is_err());
+        }
+        let lenient = SLoginStart::decode_lenient(&mut payload.as_slice()).unwrap();
+        assert_eq!(lenient.uuid, Some(uuid));
+    }
+
+    #[test]
+    fn test_login_start_declared_layout_decodes_strictly() {
+        let uuid = uuid::Uuid::parse_str("069a79f4-44e9-4726-a5be-fca90e38aaf5").unwrap();
+        let pkt = SLoginStart {
+            name: "Notch".to_string(),
+            uuid: Some(uuid),
+            profile_key: None,
+        };
+        for version in PRE_1_20_2_SIGNED {
+            let mut payload = Vec::new();
+            pkt.encode(&mut payload, version).unwrap();
+            let decoded = SLoginStart::decode(&mut payload.as_slice(), version).unwrap();
+            assert_eq!(decoded.name, "Notch");
+            let expected = version
+                .no_less_than(ProtocolVersion::V1_19_1)
+                .then_some(uuid);
+            assert_eq!(decoded.uuid, expected, "{version:?}");
+        }
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_20_2);
+        assert_eq!(decoded.uuid, Some(uuid));
+    }
+
+    #[test]
+    fn test_login_start_lenient_takes_a_uuid_only_from_exactly_sixteen_bytes() {
+        for trailing in [0usize, 1, 15, 17, 32] {
+            let mut payload = Vec::new();
+            payload.write_string(MARKER_NAME).unwrap();
+            payload.extend(std::iter::repeat_n(0xAB, trailing));
+            let lenient = SLoginStart::decode_lenient(&mut payload.as_slice()).unwrap();
+            assert_eq!(lenient.name, MARKER_NAME);
+            assert_eq!(lenient.uuid, None, "{trailing} trailing bytes");
+        }
+    }
+
+    #[test]
+    fn test_login_start_lenient_rejects_garbage() {
+        let too_long = "a".repeat(17);
+        let mut oversized = Vec::new();
+        oversized.write_string(&too_long).unwrap();
+        oversized.write_uuid(&MARKER_UUID).unwrap();
+        let mut empty_name = vec![0x00];
+        empty_name.extend_from_slice(MARKER_UUID.as_bytes());
+        let garbage: [&[u8]; 7] = [
+            &[],
+            &empty_name,
+            &oversized,
+            &[0x05, b'a', b'b'],
+            &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+            &[0x02, 0xC3, 0x28],
+            &[0xFF, 0xFF, 0x03, b'a'],
+        ];
+        for payload in garbage {
+            assert!(
+                SLoginStart::decode_lenient(&mut &payload[..]).is_err(),
+                "{payload:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_login_start_lenient_never_panics() {
+        for len in 0u8..48 {
+            for seed in 0u8..48 {
+                let payload: Vec<u8> = (0..len)
+                    .map(|i| i.wrapping_mul(31).wrapping_add(seed.wrapping_mul(17)))
+                    .collect();
+                let _ = SLoginStart::decode_lenient(&mut payload.as_slice());
+            }
+        }
     }
 
     #[test]

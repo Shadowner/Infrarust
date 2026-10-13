@@ -93,9 +93,9 @@ send_proxy_protocol = true
 
 ## Does Infrarust support modded servers (Forge, Fabric, NeoForge)?
 
-In forwarding modes, yes. The proxy strips Forge Mod Loader markers (`\0FML\0`, `\0FML2\0`, `\0FML3\0`) from the handshake domain for routing purposes, then forwards the original bytes unchanged to the backend. The mod handshake happens directly between the client and the backend server.
+In forwarding modes, yes. The proxy strips Forge Mod Loader markers (`\0FML\0`, `\0FML2\0`, `\0FML3\0`) from the handshake domain for routing purposes, then forwards the original bytes unchanged to the backend. The mod handshake happens directly between the client and the backend server. A domain rewrite or BungeeCord forwarding keeps the marker too, see [FML markers](./routing.md#fml-markers). A Login Start that does not follow the layout of its declared protocol, such as a 1.20.2+ layout sent with a 1.19 to 1.20.1 protocol, is forwarded as sent rather than refused.
 
-In intercepted modes, modded servers work as long as the Minecraft protocol version is supported. Custom packets from mods pass through the proxy's codec as opaque plugin channel messages.
+In intercepted modes, modded servers work as long as the Minecraft protocol version is supported. The proxy keeps the client in the login phase until the backend accepts it and relays the loader's login plugin messages, then relays configuration and play plugin messages. Switching between modded servers has limits; see [Modded Servers](./modded-servers).
 
 ## Does Infrarust support Bedrock Edition?
 

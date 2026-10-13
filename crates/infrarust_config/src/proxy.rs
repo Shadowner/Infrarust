@@ -102,6 +102,9 @@ pub struct ProxyConfig {
     #[serde(default = "defaults::true_val")]
     pub announce_proxy_commands: bool,
 
+    #[serde(default = "defaults::compression_threshold")]
+    pub compression_threshold: i32,
+
     #[serde(default)]
     pub forwarding: Option<ForwardingConfig>,
 

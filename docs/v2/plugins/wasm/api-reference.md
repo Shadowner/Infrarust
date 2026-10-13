@@ -42,6 +42,7 @@ world plugin {
     import permissions;
     import permission-nodes;
     import providers;
+    import connection-claims;
 
     export guest;
     export codec-filter;
@@ -56,7 +57,7 @@ world plugin {
 | `events` | none | The event records, results and the `event` / `event-outcome` variants, and the three reads of the ping being handled. |
 | `log` | none | `trace`/`debug`/`info`/`warn`/`error` to the host log, and the most verbose level the proxy logs. |
 | `text` | none | Parse and serialize text components with the proxy's own parser. |
-| `event-bus` | `event-bus` (`chat-intercept` for `chat-message` and `command-execute`, `plugin-messaging` for `plugin-message`, `raw-packet` for packets) | Subscribe to event kinds, named events and packets by priority; fire named events. |
+| `event-bus` | `event-bus` (`chat-intercept` for `chat-message` and `command-execute`, `plugin-messaging` for `plugin-message` and the login plugin messages, `connection-handoff` for `raw-connection` and `login-claim`, `raw-packet` for packets) | Subscribe to event kinds, named events and packets by priority; fire named events. |
 | `players` | `player-read`, `player-write` for actions, `raw-packet` for `send-packet` | Look up players by id, name, UUID or address, and act on them by id. |
 | `server-manager` | `server-manage` | Read server state, start and stop backends. |
 | `ban-service` | `ban` | Create, remove, look up and page bans. |
@@ -72,6 +73,7 @@ world plugin {
 | `permissions` | `permission-provider` | Replace or clear the permission snapshot the host holds for a player. |
 | `permission-nodes` | none | Register the plugin's own permission nodes with their defaults, and read every registered node. |
 | `providers` | `ban-provider` for `register-ban-provider`, `permission-provider` for `register-permission-provider` | Become the proxy's ban provider or permission provider. |
+| `connection-claims` | `connection-handoff` | Register the byte prefixes that make the proxy hand a raw connection to the plugin. |
 
 Every interface is linked for every plugin. A call the plugin lacks the capability for is refused when it is made: it returns a `host-error` of kind `permission-denied`, or a neutral value for the few infallible reads listed under [Players](#players). See [Capabilities](./capabilities).
 
@@ -401,6 +403,10 @@ interface events {
         player-resource-pack-status,
         named-event,
         raw-packet,
+        raw-connection,
+        login-claim,
+        login-plugin-request,
+        login-plugin-response,
     }
 
     record pre-login-event {
@@ -648,10 +654,26 @@ interface events {
         %result: connection-handshake-result,
     }
 
+    variant handoff-target {
+        route,
+        server(server-id),
+        server-port(tuple<server-id, u16>),
+        address(server-address),
+    }
+
+    record handoff {
+        target: handoff-target,
+        replay: bool,
+        prefix: list<u8>,
+        reply: list<u8>,
+        proxy-protocol: option<bool>,
+    }
+
     variant connection-handshake-result {
         allow,
         deny(option<component>),
         drop-silently,
+        handoff(handoff),
     }
 
     variant reject-reason {
@@ -829,6 +851,77 @@ interface events {
         drop,
     }
 
+    record raw-connection-event {
+        connection-id: u64,
+        remote-addr: socket-address,
+        local-addr: socket-address,
+        prefix: list<u8>,
+        data: list<u8>,
+        %result: raw-connection-result,
+    }
+
+    variant raw-connection-result {
+        pass,
+        need-more(u32),
+        handoff(handoff),
+        reject,
+    }
+
+    record login-claim-event {
+        remote-addr: socket-address,
+        virtual-host: option<string>,
+        raw-host: string,
+        port: u16,
+        protocol: protocol-version,
+        server: option<server-id>,
+        username: string,
+        uuid: option<uuid>,
+        login-start: list<u8>,
+        layout-matches: bool,
+        %result: login-claim-result,
+    }
+
+    variant login-claim-result {
+        pass,
+        handoff(handoff),
+    }
+
+    record login-plugin-request-event {
+        player: player-ref,
+        server: server-id,
+        message-id: s32,
+        channel: string,
+        data: list<u8>,
+        client-reachable: bool,
+        %result: login-plugin-request-result,
+    }
+
+    variant login-plugin-request-result {
+        forward,
+        replace(list<u8>),
+        respond(option<list<u8>>),
+    }
+
+    record login-plugin-response-event {
+        player: player-ref,
+        server: server-id,
+        message-id: s32,
+        channel: string,
+        successful: bool,
+        data: list<u8>,
+        %result: login-plugin-response-result,
+    }
+
+    record login-plugin-response-replacement {
+        successful: bool,
+        data: list<u8>,
+    }
+
+    variant login-plugin-response-result {
+        forward,
+        replace(login-plugin-response-replacement),
+    }
+
     variant event {
         pre-login(pre-login-event),
         post-login(post-login-event),
@@ -866,6 +959,10 @@ interface events {
         player-resource-pack-status(player-resource-pack-status-event),
         named-event(named-event-event),
         raw-packet(raw-packet-event),
+        raw-connection(raw-connection-event),
+        login-claim(login-claim-event),
+        login-plugin-request(login-plugin-request-event),
+        login-plugin-response(login-plugin-response-event),
     }
 
     variant event-outcome {
@@ -885,6 +982,10 @@ interface events {
         pre-transfer(pre-transfer-result),
         named-event(named-event-result),
         raw-packet(raw-packet-result),
+        raw-connection(raw-connection-result),
+        login-claim(login-claim-result),
+        login-plugin-request(login-plugin-request-result),
+        login-plugin-response(login-plugin-response-result),
     }
 
     ping-description: func() -> option<component>;
@@ -900,6 +1001,14 @@ interface events {
 `proxy-ping-result` carries the four cheap fields of the response (`max-players`, `online-players`, `protocol` and `version-name`). The description, the favicon and the player sample stay on the host: in the event they are always `none`, and the guest reads them during the call with `ping-description`, `ping-favicon` and `ping-player-sample`. Those three answer `none` or an empty list outside a `proxy-ping` call. Each read converts one field and copies it into the guest, so a handler that never reads them never pays for them.
 
 In an outcome the four cheap fields set the response, and each of the three heavy fields replaces the response's value only when it is `some`: `description: some(component)` replaces the description, `favicon: some(none)` removes the favicon, `player-sample: some(list)` replaces the sample. A heavy field left at `none` keeps what the response had, including parts of the description the contract cannot carry. The SDK fills an outcome that way: it sends a heavy field back only when the handler set it.
+
+### Handoffs and login plugin messages
+
+`handoff` tells the proxy to stop treating a connection as Minecraft and relay it, byte for byte, to `target`: `route` is the server the connection was routed to, `server` another configured server, `server-port` the host the load balancer picks for that server on another port, and `address` an explicit `host` and `port`. Before the relay starts the host writes `reply` to the client and `prefix` to the target, then, when `replay` is true, the bytes the connection already sent. `proxy-protocol` forces a PROXY protocol v2 header on or off; `none` follows the target server's `send_proxy_protocol` (no header for an `address`). A handoff is accepted only from a plugin that holds `connection-handoff`, and an `address` target, or a `server-port` target on a port the server's addresses do not use, only when the plugin's [network allow-list](./network) permits it (for `server-port`, on every address of that server); otherwise the host ignores the outcome and logs a rate-limited warning. See [Connection Handoff](./connection-handoff).
+
+`raw-connection` fires for a connection whose first bytes match a prefix registered through [`connection-claims`](#connection-claims); `prefix` is the registered prefix that matched and `data` every byte read so far. `need-more(n)` asks the host to read until `data` holds `n` bytes and fire the event again. `login-claim` fires once the Login Start packet is read, before `pre-login`; `login-start` is its payload as sent and `layout-matches` is false when only a lenient decode accepted it. Both need `connection-handoff` to subscribe.
+
+`login-plugin-request` and `login-plugin-response` carry the login plugin messages of the channels some plugin registered. `respond(some(data))` answers the backend as the client, `respond(none)` answers that the request was not understood, and `replace` sends other bytes to the client under the same message id. `client-reachable` is false when the player is already past the login, where `forward` gets the proxy's "not understood" answer. A response event carries the channel of the request it answers. Both need `plugin-messaging` to subscribe. See [Login plugin messages](./messaging#login-plugin-messages).
 
 `ban-issued` and `ban-revoked` reuse `ban-entry` and `ban-source` from `ban-service`, and `limbo-enter` reuses `limbo-entry-context` from `limbo`. A plugin that only reads those events imports the types, not the functions, so it needs neither `ban` nor `limbo`.
 
@@ -924,7 +1033,7 @@ interface event-bus {
 }
 ```
 
-`subscribe` refuses with `permission-denied` when the plugin lacks `event-bus`, for `chat-message` and `command-execute` when it lacks `chat-intercept`, for `plugin-message` when it lacks `plugin-messaging`, and for `raw-packet` when it lacks `raw-packet`; with `raw-packet` granted it still answers `invalid-argument`, because a packet subscription goes through `subscribe-packets` with its filters. `subscribe` with `named-event` receives every named event, `subscribe-named` only the ones with that name. `unsubscribe` answers whether the handle was subscribed, and removes every filter of a packet subscription.
+`subscribe` refuses with `permission-denied` when the plugin lacks `event-bus`, for `chat-message` and `command-execute` when it lacks `chat-intercept`, for `plugin-message`, `login-plugin-request` and `login-plugin-response` when it lacks `plugin-messaging`, for `raw-connection` and `login-claim` when it lacks `connection-handoff`, and for `raw-packet` when it lacks `raw-packet`; with `raw-packet` granted it still answers `invalid-argument`, because a packet subscription goes through `subscribe-packets` with its filters. `subscribe` with `named-event` receives every named event, `subscribe-named` only the ones with that name. `unsubscribe` answers whether the handle was subscribed, and removes every filter of a packet subscription.
 
 `fire-named` fires a native `NamedEvent` with the plugin as its `source-plugin`, runs every native and WASM listener in priority order, and answers what they decided. It is bounded like the other waiting calls, see [Slow services and deadlines](./services#slow-services-and-deadlines). The host never enters an instance that is running the call the event came from: a listener of the calling plugin, or of any plugin up the chain of calls that led here, gets the event queued behind its current call, and its outcome is ignored. See [Named events](./events#named-events).
 
@@ -1446,6 +1555,13 @@ interface providers {
     register-ban-provider: func(features: ban-features) -> result<_, host-error>;
     register-permission-provider: func() -> result<_, host-error>;
 }
+
+interface connection-claims {
+    use types.{host-error};
+
+    register-prefix: func(prefix: list<u8>) -> result<_, host-error>;
+    unregister-prefix: func(prefix: list<u8>) -> result<_, host-error>;
+}
 ```
 
 - `ban-service.ban` records the plugin as the ban's source. `unban` answers the removed entry. `list` pages through bans with the cursor from the previous page.
@@ -1463,6 +1579,7 @@ interface providers {
 - `permissions.set-snapshot` replaces the snapshot of a player who holds one from this plugin (answered `not-found` otherwise, `player-gone` when the player is offline, `invalid-argument` above 65,536 rules) and refreshes the player's command tree. `release` clears it back to the node defaults and forgets it; releasing a player the plugin holds nothing for succeeds. See [Permissions](./permissions).
 - `permission-nodes` is never gated. `register` takes only a node whose normalized name starts with `<plugin-id>.` and answers `invalid-argument` for any other, with that prefix in the message; inside the namespace it answers `invalid-argument` for an invalid name and `conflict` for a node a native plugin or the proxy owns. Registering a node the plugin owns again replaces its description and default. `get` and `list` see every node, the proxy's (`plugin-id` is `none`) and every plugin's; `list` is sorted by name. The host removes a plugin's nodes when it is disabled or unloaded. See [Permission nodes](./permissions#permission-nodes).
 - `providers.register-*` register the plugin as the provider named by `[ban] provider` or `[permissions] provider`. A plugin that is not the selected one is answered `conflict`. Registering again, for example from a recovered instance, keeps the first registration and succeeds.
+- <a id="connection-claims"></a>`connection-claims` needs `connection-handoff`. `register-prefix` answers `invalid-argument` for a prefix shorter than 2 or longer than 16 bytes, or one a Minecraft handshake, a legacy ping or a PROXY protocol header could start with, and `limit-exceeded` past 16 prefixes per plugin; registering a prefix the plugin holds again succeeds. `unregister-prefix` answers `not-found` for a prefix the plugin does not hold. Two plugins may register the same prefix. The host drops a plugin's prefixes when it is disabled or unloaded, and when a fault replaces its instance, before the fresh instance's `on-enable` registers them again. See [Connection Handoff](./connection-handoff#claiming-raw-connections).
 
 ## Limbo
 

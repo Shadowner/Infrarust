@@ -319,3 +319,10 @@ interface plugin-registry {
     %list: func() -> list<plugin-info>;
     get: func(id: string) -> option<plugin-info>;
 }
+
+interface connection-claims {
+    use types.{host-error};
+
+    register-prefix: func(prefix: list<u8>) -> result<_, host-error>;
+    unregister-prefix: func(prefix: list<u8>) -> result<_, host-error>;
+}

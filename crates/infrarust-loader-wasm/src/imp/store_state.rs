@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -181,6 +181,7 @@ struct HostResources {
     next_task_id: u64,
     tasks: Arc<LiveTasks>,
     boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
+    claim_prefixes: BTreeSet<Vec<u8>>,
 }
 
 impl HostResources {
@@ -192,6 +193,7 @@ impl HostResources {
             next_task_id: 1,
             tasks: Arc::default(),
             boss_bars: HashMap::new(),
+            claim_prefixes: BTreeSet::new(),
         }
     }
 }
@@ -433,8 +435,22 @@ impl PluginStoreState {
         self.resources.tasks.len()
     }
 
+    pub(crate) fn record_claim_prefix(&mut self, prefix: &[u8]) {
+        self.resources.claim_prefixes.insert(prefix.to_vec());
+    }
+
+    pub(crate) fn forget_claim_prefix(&mut self, prefix: &[u8]) {
+        self.resources.claim_prefixes.remove(prefix);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn claim_prefix_count(&self) -> usize {
+        self.resources.claim_prefixes.len()
+    }
+
     pub(crate) fn release_host_resources(&mut self) {
         let resources = &mut self.resources;
+        let prefixes = std::mem::take(&mut resources.claim_prefixes);
         let listeners: Vec<ListenerHandle> =
             resources.listeners.drain().flat_map(|(_, h)| h).collect();
         resources.listener_handles = 0;
@@ -450,6 +466,11 @@ impl PluginStoreState {
         }
         for task in tasks {
             ctx.scheduler().cancel(task);
+        }
+        if let Some(claims) = ctx.connection_claims() {
+            for prefix in prefixes {
+                let _ = claims.unregister_prefix(&prefix);
+            }
         }
     }
 

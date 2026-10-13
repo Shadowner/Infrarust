@@ -164,6 +164,9 @@ pub enum ProxyValidationError {
     #[error("{key} must be greater than zero")]
     ZeroDuration { key: &'static str },
 
+    #[error("compression_threshold must be -1 (disabled) or at least 0 (got {value})")]
+    CompressionThreshold { value: i32 },
+
     #[error(
         "web.enable_webui requires web.enable_api: the dashboard is served by the \
          admin API and cannot run without it"

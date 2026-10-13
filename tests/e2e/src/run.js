@@ -8,7 +8,9 @@ import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate, KNOWN_FINDINGS } from './expectations.js';
 import { FORWARDING_SECRET, writeLab } from './lab.js';
+import { forgeMarkerFor } from './modded.js';
 import { Proxy, sleep, waitForPlayer, waitForPort } from './proxy.js';
+import { rawLoginStart } from './raw-client.js';
 import { writeReport } from './report.js';
 import { BACKENDS, SCENARIOS, skipReason } from './scenarios.js';
 import { allVersions, TIER_B_ANCHORS } from './versions.js';
@@ -92,6 +94,7 @@ async function main() {
 
   const useMocks = args.backends === 'mock';
   const caseDelayMs = args.caseDelayMs ?? (useMocks ? 0 : 4500);
+  const usedBackends = [...new Set(scenarios.filter((s) => useMocks || !s.mockOnly).map((s) => s.backend))];
 
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
@@ -100,20 +103,17 @@ async function main() {
   try {
     for (const v of versions) {
       const backends = {};
-      if (useMocks) {
-        for (const [name, cfg] of Object.entries(BACKENDS)) {
-          backends[name] = await startBackend({ version: v.version, port: cfg.port, kind: cfg.kind, secret: FORWARDING_SECRET });
-        }
-      } else {
-        for (const [name] of Object.entries(BACKENDS)) {
-          backends[name] = { reset() {}, observation: () => null, close: async () => {} };
-        }
+      for (const name of usedBackends) {
+        const cfg = BACKENDS[name];
+        backends[name] = useMocks
+          ? await startBackend({ ...cfg, version: v.version, secret: FORWARDING_SECRET })
+          : { reset() {}, observation: () => null, close: async () => {} };
       }
-      for (const cfg of Object.values(BACKENDS)) await waitForPort(cfg.port, { timeoutMs: 120000 });
+      for (const name of usedBackends) await waitForPort(BACKENDS[name].port, { timeoutMs: 120000 });
 
       const line = [];
       for (const scenario of scenarios) {
-        const reason = skipReason(scenario, v.protocol, { authAvailable });
+        const reason = skipReason(scenario, v.protocol, { authAvailable, realBackends: !useMocks });
         if (reason) {
           results.push({ version: v.version, protocol: v.protocol, scenario: scenario.id, status: 'skip', reason, checks: [] });
           line.push('⏭️');
@@ -128,18 +128,22 @@ async function main() {
         const username = `E${versions.indexOf(v)}_${scenario.id.replace(/[^a-zA-Z0-9]/g, '')}`.slice(0, 16);
 
         let proxyPlayer = null;
-        const client = await connectOnce({
-          version: v.version,
-          domain: scenario.domain,
-          username,
-          session: scenario.needsAuth ? await yggdrasil.session(username) : null,
-          sessionServer: scenario.needsAuth ? yggdrasil.sessionServer : null,
-          onPlay: async () => {
-            proxyPlayer = await waitForPlayer(username);
-          },
-        });
+        const viewFromProxy = async () => {
+          proxyPlayer = await waitForPlayer(username);
+        };
+        const client = scenario.rawClient
+          ? await rawLoginStart({ protocol: v.protocol, domain: scenario.domain, username, onRelayed: viewFromProxy })
+          : await connectOnce({
+              version: v.version,
+              domain: scenario.forgeMarker ? `${scenario.domain}${forgeMarkerFor(v.protocol)}` : scenario.domain,
+              username,
+              session: scenario.needsAuth ? await yggdrasil.session(username) : null,
+              sessionServer: scenario.needsAuth ? yggdrasil.sessionServer : null,
+              onPlay: viewFromProxy,
+              ...scenario.client,
+            });
 
-        const observations = { client, backend: backend.observation(), proxyPlayer };
+        const observations = { client, backend: backend.observation(), proxyPlayer, protocol: v.protocol };
         const { status, checks } = evaluate(scenario, observations, { backendObservable: useMocks });
         results.push({
           version: v.version,

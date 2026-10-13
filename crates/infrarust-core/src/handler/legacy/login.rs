@@ -1,11 +1,9 @@
-use tokio::io::AsyncReadExt;
-
 use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent, RejectReason};
 use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::legacy::parse_legacy_handshake;
 
-use super::LegacyHandler;
+use super::{LegacyHandler, LegacyReader};
 use crate::error::CoreError;
 use crate::handler::forwarded::{Arrival, ForwardedLogin, Opening, Route, UNKNOWN_SERVER, Wire};
 use crate::handler::helpers::send_legacy_kick;
@@ -75,6 +73,10 @@ impl LegacyHandler {
                 return Ok(());
             }
             Admission::Dropped => return Ok(()),
+            Admission::Handoff(_) => {
+                tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
+                return Ok(());
+            }
         }
 
         let attempt = LoginAttempt::pre_auth(ctx.client_ip, handshake.username.clone())
@@ -158,50 +160,38 @@ impl LegacyHandler {
         &self,
         ctx: &mut ConnectionContext,
     ) -> Result<Vec<u8>, CoreError> {
+        let mut reader = LegacyReader::new(ctx);
         let mut data = Vec::with_capacity(256);
-
         data.push(0x02);
 
-        let mut format_byte = [0u8; 1];
-        ctx.stream_mut().read_exact(&mut format_byte).await?;
-        data.push(format_byte[0]);
+        let format = reader.read_u8().await?;
+        data.push(format);
 
-        if format_byte[0] == 0x00 {
-            let mut low_byte = [0u8; 1];
-            ctx.stream_mut().read_exact(&mut low_byte).await?;
-            data.push(low_byte[0]);
-
-            let str_len = u16::from_be_bytes([0x00, low_byte[0]]) as usize;
-            let mut str_data = vec![0u8; str_len * 2];
-            ctx.stream_mut().read_exact(&mut str_data).await?;
-            data.extend_from_slice(&str_data);
+        if format == 0x00 {
+            let chars = reader.read_u8().await?;
+            data.push(chars);
+            data.extend_from_slice(&reader.read_vec(usize::from(chars) * 2).await?);
         } else {
-            self.read_legacy_string_into(ctx, &mut data).await?;
-            self.read_legacy_string_into(ctx, &mut data).await?;
-            let mut port = [0u8; 4];
-            ctx.stream_mut().read_exact(&mut port).await?;
-            data.extend_from_slice(&port);
+            read_legacy_string_into(&mut reader, &mut data).await?;
+            read_legacy_string_into(&mut reader, &mut data).await?;
+            data.extend_from_slice(&reader.read_vec(4).await?);
         }
 
+        data.extend_from_slice(&reader.unread());
         Ok(data)
     }
+}
 
-    async fn read_legacy_string_into(
-        &self,
-        ctx: &mut ConnectionContext,
-        data: &mut Vec<u8>,
-    ) -> Result<(), CoreError> {
-        let mut len_bytes = [0u8; 2];
-        ctx.stream_mut().read_exact(&mut len_bytes).await?;
-        let char_count = u16::from_be_bytes(len_bytes) as usize;
-
-        let mut str_data = vec![0u8; char_count * 2];
-        ctx.stream_mut().read_exact(&mut str_data).await?;
-
-        data.extend_from_slice(&len_bytes);
-        data.extend_from_slice(&str_data);
-        Ok(())
-    }
+async fn read_legacy_string_into(
+    reader: &mut LegacyReader<'_>,
+    data: &mut Vec<u8>,
+) -> Result<(), CoreError> {
+    let mut len_bytes = [0u8; 2];
+    reader.read_exact(&mut len_bytes).await?;
+    let chars = usize::from(u16::from_be_bytes(len_bytes));
+    data.extend_from_slice(&len_bytes);
+    data.extend_from_slice(&reader.read_vec(chars * 2).await?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -212,6 +202,7 @@ mod tests {
 
     use infrarust_config::ServerAddress;
     use infrarust_transport::BackendConnector;
+    use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
     use tokio::net::{TcpListener, TcpStream};
     use tokio_util::sync::CancellationToken;
@@ -247,12 +238,7 @@ mod tests {
         ctx
     }
 
-    #[tokio::test]
-    async fn a_legacy_login_is_counted_on_its_backend_for_the_whole_forward() {
-        let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let backend_addr = backend_listener.local_addr().unwrap();
-        let address: ServerAddress = backend_addr.to_string().parse().unwrap();
-
+    fn lobby_handler(backend_addr: std::net::SocketAddr) -> Arc<LegacyHandler> {
         let services = test_proxy_services();
         services.domain_router.add(
             ProviderId::file("lobby"),
@@ -261,15 +247,69 @@ mod tests {
             ))
             .unwrap(),
         );
-        let load = Arc::clone(&services.backend_load);
-        let handler = Arc::new(LegacyHandler::new(
+        Arc::new(LegacyHandler::new(
             services,
             Arc::new(BackendConnector::new(
                 std::time::Duration::from_secs(2),
                 infrarust_config::KeepaliveConfig::default(),
             )),
             CancellationToken::new(),
-        ));
+        ))
+    }
+
+    async fn login_read_ahead(read_ahead: usize) {
+        let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let handler = lobby_handler(backend_listener.local_addr().unwrap());
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(proxy_listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server_side, _) = proxy_listener.accept().await.unwrap();
+
+        let tail = legacy_login_tail("Notch", "lobby.test", 25565);
+        let mut ctx = test_ctx(server_side).await;
+        ctx.buffered_data.extend_from_slice(&tail[..read_ahead]);
+        client.write_all(&tail[read_ahead..]).await.unwrap();
+        let login = {
+            let handler = Arc::clone(&handler);
+            tokio::spawn(async move { handler.handle_login(&mut ctx).await })
+        };
+
+        let (mut backend, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), backend_listener.accept())
+                .await
+                .expect("the login never reached the backend")
+                .unwrap();
+        let mut forwarded = vec![0u8; 1 + tail.len()];
+        backend.read_exact(&mut forwarded).await.unwrap();
+        assert_eq!(forwarded[0], 0x02, "read ahead {read_ahead}");
+        assert_eq!(forwarded[1..], tail[..], "read ahead {read_ahead}");
+
+        drop(client);
+        drop(backend);
+        login.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_legacy_login_read_ahead_whole_is_not_waited_for_again() {
+        login_read_ahead(legacy_login_tail("Notch", "lobby.test", 25565).len()).await;
+    }
+
+    #[tokio::test]
+    async fn a_legacy_login_read_ahead_in_part_is_completed_from_the_stream() {
+        for read_ahead in [1, 2, 5, 13] {
+            login_read_ahead(read_ahead).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_legacy_login_is_counted_on_its_backend_for_the_whole_forward() {
+        let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = backend_listener.local_addr().unwrap();
+        let address: ServerAddress = backend_addr.to_string().parse().unwrap();
+
+        let handler = lobby_handler(backend_addr);
+        let load = Arc::clone(&handler.services.backend_load);
 
         let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let proxy_addr = proxy_listener.local_addr().unwrap();

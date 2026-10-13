@@ -6,6 +6,9 @@ import { createHmac } from 'node:crypto';
 import { startBackend } from './backend-mock.js';
 import { connectOnce } from './client.js';
 import { evaluate } from './expectations.js';
+import { BACKEND_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD } from './lab.js';
+import { BIG_PACKET_CHANNEL, LOGIN_QUERIES, modernLoginStartOpening } from './modded.js';
+import { rawLoginStart } from './raw-client.js';
 import { SCENARIOS } from './scenarios.js';
 import { verifyAndDecode, writeVarInt } from './velocity.js';
 
@@ -83,25 +86,136 @@ await check('expectations: a broken admin API is not reported as an absent playe
 });
 
 await check('expectations: a known finding downgrades a failure but does not hide it', () => {
-  const scenario = SCENARIOS.find((s) => s.id === 'offline-bungeecord');
+  const scenario = SCENARIOS.find((s) => s.id === 'full-fallback');
   const { status, checks } = evaluate(scenario, {
-    client: { reachedPlay: true },
-    backend: { handshakeHost: 'off-bungee.test' },
-    proxyPlayer: { is_active: true },
+    client: { reachedPlay: false, error: 'connection ended before reaching play' },
+    backend: null,
+    proxyPlayer: null,
   });
   assert.equal(status, 'known');
-  assert.ok(checks.some((c) => c.known === 'bungee-forwarding-is-a-noop-in-offline-mode'));
+  assert.ok(checks.some((c) => c.known === 'full-mode-is-refused-at-validation'));
 });
 
 await check('expectations: a known finding that stops reproducing is reported as fixed', () => {
-  const scenario = SCENARIOS.find((s) => s.id === 'offline-bungeecord');
-  const injected = ['off-bungee.test', '127.0.0.1', 'abc', '[{"name":"bungeeguard-token"}]'].join('\u0000');
+  const scenario = SCENARIOS.find((s) => s.id === 'full-fallback');
   const { status } = evaluate(scenario, {
     client: { reachedPlay: true },
-    backend: { handshakeHost: injected },
-    proxyPlayer: { is_active: true },
+    backend: {},
+    proxyPlayer: { is_active: false },
   });
   assert.equal(status, 'fixed');
+});
+
+const only = (name, expected = true) => ({ id: `selftest-${name}`, expect: { [name]: expected } });
+const relayedQueries = () => ({
+  client: {
+    loginQueries: LOGIN_QUERIES.map((q) => ({ messageId: q.messageId, channel: q.channel, data: q.request.toString('hex'), at: 1 })),
+    loginSuccessAt: 3,
+  },
+  backend: {
+    loginQueries: {
+      complete: true,
+      responses: LOGIN_QUERIES.map((q) => ({ messageId: q.messageId, data: q.answer ? q.answer.toString('hex') : null })),
+    },
+    loginSuccessSentAt: 2,
+  },
+});
+
+await check('expectations: login queries relayed unchanged pass', () => {
+  assert.equal(evaluate(only('loginQueriesRelayed'), relayedQueries()).status, 'pass');
+  assert.equal(evaluate(only('loginSuccessAfterBackend'), relayedQueries()).status, 'pass');
+});
+
+await check('expectations: login queries the proxy answers itself are caught', () => {
+  const obs = relayedQueries();
+  obs.client.loginQueries = [];
+  obs.backend.loginQueries.responses = LOGIN_QUERIES.map((q) => ({ messageId: q.messageId, data: null }));
+  const { status, checks } = evaluate(only('loginQueriesRelayed'), obs);
+  assert.equal(status, 'fail');
+  assert.match(checks[0].detail, /client saw .* 0 times/);
+});
+
+await check('expectations: a renumbered login query is caught', () => {
+  const obs = relayedQueries();
+  obs.client.loginQueries[1].messageId = 0;
+  assert.equal(evaluate(only('loginQueriesRelayed'), obs).status, 'fail');
+});
+
+await check('expectations: a LoginSuccess the proxy sends before the backend is caught', () => {
+  const obs = relayedQueries();
+  obs.client.loginSuccessAt = 1;
+  assert.equal(evaluate(only('loginSuccessAfterBackend'), obs).status, 'fail');
+});
+
+await check("expectations: the backend's threshold on a login the proxy finishes is caught", () => {
+  const client = { loginPackets: ['compress', 'success'], setCompression: BACKEND_COMPRESSION_THRESHOLD };
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'fail');
+  client.setCompression = COMPRESSION_THRESHOLD;
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'pass');
+  client.loginPackets = ['success', 'compress'];
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client, protocol: 769 }).status, 'fail');
+  assert.equal(evaluate(only('clientCompression', 'proxy'), { client: { loginPackets: ['success'] }, protocol: 769 }).status, 'fail');
+});
+
+await check('expectations: a forge marker lost by a rewrite or by bungeecord forwarding is caught', () => {
+  const client = { domain: 'forge.test\u0000FML3\u0000' };
+  const rewrite = only('forgeMarker', { rewrite: 'backend.internal' });
+  assert.equal(evaluate(rewrite, { client, backend: { handshakeHost: 'backend.internal\u0000FML3\u0000' } }).status, 'pass');
+  assert.equal(evaluate(rewrite, { client, backend: { handshakeHost: 'backend.internal' } }).status, 'fail');
+  const props = only('forgeMarker', { properties: true });
+  const forwarded = (properties) => ({ client, backend: { handshakeHost: ['forge.test', '127.0.0.1', 'abc', JSON.stringify(properties)].join('\u0000') } });
+  const good = [{ name: 'forgeClient', value: 'true' }, { name: 'extraData', value: '\u0001FML3\u0001', signature: '' }];
+  assert.equal(evaluate(props, forwarded(good)).status, 'pass');
+  assert.equal(evaluate(props, forwarded([])).status, 'fail');
+  assert.equal(evaluate(props, forwarded([good[0], { name: 'extraData', value: '\u0000FML3\u0000' }])).status, 'fail');
+});
+
+await check('expectations: a modern-layout opening altered on the way is caught', () => {
+  const sent = modernLoginStartOpening({ protocol: 759, host: 'hp.test', port: 25565, username: 'Steve' }).toString('hex');
+  const forwarded = (received) => ({ client: { sent, replied: true }, backend: { received } });
+  assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(sent)).status, 'pass');
+  assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(sent.slice(0, -2))).status, 'fail');
+  assert.equal(evaluate(only('rawLoginStartForwarded'), forwarded(null)).status, 'fail');
+});
+
+await check('loopback: the query backend and client agree with no proxy involved', async () => {
+  const port = 26120;
+  const backend = await startBackend({ version: '1.20.1', port, kind: 'query', loginQueries: true, secret: SECRET });
+  try {
+    const client = await connectOnce({ port, version: '1.20.1', domain: 'selftest.local', username: 'SelfTest', answerLoginQueries: true });
+    assert.equal(client.reachedPlay, true, `did not reach play: ${client.error ?? client.kick}`);
+    const { status, checks } = evaluate(
+      { id: 'selftest-loopback', expect: { loginQueriesRelayed: true, loginSuccessAfterBackend: true } },
+      { client, backend: backend.observation() },
+    );
+    assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
+  } finally {
+    await backend.close();
+  }
+});
+
+await check('loopback: the big packet reaches a client with no proxy involved', async () => {
+  const port = 26121;
+  const backend = await startBackend({ version: '1.21.4', port, kind: 'big-packet', bigPacket: true, secret: SECRET });
+  try {
+    const client = await connectOnce({ port, version: '1.21.4', domain: 'selftest.local', username: 'SelfTest', awaitPayload: BIG_PACKET_CHANNEL });
+    const { status, checks } = evaluate(only('bigPacketIntact'), { client, backend: backend.observation() });
+    assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
+  } finally {
+    await backend.close();
+  }
+});
+
+await check('loopback: the raw backend echoes the modern-layout opening with no proxy involved', async () => {
+  const port = 26122;
+  const backend = await startBackend({ port, kind: 'raw', raw: true });
+  try {
+    const client = await rawLoginStart({ port, protocol: 761, domain: 'selftest.local', username: 'SelfTest' });
+    const { status, checks } = evaluate(only('rawLoginStartForwarded'), { client, backend: backend.observation() });
+    assert.equal(status, 'pass', checks.map((c) => c.detail).join('; '));
+  } finally {
+    await backend.close();
+  }
 });
 
 let selfPort = 26100;

@@ -1,6 +1,9 @@
 import mc from 'minecraft-protocol';
 
+import { LOGIN_QUERIES, sha256 } from './modded.js';
+
 const DEFAULT_TIMEOUT_MS = 20000;
+const PAYLOAD_TIMEOUT_MS = 10000;
 
 function sessionAuth({ username, uuid, accessToken }) {
   return (client, options) => {
@@ -27,6 +30,8 @@ export function connectOnce({
   session = null,
   sessionServer = null,
   onPlay = null,
+  answerLoginQueries = false,
+  awaitPayload = null,
 }) {
   return new Promise((resolve) => {
     const obs = {
@@ -38,6 +43,11 @@ export function connectOnce({
       compressionThreshold: null,
       encrypted: false,
       loginUuid: null,
+      loginPackets: [],
+      setCompression: null,
+      loginSuccessAt: null,
+      loginQueries: [],
+      payload: null,
       error: null,
       kick: null,
     };
@@ -76,21 +86,59 @@ export function connectOnce({
       return;
     }
 
+    let payloadArrived = null;
+    const payload = awaitPayload
+      ? new Promise((done) => {
+          payloadArrived = done;
+        })
+      : null;
+
+    client.on('packet', (data, meta) => {
+      if (meta.name === 'custom_payload' && awaitPayload && data.channel === awaitPayload) {
+        obs.payload = { channel: data.channel, length: data.data.length, sha256: sha256(data.data) };
+        payloadArrived();
+        return;
+      }
+      if (meta.state !== 'login') return;
+      obs.loginPackets.push(meta.name);
+      if (meta.name === 'compress') obs.setCompression = data.threshold;
+      else if (meta.name === 'success') obs.loginSuccessAt = performance.now();
+      else if (meta.name === 'login_plugin_request') {
+        obs.loginQueries.push({
+          messageId: data.messageId,
+          channel: data.channel,
+          data: data.data ? data.data.toString('hex') : '',
+          at: performance.now(),
+        });
+      }
+    });
+
+    if (answerLoginQueries) {
+      client.removeAllListeners('login_plugin_request');
+      client.on('login_plugin_request', (packet) => {
+        const query = LOGIN_QUERIES.find((q) => q.channel === packet.channel);
+        const response = query?.answer ? { messageId: packet.messageId, data: query.answer } : { messageId: packet.messageId };
+        if (query?.answerDelayMs) setTimeout(() => client.write('login_plugin_response', response), query.answerDelayMs);
+        else client.write('login_plugin_response', response);
+      });
+    }
+
     client.on('state', (newState) => {
       obs.states.push(newState);
       if (newState !== 'play') return;
       obs.reachedPlay = true;
       obs.compressionThreshold = client.compressionThreshold ?? null;
-      if (!onPlay) {
+      if (!onPlay && !payload) {
         finish();
         return;
       }
-      Promise.resolve()
-        .then(() => onPlay(obs))
+      const viewed = Promise.resolve()
+        .then(() => onPlay?.(obs))
         .catch((err) => {
           obs.onPlayError = String(err?.message ?? err);
-        })
-        .finally(finish);
+        });
+      const received = payload ? Promise.race([payload, new Promise((done) => setTimeout(done, PAYLOAD_TIMEOUT_MS))]) : null;
+      Promise.all([viewed, received]).finally(finish);
     });
 
     client.on('login', (packet) => {

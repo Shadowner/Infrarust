@@ -48,6 +48,7 @@ macro_rules! guest_event {
 
 mod admin;
 mod chat;
+mod claim;
 mod client;
 mod connection;
 mod handshake;
@@ -61,6 +62,7 @@ pub use admin::{
     BanIssuedEvent, BanRevokedEvent, BanSource, PluginDisabledEvent, PluginEnabledEvent,
 };
 pub use chat::{ChatMessageEvent, ChatMessageResult, CommandExecuteEvent, CommandExecuteResult};
+pub use claim::{LoginClaimEvent, LoginClaimResult, RawConnectionEvent, RawConnectionResult};
 pub use client::{
     PlayerChannelRegisterEvent, PlayerClientBrandEvent, PlayerResourcePackStatusEvent,
     PlayerSettingsChangedEvent, PreTransferEvent, PreTransferResult, ResourcePackOrigin,
@@ -82,8 +84,9 @@ pub use login::{
     PreLoginEvent, PreLoginResult,
 };
 pub use messaging::{
-    MessageEndpoint, MessagePhase, NamedEvent, NamedOutcome, NamedResponse, PluginMessageEvent,
-    PluginMessageResult,
+    LoginPluginRequestEvent, LoginPluginRequestResult, LoginPluginResponseEvent,
+    LoginPluginResponseResult, MessageEndpoint, MessagePhase, NamedEvent, NamedOutcome,
+    NamedResponse, PluginMessageEvent, PluginMessageResult,
 };
 pub use packet::{PacketFilter, RawPacketEvent, RawPacketResult};
 pub use proxy::{

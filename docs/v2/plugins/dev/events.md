@@ -17,6 +17,11 @@ The events a player goes through depend on the proxy mode of the server they joi
 ```
 connection accepted
   → transport filters ── Reject, panic, timeout ──▶ ConnectionRejectedEvent (plugin)
+  → raw claim, only while a plugin holds a prefix, the global IP filter lets the
+    address in and the first bytes match a prefix:
+      IP ban ────────────────────────── banned ───▶ ConnectionRejectedEvent (ip_banned, banned)
+      RawConnectionEvent ── Handoff ──▶ relayed
+                         ── Reject ───▶ ConnectionRejectedEvent (plugin)
   → IP filter ──────────────────────── refused ──▶ ConnectionRejectedEvent (ip_filter)
   → handshake read
   → IP ban, for a server list ping ─── banned ───▶ ConnectionRejectedEvent (ip_banned)
@@ -24,12 +29,17 @@ connection accepted
   → domain routing ─────────────────── unknown ──▶ ConnectionRejectedEvent (unknown_domain)
                    ─── server's IP filter ──▶ ConnectionRejectedEvent (ip_filter)
   → ConnectionHandshakeEvent ── Deny, DropSilently ──▶ ConnectionRejectedEvent (plugin)
+                             ── Handoff ──▶ IP ban ── banned ──▶ ConnectionRejectedEvent (ip_banned, banned)
+                                                  ── relayed
   → server list ping: ProxyPingEvent
-  → login: name and IP ban ─────────── banned ───▶ ConnectionRejectedEvent (banned, ip_banned)
+  → login: Login Start read
+           LoginClaimEvent, while someone listens ── Handoff ──▶ IP ban ── banned ──▶ ConnectionRejectedEvent (ip_banned, banned)
+                                                                        ── relayed
+           name and IP ban ─────────── banned ───▶ ConnectionRejectedEvent (banned, ip_banned)
            PreLoginEvent, and the flows below
 ```
 
-A connection that reaches `ConnectionHandshakeEvent` passed the proxy's own checks. A connection the proxy refuses, before or after that event, posts exactly one [`ConnectionRejectedEvent`](#connectionrejectedevent) and never becomes a player. Refusals from the login on (`PreLoginEvent` or `LoginEvent` denied, the UUID ban after authentication) do not post it: their own events report them.
+A connection that reaches `ConnectionHandshakeEvent` passed the proxy's own checks. A connection relayed by a [handoff](../wasm/connection-handoff) leaves the flow where it is handed off: it never becomes a player and posts no `ConnectionRejectedEvent`. Before any handoff the proxy checks the address against the IP and range bans, with a provider that cannot answer refusing it as at a login, see [Bans](../wasm/connection-handoff#bans). A connection the proxy refuses, before or after that event, posts exactly one [`ConnectionRejectedEvent`](#connectionrejectedevent) and never becomes a player. Refusals from the login on (`PreLoginEvent` or `LoginEvent` denied, the UUID ban after authentication) do not post it: their own events report them.
 
 A server list ping to an unknown domain is answered with `[default_motd]` when [`unknown_domain_behavior`](../../configuration/global#unknown-domain-behavior) is `default_motd`, so it goes through `ConnectionHandshakeEvent` with no server. A login to an unknown domain, or any connection to one with `drop`, is refused.
 
@@ -220,12 +230,12 @@ Every event goes through the same dispatch: listeners run one after another in p
 
 | Delivery | Events | What it means |
 |----------|--------|---------------|
-| Inline, awaited | `ConnectionHandshakeEvent`, `PreLoginEvent`, `OnlineAuthFailedEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `PreTransferEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
+| Inline, awaited | `RawConnectionEvent`, `ConnectionHandshakeEvent`, `LoginClaimEvent`, `PreLoginEvent`, `OnlineAuthFailedEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`, `PostLoginEvent`, `PlayerChooseInitialServerEvent`, `ServerPreConnectEvent`, `ServerConnectedEvent`, `ServerPostConnectEvent`, `KickedFromServerEvent`, `LimboEnterEvent`, `LimboExitEvent`, `ChatMessageEvent`, `CommandExecuteEvent`, `PluginMessageEvent`, `PreTransferEvent`, `ProxyPingEvent`, `ProxyInitializeEvent`, `ProxyShutdownEvent`, `DisconnectEvent`, custom events | The proxy (or the plugin that fired it) waits for every listener before it continues, so listeners can change the outcome. `DisconnectEvent` is also bounded as a whole by `[events] disconnect_deadline`. |
 | Queued, in order | `ServerStateChangeEvent`, `BackendHealthEvent`, `ConfigReloadEvent`, `BanIssuedEvent`, `BanRevokedEvent`, `ConnectionRejectedEvent`, `PluginEnabledEvent`, `PluginDisabledEvent`, `ServiceProvidedEvent`, `ServiceRemovedEvent`, `PlayerClientBrandEvent`, `PlayerSettingsChangedEvent`, `PlayerChannelRegisterEvent`, `PlayerResourcePackStatusEvent` | The proxy posts these to a single queue. One dispatcher delivers them in the order they were posted, one event at a time. |
 
 Because the queue delivers one event at a time, a slow listener on a queued event delays the queued events behind it, up to `handler_timeout` per listener. A listener that panics does not stop the queue: the next event is still delivered.
 
-`ConnectionHandshakeEvent` and `ConnectionRejectedEvent` fire for every connection, including floods of bots. The proxy builds and dispatches them only while at least one listener is subscribed, so they cost nothing when no plugin uses them.
+`ConnectionHandshakeEvent`, `LoginClaimEvent` and `ConnectionRejectedEvent` fire for every connection, including floods of bots. The proxy builds and dispatches them only while at least one listener is subscribed, so they cost nothing when no plugin uses them. `RawConnectionEvent` also needs a registered prefix that the connection's first bytes match.
 
 ## Handshake events
 
@@ -255,6 +265,7 @@ Fired once per connection, right after the proxy routed its domain and before an
 | `Allow` (default, `allow()`) | Let the connection go on |
 | `Deny { reason }` (`deny(reason)`) | Refuse the connection. A login is disconnected in the login phase with `reason`, or "You are not allowed to connect to this server" when it is `None`. A client older than 1.7 gets a legacy kick. A server list ping gets no answer: the proxy closes the connection |
 | `DropSilently` (`drop_silently()`) | Close the connection without sending anything |
+| `Handoff(handoff)` (`handoff(h)`) | Stop treating the connection as Minecraft and relay it to the handoff's target, a server list ping included (no `ProxyPingEvent` then). The target gets the handshake, with nothing after the host but a Forge marker, and every byte the client sent after it. No `ConnectionRejectedEvent` is posted for a relayed connection. The address is first checked against the IP and range bans: a banned login is disconnected with the ban message and a banned ping is closed, each with a `ConnectionRejectedEvent` (`ip_banned`, or `banned` when the provider could not answer). A client older than 1.7 cannot be handed off and is closed instead. See [Connection Handoff](../wasm/connection-handoff#the-handoff). A WASM plugin needs `connection-handoff` for it; a native plugin does not, see [the capability](../wasm/connection-handoff#the-connection-handoff-capability) |
 
 A refused connection posts a `ConnectionRejectedEvent` with the reason `Plugin`, carrying the ID of the plugin whose listener last changed the result.
 
@@ -288,15 +299,15 @@ Posted when the proxy refuses a connection before a player exists, exactly once 
 
 | Variant | Description |
 |---------|-------------|
-| `IpFilter` (`ip_filter`) | The global [`ip_filter`](../../configuration/global#ip-filter) or the server's own filter refused the address |
+| `IpFilter` (`ip_filter`) | The global [`ip_filter`](../../configuration/global#ip-filter) or the server's own filter refused the address. An address the global filter refuses is refused before a [raw claim](#rawconnectionevent) reads anything |
 | `RateLimit` (`rate_limit`) | The address went over [`rate_limit`](../../configuration/global#rate-limiting) |
 | `UnknownDomain` (`unknown_domain`) | No server has the domain: a login, or any connection when `unknown_domain_behavior` is `drop` |
-| `IpBanned` (`ip_banned`) | A ban on the address or a range that contains it, for a server list ping or a login |
-| `Banned` (`banned`) | A ban on the name (or the UUID the client claimed) before authentication, or a ban check that failed and refused the login |
+| `IpBanned` (`ip_banned`) | A ban on the address or a range that contains it, for a server list ping, a login, a [raw claim](#rawconnectionevent) or a [handoff](../wasm/connection-handoff#bans) |
+| `Banned` (`banned`) | A ban on the name (or the UUID the client claimed) before authentication, or a ban check that failed and refused the login or the handoff |
 | `ServerUnavailable` (`server_unavailable`) | Not posted any more. The server manager starts a server once the player exists, and a server it cannot start is reported by `KickedFromServerEvent`, see [server wake](#server-wake). The variant remains so that existing matches compile |
-| `Plugin { plugin_id }` (`plugin`) | A `ConnectionHandshakeEvent` listener denied or dropped the connection, or a [transport filter](./architecture#layer-1-transportfilter) rejected it, panicked on it or ran past `[events] transport_filter_timeout`. `plugin_id` is the plugin that set the result or registered the filter, `None` when the proxy cannot tell or the filter is the proxy's own |
+| `Plugin { plugin_id }` (`plugin`) | A `ConnectionHandshakeEvent` listener denied or dropped the connection, a `RawConnectionEvent` listener rejected it, or a [transport filter](./architecture#layer-1-transportfilter) rejected it, panicked on it or ran past `[events] transport_filter_timeout`. `plugin_id` is the plugin that set the result or registered the filter, `None` when the proxy cannot tell or the filter is the proxy's own |
 
-A connection a transport filter refuses has no `virtual_host`: the filters run before the handshake is read. The listener limit ([`max_connections`](../../configuration/global#connection-limits)) refuses nothing: while it is reached, the proxy waits before it accepts the next connection, so the kernel holds it in the backlog.
+A connection a transport filter or a raw claim refuses has no `virtual_host`: both run before the handshake is read. The listener limit ([`max_connections`](../../configuration/global#connection-limits)) refuses nothing: while it is reached, the proxy waits before it accepts the next connection, so the kernel holds it in the backlog.
 
 ```rust
 use infrarust_api::events::handshake::{ConnectionRejectedEvent, RejectReason};
@@ -311,7 +322,68 @@ ctx.event_bus().subscribe::<ConnectionRejectedEvent, _>(
 );
 ```
 
-WASM plugins (contract 0.3.0) receive `connection-handshake` and `connection-rejected` with the same fields and results. See [WASM events](../wasm/events).
+### RawConnectionEvent
+
+Fired for a connection whose first bytes start with a prefix a plugin registered through `ctx.connection_claims()`, after the transport filters and before the proxy parses a Minecraft handshake, only while at least one listener is subscribed. The proxy reads nothing extra while no plugin holds a prefix; once one does, it reads until the bytes match a prefix or cannot match any, which a Minecraft client's first read settles, and gives a client that sent part of a prefix 5 seconds before it handles it as Minecraft. An address the global IP filter refuses is not read: the usual pipeline refuses it at once. On a match, the global IP and range bans run first, and a ban provider that cannot answer refuses the connection as at a login (a refused connection is closed and posts `ConnectionRejectedEvent` without reaching the event); the rate limiter does not. Awaited. Needs the `connection-handoff` capability for the registration, which is all the capability gates for a native plugin: compiled-in plugins are trusted, so the proxy does not check it for a native listener of this event or of `LoginClaimEvent`, nor for a native `ConnectionHandshakeEvent` handoff. Only WASM plugins are held to it there. See [Claiming raw connections](../wasm/connection-handoff#claiming-raw-connections).
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `u64` | The proxy's id for the connection |
+| `remote_addr` | `SocketAddr` | The client, from the PROXY protocol header when there is one |
+| `local_addr` | `SocketAddr` | The listener address the client reached |
+| `prefix` | `Bytes` | The registered prefix that matched. Every listener sees every claimed connection, so check it |
+| `data` | `Bytes` | Every byte read so far, the prefix included |
+
+**Results** (`RawConnectionResult`, `#[non_exhaustive]`):
+
+| Variant | Description |
+|---------|-------------|
+| `Pass` (default, `pass()`) | Handle the connection as Minecraft, with the bytes read still in front of the stream. The usual checks (IP filter, rate limit, bans) then apply |
+| `NeedMore(n)` (`need_more(n)`) | Read until `data` holds `n` bytes (exactly up to `n`; the rest stays in the socket) and fire the event again. The client has 5 seconds per round. The event fires at most 8 times and `data` holds at most 4096 bytes: a `NeedMore` on the eighth event or above 4096 bytes, or a client too slow, closes the connection without a `ConnectionRejectedEvent` |
+| `Handoff(handoff)` (`handoff(h)`) | Relay the connection to the handoff's target, replaying `data` exactly as read. `HandoffTarget::Route` is refused here: the connection has no route yet and is closed with a warning |
+| `Reject` (`reject()`) | Close the connection without a word and post `ConnectionRejectedEvent` with the reason `Plugin` and the ID of the plugin that set the result |
+
+```rust
+use infrarust_api::prelude::*;
+
+if let Some(claims) = ctx.connection_claims() {
+    claims
+        .register_prefix(b"XFER")
+        .map_err(|error| PluginError::InitFailed(error.to_string()))?;
+}
+ctx.event_bus().subscribe::<RawConnectionEvent, _>(EventPriority::NORMAL, |event| {
+    if event.prefix.as_ref() == b"XFER" {
+        event.handoff(Handoff::to(HandoffTarget::server_port("modded", 30037)));
+    }
+});
+```
+
+`register_prefix` answers `ClaimError::InvalidPrefix` for a prefix shorter than 2 or longer than 16 bytes, or one a Minecraft handshake, a legacy ping or a PROXY protocol header could start with, and `ClaimError::Limit` past 16 prefixes per plugin. `unregister_prefix` answers `ClaimError::NotFound` for a prefix the plugin does not hold. A plugin's prefixes go away when it is disabled or unloaded.
+
+### LoginClaimEvent
+
+Fired once the Login Start packet is read, on every route and for a login or a transfer, before the name and IP ban checks, `PreLoginEvent` and admission, and only while some plugin listens to it. Awaited. A claimed login skips the rest of the login, `PreLoginEvent` to `DisconnectEvent` included, never becomes a player, and is relayed to the handoff's target unauthenticated, with the handshake (nothing after the host but a Forge marker), the Login Start as sent and every byte the client sent after it. Only its address is checked first, against the IP and range bans: a banned one is disconnected with the ban message and posts `ConnectionRejectedEvent`, like a banned login. See [Claiming a login](../wasm/connection-handoff#claiming-a-login).
+
+**Type:** Resulted
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `remote_addr` | `SocketAddr` | The client |
+| `virtual_host` | `Option<String>` | The domain, lowercased, without the Forge marker or trailing dot |
+| `raw_host` | `String` | The host as the client sent it |
+| `port` | `u16` | The port from the handshake |
+| `protocol_version` | `ProtocolVersion` | The client's protocol version |
+| `server` | `Option<ServerId>` | The server the domain routes to |
+| `username` | `String` | The name from the Login Start |
+| `uuid` | `Option<Uuid>` | The UUID the client claimed, when its version sends one |
+| `login_start` | `Bytes` | The Login Start payload as sent, without its length and packet id |
+| `layout_matches` | `bool` | `false` when the payload does not match the layout of the client's protocol and only a lenient decode read it |
+
+**Results** (`LoginClaimResult`, `#[non_exhaustive]`): `Pass` (default, `pass()`) keeps the normal login, `Handoff(handoff)` (`handoff(h)`) relays the connection. While a listener exists, the proxy reads a Login Start that does not match its protocol with a lenient decode on every route, with `layout_matches: false`; a connection nobody claims is then refused on an `offline` or `client_only` route with exactly the protocol error it gets without a listener, before any ban check or `PreLoginEvent`, and forwarded unchanged on a forwarding route. A Login Start that even the lenient decode cannot read is refused before the event.
+
+WASM plugins (contract 0.3.0) receive `connection-handshake` and `connection-rejected` with the same fields and results, and `raw-connection` and `login-claim` with the `connection-handoff` capability. See [WASM events](../wasm/events).
 
 ## Lifecycle events
 
@@ -877,6 +949,10 @@ Fired for a plugin message on a channel a plugin registered with `ctx.channel_re
 **Results** (`PluginMessageResult`): `Forward` (default, `forward()`), `Handled` (`handled()`, nothing is forwarded) and `Replace(Bytes)` (`replace(data)`, forward `data` instead).
 
 A client message on `BungeeCord`, `bungeecord:main` or a `velocity:` channel is dropped before this event, whoever registered the channel.
+
+### LoginPluginRequestEvent and LoginPluginResponseEvent
+
+Fired during a backend login for a Login Plugin Request on a registered channel, and for the client's answer to it. Awaited: the login waits for the listeners. `LoginPluginRequestEvent` has `player`, `server`, `message_id`, `channel`, `data` and `client_reachable`, with the results `Forward`, `Replace(Bytes)` and `Respond(Option<Bytes>)`; `LoginPluginResponseEvent` has `player`, `server`, `message_id`, `channel`, `successful` and `data`, with `Forward` and `Replace { successful, data }`. See [Login plugin messages](./messaging#login-plugin-messages) for when each fires and what the results do.
 
 ### PlayerClientBrandEvent
 

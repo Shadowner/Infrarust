@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Engine, Store};
@@ -9,6 +10,7 @@ use crate::bindings::{Plugin as PluginBindings, PluginPre};
 use crate::config::SandboxLimits;
 use crate::deadline::Deadline;
 use crate::error::WasmLoaderError;
+use crate::network::NetworkPolicy;
 use crate::registrations::Registrations;
 use crate::store_state::{
     PluginSetup, PluginStoreState, begin_guest_call, build_load_state, install_epoch_control,
@@ -67,6 +69,14 @@ impl InstanceFactory {
 
     pub(crate) fn registrations(&self) -> &Arc<Registrations> {
         &self.setup.registrations
+    }
+
+    pub(crate) fn capabilities(&self) -> &CapabilitySet {
+        &self.setup.capabilities
+    }
+
+    pub(crate) fn network(&self) -> &Arc<NetworkPolicy> {
+        &self.setup.network
     }
 
     pub(crate) async fn instantiate(

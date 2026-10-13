@@ -8,7 +8,7 @@ outline: [2, 3]
 
 A WASM plugin has no network and sees one folder, its data directory. Two opt-in capabilities widen that, and each one only reaches what the operator lists in config:
 
-- `network` lets the plugin open outbound TCP connections, exchange UDP datagrams, resolve names and make HTTP or HTTPS requests with the addresses in `[plugins.<id>.wasm.network] allow`.
+- `network` lets the plugin open outbound TCP connections, exchange UDP datagrams, resolve names and make HTTP or HTTPS requests with the addresses in `[plugins.<id>.wasm.network] allow`. The same list bounds a [connection handoff](#connection-handoffs) to anything but a configured server's Minecraft address.
 - `filesystem-extended` mounts the host folders listed in `[[plugins.<id>.wasm.mounts]]` into the guest, read-only unless a mount says otherwise.
 
 Both fail closed. A capability without its config grants nothing, and config without its capability is ignored. Nothing new is needed in the plugin contract: the guest uses the standard WASI 0.2 imports (`wasi:sockets`, `wasi:http`, `wasi:filesystem`), so Rust's `std::net` and `std::fs` work as they do on any `wasm32-wasip2` program.
@@ -121,6 +121,29 @@ A request is sent only when `network` is granted, `http` is on, and its authorit
 A refused request fails with the wasi-http error `HTTP-request-denied`, before any connection is made. The `Host` header always comes from the authority; the guest cannot set it.
 
 HTTPS certificates are checked against the proxy host's trust store, the same one the proxy's own HTTPS clients use. To trust a private CA, add it to the system store, or point `SSL_CERT_FILE` (a PEM bundle) or `SSL_CERT_DIR` at your certificates when starting the proxy; when either is set, only those certificates are trusted. The connect, first-byte and between-bytes timeouts a request asks for are capped at the plugin's `host_call_timeout`.
+
+### Connection handoffs
+
+A plugin that also holds `connection-handoff` can have the proxy relay a client connection to another target, byte for byte (see [Connection Handoff](./connection-handoff)). The proxy opens that connection, not the plugin, but the allow-list still bounds where it goes. The host checks the target when it reads the plugin's answer:
+
+| Target | Check |
+|--------|-------|
+| `Route`, `Server { server }` | None: they only reach the Minecraft addresses of configured servers |
+| `ServerPort { server, port }` on a port the server's addresses already use | None for those addresses: it is reached like a `Server` target |
+| `ServerPort { server, port }` on any other port | Every address configured for the server needs a rule for its host on `port`, since the relay goes to whichever address the load balancer picks. A server the proxy does not know is refused |
+| `Address { host, port }` | An IP address needs an IP or range rule that covers it and the port; a name needs a hostname or wildcard rule for that name and port. The proxy resolves the name itself when it connects |
+
+So a plugin with `connection-handoff` and no `network` can send a connection to a configured server, but not to another service on that server's host, such as a file server on port 30037:
+
+```toml
+[plugins.files]
+permissions = ["connection-handoff", "network"]
+
+[plugins.files.wasm.network]
+allow = ["10.0.0.5:30037"]
+```
+
+A refused target is ignored: the event keeps the result it had, and the host logs a warning, at most five per plugin per minute.
 
 ### Denials in the log
 

@@ -23,7 +23,6 @@ use crate::player::{SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
 use crate::session::admission::{Admission, Admitted, Arrival, admit};
 use crate::session::client_bridge::ClientBridge;
-use crate::session::client_login::complete_login;
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
 use crate::session::context::{SessionContext, SessionIo};
@@ -156,17 +155,6 @@ impl InterceptedHandler {
                 return Ok(());
             }
         };
-        let profile = player.game_profile().clone();
-
-        let mut login_completed = false;
-        if online_mode {
-            if let Err(e) = complete_login(&mut client, &profile, version, registry).await {
-                lifecycle.end(DisconnectCause::Error).await;
-                return Err(e);
-            }
-            login_completed = true;
-        }
-
         let commands =
             CommandInbox::new(cmd_rx).with_presentation(Arc::clone(player.presentation()));
         let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
@@ -227,8 +215,9 @@ impl InterceptedHandler {
         }
 
         let mut progress = LoginProgress {
-            completed: login_completed,
+            completed: false,
             rewritten,
+            online_mode,
         };
         let mut pending_ticket = conn
             .extensions

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use infrarust_config::ServerConfig;
 use infrarust_protocol::ProtocolVersion;
 use infrarust_protocol::packets::ProfileKey;
@@ -31,6 +31,12 @@ pub struct HandshakeData {
     pub raw_packets: Vec<BytesMut>,
 }
 
+impl HandshakeData {
+    pub fn host_suffix(&self) -> &str {
+        crate::util::host_suffix(&self.raw_host)
+    }
+}
+
 /// Data resolved by the domain router middleware.
 #[derive(Clone)]
 pub struct RoutingData {
@@ -59,6 +65,14 @@ pub struct LoginData {
     /// Player UUID (present in 1.20.2+).
     pub player_uuid: Option<Uuid>,
     pub profile_key: Option<ProfileKey>,
+    pub raw_payload: Bytes,
+    pub layout: LoginStartLayout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginStartLayout {
+    Declared,
+    Mismatched,
 }
 
 /// Marker type inserted into extensions when a legacy ping is detected (first byte 0xFE).
@@ -70,3 +84,9 @@ pub struct UnknownDomain;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refused(pub infrarust_api::events::handshake::RejectReason);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimedLogin(pub infrarust_api::handoff::Handoff);
+
+#[derive(Debug)]
+pub struct LayoutRefusal(pub infrarust_protocol::ProtocolError);

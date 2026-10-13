@@ -112,6 +112,7 @@ pub fn test_proxy_services() -> ProxyServices {
         backend_health,
         codec_filter_registry: Arc::new(CodecFilterRegistryImpl::new()),
         transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
+        connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),
         registry_codec_cache: Arc::new(RegistryCodecCache::new(provider)),
         provider_event_sender: tokio::sync::mpsc::channel(1).0,

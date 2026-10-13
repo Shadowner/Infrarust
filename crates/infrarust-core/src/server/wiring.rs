@@ -27,6 +27,7 @@ use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
 use crate::middleware::handshake_parser::HandshakeParserMiddleware;
 use crate::middleware::ip_filter::IpFilterMiddleware;
+use crate::middleware::login_claim::LoginClaimMiddleware;
 use crate::middleware::login_start_parser::LoginStartParserMiddleware;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::middleware::routing_middleware::DomainRouterMiddleware;
@@ -247,6 +248,7 @@ impl ProxyServer {
             transport_filter_registry: Arc::new(
                 crate::filter::transport_registry::TransportFilterRegistryImpl::new(),
             ),
+            connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
             limbo_handler_registry,
             registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
                 Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
@@ -272,7 +274,13 @@ impl ProxyServer {
         ))));
 
         let mut login_pipeline = Pipeline::new();
-        login_pipeline.add(Box::new(LoginStartParserMiddleware::new()));
+        login_pipeline.add(Box::new(LoginStartParserMiddleware::with_login_claims(
+            Arc::clone(&event_bus),
+        )));
+        login_pipeline.add(Box::new(LoginClaimMiddleware::new(
+            Arc::clone(&event_bus),
+            Arc::clone(&ban_manager),
+        )));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
         login_pipeline.add(Box::new(TelemetryMiddleware));
         login_pipeline.add(Box::new(
@@ -282,6 +290,11 @@ impl ProxyServer {
             )
             .with_pending(Arc::clone(&pending_backends)),
         ));
+
+        let handoff =
+            crate::handoff::HandoffRelay::new(services.clone(), Arc::clone(&backend_connector));
+        #[cfg(feature = "telemetry")]
+        let handoff = handoff.with_metrics(Arc::clone(&proxy_metrics));
 
         let legacy_handler = LegacyHandler::new(
             services.clone(),
@@ -319,6 +332,7 @@ impl ProxyServer {
             passthrough_handler,
             offline_handler,
             client_only_handler,
+            handoff,
             services,
             backend_health,
             unknown_domain_behavior: config.unknown_domain_behavior,

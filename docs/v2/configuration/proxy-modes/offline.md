@@ -72,7 +72,7 @@ text = "§6Lobby — Online"
 | `disconnect_message` | string | `"Server is currently unreachable..."` | Message sent to the player when the backend is down. |
 | `limbo_handlers` | string array | `[]` | Plugin IDs for limbo handler chain, executed in order. |
 | `timeouts.connect` | duration | `"5s"` | How long to wait when connecting to the backend. |
-| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. |
+| `timeouts.read` | duration | `"30s"` | Read timeout on the backend connection. During the login, the longest silence allowed between two backend packets while nothing waits on the client, and the time the client has to acknowledge the login. See [Login time limits](#login-time-limits). |
 | `timeouts.write` | duration | `"30s"` | Write timeout on the backend connection. |
 
 ::: tip
@@ -86,11 +86,22 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 3. It fires a `GameProfileRequestEvent`, where plugins may rewrite the player's profile, then checks bans against the final profile. No RSA key exchange, no encryption, no Mojang session verification.
 4. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.
 5. It registers the player and fires `PostLoginEvent`.
-6. It connects to the backend and forwards the raw handshake and login packets as received from the client.
-7. The backend handles the login completion (sends `LoginSuccess` to the client).
-8. The proxy enters the session loop, parsing and relaying packets in both directions.
+6. It connects to the backend. How the login goes on depends on the server:
+   - **No forwarding and an untouched profile**: the proxy forwards the client's raw handshake and login packets, and the backend completes the login (its `SetCompression` and `LoginSuccess` go straight to the client).
+   - **Forwarding (`bungee_cord`, `bungee_guard`, `velocity`) or a profile rewritten in `GameProfileRequestEvent`**: the proxy sends its own handshake, carrying the forwarding data, and its own login start. It relays the backend's login plugin messages and login cookie requests to the client and the answers back, with their message ids unchanged, and answers `velocity:player_info` itself. Once the backend accepts the login, the proxy sends `SetCompression` (see [`compression_threshold`](../global#client-compression)) and `LoginSuccess` to the client.
+7. The proxy enters the session loop, parsing and relaying packets in both directions.
 
-The proxy does not send `LoginSuccess` to the client during its own auth phase. The backend is responsible for completing the login sequence. If the player ends up in limbo instead (because limbo handlers are configured or a plugin redirects there), or a plugin rewrote the profile in `GameProfileRequestEvent`, the proxy sends `LoginSuccess` itself.
+If the player ends up in limbo instead (because limbo handlers are configured or a plugin redirects there), the proxy sends `SetCompression` and `LoginSuccess` itself, and a backend reached later through a server switch gets "not understood" answers to its login plugin messages. When the backend refuses the login, its reason reaches the client as a login disconnect.
+
+### Login time limits
+
+On both paths the proxy bounds the login:
+
+- The backend gets `timeouts.read` (30 seconds by default) between two of its login packets. Packets from the client do not extend it.
+- While a login plugin message relayed to the client waits for its answer, that deadline is suspended: a mod may show the player a prompt first. The client gets at most 5 minutes, counted from the first request it has not answered.
+- Once `LoginSuccess` reaches the client, the client has `timeouts.read` to acknowledge it (1.20.2 and later).
+
+Past any of these limits the player is disconnected. A client answer to a request the client was never sent, such as one a plugin answered itself, is dropped instead of reaching the backend.
 
 ### Connection lifecycle
 
@@ -104,10 +115,19 @@ Client ──TCP──▶ Infrarust ──TCP──▶ Backend
          PermissionsSetupEvent, LoginEvent (plugins can deny)
          PostLoginEvent
                    │
-         forwards raw handshake + login
-         to backend (no auth, no encryption)
-                   │
-         backend sends LoginSuccess to client
+         ┌─────────┴──────────────────────────┐
+   no forwarding,                    forwarding or
+   untouched profile                 rewritten profile
+         │                                    │
+   raw handshake + login             own handshake (+ forwarding)
+   ──▶ Backend                       + login start ──▶ Backend
+         │                                    │
+   Backend's SetCompression          login plugin messages
+   + LoginSuccess ──▶ Client         Backend ◀──▶ Client
+         │                                    │
+         │                           Backend ──▶ LoginSuccess (consumed)
+         │                           SetCompression + LoginSuccess ──▶ Client
+         └─────────┬──────────────────────────┘
                    │
          session loop ─────────▶ parsed packets flow
                                  both directions
@@ -123,7 +143,7 @@ Since there's no Mojang session, the proxy derives the player's UUID from the na
 |---|---|---|
 | Mojang authentication | Yes | No |
 | Client-side encryption | Yes (AES/CFB8) | No |
-| `LoginSuccess` sent by proxy | Yes | No (backend sends it) |
+| `LoginSuccess` sent by proxy | Yes, after the backend accepted the login | Only with forwarding, a rewritten profile or a limbo |
 | Packet inspection | Yes | Yes |
 | Server switching | Yes | Yes |
 | Limbo handlers | Yes | Yes |

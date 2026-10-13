@@ -46,6 +46,44 @@ fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl 
     factory_in(Path::new("plugins"), entries)
 }
 
+#[test]
+fn connection_claims_need_the_connection_handoff_capability() {
+    let services = PluginServices::for_tests();
+    let claims = Arc::clone(&services.connection_claims);
+    let f = PluginContextFactoryImpl::new(
+        services,
+        HashMap::from([
+            ("granted".to_string(), perms(&["connection-handoff"], false)),
+            ("plain".to_string(), perms(&[], false)),
+            ("trusted".to_string(), perms(&[], true)),
+            (
+                "stripped".to_string(),
+                denying(perms(&[], true), &["connection-handoff"]),
+            ),
+        ]),
+    );
+    assert!(f.context("plain").connection_claims().is_none());
+    assert!(f.context("stripped").connection_claims().is_none());
+    assert!(f.context("trusted").connection_claims().is_some());
+
+    let granted = f.context("granted");
+    let registry = granted
+        .connection_claims()
+        .expect("connection-handoff is grantable from config");
+    registry.register_prefix(b"XFER").unwrap();
+    registry.register_prefix(b"XFOK").unwrap();
+    assert_eq!(claims.len(), 2);
+    assert_eq!(
+        registry.register_prefix(&[0x10, 0x00]),
+        Err(infrarust_api::handoff::ClaimError::InvalidPrefix(
+            "it can start a Minecraft handshake"
+        ))
+    );
+
+    granted.cleanup();
+    assert!(claims.is_empty(), "a disabled plugin keeps no claim");
+}
+
 fn perms(strings: &[&str], trusted: bool) -> PluginPermissions {
     PluginPermissions {
         permissions: strings.iter().map(|s| (*s).to_string()).collect(),
