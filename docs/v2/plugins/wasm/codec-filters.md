@@ -343,7 +343,7 @@ Codec filters compile the same way as any WASM plugin: a `cdylib` for the `wasm3
 crate-type = ["cdylib"]
 
 [dependencies]
-infrarust-plugin-sdk = "2.0.0-beta.3"
+infrarust-plugin-sdk = "2.0.0-beta.4"
 ```
 ```bash [build]
 rustup target add wasm32-wasip2

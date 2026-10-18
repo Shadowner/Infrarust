@@ -81,7 +81,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-infrarust-plugin-sdk = "2.0.0-beta.3"
+infrarust-plugin-sdk = "2.0.0-beta.4"
 
 [profile.release]
 opt-level = "s"

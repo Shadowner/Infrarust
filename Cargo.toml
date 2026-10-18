@@ -180,24 +180,24 @@ quote = "1.0.47"
 proc-macro2 = "1.0.107"
 
 # Internal crates
-infrarust_protocol = { path = "crates/infrarust_protocol", version = "2.0.0-beta.3" }
-infrarust-api = { path = "crates/infrarust-api", version = "2.0.0-beta.3" }
-infrarust_config = { path = "crates/infrarust_config", version = "2.0.0-beta.3" }
-infrarust-transport = { path = "crates/infrarust-transport", version = "2.0.0-beta.3" }
-infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-beta.3" }
-infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-beta.3" }
-infrarust-plugin-common = { path = "crates/infrarust-plugin-common", version = "2.0.0-beta.3" }
-infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-beta.3" }
-infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-beta.3" }
-infrarust-plugin-macros = { path = "crates/infrarust-plugin-macros", version = "2.0.0-beta.3" }
+infrarust_protocol = { path = "crates/infrarust_protocol", version = "2.0.0-beta.4" }
+infrarust-api = { path = "crates/infrarust-api", version = "2.0.0-beta.4" }
+infrarust_config = { path = "crates/infrarust_config", version = "2.0.0-beta.4" }
+infrarust-transport = { path = "crates/infrarust-transport", version = "2.0.0-beta.4" }
+infrarust-core = { path = "crates/infrarust-core", version = "2.0.0-beta.4" }
+infrarust_server_manager = { path = "crates/infrarust_server_manager", version = "2.0.0-beta.4" }
+infrarust-plugin-common = { path = "crates/infrarust-plugin-common", version = "2.0.0-beta.4" }
+infrarust-plugin-wit = { path = "crates/infrarust-plugin-wit", version = "2.0.0-beta.4" }
+infrarust-loader-wasm = { path = "crates/infrarust-loader-wasm", version = "2.0.0-beta.4" }
+infrarust-plugin-macros = { path = "crates/infrarust-plugin-macros", version = "2.0.0-beta.4" }
 
 # Internal plugins
-infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth", version = "2.0.0-beta.3" }
-infrarust-plugin-hello = { path = "plugins/infrarust-plugin-hello", version = "2.0.0-beta.3" }
-infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake", version = "2.0.0-beta.3" }
-infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api", version = "2.0.0-beta.3" }
-infrarust-plugin-stats = { path = "plugins/infrarust-plugin-stats", version = "2.0.0-beta.3" }
-infrarust-plugin-stats-native = { path = "plugins/infrarust-plugin-stats/native", version = "2.0.0-beta.3" }
+infrarust-plugin-auth = { path = "plugins/infrarust-plugin-auth", version = "2.0.0-beta.4" }
+infrarust-plugin-hello = { path = "plugins/infrarust-plugin-hello", version = "2.0.0-beta.4" }
+infrarust-plugin-server-wake = { path = "plugins/infrarust-plugin-server-wake", version = "2.0.0-beta.4" }
+infrarust-plugin-admin-api = { path = "plugins/infrarust-plugin-admin-api", version = "2.0.0-beta.4" }
+infrarust-plugin-stats = { path = "plugins/infrarust-plugin-stats", version = "2.0.0-beta.4" }
+infrarust-plugin-stats-native = { path = "plugins/infrarust-plugin-stats/native", version = "2.0.0-beta.4" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -212,7 +212,7 @@ unsafe_code = "warn"
 unused_qualifications = "warn"
 
 [workspace.package]
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.4"
 edition = "2024"
 rust-version = "1.99"
 license-file = "LICENSE"

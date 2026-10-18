@@ -489,7 +489,7 @@ pub trait VirtualBackendHandler: Send + Sync {
 The proxy cannot route a player to a virtual backend yet, and no event result selects one: the `ServerPreConnectResult::VirtualBackend` arm was removed because the proxy never acted on it. Treat virtual backends as planned, not available, and use a limbo handler for proxy-hosted screens today.
 
 ::: info Planned
-Virtual backend routing is not implemented in the proxy on v2.0.0-beta.3. The trait is published so the API can stabilize ahead of the runtime support.
+Virtual backend routing is not implemented in the proxy on v2.0.0-beta.4. The trait is published so the API can stabilize ahead of the runtime support.
 :::
 
 ## Choosing the right layer

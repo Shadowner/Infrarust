@@ -299,11 +299,11 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-common"
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.4"
 
 [[package]]
 name = "infrarust-plugin-macros"
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.4"
 dependencies = [
  "infrarust-plugin-common",
  "proc-macro2",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-sdk"
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.4"
 dependencies = [
  "infrarust-plugin-common",
  "infrarust-plugin-macros",
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "infrarust-plugin-wit"
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.4"
 
 [[package]]
 name = "itoa"

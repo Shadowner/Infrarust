@@ -16,10 +16,10 @@ The service traits a plugin receives (`Player`, `PlayerRegistry`, `BanService` a
 
 ```toml
 [dependencies]
-infrarust-api = "2.0.0-beta.3"
+infrarust-api = "2.0.0-beta.4"
 
 [dev-dependencies]
-infrarust-api = { version = "2.0.0-beta.3", features = ["test-util"] }
+infrarust-api = { version = "2.0.0-beta.4", features = ["test-util"] }
 ```
 
 Everything lives in `infrarust_api::test_util`:
@@ -223,7 +223,7 @@ The mocks above cover what a plugin receives. Tests that go through the proxy's 
 
 ```toml
 [dev-dependencies]
-infrarust-core = { version = "2.0.0-beta.3", features = ["test-support"] }
+infrarust-core = { version = "2.0.0-beta.4", features = ["test-support"] }
 ```
 
 | Item | What it gives you |
