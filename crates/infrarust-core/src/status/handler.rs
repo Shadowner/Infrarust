@@ -115,18 +115,18 @@ impl StatusHandler {
 
         let mut decoder = self.read_status_request(ctx).await?;
 
+        let client_version = handshake
+            .as_ref()
+            .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
         let mut response = self
             .resolve_response(
                 ctx,
                 routing.as_ref(),
                 handshake.as_ref(),
+                client_version,
                 connection_registry,
             )
             .await;
-
-        let client_version = handshake
-            .as_ref()
-            .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
         let sent = core_to_api_ping_response(&response);
         let event = ProxyPingEvent::new(
             ctx.client_addr(),
@@ -167,10 +167,11 @@ impl StatusHandler {
         ctx: &ConnectionContext,
         routing: Option<&RoutingData>,
         handshake: Option<&HandshakeData>,
+        client_version: ProtocolVersion,
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         let Some(routing) = routing else {
-            let mut response = self.build_default_motd_response();
+            let mut response = self.build_default_motd_response(client_version);
             response.favicon = self.favicon_cache.default_favicon();
             return response;
         };
@@ -184,13 +185,13 @@ impl StatusHandler {
             match sm.get_state(config_id) {
                 Some(ServerState::Online) | None => {}
                 Some(state) => {
-                    return Self::build_state_motd(config, state);
+                    return Self::build_state_motd(config, state, client_version);
                 }
             }
         }
 
         let mut response = self
-            .relay_or_cache(ctx, routing, handshake, connection_registry)
+            .relay_or_cache(ctx, routing, handshake, client_version, connection_registry)
             .await;
 
         if let Some(ref online) = config.motd.online {
@@ -215,6 +216,7 @@ impl StatusHandler {
         ctx: &ConnectionContext,
         routing: &RoutingData,
         handshake: Option<&HandshakeData>,
+        client_version: ProtocolVersion,
         connection_registry: &ConnectionRegistry,
     ) -> ServerPingResponse {
         let config = &routing.server_config;
@@ -235,7 +237,6 @@ impl StatusHandler {
         }
 
         let domain = handshake.map_or("localhost", |h| h.domain.as_str());
-        let protocol_version = handshake.map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
         let client_info = ctx.connection_info();
 
         match self
@@ -250,7 +251,7 @@ impl StatusHandler {
                     self.health.as_ref(),
                 ),
                 domain,
-                protocol_version,
+                client_version,
                 &client_info,
             )
             .await
@@ -277,38 +278,31 @@ impl StatusHandler {
             }
         }
 
-        self.get_unreachable_motd(config, connection_registry, config_id)
+        self.get_unreachable_motd(config, connection_registry, config_id, client_version)
     }
 
     pub(crate) fn build_state_motd(
         config: &ServerConfig,
         state: ServerState,
+        client_version: ProtocolVersion,
     ) -> ServerPingResponse {
         let (entry, default_text) = state_motd(&config.motd, state);
         let max_players = Some(state_max_players(entry, config));
         entry.map_or_else(
-            || ServerPingResponse::synthetic(default_text, None, None, max_players),
-            |entry| {
-                ServerPingResponse::synthetic(
-                    &entry.text,
-                    entry.favicon.as_deref(),
-                    entry.version_name.as_deref(),
-                    max_players,
-                )
-            },
+            || ServerPingResponse::synthetic(default_text, client_version, max_players),
+            |entry| ServerPingResponse::from_entry(entry, client_version, max_players),
         )
     }
 
-    fn build_default_motd_response(&self) -> ServerPingResponse {
+    fn build_default_motd_response(&self, client_version: ProtocolVersion) -> ServerPingResponse {
         let entry = self.default_motd.as_ref().and_then(|m| m.online.as_ref());
 
         entry.map_or_else(
-            || ServerPingResponse::synthetic(DEFAULT_PROXY_MOTD, None, None, None),
+            || ServerPingResponse::synthetic(DEFAULT_PROXY_MOTD, client_version, None),
             |entry| {
-                ServerPingResponse::synthetic(
-                    &entry.text,
-                    entry.favicon.as_deref(),
-                    entry.version_name.as_deref(),
+                ServerPingResponse::from_entry(
+                    entry,
+                    client_version,
                     entry.max_players.map(u32::cast_signed),
                 )
             },
@@ -321,24 +315,23 @@ impl StatusHandler {
         config: &ServerConfig,
         connection_registry: &ConnectionRegistry,
         config_id: &str,
+        client_version: ProtocolVersion,
     ) -> ServerPingResponse {
         if let Some(entry) = self
             .default_motd
             .as_ref()
             .and_then(|m| m.unreachable.as_ref())
         {
-            return ServerPingResponse::synthetic(
-                &entry.text,
-                entry.favicon.as_deref(),
-                entry.version_name.as_deref(),
+            return ServerPingResponse::from_entry(
+                entry,
+                client_version,
                 entry.max_players.map(u32::cast_signed),
             );
         }
 
         let mut resp = ServerPingResponse::synthetic(
             "\u{00a7}cServer unreachable",
-            None,
-            None,
+            client_version,
             Some(config.max_players.cast_signed()),
         );
         let online = connection_registry.count_by_server(config_id) as i32;
@@ -358,12 +351,12 @@ impl StatusHandler {
         config: &ServerConfig,
         connection_registry: &ConnectionRegistry,
         config_id: &str,
+        client_version: ProtocolVersion,
     ) -> ServerPingResponse {
         if let Some(motd) = &config.motd.unreachable {
-            ServerPingResponse::synthetic(
-                &motd.text,
-                motd.favicon.as_deref(),
-                motd.version_name.as_deref(),
+            ServerPingResponse::from_entry(
+                motd,
+                client_version,
                 motd.max_players.map(u32::cast_signed),
             )
         } else if let Some((response, _latency)) = self.cache.get_stale(config_id) {
@@ -373,7 +366,7 @@ impl StatusHandler {
             );
             response
         } else {
-            self.build_unreachable_motd(config, connection_registry, config_id)
+            self.build_unreachable_motd(config, connection_registry, config_id, client_version)
         }
     }
 

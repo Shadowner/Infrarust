@@ -41,6 +41,7 @@ mod tests {
             text: text.into(),
             favicon: None,
             version_name: None,
+            version_protocol: None,
             max_players,
         }
     }

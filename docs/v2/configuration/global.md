@@ -224,6 +224,7 @@ Each MOTD entry supports these fields:
 | `text` | string | MOTD text, supports Minecraft `§` formatting codes |
 | `favicon` | string | Path to a 64x64 PNG, a base64 string, or a URL |
 | `version_name` | string | Version text shown in the client |
+| `version_protocol` | integer | Protocol number shown in the client. Defaults to the client's own, so the version shows as compatible |
 | `max_players` | integer | Max player count displayed in the server list |
 
 ## Telemetry

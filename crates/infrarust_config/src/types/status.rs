@@ -53,6 +53,8 @@ pub struct MotdEntry {
     /// Version displayed in the client.
     #[serde(default)]
     pub version_name: Option<String>,
+    #[serde(default)]
+    pub version_protocol: Option<i32>,
     /// Maximum player count displayed.
     #[serde(default)]
     pub max_players: Option<u32>,

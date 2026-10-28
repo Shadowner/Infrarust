@@ -601,6 +601,7 @@ Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unre
 | `text` | string | **required** | MOTD text. Supports Minecraft `§` formatting codes |
 | `favicon` | string | none | Path to a PNG file, a base64-encoded PNG, or a URL |
 | `version_name` | string | none | Version string shown in the client server list |
+| `version_protocol` | integer | client's protocol | Protocol number shown in the client server list. On `online`, it replaces the backend's protocol |
 | `max_players` | integer | none | Max player count shown in the server list |
 
 ```toml

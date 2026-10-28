@@ -121,6 +121,7 @@ text = "§eSurvival §7| §fStarting..."
 | `text` | string | required |
 | `favicon` | string | none |
 | `version_name` | string | none |
+| `version_protocol` | integer | client's protocol |
 | `max_players` | integer | none |
 
 `[server_manager]` configures automatic server start/stop. See [Server Manager](../servers.md) for details.

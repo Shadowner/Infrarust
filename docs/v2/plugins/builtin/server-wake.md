@@ -178,6 +178,7 @@ Each MOTD entry accepts these fields:
 | `text` | string | varies by state | MOTD text shown in the server list |
 | `favicon` | string | none | Path to a PNG, base64 string, or URL |
 | `version_name` | string | none | Custom version string in the server list |
+| `version_protocol` | integer | client's protocol | Protocol number shown in the server list |
 | `max_players` | integer | none | Max player count shown in the server list |
 
 If you don't configure a custom MOTD for a state, Infrarust falls back to built-in defaults: "Server sleeping - Connect to wake up!" for sleeping, "Server is starting..." for starting, "Server is stopping..." for stopping, and "Server unavailable" for crashed.

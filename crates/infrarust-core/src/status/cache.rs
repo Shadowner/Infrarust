@@ -86,10 +86,12 @@ impl StatusCache {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use infrarust_protocol::ProtocolVersion;
+
     use super::*;
 
     fn sample_response() -> ServerPingResponse {
-        ServerPingResponse::synthetic("Test", None, None, Some(100))
+        ServerPingResponse::synthetic("Test", ProtocolVersion::V1_21, Some(100))
     }
 
     #[test]

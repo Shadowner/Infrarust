@@ -154,6 +154,7 @@ export interface MotdEntry {
   text: string;
   favicon?: string;
   version_name?: string;
+  version_protocol?: number;
   max_players?: number;
 }
 

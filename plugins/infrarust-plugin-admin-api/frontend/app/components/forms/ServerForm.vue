@@ -62,7 +62,7 @@ const MOTD_STATES: Array<{ key: MotdState; label: string; hint: string }> = [
 const FORWARDING_MODES: ProxyMode[] = ['passthrough', 'zero_copy', 'server_only'];
 
 interface AddressRow { address: string; weight: number }
-interface MotdDraft { enabled: boolean; text: string; favicon: string; version_name: string; max_players: string }
+interface MotdDraft { enabled: boolean; text: string; favicon: string; version_name: string; version_protocol: string; max_players: string }
 interface HealthDraft {
   enabled: boolean;
   kind: ProbeKind;
@@ -73,7 +73,7 @@ interface HealthDraft {
   max_concurrent: number;
 }
 
-const emptyMotdDraft = (): MotdDraft => ({ enabled: false, text: '', favicon: '', version_name: '', max_players: '' });
+const emptyMotdDraft = (): MotdDraft => ({ enabled: false, text: '', favicon: '', version_name: '', version_protocol: '', max_players: '' });
 
 const serverIdDraft = ref(props.serverId);
 const name = ref('');
@@ -210,6 +210,7 @@ function hydrate(config: ServerConfig) {
           text: entry.text ?? '',
           favicon: entry.favicon ?? '',
           version_name: entry.version_name ?? '',
+          version_protocol: entry.version_protocol == null ? '' : String(entry.version_protocol),
           max_players: entry.max_players == null ? '' : String(entry.max_players),
         }
       : emptyMotdDraft();
@@ -276,6 +277,8 @@ function buildMotd(): MotdConfig | undefined {
     if (favicon) entry.favicon = favicon;
     const version = trimmed(draft.version_name);
     if (version) entry.version_name = version;
+    const protocol = Number.parseInt(draft.version_protocol, 10);
+    if (Number.isFinite(protocol)) entry.version_protocol = protocol;
     const max = Number.parseInt(draft.max_players, 10);
     if (Number.isFinite(max)) entry.max_players = max;
     out[key] = entry;
@@ -910,10 +913,14 @@ function submit() {
               <label :for="`motd-text-${state.key}`" class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Text</label>
               <input :id="`motd-text-${state.key}`" v-model="motd[state.key].text" class="input font-mono" placeholder="§6My server" :disabled="fieldsLocked" />
             </div>
-            <div class="grid gap-4 sm:grid-cols-3">
+            <div class="grid gap-4 sm:grid-cols-2">
               <div>
                 <label :for="`motd-version-${state.key}`" class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Version label</label>
                 <input :id="`motd-version-${state.key}`" v-model="motd[state.key].version_name" class="input" placeholder="1.21" :disabled="fieldsLocked" />
+              </div>
+              <div>
+                <label :for="`motd-protocol-${state.key}`" class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Protocol number</label>
+                <input :id="`motd-protocol-${state.key}`" v-model="motd[state.key].version_protocol" type="number" class="input font-mono" placeholder="client's own" :disabled="fieldsLocked" />
               </div>
               <div>
                 <label :for="`motd-max-${state.key}`" class="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Shown max players</label>
