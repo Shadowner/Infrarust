@@ -54,6 +54,7 @@ mod tests {
             crashed: Some(entry("crash", None)),
             stopping: Some(entry("stop", None)),
             unreachable: Some(entry("gone", None)),
+            offline: None,
         };
         let texts: Vec<&str> = [
             ServerState::Sleeping,

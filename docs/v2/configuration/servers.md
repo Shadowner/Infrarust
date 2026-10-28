@@ -182,9 +182,6 @@ favicon = "./icons/survival.png"
 version_name = "Survival 1.21"
 max_players = 100
 
-[motd.offline]
-text = "§cSurvival §7- §fOffline"
-
 [motd.sleeping]
 text = "§eSurvival §7- §fConnect to wake up!"
 version_name = "Server Sleeping"
@@ -202,7 +199,7 @@ text = "§6Survival §7- §fStopping..."
 text = "§cSurvival §7- §fUnreachable"
 ```
 
-Available states: `online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
+Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
 
 Each MOTD entry supports these fields:
 

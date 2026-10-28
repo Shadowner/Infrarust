@@ -38,6 +38,8 @@ pub struct MotdConfig {
     pub crashed: Option<MotdEntry>,
     pub stopping: Option<MotdEntry>,
     pub unreachable: Option<MotdEntry>,
+    #[serde(default, skip_serializing)]
+    pub offline: Option<MotdEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

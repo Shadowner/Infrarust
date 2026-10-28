@@ -117,8 +117,10 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, C
         ));
     }
 
-    #[allow(unused_mut)]
     let mut warnings = balance_warnings(config);
+    if config.motd.offline.is_some() {
+        warnings.push(ignored_offline_motd("[motd.offline]"));
+    }
 
     #[cfg(not(target_os = "linux"))]
     if config.proxy_mode == crate::types::ProxyMode::ZeroCopy {
@@ -268,6 +270,14 @@ pub fn validate_proxy_config(config: &ProxyConfig) -> Result<Vec<String>, Config
         );
     }
 
+    if config
+        .default_motd
+        .as_ref()
+        .is_some_and(|motd| motd.offline.is_some())
+    {
+        warnings.push(ignored_offline_motd("[default_motd.offline]"));
+    }
+
     if !config.plugins.is_empty() && !config.plugins_dir.is_dir() {
         warnings.push(format!(
             "plugins are configured but plugins_dir {} does not exist \
@@ -277,6 +287,13 @@ pub fn validate_proxy_config(config: &ProxyConfig) -> Result<Vec<String>, Config
     }
 
     Ok(warnings)
+}
+
+fn ignored_offline_motd(table: &str) -> String {
+    format!(
+        "{table} is no longer read and is ignored: use unreachable for a server that does not \
+         answer, or sleeping, starting, crashed and stopping for a managed server"
+    )
 }
 
 fn zero_duration(key: &'static str) -> ConfigError {

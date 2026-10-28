@@ -114,7 +114,7 @@ text = "§eSurvival §7| §fStarting..."
 | `read` | duration | `"30s"` |
 | `write` | duration | `"30s"` |
 
-`[motd.<state>]` configures the MOTD for each server state (`online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`):
+`[motd.<state>]` configures the MOTD for each server state (`online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`):
 
 | Field | Type | Default |
 |-------|------|---------|
