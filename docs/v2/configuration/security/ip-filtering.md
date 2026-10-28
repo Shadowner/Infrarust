@@ -84,7 +84,7 @@ Only allow connections from a home network and a friend's IP:
 whitelist = ["192.168.1.0/24", "203.0.113.50/32"]
 ```
 
-Any IP outside these ranges is rejected with "IP 45.33.22.11 is not allowed on this server" (per-server filter) or "IP 45.33.22.11 is not allowed" (global filter).
+A login from an IP outside these ranges is kicked with "IP 45.33.22.11 is not allowed on this server" by a per-server filter. The global filter runs before the handshake is read, so it closes the connection without a reply.
 
 ### Public server with a blocklist
 
