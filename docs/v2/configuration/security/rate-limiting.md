@@ -38,7 +38,7 @@ Duration values use the `humantime` format: `10s`, `1m`, `500ms`, `2m30s`.
 
 The rate limiter uses a token-bucket algorithm (via the `governor` crate). Each IP gets a bucket that refills at a steady rate over the window. A burst up to the configured maximum is allowed, then additional connections are rejected until tokens replenish.
 
-When a connection exceeds the limit, the client receives a "Rate limit exceeded" disconnect message and the event is logged at `debug` level with the source IP and connection intent.
+When a login exceeds the limit, the client receives a "Rate limit exceeded" disconnect message, and a status ping is closed without a reply. The event is logged at `debug` level with the source IP and connection intent.
 
 ### Login vs status
 

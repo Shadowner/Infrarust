@@ -134,7 +134,8 @@ impl ProxyServer {
             MiddlewareResult::Reject(msg) => {
                 let intent = ctx.extensions.get::<HandshakeData>().map(|h| h.intent);
                 let unknown_domain = ctx.extensions.contains::<UnknownDomain>();
-                let dropped = self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
+                let dropped =
+                    unknown_domain && self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
                 if dropped || !unknown_domain || intent != Some(ConnectionIntent::Status) {
                     admission::reject_refused(&self.services.event_bus, &ctx);
                     match intent {

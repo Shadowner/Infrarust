@@ -81,3 +81,84 @@ async fn a_login_turned_away_by_the_global_ip_filter_is_closed_without_a_kick() 
 
     proxy.shutdown().await.unwrap();
 }
+
+fn drop_unknown_domains(table: &mut Table) {
+    table.insert("unknown_domain_behavior".into(), "drop".into());
+}
+
+#[tokio::test]
+async fn the_drop_behavior_closes_an_unknown_domain_login_without_a_kick() {
+    let (proxy, _backend) = start(TestProxy::builder().patch_config(drop_unknown_domains)).await;
+
+    closed_without_answer(
+        proxy
+            .client(VERSION)
+            .domain("nowhere.test")
+            .login("Bob")
+            .await,
+    );
+    assert!(!status_reply(&proxy, "nowhere.test").await.unwrap());
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_drop_behavior_still_kicks_a_rate_limited_login() {
+    let (proxy, _backend) = start(TestProxy::builder().patch_config(|table| {
+        drop_unknown_domains(table);
+        let rate_limit: Table = toml::from_str(
+            "enabled = true\nmax_connections = 1\nwindow = \"1h\"\nstatus_max = 100\nstatus_window = \"1h\"",
+        )
+        .unwrap();
+        table.insert("rate_limit".into(), rate_limit.into());
+    }))
+    .await;
+
+    let _alice = proxy
+        .client(VERSION)
+        .login("Alice")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let kick = proxy
+        .client(VERSION)
+        .login("Alice")
+        .await
+        .unwrap()
+        .disconnected()
+        .unwrap();
+
+    assert_eq!(kick.text, "Rate limit exceeded");
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn the_drop_behavior_still_kicks_a_login_blocked_by_a_server_ip_filter() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(
+            ServerSpec::offline("guarded")
+                .backend(backend.addr())
+                .patch(|table| {
+                    table.insert("ip_filter".into(), block_localhost());
+                }),
+        )
+        .patch_config(drop_unknown_domains)
+        .start()
+        .await
+        .unwrap();
+
+    let kick = proxy
+        .client(VERSION)
+        .login("Eve")
+        .await
+        .unwrap()
+        .disconnected()
+        .unwrap();
+
+    assert_eq!(kick.text, "IP 127.0.0.1 is not allowed on this server");
+
+    proxy.shutdown().await.unwrap();
+}

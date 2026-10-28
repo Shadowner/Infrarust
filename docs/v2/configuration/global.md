@@ -145,6 +145,8 @@ What happens when a player connects with a domain that doesn't match any server 
 
 The setting also covers legacy clients (Beta to 1.6). A Beta or 1.4 ping carries no hostname and counts as an unknown domain.
 
+The setting only applies to unknown domains. A login refused by an IP filter or the rate limiter is kicked with the reason under either value.
+
 ## Rate limiting
 
 ```toml
