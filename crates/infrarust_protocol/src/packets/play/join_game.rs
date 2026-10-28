@@ -25,6 +25,7 @@ pub struct CJoinGame {
     pub dimension_type: String,
     pub portal_cooldown: i32,
     pub sea_level: i32,
+    pub online_mode: bool,
     pub enforces_secure_chat: bool,
     pub death_dimension: Option<String>,
     pub death_position: Option<i64>,
@@ -54,6 +55,7 @@ impl Default for CJoinGame {
             dimension_type: String::new(),
             portal_cooldown: 0,
             sea_level: 63,
+            online_mode: false,
             enforces_secure_chat: false,
             death_dimension: None,
             death_position: None,
@@ -155,6 +157,7 @@ fn decode_1_20_2_up(
     let (death_dimension, death_position) = super::common::decode_death_location(r)?;
     let (portal_cooldown, sea_level) = super::common::decode_world_info(r, version)?;
 
+    let online_mode = version.no_less_than(ProtocolVersion::V26_2) && r.read_bool()?;
     let enforces_secure_chat = if version.no_less_than(ProtocolVersion::V1_20_5) {
         r.read_bool()?
     } else {
@@ -181,6 +184,7 @@ fn decode_1_20_2_up(
         dimension_type,
         portal_cooldown,
         sea_level,
+        online_mode,
         enforces_secure_chat,
         death_dimension,
         death_position,
@@ -222,6 +226,9 @@ fn encode_1_20_2_up(
     super::common::encode_death_location(w, pkt.death_dimension.as_deref(), pkt.death_position)?;
     super::common::encode_world_info(w, pkt.portal_cooldown, pkt.sea_level, version)?;
 
+    if version.no_less_than(ProtocolVersion::V26_2) {
+        w.write_bool(pkt.online_mode)?;
+    }
     if version.no_less_than(ProtocolVersion::V1_20_5) {
         w.write_bool(pkt.enforces_secure_chat)?;
     }
@@ -259,6 +266,7 @@ mod tests {
             dimension_type: "minecraft:overworld".to_string(),
             portal_cooldown: 20,
             sea_level: 63,
+            online_mode: true,
             enforces_secure_chat: true,
             death_dimension: None,
             death_position: None,
@@ -268,9 +276,12 @@ mod tests {
 
     #[test]
     fn test_join_game_round_trip_1_20_2_and_up() {
-        for (version, enforces_secure_chat) in [
-            (ProtocolVersion::V1_20_2, false),
-            (ProtocolVersion::V1_21, true),
+        for (version, online_mode, enforces_secure_chat) in [
+            (ProtocolVersion::V1_20_2, false, false),
+            (ProtocolVersion::V1_21, false, true),
+            (ProtocolVersion::V26_1, false, true),
+            (ProtocolVersion::V26_2, true, true),
+            (ProtocolVersion::V26_3, true, true),
         ] {
             let decoded = round_trip(&modern_fixture(), version);
             assert_eq!(decoded.entity_id, 42, "{version}");
@@ -285,12 +296,32 @@ mod tests {
             assert_eq!(decoded.level_name, "minecraft:overworld", "{version}");
             assert_eq!(decoded.hashed_seed, 123_456_789, "{version}");
             assert_eq!(decoded.portal_cooldown, 20, "{version}");
+            assert_eq!(decoded.online_mode, online_mode, "{version}");
             assert_eq!(
                 decoded.enforces_secure_chat, enforces_secure_chat,
                 "{version}"
             );
             assert!(decoded.raw_payload.is_none(), "{version}");
         }
+    }
+
+    #[test]
+    fn test_online_mode_precedes_enforces_secure_chat_from_26_2() {
+        let pkt = CJoinGame {
+            online_mode: true,
+            enforces_secure_chat: false,
+            ..modern_fixture()
+        };
+        let encode = |version| {
+            let mut buf = Vec::new();
+            pkt.encode(&mut buf, version).unwrap();
+            buf
+        };
+        let before = encode(ProtocolVersion::V26_1);
+        let after = encode(ProtocolVersion::V26_2);
+
+        assert_eq!(after.len(), before.len() + 1);
+        assert_eq!(after[after.len() - 2..], [1, 0]);
     }
 
     #[test]
