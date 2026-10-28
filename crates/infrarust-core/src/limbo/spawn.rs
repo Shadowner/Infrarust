@@ -13,6 +13,9 @@ use infrarust_protocol::packets::play::container_content::CSetContainerContent;
 use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::game_event::{CGameEvent, START_WAITING_CHUNKS};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
+use infrarust_protocol::packets::play::player_abilities::{
+    ABILITY_FLYING, CPlayerAbilities, DEFAULT_WALKING_SPEED,
+};
 use infrarust_protocol::packets::play::player_position::CSynchronizePlayerPosition;
 use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
 use infrarust_protocol::registry::PacketRegistry;
@@ -55,7 +58,21 @@ pub(crate) async fn send_spawn_sequence(
         send_clear_inventory(client, version, registry).await?;
     }
 
-    Ok(())
+    send_frozen_abilities(client, version, registry).await
+}
+
+async fn send_frozen_abilities(
+    client: &mut ClientBridge,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    let abilities = CPlayerAbilities {
+        flags: ABILITY_FLYING,
+        flying_speed: 0.0,
+        walking_speed: DEFAULT_WALKING_SPEED,
+    };
+    let frame = encode_packet(&abilities, version, registry)?;
+    client.write_frame(&frame).await
 }
 
 async fn send_modern_with_join(
@@ -448,6 +465,52 @@ async fn send_clear_inventory(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[tokio::test]
+    async fn every_spawn_sequence_ends_by_freezing_the_player_in_flight() {
+        use infrarust_protocol::packets::play::respawn::CRespawn;
+
+        use crate::session::test_peer::client_pair;
+
+        for version in [
+            ProtocolVersion::V1_7_2,
+            ProtocolVersion::V1_8,
+            ProtocolVersion::V1_12_2,
+            ProtocolVersion::V1_13,
+            ProtocolVersion::V1_16,
+            ProtocolVersion::V1_20,
+            ProtocolVersion::V1_20_2,
+            ProtocolVersion::V1_21_11,
+            ProtocolVersion::V26_3,
+        ] {
+            for needs_join_game in [true, false] {
+                let (mut client, mut peer) = client_pair(version).await;
+                let registry = infrarust_protocol::build_default_registry();
+                send_spawn_sequence(&mut client, version, &registry, needs_join_game)
+                    .await
+                    .unwrap();
+                drop(client);
+
+                let mut frames = Vec::new();
+                while let Some(frame) = peer.recv().await {
+                    frames.push(frame.id);
+                }
+                let abilities = peer.id::<CPlayerAbilities>();
+                let world = [peer.id::<CJoinGame>(), peer.id::<CRespawn>()];
+                let case = format!("{version} join={needs_join_game}");
+
+                assert_eq!(frames.last(), Some(&abilities), "{case}");
+                assert_eq!(
+                    frames.iter().filter(|id| **id == abilities).count(),
+                    1,
+                    "{case}"
+                );
+                if let Some(last_world) = frames.iter().rposition(|id| world.contains(id)) {
+                    assert!(last_world < frames.len() - 1, "{case}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_pre_1_16_join_game_v1_7() {

@@ -24,7 +24,7 @@ pub use login::{
 pub use play::{
     ArgumentSignature, BossBarAction, CBossBar, CChatMessageLegacy, CChunkBatchFinished,
     CChunkBatchStart, CChunkData, CClearTitles, CCommands, CConfigTransfer, CDisconnect,
-    CGameEvent, CJoinGame, CKeepAlive, CPluginMessage, CRespawn, CSetCenterChunk,
+    CGameEvent, CJoinGame, CKeepAlive, CPlayerAbilities, CPluginMessage, CRespawn, CSetCenterChunk,
     CSetContainerContent, CSetDefaultSpawnPosition, CSetSubtitle, CSetTitle, CSetTitleTimes,
     CStartConfiguration, CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse,
     CTabListHeaderFooter, CTitleLegacy, CTransfer, ClientInformation, DimensionInfo,
