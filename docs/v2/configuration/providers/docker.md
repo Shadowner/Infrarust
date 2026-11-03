@@ -23,7 +23,7 @@ That's it. All fields have defaults. Infrarust connects to the local Docker sock
 |-------|------|---------|-------------|
 | `endpoint` | string | `"unix:///var/run/docker.sock"` | Docker daemon socket. Use `tcp://host:2375` for remote daemons. |
 | `network` | string | none | Preferred Docker network for address resolution. |
-| `poll_interval` | duration | `"30s"` | Fallback polling interval. |
+| `poll_interval` | duration | `"30s"` | How often to rescan labelled containers (in addition to the event stream). A resync also runs as soon as the event stream connects, so containers that were already running are picked up even if Docker was unreachable during startup. |
 | `reconnect_delay` | duration | `"5s"` | Initial delay before reconnecting after a daemon disconnection. |
 
 Full example:

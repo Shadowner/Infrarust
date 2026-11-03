@@ -188,11 +188,10 @@ impl DockerProvider {
                 }
             };
 
-            // Reset delay on successful connection
             reconnect_delay = self.config.reconnect_delay;
 
             match self.watch_events(&docker, sender, shutdown).await {
-                Ok(()) => return Ok(()), // Normal shutdown
+                Ok(()) => return Ok(()),
                 Err(e) => {
                     if shutdown.is_cancelled() {
                         return Ok(());
@@ -208,17 +207,11 @@ impl DockerProvider {
                         () = tokio::time::sleep(reconnect_delay) => {}
                     }
                     reconnect_delay = (reconnect_delay * 2).min(max_delay);
-
-                    // Re-scan after reconnection
-                    if let Ok(docker) = self.connect() {
-                        self.resync_containers(&docker, sender).await;
-                    }
                 }
             }
         }
     }
 
-    /// Watches the Docker event stream.
     async fn watch_events(
         &self,
         docker: &Docker,
@@ -243,11 +236,20 @@ impl DockerProvider {
 
         let mut stream = docker.events(Some(options));
 
+        self.resync_containers(docker, sender).await;
+
+        let mut poll = tokio::time::interval(self.config.poll_interval);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        poll.tick().await;
+
         loop {
             tokio::select! {
                 biased;
                 () = shutdown.cancelled() => {
                     return Ok(());
+                }
+                _ = poll.tick() => {
+                    self.resync_containers(docker, sender).await;
                 }
                 event = stream.next() => {
                     match event {
