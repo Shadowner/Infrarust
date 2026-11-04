@@ -106,3 +106,29 @@ fn test_address_resolution_hostname_fallback() {
     let addr = resolve_container_address(&info, None, 25565);
     assert_eq!(addr, "mc-survival:25565");
 }
+
+#[test]
+fn test_address_resolution_picks_first_network_by_name() {
+    use bollard::models::{ContainerInspectResponse, EndpointSettings, NetworkSettings};
+
+    let endpoint = |ip: &str| EndpointSettings {
+        ip_address: Some(ip.to_string()),
+        ..Default::default()
+    };
+    let networks = HashMap::from([
+        ("zeta".to_string(), endpoint("10.0.0.3")),
+        ("alpha".to_string(), endpoint("")),
+        ("beta".to_string(), endpoint("10.0.0.2")),
+        ("gamma".to_string(), endpoint("10.0.0.1")),
+    ]);
+    let info = ContainerInspectResponse {
+        network_settings: Some(NetworkSettings {
+            networks: Some(networks),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let addr = resolve_container_address(&info, None, 25565);
+    assert_eq!(addr, "10.0.0.2:25565");
+}

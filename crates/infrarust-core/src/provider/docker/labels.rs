@@ -141,13 +141,15 @@ pub fn resolve_container_address(
         {
             return format!("{ip}:{port}");
         }
-        // Try any network
-        for net in networks.values() {
-            if let Some(ip) = &net.ip_address
-                && !ip.is_empty()
-            {
-                return format!("{ip}:{port}");
-            }
+        let first_by_name = networks
+            .iter()
+            .filter_map(|(name, net)| {
+                let ip = net.ip_address.as_deref().filter(|ip| !ip.is_empty())?;
+                Some((name, ip))
+            })
+            .min();
+        if let Some((_, ip)) = first_by_name {
+            return format!("{ip}:{port}");
         }
     }
 

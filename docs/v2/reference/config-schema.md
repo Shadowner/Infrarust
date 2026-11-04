@@ -157,7 +157,7 @@ Auto-discovers servers from Docker container labels. Requires Infrarust to be co
 |--------|------|---------|-------------|
 | `endpoint` | string | `"unix:///var/run/docker.sock"` | Docker daemon socket or TCP endpoint |
 | `network` | string | none | Preferred Docker network name for resolving container addresses |
-| `poll_interval` | duration | `"30s"` | Fallback polling interval for container changes |
+| `poll_interval` | duration | `"30s"` | How often to rescan labelled containers; a resync also runs when the event stream first connects |
 | `reconnect_delay` | duration | `"5s"` | Delay before reconnecting after Docker daemon disconnection |
 
 ```toml
