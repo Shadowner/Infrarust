@@ -155,8 +155,7 @@ impl InterceptedHandler {
                 return Ok(());
             }
         };
-        let commands =
-            CommandInbox::new(cmd_rx).with_presentation(Arc::clone(player.presentation()));
+        let commands = CommandInbox::new(cmd_rx).with_session(Arc::clone(&player));
         let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
             &self.services.codec_filter_registry,
             api_version,

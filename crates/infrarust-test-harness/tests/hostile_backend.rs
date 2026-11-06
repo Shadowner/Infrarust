@@ -6,8 +6,8 @@ use std::time::Duration;
 use bytes::Bytes;
 use infrarust_api::command::{CommandContext, CommandHandler, CommandSpec};
 use infrarust_api::event::BoxFuture;
-use infrarust_api::player::Player;
-use infrarust_api::types::Component;
+use infrarust_api::player::{ConnectionResult, Player};
+use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::config::CRegistryData;
 use infrarust_protocol::packets::play::chat::CSystemChatMessage;
 use infrarust_protocol::packets::play::commands::{CCommands, CommandNode, MAX_COMMAND_NODES};
@@ -216,3 +216,100 @@ async fn an_undecodable_tree_replaces_the_previous_one(version: ProtocolVersion)
 }
 
 version_matrix!(an_undecodable_tree_replaces_the_previous_one; p764 = 764, p777 = 777);
+
+struct Spread {
+    lobby: FakeBackend,
+    a: FakeBackend,
+    b: FakeBackend,
+    c: FakeBackend,
+    proxy: TestProxy,
+}
+
+impl Spread {
+    async fn start() -> Self {
+        let lobby = FakeBackend::builder().hold_config().spawn().await.unwrap();
+        let a = FakeBackend::builder().spawn().await.unwrap();
+        let b = FakeBackend::builder().spawn().await.unwrap();
+        let c = FakeBackend::builder().spawn().await.unwrap();
+        let proxy = TestProxy::builder()
+            .server(ServerSpec::offline("lobby").backend(lobby.addr()))
+            .server(ServerSpec::offline("a").backend(a.addr()))
+            .server(ServerSpec::offline("b").backend(b.addr()))
+            .server(ServerSpec::offline("c").backend(c.addr()))
+            .start()
+            .await
+            .unwrap();
+        Self {
+            lobby,
+            a,
+            b,
+            c,
+            proxy,
+        }
+    }
+}
+
+async fn only_the_last_switch_during_configuration_runs(version: ProtocolVersion) {
+    let world = Spread::start().await;
+    let client = world.proxy.client_for("lobby", version).unwrap();
+    let login = tokio::spawn(async move { client.login("Steve").await });
+    let mut conn = world.lobby.next_connection(T).await.unwrap();
+    let player = world.proxy.wait_for_player("Steve", T).await.unwrap();
+
+    for target in ["a", "b", "c"] {
+        player.switch_server(ServerId::new(target)).await.unwrap();
+    }
+    conn.finish_config(T).await.unwrap();
+    let mut session = tokio::time::timeout(T, login)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .joined()
+        .unwrap();
+
+    session.expect_join(T).await.unwrap();
+    world.c.next_connection(T).await.unwrap();
+    assert_eq!(world.a.accepted_connections(), 0);
+    assert_eq!(world.b.accepted_connections(), 0);
+
+    world.proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(only_the_last_switch_during_configuration_runs; p764 = 764, p777 = 777);
+
+async fn a_replaced_connect_is_cancelled(version: ProtocolVersion) {
+    let world = Spread::start().await;
+    let client = world.proxy.client_for("lobby", version).unwrap();
+    let login = tokio::spawn(async move { client.login("Steve").await });
+    let mut conn = world.lobby.next_connection(T).await.unwrap();
+    let player = world.proxy.wait_for_player("Steve", T).await.unwrap();
+
+    let mut replaced = player.connect(ServerId::new("a"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut replaced)
+            .await
+            .is_err(),
+        "the switch waits for the end of the configuration phase"
+    );
+    player.switch_server(ServerId::new("b")).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(T, replaced).await.unwrap().unwrap(),
+        ConnectionResult::Cancelled
+    );
+
+    conn.finish_config(T).await.unwrap();
+    let mut session = tokio::time::timeout(T, login)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .joined()
+        .unwrap();
+    session.expect_join(T).await.unwrap();
+    assert_eq!(world.a.accepted_connections(), 0);
+
+    world.proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_replaced_connect_is_cancelled; p764 = 764, p777 = 777);

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use infrarust_api::events::connection::ConnectCause;
+use infrarust_api::player::ConnectionResult;
 use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, ServerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::cookie::{
@@ -18,13 +19,19 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use super::packets::{self, encode_packet};
-use super::{BossBarCommand, ClientCommand, MessageTarget, OutgoingMessage, PlayerCommand};
+use super::{
+    BossBarCommand, ClientCommand, MessageTarget, OutgoingMessage, PlayerCommand, PlayerSession,
+};
 use crate::error::CoreError;
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
-use crate::session::presentation::Presentation;
 use crate::util::text::encode_text_component;
+
+const MAX_DEFERRED_COMMANDS: usize = 128;
+const MAX_QUEUED_MESSAGES: usize = 64;
+const MAX_QUEUED_MESSAGE_BYTES: usize = 1024 * 1024;
+const MAX_QUEUED_CLIENT_COMMANDS: usize = 64;
 
 #[derive(Debug)]
 pub(crate) enum CommandOutcome {
@@ -33,12 +40,37 @@ pub(crate) enum CommandOutcome {
     Switch(ServerId, ConnectCause),
 }
 
+#[derive(Default)]
+struct MessageQueue {
+    messages: VecDeque<OutgoingMessage>,
+    bytes: usize,
+}
+
+impl MessageQueue {
+    const fn new() -> Self {
+        Self {
+            messages: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
+    fn push(&mut self, message: OutgoingMessage) {
+        let bytes = self.bytes + message.data.len();
+        if self.messages.len() >= MAX_QUEUED_MESSAGES || bytes > MAX_QUEUED_MESSAGE_BYTES {
+            tracing::debug!("too many plugin messages queued; dropping this one");
+            return;
+        }
+        self.bytes = bytes;
+        self.messages.push_back(message);
+    }
+}
+
 pub(crate) struct CommandInbox {
     receiver: mpsc::Receiver<PlayerCommand>,
     deferred: VecDeque<PlayerCommand>,
-    messages: VecDeque<OutgoingMessage>,
+    messages: MessageQueue,
     client_commands: VecDeque<ClientCommand>,
-    presentation: Option<Arc<Presentation>>,
+    session: Option<Arc<PlayerSession>>,
 }
 
 impl CommandInbox {
@@ -46,15 +78,15 @@ impl CommandInbox {
         Self {
             receiver,
             deferred: VecDeque::new(),
-            messages: VecDeque::new(),
+            messages: MessageQueue::new(),
             client_commands: VecDeque::new(),
-            presentation: None,
+            session: None,
         }
     }
 
     #[must_use]
-    pub(crate) fn with_presentation(mut self, presentation: Arc<Presentation>) -> Self {
-        self.presentation = Some(presentation);
+    pub(crate) fn with_session(mut self, session: Arc<PlayerSession>) -> Self {
+        self.session = Some(session);
         self
     }
 
@@ -142,8 +174,8 @@ impl CommandInbox {
                         registry,
                     ),
                 }?;
-                if let Some(presentation) = &self.presentation {
-                    presentation.pack_pushed(Some(id), true, legacy);
+                if let Some(session) = &self.session {
+                    session.presentation().pack_pushed(Some(id), true, legacy);
                 }
                 frame
             }
@@ -171,8 +203,8 @@ impl CommandInbox {
                 } else {
                     encode_packet(&CCookieRequest { key: key.clone() }, version, registry)?
                 };
-                if let Some(presentation) = &self.presentation {
-                    presentation.cookie_requested(&key, Some(reply));
+                if let Some(session) = &self.session {
+                    session.presentation().cookie_requested(&key, Some(reply));
                 }
                 frame
             }
@@ -196,14 +228,14 @@ impl CommandInbox {
         client_open: bool,
     ) {
         self.deliver_client_commands(client, registry, client_open);
-        if self.messages.is_empty() {
+        if self.messages.messages.is_empty() {
             return;
         }
         let version = client.protocol_version;
         let ids = MessageIds::resolve(registry, version);
         let api_version = ApiVersion::new(version.0);
-        let mut kept = VecDeque::new();
-        while let Some(message) = self.messages.pop_front() {
+        let mut kept = MessageQueue::new();
+        for message in std::mem::take(&mut self.messages).messages {
             let channel = message.channel.wire_name(api_version);
             let delivered = match message.target {
                 MessageTarget::Client if client_open => ids.clientbound(client.state()).map(|id| {
@@ -236,7 +268,7 @@ impl CommandInbox {
             match delivered {
                 Some(Ok(())) => {}
                 Some(Err(e)) => tracing::warn!(%channel, "failed to deliver a plugin message: {e}"),
-                None => kept.push_back(message),
+                None => kept.push(message),
             }
         }
         self.messages = kept;
@@ -265,20 +297,52 @@ impl CommandInbox {
         let command = match command {
             PlayerCommand::Kick(reason) => return CommandOutcome::Kick(reason),
             PlayerCommand::PluginMessage(message) => {
-                self.messages.push_back(message);
+                self.messages.push(message);
                 return CommandOutcome::Continue;
             }
             PlayerCommand::Client(command) => {
-                self.client_commands.push_back(command);
+                if self.client_commands.len() < MAX_QUEUED_CLIENT_COMMANDS {
+                    self.client_commands.push_back(command);
+                } else {
+                    tracing::debug!("too many player commands queued; dropping this one");
+                }
                 return CommandOutcome::Continue;
             }
             command => command,
         };
-        self.deferred.push_back(command);
+        self.defer(command);
         if in_game {
             self.release(client, registry)
         } else {
             CommandOutcome::Continue
+        }
+    }
+
+    fn defer(&mut self, command: PlayerCommand) {
+        if let PlayerCommand::SwitchServer(target, _) = &command {
+            self.supersede_switch(target);
+        } else if self.deferred.len() >= MAX_DEFERRED_COMMANDS {
+            tracing::debug!("too many player commands deferred; dropping this one");
+            return;
+        }
+        self.deferred.push_back(command);
+    }
+
+    fn supersede_switch(&mut self, next: &ServerId) {
+        let Some(index) = self
+            .deferred
+            .iter()
+            .position(|command| matches!(command, PlayerCommand::SwitchServer(..)))
+        else {
+            return;
+        };
+        let Some(PlayerCommand::SwitchServer(previous, _)) = self.deferred.remove(index) else {
+            return;
+        };
+        if &previous != next
+            && let Some(session) = &self.session
+        {
+            session.settle_connect(&previous, &ConnectionResult::Cancelled);
         }
     }
 
@@ -389,11 +453,12 @@ fn queue_frames(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use bytes::Bytes;
+    use infrarust_api::messaging::ChannelId;
     use infrarust_protocol::version::ProtocolVersion;
 
     use super::*;
     use crate::limbo::test_helpers::{test_client_bridge, test_registry};
-    use crate::player::PlayerSession;
 
     fn inbox() -> (mpsc::Sender<PlayerCommand>, CommandInbox) {
         let (tx, rx) = PlayerSession::channel();
@@ -436,6 +501,83 @@ mod tests {
             CommandOutcome::Continue
         ));
         assert!(inbox.deferred.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deferred_commands_are_bounded_but_a_switch_is_always_kept() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = test_registry();
+        let (_tx, mut inbox) = inbox();
+        for _ in 0..MAX_DEFERRED_COMMANDS + 10 {
+            inbox.apply(message("queued"), &mut client, &registry, false);
+        }
+        assert_eq!(inbox.deferred.len(), MAX_DEFERRED_COMMANDS);
+
+        for target in ["a", "b"] {
+            inbox.apply(
+                PlayerCommand::SwitchServer(ServerId::new(target), ConnectCause::Switch),
+                &mut client,
+                &registry,
+                false,
+            );
+        }
+        assert_eq!(inbox.deferred.len(), MAX_DEFERRED_COMMANDS + 1);
+        assert!(matches!(
+            inbox.deferred.back(),
+            Some(PlayerCommand::SwitchServer(target, _)) if *target == ServerId::new("b")
+        ));
+    }
+
+    fn client_message(data: Bytes) -> PlayerCommand {
+        PlayerCommand::PluginMessage(OutgoingMessage {
+            target: MessageTarget::Client,
+            channel: ChannelId::brand(),
+            data,
+        })
+    }
+
+    #[tokio::test]
+    async fn queued_plugin_messages_are_bounded_by_count() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = test_registry();
+        let (_tx, mut inbox) = inbox();
+        for _ in 0..MAX_QUEUED_MESSAGES + 10 {
+            let queued = client_message(Bytes::from_static(b"x"));
+            inbox.apply(queued, &mut client, &registry, false);
+        }
+        assert_eq!(inbox.messages.messages.len(), MAX_QUEUED_MESSAGES);
+        inbox.deliver_messages(&mut client, None, &registry, false);
+        assert_eq!(inbox.messages.messages.len(), MAX_QUEUED_MESSAGES);
+        assert_eq!(inbox.messages.bytes, MAX_QUEUED_MESSAGES);
+    }
+
+    #[tokio::test]
+    async fn queued_plugin_messages_are_bounded_by_bytes() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = test_registry();
+        let (_tx, mut inbox) = inbox();
+        let chunk = Bytes::from(vec![0; MAX_QUEUED_MESSAGE_BYTES / 2]);
+        for _ in 0..3 {
+            inbox.apply(client_message(chunk.clone()), &mut client, &registry, false);
+        }
+        assert_eq!(inbox.messages.messages.len(), 2);
+        assert_eq!(inbox.messages.bytes, MAX_QUEUED_MESSAGE_BYTES);
+    }
+
+    #[tokio::test]
+    async fn queued_client_commands_are_bounded() {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = test_registry();
+        let (_tx, mut inbox) = inbox();
+        for _ in 0..MAX_QUEUED_CLIENT_COMMANDS + 10 {
+            inbox.apply(
+                PlayerCommand::Client(ClientCommand::PopPack(None)),
+                &mut client,
+                &registry,
+                false,
+            );
+        }
+        assert_eq!(inbox.client_commands.len(), MAX_QUEUED_CLIENT_COMMANDS);
     }
 
     #[tokio::test]
