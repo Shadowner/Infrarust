@@ -296,6 +296,7 @@ impl TestProxyBuilder {
         table.insert("bind".into(), Value::String("127.0.0.1:0".into()));
         table.insert("servers_dir".into(), path_value(&servers_dir)?);
         table.insert("plugins_dir".into(), path_value(&plugins_dir)?);
+        table.insert("max_connections_per_ip".into(), Value::Integer(0));
         table.insert(
             "trusted_proxies".into(),
             string_array(vec!["127.0.0.0/8".to_string()]),

@@ -76,9 +76,12 @@ fn test_proxy_defaults_minimal_config() {
 
     assert_eq!(config.bind, "0.0.0.0:25565".parse().unwrap());
     assert_eq!(config.connect_timeout, Duration::from_secs(5));
-    assert_eq!(config.max_connections, 0);
+    assert_eq!(config.max_connections, 10_000);
+    assert_eq!(config.max_connections_per_ip, 32);
     assert!(!config.receive_proxy_protocol);
-    assert_eq!(config.rate_limit.max_connections, 3);
+    assert!(config.rate_limit.enabled);
+    assert_eq!(config.rate_limit.max_connections, 10);
+    assert_eq!(config.rate_limit.window, Duration::from_secs(10));
     assert_eq!(config.status_cache.ttl, Duration::from_secs(5));
     assert!(config.default_motd.is_none());
     assert_eq!(config.compression_threshold, 256);

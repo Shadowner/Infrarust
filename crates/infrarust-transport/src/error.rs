@@ -53,6 +53,10 @@ pub enum TransportError {
     #[error("peer {peer} is not in trusted_proxies")]
     UntrustedProxyPeer { peer: IpAddr },
 
+    /// The client's address is at `max_connections_per_ip`.
+    #[error("{ip} is at the per-IP connection limit")]
+    IpLimitReached { ip: IpAddr },
+
     /// Socket configuration error.
     #[error("socket configuration error: {0}")]
     SocketConfig(std::io::Error),

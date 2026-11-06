@@ -24,6 +24,7 @@ bytes = { workspace = true }
 socket2 = { workspace = true }
 ppp = { workspace = true }
 ipnet = { workspace = true }
+dashmap = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 infrarust_config = { workspace = true }
@@ -36,6 +37,7 @@ listenfd = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 command-fds = { workspace = true }

@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn default_config_is_disabled() {
-        assert!(!RateLimiterMiddleware::new(&RateLimitConfig::default()).enabled);
+    fn default_config_is_enabled() {
+        assert!(RateLimiterMiddleware::new(&RateLimitConfig::default()).enabled);
     }
 }

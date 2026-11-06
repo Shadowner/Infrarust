@@ -33,8 +33,12 @@ pub struct ProxyConfig {
     pub bind: SocketAddr,
 
     /// Maximum number of simultaneous connections (0 = unlimited)
-    #[serde(default)]
+    #[serde(default = "defaults::max_connections")]
     pub max_connections: u32,
+
+    /// Maximum simultaneous connections per IPv4 address or IPv6 /64 (0 = unlimited)
+    #[serde(default = "defaults::max_connections_per_ip")]
+    pub max_connections_per_ip: u32,
 
     /// Backend connection timeout
     #[serde(default = "defaults::connect_timeout")]

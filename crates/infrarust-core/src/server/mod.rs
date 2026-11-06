@@ -64,6 +64,7 @@ impl ProxyServer {
         let listener_config = ListenerConfig {
             bind: config.bind,
             max_connections: config.max_connections,
+            max_connections_per_ip: config.max_connections_per_ip,
             keepalive: config.keepalive.clone(),
             so_reuseport: config.so_reuseport,
             receive_proxy_protocol: config.receive_proxy_protocol,

@@ -8,7 +8,7 @@ use infrarust_api::handoff::Handoff;
 use infrarust_api::types::{Component, Extensions};
 use infrarust_config::{ProxyMode, UnknownDomainBehavior};
 use infrarust_protocol::version::ProtocolVersion;
-use infrarust_transport::{Listener, PendingConnection};
+use infrarust_transport::{Listener, PendingConnection, TransportError};
 
 use super::ProxyServer;
 use crate::error::CoreError;
@@ -90,7 +90,14 @@ impl ProxyServer {
         let accepted = tokio::select! {
             biased;
             () = shutdown.cancelled() => return Ok(()),
-            accepted = pending.resolve() => accepted?,
+            accepted = pending.resolve() => match accepted {
+                Ok(accepted) => accepted,
+                Err(TransportError::IpLimitReached { ip }) => {
+                    tracing::debug!(%ip, "closing connection over the per-IP limit");
+                    return Ok(());
+                }
+                Err(e) => return Err(e.into()),
+            },
         };
         let mut ctx = ConnectionContext::from_accepted(accepted);
         if !self.open_transport(&mut ctx, &shutdown).await {

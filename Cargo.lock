@@ -2196,6 +2196,7 @@ version = "2.0.0-beta.4"
 dependencies = [
  "bytes",
  "command-fds",
+ "dashmap",
  "infrarust_config",
  "ipnet",
  "listenfd",
@@ -2207,6 +2208,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

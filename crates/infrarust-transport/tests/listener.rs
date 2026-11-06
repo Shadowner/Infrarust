@@ -18,6 +18,7 @@ fn test_config() -> ListenerConfig {
     ListenerConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         max_connections: 0,
+        max_connections_per_ip: 0,
         keepalive: KeepaliveConfig::default(),
         so_reuseport: false,
         receive_proxy_protocol: false,
@@ -231,6 +232,82 @@ async fn a_header_from_a_trusted_peer_is_honored() {
     let _client = send_header_then(addr, b"").await;
     let accepted = listener.accept().await.unwrap().resolve().await.unwrap();
     assert_eq!(accepted.connection.real_ip(), header_source());
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn the_connection_over_the_per_ip_limit_is_refused() {
+    let shutdown = CancellationToken::new();
+    let config = ListenerConfig {
+        max_connections_per_ip: 32,
+        ..test_config()
+    };
+    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut held = Vec::new();
+    for _ in 0..32 {
+        let client = TcpStream::connect(addr).await.unwrap();
+        let accepted = listener.accept().await.unwrap().resolve().await.unwrap();
+        held.push((client, accepted));
+    }
+
+    let _refused = TcpStream::connect(addr).await.unwrap();
+    let err = listener
+        .accept()
+        .await
+        .unwrap()
+        .resolve()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, TransportError::IpLimitReached { ip } if ip.is_loopback()),
+        "{err:?}"
+    );
+
+    held.pop();
+    let _client = TcpStream::connect(addr).await.unwrap();
+    listener.accept().await.unwrap().resolve().await.unwrap();
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn the_per_ip_limit_counts_the_address_from_the_proxy_header() {
+    let shutdown = CancellationToken::new();
+    let config = ListenerConfig {
+        max_connections_per_ip: 1,
+        ..proxy_protocol_config(0)
+    };
+    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    async fn from(addr: SocketAddr, source: &str) -> TcpStream {
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let header = format!("PROXY TCP6 {source} ::1 50001 25565\r\n");
+        client.write_all(header.as_bytes()).await.unwrap();
+        client
+    }
+
+    let _first = from(addr, "2001:db8:1:1::1").await;
+    let _held = listener.accept().await.unwrap().resolve().await.unwrap();
+
+    let _same_64 = from(addr, "2001:db8:1:1::2").await;
+    let err = listener
+        .accept()
+        .await
+        .unwrap()
+        .resolve()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, TransportError::IpLimitReached { .. }),
+        "{err:?}"
+    );
+
+    let _other_64 = from(addr, "2001:db8:1:2::1").await;
+    let _also_held = listener.accept().await.unwrap().resolve().await.unwrap();
 
     shutdown.cancel();
 }

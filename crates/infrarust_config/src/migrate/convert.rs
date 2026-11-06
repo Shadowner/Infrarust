@@ -753,6 +753,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         plugin_messaging: Default::default(),
         wasm: Default::default(),
         max_connections: 0,
+        max_connections_per_ip: crate::defaults::max_connections_per_ip(),
         connect_timeout: crate::defaults::connect_timeout(),
         connect_max_attempts: crate::defaults::connect_max_attempts(),
         receive_proxy_protocol,
