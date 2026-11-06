@@ -165,6 +165,7 @@ enum Milestone {
 }
 
 const TRACKED_KEEPALIVES: usize = 8;
+const MAX_COMMAND_TREE_BYTES: usize = 1024 * 1024;
 
 struct LoopState {
     keepalives: VecDeque<(i64, Instant)>,
@@ -909,11 +910,25 @@ impl Loop<'_> {
                 return Ok(BackendAction::Continue);
             }
 
-            let tree = match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-                Ok(DecodedPacket::Typed { packet, .. }) => {
-                    packet.as_any().downcast_ref::<CCommands>().cloned()
+            let tree = if frame.payload.len() > MAX_COMMAND_TREE_BYTES {
+                tracing::warn!(
+                    bytes = frame.payload.len(),
+                    "the backend's command tree is too large; relaying it without the proxy's commands"
+                );
+                None
+            } else {
+                match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
+                    Ok(DecodedPacket::Typed { packet, .. }) => {
+                        packet.as_any().downcast_ref::<CCommands>().cloned()
+                    }
+                    Ok(DecodedPacket::Opaque { .. }) => None,
+                    Err(e) => {
+                        tracing::warn!(
+                            "relaying the backend's command tree without the proxy's commands: {e}"
+                        );
+                        None
+                    }
                 }
-                Ok(DecodedPacket::Opaque { .. }) | Err(_) => None,
             };
             let injected = tree
                 .as_ref()
@@ -921,9 +936,7 @@ impl Loop<'_> {
             self.io
                 .client
                 .queue_frame(injected.as_ref().unwrap_or(&frame))?;
-            if tree.is_some() {
-                self.backend_tree = tree;
-            }
+            self.backend_tree = tree;
             return Ok(BackendAction::Continue);
         }
 
