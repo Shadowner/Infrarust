@@ -169,6 +169,7 @@ const MAX_COMMAND_TREE_BYTES: usize = 1024 * 1024;
 
 struct LoopState {
     keepalives: VecDeque<(i64, Instant)>,
+    login_success_sent: bool,
     config_closing: bool,
     reconfiguring: bool,
     presentation_lost: bool,
@@ -178,6 +179,7 @@ impl LoopState {
     const fn new() -> Self {
         Self {
             keepalives: VecDeque::new(),
+            login_success_sent: false,
             config_closing: false,
             reconfiguring: false,
             presentation_lost: false,
@@ -771,6 +773,12 @@ impl Loop<'_> {
                     .downcast_ref::<SLoginAcknowledged>()
                     .is_some()
                 {
+                    if !self.state.login_success_sent {
+                        tracing::debug!(
+                            "ignoring a login acknowledgement sent before the login succeeded"
+                        );
+                        return Ok(());
+                    }
                     self.backend.queue_frame(&frame)?;
                     self.io.client.set_state(ConnectionState::Config);
                     self.backend.set_state(ConnectionState::Config);
@@ -975,6 +983,7 @@ impl Loop<'_> {
 
                 if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
                     self.io.client.queue_frame(&frame)?;
+                    self.state.login_success_sent = true;
                     if version.less_than(ProtocolVersion::V1_20_2) {
                         self.io.client.set_state(ConnectionState::Play);
                         self.backend.set_state(ConnectionState::Play);
