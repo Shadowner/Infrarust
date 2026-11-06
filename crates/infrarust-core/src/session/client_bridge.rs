@@ -144,9 +144,19 @@ impl ClientBridge {
     ///
     /// In Minecraft, the IV equals the key. Both encrypt and decrypt
     /// ciphers are created from the same 16-byte key.
-    pub fn enable_encryption(&mut self, key: &[u8; 16]) {
+    ///
+    /// # Errors
+    /// Returns `CoreError::Auth` if the decoder already holds bytes, since
+    /// they were read before the switch and would never be decrypted.
+    pub fn enable_encryption(&mut self, key: &[u8; 16]) -> Result<(), CoreError> {
+        if !self.decoder.read_buf_mut().is_empty() {
+            return Err(CoreError::Auth(
+                "client sent data ahead of the encryption switch".to_string(),
+            ));
+        }
         self.encrypt_cipher = Some(EncryptCipher::new(key));
         self.decrypt_cipher = Some(DecryptCipher::new(key));
+        Ok(())
     }
 
     /// Activates packet compression with the given threshold, or leaves it

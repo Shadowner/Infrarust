@@ -213,7 +213,7 @@ impl MojangAuth {
         let profile = self.verify_session(username, &server_hash).await?;
 
         // Enable encryption on client bridge
-        client.enable_encryption(&key);
+        client.enable_encryption(&key)?;
 
         Ok(profile)
     }
