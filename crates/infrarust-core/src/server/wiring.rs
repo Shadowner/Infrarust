@@ -268,7 +268,8 @@ impl ProxyServer {
         common_pipeline.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(
             &ban_manager,
         ))));
-        common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
+        let rate_limiter = RateLimiterMiddleware::new(&config.rate_limit);
+        common_pipeline.add(Box::new(rate_limiter.clone()));
         common_pipeline.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
             &domain_router,
         ))));
@@ -327,6 +328,7 @@ impl ProxyServer {
         Ok(Self {
             common_pipeline,
             login_pipeline,
+            rate_limiter,
             status_handler,
             legacy_handler,
             passthrough_handler,

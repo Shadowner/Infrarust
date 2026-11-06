@@ -17,6 +17,7 @@ use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
 use crate::handoff::HandoffRelay;
+use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::pipeline::Pipeline;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
@@ -28,6 +29,7 @@ pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct ProxyServer {
     common_pipeline: Pipeline,
     login_pipeline: Pipeline,
+    rate_limiter: RateLimiterMiddleware,
     status_handler: StatusHandler,
     legacy_handler: LegacyHandler,
     passthrough_handler: PassthroughHandler,

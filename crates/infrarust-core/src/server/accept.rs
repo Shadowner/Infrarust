@@ -41,6 +41,8 @@ impl ProxyServer {
             .ban_manager
             .start_purge_task(config.ban.purge_interval, self.background.clone());
 
+        let _rate_limit_purge_handle = self.rate_limiter.start_purge_task(self.background.clone());
+
         let _prober_handle = Arc::new(crate::loadbalancer::ActiveHealthProber::new(
             Arc::clone(&self.services.domain_router),
             Arc::clone(&self.backend_health),
