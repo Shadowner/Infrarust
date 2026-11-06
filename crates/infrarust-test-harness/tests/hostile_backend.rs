@@ -5,17 +5,19 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use infrarust_api::command::{CommandContext, CommandHandler, CommandSpec};
-use infrarust_api::event::BoxFuture;
+use infrarust_api::event::{BoxFuture, EventPriority};
+use infrarust_api::events::transfer::PreTransferEvent;
 use infrarust_api::player::{ConnectionResult, Player};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::config::CRegistryData;
 use infrarust_protocol::packets::play::boss_bar::{BossBarAction, CBossBar};
 use infrarust_protocol::packets::play::chat::CSystemChatMessage;
 use infrarust_protocol::packets::play::commands::{CCommands, CommandNode, MAX_COMMAND_NODES};
+use infrarust_protocol::packets::play::transfer::{CConfigTransfer, CTransfer};
 use infrarust_test_harness::text::{component_text, encode_component_json};
 use infrarust_test_harness::{
-    ClientSession, DEFAULT_TIMEOUT, FakeBackend, PacketFrame, ProtocolVersion, ScriptedPlugin,
-    ServerSpec, TestProxy, holding_handler, version_matrix, wire,
+    BackendConn, ClientSession, DEFAULT_TIMEOUT, FakeBackend, PacketFrame, ProtocolVersion,
+    ScriptedPlugin, ServerSpec, TestProxy, holding_handler, version_matrix, wire,
 };
 use uuid::Uuid;
 
@@ -365,3 +367,125 @@ async fn backend_boss_bars_are_tracked_up_to_a_limit() {
 
     proxy.shutdown().await.unwrap();
 }
+
+async fn transfer_proxy(plugin: ScriptedPlugin) -> (FakeBackend, TestProxy) {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .plugin(plugin)
+        .start()
+        .await
+        .unwrap();
+    (backend, proxy)
+}
+
+async fn assert_transfer_stopped(conn: &mut BackendConn, session: &mut ClientSession) {
+    let version = session.version();
+    conn.send_system_message_json(r#"{"text":"after"}"#)
+        .await
+        .unwrap();
+    loop {
+        let frame = session.recv_frame(T).await.unwrap();
+        assert!(
+            !wire::is::<CTransfer>(&frame, version),
+            "the transfer reached the client"
+        );
+        if wire::is::<CSystemChatMessage>(&frame, version) {
+            return;
+        }
+    }
+}
+
+async fn a_transfer_with_an_invalid_port_is_dropped(version: ProtocolVersion) {
+    let (backend, proxy) = transfer_proxy(ScriptedPlugin::new("idle")).await;
+    let (mut session, _player) = join(&proxy, version).await;
+    let mut conn = backend.next_connection(T).await.unwrap();
+
+    conn.send_packet(&CTransfer {
+        host: "evil.example.com".into(),
+        port: 70_000,
+    })
+    .await
+    .unwrap();
+    assert_transfer_stopped(&mut conn, &mut session).await;
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_transfer_with_an_invalid_port_is_dropped; p766 = 766, p777 = 777);
+
+async fn a_configuration_transfer_with_an_invalid_port_is_dropped(version: ProtocolVersion) {
+    let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let client = proxy.client(version);
+    let login = tokio::spawn(async move { client.login("Steve").await });
+    let mut conn = backend.next_connection(T).await.unwrap();
+
+    conn.send_packet(&CConfigTransfer {
+        host: "evil.example.com".into(),
+        port: 70_000,
+    })
+    .await
+    .unwrap();
+    conn.finish_config(T).await.unwrap();
+    let session = tokio::time::timeout(T, login)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .joined()
+        .unwrap();
+    assert!(
+        !session
+            .config_frames()
+            .iter()
+            .any(|frame| wire::is::<CConfigTransfer>(frame, version)),
+        "the transfer reached the client"
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_configuration_transfer_with_an_invalid_port_is_dropped; p766 = 766, p777 = 777);
+
+async fn an_undecodable_transfer_is_dropped(version: ProtocolVersion) {
+    let (backend, proxy) = transfer_proxy(ScriptedPlugin::new("idle")).await;
+    let (mut session, _player) = join(&proxy, version).await;
+    let mut conn = backend.next_connection(T).await.unwrap();
+
+    let id = wire::packet_id::<CTransfer>(version).unwrap();
+    conn.send_frame(&PacketFrame::new(id, Bytes::new()))
+        .await
+        .unwrap();
+    assert_transfer_stopped(&mut conn, &mut session).await;
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(an_undecodable_transfer_is_dropped; p766 = 766, p777 = 777);
+
+async fn a_redirect_that_cannot_be_encoded_drops_the_transfer(version: ProtocolVersion) {
+    let redirector = ScriptedPlugin::new("redirector")
+        .on::<PreTransferEvent>(EventPriority::NORMAL, |event| {
+            event.redirect("x".repeat(40_000), 25565)
+        });
+    let (backend, proxy) = transfer_proxy(redirector).await;
+    let (mut session, _player) = join(&proxy, version).await;
+    let mut conn = backend.next_connection(T).await.unwrap();
+
+    conn.send_packet(&CTransfer {
+        host: "evil.example.com".into(),
+        port: 25565,
+    })
+    .await
+    .unwrap();
+    assert_transfer_stopped(&mut conn, &mut session).await;
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_redirect_that_cannot_be_encoded_drops_the_transfer; p766 = 766, p777 = 777);
