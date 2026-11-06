@@ -9,13 +9,15 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::player::{ConnectionResult, Player};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::packets::config::CRegistryData;
+use infrarust_protocol::packets::play::boss_bar::{BossBarAction, CBossBar};
 use infrarust_protocol::packets::play::chat::CSystemChatMessage;
 use infrarust_protocol::packets::play::commands::{CCommands, CommandNode, MAX_COMMAND_NODES};
-use infrarust_test_harness::text::component_text;
+use infrarust_test_harness::text::{component_text, encode_component_json};
 use infrarust_test_harness::{
     ClientSession, DEFAULT_TIMEOUT, FakeBackend, PacketFrame, ProtocolVersion, ScriptedPlugin,
     ServerSpec, TestProxy, holding_handler, version_matrix, wire,
 };
+use uuid::Uuid;
 
 const T: Duration = DEFAULT_TIMEOUT;
 
@@ -313,3 +315,53 @@ async fn a_replaced_connect_is_cancelled(version: ProtocolVersion) {
 }
 
 version_matrix!(a_replaced_connect_is_cancelled; p764 = 764, p777 = 777);
+
+const TRACKED_BARS: usize = 256;
+const SENT_BARS: u128 = 300;
+
+#[tokio::test]
+async fn backend_boss_bars_are_tracked_up_to_a_limit() {
+    let version = ProtocolVersion::V1_19_4;
+    let backend_a = FakeBackend::builder().spawn().await.unwrap();
+    let backend_b = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .offline_pair(backend_a.addr(), backend_b.addr())
+        .start()
+        .await
+        .unwrap();
+    let (mut session, player) = join(&proxy, version).await;
+    let mut conn = backend_a.next_connection(T).await.unwrap();
+
+    for id in 0..SENT_BARS {
+        conn.send_packet(&CBossBar {
+            id: Uuid::from_u128(id + 1),
+            action: BossBarAction::Add {
+                title: encode_component_json(r#"{"text":"bar"}"#, version).unwrap(),
+                health: 1.0,
+                color: 0,
+                division: 0,
+                flags: 0,
+            },
+        })
+        .await
+        .unwrap();
+    }
+    for _ in 0..SENT_BARS {
+        session.expect::<CBossBar>(T).await.unwrap();
+    }
+
+    assert_eq!(
+        player.connect(ServerId::new("b")).await.unwrap(),
+        ConnectionResult::Success
+    );
+    let frames = frames_until_marker(&mut session, player.as_ref(), "switched").await;
+    let removed = frames
+        .iter()
+        .filter(|frame| wire::is::<CBossBar>(frame, version))
+        .map(|frame| wire::decode::<CBossBar>(frame, version).unwrap())
+        .filter(|bar| matches!(bar.action, BossBarAction::Remove))
+        .count();
+    assert_eq!(removed, TRACKED_BARS);
+
+    proxy.shutdown().await.unwrap();
+}
