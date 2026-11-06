@@ -1,6 +1,6 @@
 //! Transport error types.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 /// Errors that can occur in the transport layer.
@@ -48,6 +48,10 @@ pub enum TransportError {
     /// Failed to decode proxy protocol header.
     #[error("proxy protocol decode error: {0}")]
     ProxyProtocolDecode(String),
+
+    /// A peer outside `trusted_proxies` connected to a proxy protocol listener.
+    #[error("peer {peer} is not in trusted_proxies")]
+    UntrustedProxyPeer { peer: IpAddr },
 
     /// Socket configuration error.
     #[error("socket configuration error: {0}")]

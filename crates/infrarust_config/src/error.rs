@@ -176,6 +176,12 @@ pub enum ProxyValidationError {
     #[error("{0}")]
     WebApiKey(String),
 
+    #[error(
+        "receive_proxy_protocol requires trusted_proxies: list the addresses of your \
+         load balancers, or [\"0.0.0.0/0\", \"::/0\"] to trust every peer"
+    )]
+    ProxyProtocolWithoutTrustedProxies,
+
     #[error("web.bind '{bind}' is not a valid bind address (expected host:port)")]
     WebBindNotHostPort { bind: String },
 

@@ -335,6 +335,12 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
         ));
     }
 
+    if config.receive_proxy_protocol && config.trusted_proxies.is_empty() {
+        return Err(ConfigError::Proxy(
+            ProxyValidationError::ProxyProtocolWithoutTrustedProxies,
+        ));
+    }
+
     let warnings = validate_wasm_config(config)?;
 
     if config.rate_limit.enabled {

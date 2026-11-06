@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use crate::defaults;
@@ -48,6 +49,11 @@ pub struct ProxyConfig {
     /// Enables receiving proxy protocol (`HAProxy` v1/v2)
     #[serde(default)]
     pub receive_proxy_protocol: bool,
+
+    /// Peers allowed to send a proxy protocol header. Any other peer is closed
+    /// without reading. Required when `receive_proxy_protocol` is enabled.
+    #[serde(default)]
+    pub trusted_proxies: Vec<IpNet>,
 
     /// Path to the server configuration directory
     #[serde(default = "defaults::servers_dir")]

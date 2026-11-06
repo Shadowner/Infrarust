@@ -253,6 +253,31 @@ fn test_proxy_zero_connect_timeout_is_invalid() {
 }
 
 #[test]
+fn proxy_protocol_without_trusted_proxies_is_a_startup_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("receive_proxy_protocol = true", dir.path());
+    assert!(matches!(
+        validate_proxy_config(&config),
+        Err(ConfigError::Proxy(
+            ProxyValidationError::ProxyProtocolWithoutTrustedProxies
+        ))
+    ));
+}
+
+#[test]
+fn proxy_protocol_with_trusted_proxies_is_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml(
+        r#"
+        receive_proxy_protocol = true
+        trusted_proxies = ["10.0.0.0/8", "2001:db8::/32"]
+    "#,
+        dir.path(),
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+}
+
+#[test]
 fn test_proxy_zero_rate_limit_window_is_invalid_when_enabled() {
     let dir = tempfile::tempdir().unwrap();
     let config = proxy_from_toml(

@@ -297,6 +297,10 @@ impl TestProxyBuilder {
         table.insert("servers_dir".into(), path_value(&servers_dir)?);
         table.insert("plugins_dir".into(), path_value(&plugins_dir)?);
         table.insert(
+            "trusted_proxies".into(),
+            string_array(vec!["127.0.0.0/8".to_string()]),
+        );
+        table.insert(
             "rate_limit".into(),
             Value::Table(Table::from_iter([(
                 "enabled".into(),

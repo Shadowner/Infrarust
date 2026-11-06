@@ -23,6 +23,7 @@ tokio-util = { workspace = true }
 bytes = { workspace = true }
 socket2 = { workspace = true }
 ppp = { workspace = true }
+ipnet = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 infrarust_config = { workspace = true }

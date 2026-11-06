@@ -2197,6 +2197,7 @@ dependencies = [
  "bytes",
  "command-fds",
  "infrarust_config",
+ "ipnet",
  "listenfd",
  "nix",
  "ppp",

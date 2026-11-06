@@ -21,6 +21,7 @@ fn test_config() -> ListenerConfig {
         keepalive: KeepaliveConfig::default(),
         so_reuseport: false,
         receive_proxy_protocol: false,
+        trusted_proxies: Vec::new(),
     }
 }
 
@@ -28,6 +29,7 @@ fn proxy_protocol_config(max_connections: u32) -> ListenerConfig {
     ListenerConfig {
         max_connections,
         receive_proxy_protocol: true,
+        trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
         ..test_config()
     }
 }
@@ -188,6 +190,47 @@ async fn a_silent_connection_holds_its_permit_until_its_header_times_out() {
         header_source()
     );
     assert_eq!(accepted.connection.peek(5).await.unwrap(), b"hello");
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn an_untrusted_peer_is_refused_without_waiting_for_its_header() {
+    let shutdown = CancellationToken::new();
+    let config = ListenerConfig {
+        trusted_proxies: vec!["192.0.2.0/24".parse().unwrap()],
+        ..proxy_protocol_config(0)
+    };
+    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut silent = TcpStream::connect(addr).await.unwrap();
+    let pending = listener.accept().await.unwrap();
+    let err = timeout(Duration::from_secs(1), pending.resolve())
+        .await
+        .expect("an untrusted peer is refused before any read")
+        .unwrap_err();
+    assert!(
+        matches!(&err, TransportError::UntrustedProxyPeer { peer } if peer.is_loopback()),
+        "{err:?}"
+    );
+    let mut byte = [0u8; 1];
+    assert_eq!(silent.read(&mut byte).await.unwrap(), 0);
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn a_header_from_a_trusted_peer_is_honored() {
+    let shutdown = CancellationToken::new();
+    let listener = Listener::bind(proxy_protocol_config(0), shutdown.clone())
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let _client = send_header_then(addr, b"").await;
+    let accepted = listener.accept().await.unwrap().resolve().await.unwrap();
+    assert_eq!(accepted.connection.real_ip(), header_source());
 
     shutdown.cancel();
 }

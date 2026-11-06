@@ -67,6 +67,7 @@ impl ProxyServer {
             keepalive: config.keepalive.clone(),
             so_reuseport: config.so_reuseport,
             receive_proxy_protocol: config.receive_proxy_protocol,
+            trusted_proxies: config.trusted_proxies.clone(),
         };
 
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;

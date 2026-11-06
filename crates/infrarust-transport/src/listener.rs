@@ -4,9 +4,10 @@
 //! graceful shutdown, optional proxy protocol decoding, and socket
 //! configuration on accepted connections.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
+use ipnet::IpNet;
 use socket2::Socket;
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -14,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_config::KeepaliveConfig;
 
-use crate::connection::ClientConnection;
+use crate::connection::{ClientConnection, canonicalize_ip};
 use crate::error::TransportError;
 use crate::proxy_protocol::decode_proxy_protocol;
 use crate::socket::{configure_listener_socket, configure_stream_socket, into_tokio_listener};
@@ -32,6 +33,8 @@ pub struct ListenerConfig {
     pub so_reuseport: bool,
     /// Decode proxy protocol headers on accepted connections.
     pub receive_proxy_protocol: bool,
+    /// Peers allowed to send a proxy protocol header.
+    pub trusted_proxies: Vec<IpNet>,
 }
 
 /// TCP listener with connection limiting and graceful shutdown.
@@ -43,10 +46,31 @@ pub struct Listener {
     shutdown: CancellationToken,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ProxyHeader {
+    NotExpected,
+    Expected,
+    UntrustedPeer,
+}
+
+impl ProxyHeader {
+    fn for_peer(config: &ListenerConfig, peer: IpAddr) -> Self {
+        if !config.receive_proxy_protocol {
+            return Self::NotExpected;
+        }
+        let peer = canonicalize_ip(peer);
+        if config.trusted_proxies.iter().any(|net| net.contains(&peer)) {
+            Self::Expected
+        } else {
+            Self::UntrustedPeer
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PendingConnection {
     connection: ClientConnection,
-    receive_proxy_protocol: bool,
+    proxy_header: ProxyHeader,
     permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -58,15 +82,23 @@ impl PendingConnection {
     pub async fn resolve(self) -> Result<AcceptedConnection, TransportError> {
         let Self {
             mut connection,
-            receive_proxy_protocol,
+            proxy_header,
             permit,
         } = self;
-        if receive_proxy_protocol {
-            let (info, leftover) = decode_proxy_protocol(connection.stream_mut()).await?;
-            if let Some(info) = info {
-                connection = connection.with_proxy_protocol(&info);
+        match proxy_header {
+            ProxyHeader::NotExpected => {}
+            ProxyHeader::UntrustedPeer => {
+                return Err(TransportError::UntrustedProxyPeer {
+                    peer: canonicalize_ip(connection.peer_addr().ip()),
+                });
             }
-            connection.inject_buffered_data(&leftover);
+            ProxyHeader::Expected => {
+                let (info, leftover) = decode_proxy_protocol(connection.stream_mut()).await?;
+                if let Some(info) = info {
+                    connection = connection.with_proxy_protocol(&info);
+                }
+                connection.inject_buffered_data(&leftover);
+            }
         }
         Ok(AcceptedConnection { connection, permit })
     }
@@ -201,7 +233,7 @@ impl Listener {
 
             return Ok(PendingConnection {
                 connection: ClientConnection::new(stream, peer_addr, local_addr),
-                receive_proxy_protocol: self.config.receive_proxy_protocol,
+                proxy_header: ProxyHeader::for_peer(&self.config, peer_addr.ip()),
                 permit,
             });
         }
@@ -230,8 +262,49 @@ fn is_transient_error(e: &std::io::Error) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn proxy_config(trusted: &[&str]) -> ListenerConfig {
+        ListenerConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            max_connections: 0,
+            keepalive: KeepaliveConfig::default(),
+            so_reuseport: false,
+            receive_proxy_protocol: true,
+            trusted_proxies: trusted.iter().map(|net| net.parse().unwrap()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_ipv4_mapped_peer_matches_ipv4_trusted_networks() {
+        let config = proxy_config(&["10.0.0.0/8"]);
+        let mapped: IpAddr = "::ffff:10.1.2.3".parse().unwrap();
+        assert!(matches!(
+            ProxyHeader::for_peer(&config, mapped),
+            ProxyHeader::Expected
+        ));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_peer_does_not_match_ipv6_networks() {
+        let config = proxy_config(&["::/0"]);
+        let mapped: IpAddr = "::ffff:10.1.2.3".parse().unwrap();
+        assert!(matches!(
+            ProxyHeader::for_peer(&config, mapped),
+            ProxyHeader::UntrustedPeer
+        ));
+    }
+
+    #[test]
+    fn an_empty_trust_list_refuses_every_peer() {
+        let config = proxy_config(&[]);
+        assert!(matches!(
+            ProxyHeader::for_peer(&config, "127.0.0.1".parse().unwrap()),
+            ProxyHeader::UntrustedPeer
+        ));
+    }
 
     #[test]
     fn transient_errors_are_retried() {
