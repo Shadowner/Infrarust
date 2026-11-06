@@ -165,8 +165,7 @@ pub struct PlayerSession {
     connected_address: RwLock<Option<ServerAddress>>,
     backend_load: Arc<BackendLoad>,
     connected: AtomicBool,
-    active: bool,
-    online_mode: bool,
+    kind: SessionKind,
     connected_at: SystemTime,
     command_tx: mpsc::Sender<PlayerCommand>,
     shutdown_token: CancellationToken,
@@ -190,7 +189,7 @@ impl std::fmt::Debug for PlayerSession {
         f.debug_struct("PlayerSession")
             .field("player_id", &self.player_id)
             .field("username", &self.profile.username)
-            .field("active", &self.active)
+            .field("active", &self.kind.active())
             .field("connected", &self.connected.load(Ordering::Acquire))
             .finish()
     }
@@ -211,6 +210,27 @@ impl SessionKind {
         match self {
             Self::Intercepted { online_mode } => online_mode,
             Self::Forwarded => false,
+        }
+    }
+
+    pub(crate) const fn may_displace(self, previous: Self) -> bool {
+        match (self, previous) {
+            (Self::Forwarded, _) | (_, Self::Forwarded) => false,
+            (Self::Intercepted { online_mode: true }, Self::Intercepted { .. }) => true,
+            (
+                Self::Intercepted { online_mode: false },
+                Self::Intercepted {
+                    online_mode: previous_online,
+                },
+            ) => !previous_online,
+        }
+    }
+
+    pub(crate) const fn identity_rank(self) -> u8 {
+        match self {
+            Self::Forwarded => 0,
+            Self::Intercepted { online_mode: false } => 1,
+            Self::Intercepted { online_mode: true } => 2,
         }
     }
 }
@@ -283,8 +303,7 @@ impl PlayerSessionBuilder {
             connected_address: RwLock::new(None),
             backend_load: self.backend_load,
             connected: AtomicBool::new(true),
-            active: self.kind.active(),
-            online_mode: self.kind.online_mode(),
+            kind: self.kind,
             connected_at: SystemTime::now(),
             command_tx: self.command_tx,
             shutdown_token: self.shutdown_token,
@@ -336,6 +355,10 @@ impl PlayerSession {
         self.shared
             .upgrade()
             .map(|session| session as Arc<dyn Player>)
+    }
+
+    pub(crate) const fn kind(&self) -> SessionKind {
+        self.kind
     }
 
     pub(crate) const fn presentation(&self) -> &Arc<Presentation> {
@@ -461,7 +484,7 @@ impl PlayerSession {
         data: Bytes,
         max: usize,
     ) -> Result<(), PlayerError> {
-        if !self.active {
+        if !self.kind.active() {
             return Err(PlayerError::NotActive);
         }
         if data.len() > max {
@@ -481,7 +504,7 @@ impl PlayerSession {
         let subject = PermissionSubject::player(
             self.player_id,
             self.profile.clone(),
-            self.online_mode,
+            self.kind.online_mode(),
             self.remote_addr,
         );
         match &self.virtual_host {
@@ -511,7 +534,7 @@ impl PlayerSession {
         let setup = bus
             .fire(PermissionsSetupEvent::new(
                 Arc::clone(self) as Arc<dyn Player>,
-                self.online_mode,
+                self.kind.online_mode(),
             ))
             .await;
         if let PermissionsSetupResult::Custom(checker) = setup.result() {
@@ -571,7 +594,7 @@ impl PlayerSession {
     }
 
     fn ready(&self) -> Result<(), PlayerError> {
-        if !self.active {
+        if !self.kind.active() {
             return Err(PlayerError::NotActive);
         }
         if !self.connected.load(Ordering::Acquire) {

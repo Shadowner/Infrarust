@@ -113,10 +113,7 @@ async fn finish(
 async fn displace_previous(services: &ProxyServices, session: &PlayerSession, deadline: Duration) {
     let uuid = session.profile().uuid;
     let give_up = tokio::time::Instant::now() + deadline;
-    while let Some(previous) = services.connection_registry.find_by_uuid(&uuid) {
-        if previous.id() == session.id() {
-            return;
-        }
+    while let Some(previous) = services.connection_registry.displaced_by(session) {
         tracing::info!(
             %uuid,
             username = %session.profile().username,

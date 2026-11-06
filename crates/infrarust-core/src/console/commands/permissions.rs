@@ -173,7 +173,7 @@ fn delegated(services: &ConsoleServices) -> Option<CommandOutput> {
 }
 
 async fn refresh(services: &ConsoleServices, uuid: &Uuid) {
-    if let Some(player) = services.connection_registry.find_by_uuid(uuid) {
+    for player in services.connection_registry.find_all_by_uuid(uuid) {
         player.refresh_permissions().await;
     }
 }

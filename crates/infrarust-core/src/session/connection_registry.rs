@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -10,8 +11,8 @@ use uuid::Uuid;
 use crate::player::PlayerSession;
 
 pub struct ConnectionRegistry {
-    sessions: DashMap<Uuid, Arc<PlayerSession>>,
-    id_index: DashMap<PlayerId, Uuid>,
+    sessions: DashMap<PlayerId, Arc<PlayerSession>>,
+    uuid_index: SessionIndex<Uuid>,
     name_index: SessionIndex<String>,
     ip_index: SessionIndex<IpAddr>,
 }
@@ -50,20 +51,15 @@ impl ConnectionRegistry {
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
-            id_index: DashMap::new(),
+            uuid_index: SessionIndex::new(),
             name_index: SessionIndex::new(),
             ip_index: SessionIndex::new(),
         }
     }
 
-    fn index(&self, session: &Arc<PlayerSession>) {
-        self.name_index
-            .insert(name_key(&session.profile().username), session);
-        self.ip_index
-            .insert(session.remote_addr().ip().to_canonical(), session);
-    }
-
     fn unindex(&self, session: &PlayerSession) {
+        self.uuid_index
+            .remove(&session.profile().uuid, session.id());
         self.name_index
             .remove(&name_key(&session.profile().username), session.id());
         self.ip_index
@@ -73,13 +69,23 @@ impl ConnectionRegistry {
     pub fn register(self: &Arc<Self>, session: Arc<PlayerSession>) -> SessionGuard {
         let uuid = session.profile().uuid;
         let player_id = session.id();
-        self.id_index.insert(player_id, uuid);
-        self.index(&session);
-        if let Some(previous) = self.sessions.insert(uuid, Arc::clone(&session)) {
-            if previous.id() != player_id {
-                self.id_index.remove(&previous.id());
-                self.unindex(&previous);
-            }
+        self.sessions.insert(player_id, Arc::clone(&session));
+        self.name_index
+            .insert(name_key(&session.profile().username), &session);
+        self.ip_index
+            .insert(session.remote_addr().ip().to_canonical(), &session);
+        let displaced: Vec<_> = {
+            let mut same_uuid = self.uuid_index.entries.entry(uuid).or_default();
+            let (displaced, kept) = std::mem::take(&mut *same_uuid)
+                .into_iter()
+                .partition(|previous| session.kind().may_displace(previous.kind()));
+            *same_uuid = kept;
+            same_uuid.push(Arc::clone(&session));
+            displaced
+        };
+        for previous in displaced {
+            self.sessions.remove(&previous.id());
+            self.unindex(&previous);
             previous.shutdown_token().cancel();
             previous.set_disconnected();
             tracing::warn!(
@@ -95,33 +101,51 @@ impl ConnectionRegistry {
         }
     }
 
-    fn unregister(&self, session_uuid: &Uuid, player_id: PlayerId) -> Option<Arc<PlayerSession>> {
-        let (_, session) = self
-            .sessions
-            .remove_if(session_uuid, |_, s| s.id() == player_id)?;
-        self.id_index
-            .remove_if(&player_id, |_, u| u == session_uuid);
+    fn unregister(&self, player_id: PlayerId) -> Option<Arc<PlayerSession>> {
+        let (_, session) = self.sessions.remove(&player_id)?;
         self.unindex(&session);
         session.set_disconnected();
         Some(session)
     }
 
+    pub(crate) fn displaced_by(&self, session: &PlayerSession) -> Option<Arc<PlayerSession>> {
+        self.uuid_index
+            .entries
+            .get(&session.profile().uuid)?
+            .iter()
+            .find(|previous| {
+                previous.id() != session.id() && session.kind().may_displace(previous.kind())
+            })
+            .map(Arc::clone)
+    }
+
     pub fn find_by_id(&self, id: PlayerId) -> Option<Arc<PlayerSession>> {
-        let uuid = *self.id_index.get(&id)?;
-        self.get(&uuid)
+        self.sessions.get(&id).map(|r| Arc::clone(&r))
     }
 
     pub fn get(&self, session_uuid: &Uuid) -> Option<Arc<PlayerSession>> {
-        self.sessions.get(session_uuid).map(|r| Arc::clone(&r))
+        self.uuid_index
+            .entries
+            .get(session_uuid)?
+            .iter()
+            .min_by_key(|s| Reverse(s.kind().identity_rank()))
+            .map(Arc::clone)
     }
 
     pub fn find_by_username(&self, username: &str) -> Option<Arc<PlayerSession>> {
-        let matches = self.name_index.entries.get(&name_key(username))?;
+        self.find_all_by_username(username).into_iter().next()
+    }
+
+    pub(crate) fn find_all_by_username(&self, username: &str) -> Vec<Arc<PlayerSession>> {
+        let mut matches = self
+            .name_index
+            .entries
+            .get(&name_key(username))
+            .map(|sessions| sessions.clone())
+            .unwrap_or_default();
         matches
-            .iter()
-            .find(|s| s.profile().username == username)
-            .or_else(|| matches.first())
-            .map(Arc::clone)
+            .sort_by_key(|s| Reverse((s.kind().identity_rank(), s.profile().username == username)));
+        matches
     }
 
     pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<PlayerSession>> {
@@ -158,6 +182,14 @@ impl ConnectionRegistry {
     pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<Arc<PlayerSession>> {
         self.get(uuid)
     }
+
+    pub(crate) fn find_all_by_uuid(&self, uuid: &Uuid) -> Vec<Arc<PlayerSession>> {
+        self.uuid_index
+            .entries
+            .get(uuid)
+            .map(|sessions| sessions.clone())
+            .unwrap_or_default()
+    }
 }
 
 impl Default for ConnectionRegistry {
@@ -181,7 +213,7 @@ impl SessionGuard {
 
 impl Drop for SessionGuard {
     fn drop(&mut self) {
-        self.registry.unregister(&self.uuid, self.player_id);
+        self.registry.unregister(self.player_id);
     }
 }
 
@@ -194,6 +226,8 @@ impl infrarust_server_manager::PlayerCounter for ConnectionRegistry {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use crate::loadbalancer::{AddressConnectionCount, BackendLoad};
     use crate::player::{PlayerCommand, SessionKind};
@@ -223,7 +257,7 @@ mod tests {
             CancellationToken::new(),
             Arc::clone(load),
         )
-        .kind(SessionKind::Forwarded)
+        .kind(SessionKind::Intercepted { online_mode: false })
         .current_server(ServerId::new(server))
         .build()
     }
@@ -258,7 +292,7 @@ mod tests {
 
     fn is_empty(registry: &ConnectionRegistry) -> bool {
         registry.sessions.is_empty()
-            && registry.id_index.is_empty()
+            && registry.uuid_index.entries.is_empty()
             && registry.name_index.entries.is_empty()
             && registry.ip_index.entries.is_empty()
     }
@@ -274,7 +308,8 @@ mod tests {
     }
 
     fn make_session(username: &str, server: &str) -> Arc<PlayerSession> {
-        make_session_with_id(0, username, server)
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1000);
+        make_session_with_id(NEXT_ID.fetch_add(1, Ordering::Relaxed), username, server)
     }
 
     fn addr(host: &str) -> ServerAddress {
@@ -559,6 +594,123 @@ mod tests {
         }
 
         assert!(is_empty(&registry));
+    }
+
+    fn of_kind(id: u64, uuid: Uuid, username: &str, kind: SessionKind) -> Arc<PlayerSession> {
+        let (tx, _rx) = mpsc::channel::<PlayerCommand>(32);
+        PlayerSession::builder(
+            PlayerId::new(id),
+            GameProfile {
+                uuid,
+                username: username.to_string(),
+                properties: vec![],
+            },
+            infrarust_api::types::ProtocolVersion::new(767),
+            "127.0.0.1:12345".parse().unwrap(),
+            tx,
+            CancellationToken::new(),
+            Arc::new(BackendLoad::new()),
+        )
+        .kind(kind)
+        .build()
+    }
+
+    const VERIFIED: SessionKind = SessionKind::Intercepted { online_mode: true };
+    const OFFLINE: SessionKind = SessionKind::Intercepted { online_mode: false };
+    const FORWARDED: SessionKind = SessionKind::Forwarded;
+
+    #[test]
+    fn who_may_displace_whom() {
+        let allowed = [
+            (VERIFIED, VERIFIED),
+            (VERIFIED, OFFLINE),
+            (OFFLINE, OFFLINE),
+        ];
+        for new in [VERIFIED, OFFLINE, FORWARDED] {
+            for previous in [VERIFIED, OFFLINE, FORWARDED] {
+                assert_eq!(
+                    new.may_displace(previous),
+                    allowed.contains(&(new, previous)),
+                    "{new:?} over {previous:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_undisplaceable_session_keeps_running_next_to_the_new_one() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let uuid = Uuid::new_v4();
+        let verified = of_kind(1, uuid, "Steve", VERIFIED);
+        let _verified = registry.register(Arc::clone(&verified));
+
+        let offline = of_kind(2, uuid, "Steve", OFFLINE);
+        let offline_guard = registry.register(Arc::clone(&offline));
+
+        assert!(!verified.shutdown_token().is_cancelled());
+        assert!(verified.is_connected());
+        assert_eq!(registry.count(), 2);
+        assert_eq!(registry.find_by_uuid(&uuid).unwrap().id().as_u64(), 1);
+        assert_eq!(found_id(&registry, "Steve"), Some(1));
+        assert_eq!(ids(&registry.find_all_by_uuid(&uuid)), [1, 2]);
+        assert_eq!(
+            registry.find_by_id(PlayerId::new(2)).unwrap().id(),
+            offline.id()
+        );
+
+        drop(offline_guard);
+
+        assert_eq!(registry.count(), 1);
+        assert_eq!(ids(&registry.find_all_by_uuid(&uuid)), [1]);
+        assert!(verified.is_connected());
+    }
+
+    #[test]
+    fn registering_a_verified_session_replaces_lower_ones_but_not_forwarded() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let uuid = Uuid::new_v4();
+        let forwarded = of_kind(1, uuid, "Steve", FORWARDED);
+        let offline = of_kind(2, uuid, "Steve", OFFLINE);
+        let forwarded_guard = registry.register(Arc::clone(&forwarded));
+        let offline_guard = registry.register(Arc::clone(&offline));
+
+        let verified_guard = registry.register(of_kind(3, uuid, "Steve", VERIFIED));
+
+        assert!(offline.shutdown_token().is_cancelled());
+        assert!(!offline.is_connected());
+        assert!(!forwarded.shutdown_token().is_cancelled());
+        assert_eq!(ids(&registry.find_all_by_uuid(&uuid)), [1, 3]);
+
+        drop(offline_guard);
+        assert_eq!(registry.count(), 2);
+
+        drop(forwarded_guard);
+        drop(verified_guard);
+        assert!(is_empty(&registry));
+    }
+
+    #[test]
+    fn lookups_return_the_best_ranked_session() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let forwarded_first = registry.register(of_kind(1, Uuid::new_v4(), "Steve", FORWARDED));
+        let _forwarded_second = registry.register(of_kind(2, Uuid::new_v4(), "Steve", FORWARDED));
+        assert_eq!(found_id(&registry, "Steve"), Some(1));
+
+        let _offline = registry.register(of_kind(3, Uuid::new_v4(), "steve", OFFLINE));
+        assert_eq!(found_id(&registry, "Steve"), Some(3));
+
+        let _verified = registry.register(of_kind(4, Uuid::new_v4(), "Steve", VERIFIED));
+        assert_eq!(found_id(&registry, "steve"), Some(4));
+
+        drop(forwarded_first);
+        assert_eq!(
+            registry
+                .find_all_by_username("STEVE")
+                .iter()
+                .map(|s| s.id().as_u64())
+                .collect::<Vec<_>>(),
+            [4, 3, 2]
+        );
     }
 
     #[test]
