@@ -3,6 +3,9 @@
 //! Handles RSA key exchange, SHA-1 server hash computation,
 //! and session verification against `sessionserver.mojang.com`.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use num_bigint::BigInt;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
@@ -11,6 +14,7 @@ use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
 use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
+use tokio::sync::Semaphore;
 
 use infrarust_protocol::packets::login::{
     CEncryptionRequest, EncryptionProof, ProfileKey, SEncryptionResponse,
@@ -24,15 +28,44 @@ use crate::session::client_bridge::ClientBridge;
 
 const DEFAULT_SESSION_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
 
+/// Bounds on what authentications may hold, individually and together.
+#[derive(Debug, Clone)]
+pub struct AuthLimits {
+    /// Deadline for one whole authentication, client wait included.
+    pub authenticate_timeout: Duration,
+    pub connect_timeout: Duration,
+    /// Deadline for one session server request, response body included.
+    pub request_timeout: Duration,
+    /// Concurrent RSA operations on the blocking pool.
+    pub rsa_permits: usize,
+    /// Concurrent session server requests.
+    pub session_permits: usize,
+}
+
+impl Default for AuthLimits {
+    fn default() -> Self {
+        Self {
+            authenticate_timeout: Duration::from_secs(30),
+            connect_timeout: Duration::from_secs(5),
+            request_timeout: Duration::from_secs(10),
+            rsa_permits: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            session_permits: 64,
+        }
+    }
+}
+
 /// Handles Mojang authentication for the `ClientOnly` proxy mode.
 ///
 /// A single instance is shared across all connections (via `Arc`).
 /// The RSA key and HTTP client are reused for every authentication.
 pub struct MojangAuth {
-    rsa_key: RsaPrivateKey,
+    rsa_key: Arc<RsaPrivateKey>,
     public_key_der: Vec<u8>,
     http_client: reqwest::Client,
     session_url: String,
+    authenticate_timeout: Duration,
+    rsa_permits: Arc<Semaphore>,
+    session_permits: Semaphore,
 }
 
 impl MojangAuth {
@@ -41,7 +74,7 @@ impl MojangAuth {
     /// # Errors
     /// Returns `CoreError::Auth` if RSA key generation or DER encoding fails.
     pub fn new() -> Result<Self, CoreError> {
-        Self::build(DEFAULT_SESSION_URL.to_string())
+        Self::with_limits(DEFAULT_SESSION_URL.to_string(), AuthLimits::default())
     }
 
     /// Creates a `MojangAuth` with a custom session server URL (for testing).
@@ -49,10 +82,15 @@ impl MojangAuth {
     /// # Errors
     /// Returns `CoreError::Auth` if RSA key generation or DER encoding fails.
     pub fn with_session_url(session_url: String) -> Result<Self, CoreError> {
-        Self::build(session_url)
+        Self::with_limits(session_url, AuthLimits::default())
     }
 
-    fn build(session_url: String) -> Result<Self, CoreError> {
+    /// Creates a `MojangAuth` with a custom session server URL and limits.
+    ///
+    /// # Errors
+    /// Returns `CoreError::Auth` if RSA key generation, DER encoding or the
+    /// HTTP client setup fails.
+    pub fn with_limits(session_url: String, limits: AuthLimits) -> Result<Self, CoreError> {
         let mut rng = OsRng;
         let rsa_key = RsaPrivateKey::new(&mut rng, 1024)
             .map_err(|e| CoreError::Auth(format!("RSA key generation failed: {e}")))?;
@@ -63,13 +101,20 @@ impl MojangAuth {
             .map_err(|e| CoreError::Auth(format!("DER encoding failed: {e}")))?
             .to_vec();
 
-        let http_client = reqwest::Client::new();
+        let http_client = reqwest::Client::builder()
+            .connect_timeout(limits.connect_timeout)
+            .timeout(limits.request_timeout)
+            .build()
+            .map_err(|e| CoreError::Auth(format!("HTTP client setup failed: {e}")))?;
 
         Ok(Self {
-            rsa_key,
+            rsa_key: Arc::new(rsa_key),
             public_key_der,
             http_client,
             session_url,
+            authenticate_timeout: limits.authenticate_timeout,
+            rsa_permits: Arc::new(Semaphore::new(limits.rsa_permits)),
+            session_permits: Semaphore::new(limits.session_permits),
         })
     }
 
@@ -84,12 +129,28 @@ impl MojangAuth {
     ///
     /// # Errors
     /// Returns `CoreError::Auth` on RSA decrypt failure, a failed freshness
-    /// check, or session server verification failure.
+    /// check, or session server verification failure, and `CoreError::Timeout`
+    /// when the whole flow outlasts `AuthLimits::authenticate_timeout`.
     ///
     /// # Panics
     /// Panics if the shared secret is validated as 16 bytes but the
     /// `try_into` conversion still fails (should be unreachable).
     pub async fn authenticate(
+        &self,
+        client: &mut ClientBridge,
+        username: &str,
+        profile_key: Option<&ProfileKey>,
+        registry: &PacketRegistry,
+    ) -> Result<GameProfile, CoreError> {
+        tokio::time::timeout(
+            self.authenticate_timeout,
+            self.exchange_keys_and_verify(client, username, profile_key, registry),
+        )
+        .await
+        .map_err(|_| CoreError::Timeout("online authentication timed out".to_string()))?
+    }
+
+    async fn exchange_keys_and_verify(
         &self,
         client: &mut ClientBridge,
         username: &str,
@@ -141,43 +202,12 @@ impl MojangAuth {
             }
         };
 
-        // Decrypt shared secret
-        let shared_secret = self
-            .rsa_key
-            .decrypt(Pkcs1v15Encrypt, &enc_response.shared_secret)
-            .map_err(|e| CoreError::Auth(format!("shared secret decrypt failed: {e}")))?;
-
-        let key: [u8; 16] = shared_secret.as_slice().try_into().map_err(|_| {
-            CoreError::Auth(format!(
-                "shared secret must be 16 bytes, got {}",
-                shared_secret.len()
-            ))
-        })?;
-
-        match &enc_response.proof {
-            EncryptionProof::VerifyToken(token) => {
-                let decrypted_token = self
-                    .rsa_key
-                    .decrypt(Pkcs1v15Encrypt, token)
-                    .map_err(|e| CoreError::Auth(format!("verify token decrypt failed: {e}")))?;
-
-                if decrypted_token != verify_token {
-                    return Err(CoreError::Auth("verify token mismatch".to_string()));
-                }
-            }
-            EncryptionProof::Signature { salt, signature } => {
-                let key = profile_key.ok_or_else(|| {
-                    CoreError::Auth(
-                        "signed encryption response but no profile key in login start".to_string(),
-                    )
-                })?;
-
-                verify_challenge_signature(&key.public_key, &verify_token, *salt, signature)?;
-            }
-        }
+        let key = self
+            .open_encryption_response(enc_response, profile_key, verify_token)
+            .await?;
 
         // Compute server hash
-        let server_hash = minecraft_server_hash("", &shared_secret, &self.public_key_der);
+        let server_hash = minecraft_server_hash("", &key, &self.public_key_der);
 
         // Call Mojang session server
         let profile = self.verify_session(username, &server_hash).await?;
@@ -188,12 +218,44 @@ impl MojangAuth {
         Ok(profile)
     }
 
+    async fn open_encryption_response(
+        &self,
+        response: SEncryptionResponse,
+        profile_key: Option<&ProfileKey>,
+        verify_token: [u8; 4],
+    ) -> Result<[u8; 16], CoreError> {
+        let permit = Arc::clone(&self.rsa_permits)
+            .acquire_owned()
+            .await
+            .map_err(|e| CoreError::Auth(format!("RSA permit unavailable: {e}")))?;
+        let rsa_key = Arc::clone(&self.rsa_key);
+        let profile_public_key = profile_key.map(|key| key.public_key.clone());
+
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            decrypt_and_check_freshness(
+                &rsa_key,
+                &response,
+                profile_public_key.as_deref(),
+                &verify_token,
+            )
+        })
+        .await
+        .map_err(|e| CoreError::Auth(format!("RSA task failed: {e}")))?
+    }
+
     /// Verifies the player session against the Mojang session server.
     async fn verify_session(
         &self,
         username: &str,
         server_hash: &str,
     ) -> Result<GameProfile, CoreError> {
+        let _permit = self
+            .session_permits
+            .acquire()
+            .await
+            .map_err(|e| CoreError::Auth(format!("session server permit unavailable: {e}")))?;
+
         let response = self
             .http_client
             .get(&self.session_url)
@@ -216,6 +278,47 @@ impl MojangAuth {
 
         Ok(profile)
     }
+}
+
+fn decrypt_and_check_freshness(
+    rsa_key: &RsaPrivateKey,
+    response: &SEncryptionResponse,
+    profile_public_key: Option<&[u8]>,
+    verify_token: &[u8; 4],
+) -> Result<[u8; 16], CoreError> {
+    let shared_secret = rsa_key
+        .decrypt(Pkcs1v15Encrypt, &response.shared_secret)
+        .map_err(|e| CoreError::Auth(format!("shared secret decrypt failed: {e}")))?;
+
+    let key: [u8; 16] = shared_secret.as_slice().try_into().map_err(|_| {
+        CoreError::Auth(format!(
+            "shared secret must be 16 bytes, got {}",
+            shared_secret.len()
+        ))
+    })?;
+
+    match &response.proof {
+        EncryptionProof::VerifyToken(token) => {
+            let decrypted_token = rsa_key
+                .decrypt(Pkcs1v15Encrypt, token)
+                .map_err(|e| CoreError::Auth(format!("verify token decrypt failed: {e}")))?;
+
+            if decrypted_token != verify_token {
+                return Err(CoreError::Auth("verify token mismatch".to_string()));
+            }
+        }
+        EncryptionProof::Signature { salt, signature } => {
+            let public_key = profile_public_key.ok_or_else(|| {
+                CoreError::Auth(
+                    "signed encryption response but no profile key in login start".to_string(),
+                )
+            })?;
+
+            verify_challenge_signature(public_key, verify_token, *salt, signature)?;
+        }
+    }
+
+    Ok(key)
 }
 
 fn verify_challenge_signature(
