@@ -152,6 +152,19 @@ pub(crate) async fn perform_switch(
             })?
     };
 
+    if effective_target != *current_server
+        && !validation::admits_session(session.kind(), &server_config)
+    {
+        tracing::info!(
+            username = %session.game_profile().username,
+            target = %effective_target,
+            "refusing to switch an unverified player to a server that requires verification"
+        );
+        return Ok(SwitchResult::Denied(Component::text(
+            validation::UNVERIFIED_REFUSED,
+        )));
+    }
+
     if let Err(unavailable) = wake(services, &server_config, session.shutdown_token()).await {
         return Ok(SwitchResult::Failed(
             unavailable.into_kick(effective_target),

@@ -4,6 +4,14 @@
 
 use infrarust_config::ServerConfig;
 
+use crate::player::SessionKind;
+
+pub(crate) const UNVERIFIED_REFUSED: &str = "This server requires a verified Minecraft account";
+
+pub(crate) const fn admits_session(kind: SessionKind, target: &ServerConfig) -> bool {
+    kind.online_mode() || !target.proxy_mode.requires_verified_player()
+}
+
 /// Error when a switch is not allowed due to network constraints.
 #[derive(Debug, thiserror::Error)]
 pub enum SwitchValidationError {

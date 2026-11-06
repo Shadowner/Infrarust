@@ -25,6 +25,7 @@ use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
+use crate::session::server_switch::validation;
 use crate::session::wake::wake;
 
 pub(crate) enum ConnectionMode {
@@ -201,6 +202,17 @@ pub(crate) async fn resolve_initial_mode(
             io.client.disconnect(&reason, ctx.registry()).await.ok();
             return Ok(kicked(reason));
         };
+        if !validation::admits_session(player.kind(), &server_config) {
+            tracing::info!(
+                username = %player.game_profile().username,
+                from = %routing.config_id,
+                to = %target_server_id,
+                "refusing to redirect an unverified player to a server that requires verification"
+            );
+            let reason = Component::text(validation::UNVERIFIED_REFUSED);
+            io.client.disconnect(&reason, ctx.registry()).await.ok();
+            return Ok(kicked(reason));
+        }
         Some(RoutingData {
             server_config,
             config_id: target_server_id.to_string(),

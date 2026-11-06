@@ -32,4 +32,11 @@ impl ProxyMode {
     pub const fn is_forwarding(&self) -> bool {
         matches!(self, Self::Passthrough | Self::ZeroCopy | Self::ServerOnly)
     }
+
+    pub const fn requires_verified_player(&self) -> bool {
+        match self {
+            Self::ClientOnly | Self::Full => true,
+            Self::Passthrough | Self::ZeroCopy | Self::Offline | Self::ServerOnly => false,
+        }
+    }
 }
