@@ -497,7 +497,11 @@ mod tests {
             ServerState::Stopping,
         ] {
             let legacy = handler.state_response(&cfg, state, "lobby");
-            let modern = crate::status::StatusHandler::build_state_motd(&cfg, state);
+            let modern = crate::status::StatusHandler::build_state_motd(
+                &cfg,
+                state,
+                ProtocolVersion::CURRENT,
+            );
             assert_eq!(modern.players.max, legacy.max_players, "{state:?}");
             assert_eq!(modern.players.max, 42, "{state:?}");
             assert_eq!(modern.description["text"], legacy.motd, "{state:?}");
@@ -507,10 +511,15 @@ mod tests {
             text: "zzz".into(),
             favicon: None,
             version_name: None,
+            version_protocol: None,
             max_players: Some(7),
         });
         let legacy = handler.state_response(&cfg, ServerState::Sleeping, "lobby");
-        let modern = crate::status::StatusHandler::build_state_motd(&cfg, ServerState::Sleeping);
+        let modern = crate::status::StatusHandler::build_state_motd(
+            &cfg,
+            ServerState::Sleeping,
+            ProtocolVersion::CURRENT,
+        );
         assert_eq!((modern.players.max, legacy.max_players), (7, 7));
         assert_eq!(modern.description["text"], "zzz");
         assert_eq!(legacy.motd, "zzz");

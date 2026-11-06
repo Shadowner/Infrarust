@@ -1693,6 +1693,7 @@ ENC play clientbound   4 CChunkData 0x21
 ENC play clientbound   4 CDisconnect 0x40
 ENC play clientbound   4 CJoinGame 0x01
 ENC play clientbound   4 CKeepAlive 0x00
+ENC play clientbound   4 CPlayerAbilities 0x39
 ENC play clientbound   4 CPluginMessage 0x3F
 ENC play clientbound   4 CRespawn 0x07
 ENC play clientbound   4 CSetContainerContent 0x30
@@ -1703,6 +1704,7 @@ ENC play clientbound   5 CChunkData 0x21
 ENC play clientbound   5 CDisconnect 0x40
 ENC play clientbound   5 CJoinGame 0x01
 ENC play clientbound   5 CKeepAlive 0x00
+ENC play clientbound   5 CPlayerAbilities 0x39
 ENC play clientbound   5 CPluginMessage 0x3F
 ENC play clientbound   5 CRespawn 0x07
 ENC play clientbound   5 CSetContainerContent 0x30
@@ -1713,6 +1715,7 @@ ENC play clientbound  47 CChunkData 0x21
 ENC play clientbound  47 CDisconnect 0x40
 ENC play clientbound  47 CJoinGame 0x01
 ENC play clientbound  47 CKeepAlive 0x00
+ENC play clientbound  47 CPlayerAbilities 0x39
 ENC play clientbound  47 CPluginMessage 0x3F
 ENC play clientbound  47 CResourcePack 0x48
 ENC play clientbound  47 CRespawn 0x07
@@ -1728,6 +1731,7 @@ ENC play clientbound 107 CDisconnect 0x1A
 ENC play clientbound 107 CGameEvent 0x1E
 ENC play clientbound 107 CJoinGame 0x23
 ENC play clientbound 107 CKeepAlive 0x1F
+ENC play clientbound 107 CPlayerAbilities 0x2B
 ENC play clientbound 107 CPluginMessage 0x18
 ENC play clientbound 107 CResourcePack 0x32
 ENC play clientbound 107 CRespawn 0x33
@@ -1743,6 +1747,7 @@ ENC play clientbound 109 CDisconnect 0x1A
 ENC play clientbound 109 CGameEvent 0x1E
 ENC play clientbound 109 CJoinGame 0x23
 ENC play clientbound 109 CKeepAlive 0x1F
+ENC play clientbound 109 CPlayerAbilities 0x2B
 ENC play clientbound 109 CPluginMessage 0x18
 ENC play clientbound 109 CResourcePack 0x32
 ENC play clientbound 109 CRespawn 0x33
@@ -1758,6 +1763,7 @@ ENC play clientbound 110 CDisconnect 0x1A
 ENC play clientbound 110 CGameEvent 0x1E
 ENC play clientbound 110 CJoinGame 0x23
 ENC play clientbound 110 CKeepAlive 0x1F
+ENC play clientbound 110 CPlayerAbilities 0x2B
 ENC play clientbound 110 CPluginMessage 0x18
 ENC play clientbound 110 CResourcePack 0x32
 ENC play clientbound 110 CRespawn 0x33
@@ -1773,6 +1779,7 @@ ENC play clientbound 335 CDisconnect 0x1A
 ENC play clientbound 335 CGameEvent 0x1E
 ENC play clientbound 335 CJoinGame 0x23
 ENC play clientbound 335 CKeepAlive 0x1F
+ENC play clientbound 335 CPlayerAbilities 0x2B
 ENC play clientbound 335 CPluginMessage 0x18
 ENC play clientbound 335 CResourcePack 0x33
 ENC play clientbound 335 CRespawn 0x34
@@ -1788,6 +1795,7 @@ ENC play clientbound 338 CDisconnect 0x1A
 ENC play clientbound 338 CGameEvent 0x1E
 ENC play clientbound 338 CJoinGame 0x23
 ENC play clientbound 338 CKeepAlive 0x1F
+ENC play clientbound 338 CPlayerAbilities 0x2C
 ENC play clientbound 338 CPluginMessage 0x18
 ENC play clientbound 338 CResourcePack 0x34
 ENC play clientbound 338 CRespawn 0x35
@@ -1803,6 +1811,7 @@ ENC play clientbound 340 CDisconnect 0x1A
 ENC play clientbound 340 CGameEvent 0x1E
 ENC play clientbound 340 CJoinGame 0x23
 ENC play clientbound 340 CKeepAlive 0x1F
+ENC play clientbound 340 CPlayerAbilities 0x2C
 ENC play clientbound 340 CPluginMessage 0x18
 ENC play clientbound 340 CResourcePack 0x34
 ENC play clientbound 340 CRespawn 0x35
@@ -1819,6 +1828,7 @@ ENC play clientbound 393 CDisconnect 0x1B
 ENC play clientbound 393 CGameEvent 0x20
 ENC play clientbound 393 CJoinGame 0x25
 ENC play clientbound 393 CKeepAlive 0x21
+ENC play clientbound 393 CPlayerAbilities 0x2E
 ENC play clientbound 393 CPluginMessage 0x19
 ENC play clientbound 393 CResourcePack 0x37
 ENC play clientbound 393 CRespawn 0x38
@@ -1836,6 +1846,7 @@ ENC play clientbound 477 CDisconnect 0x1A
 ENC play clientbound 477 CGameEvent 0x1E
 ENC play clientbound 477 CJoinGame 0x25
 ENC play clientbound 477 CKeepAlive 0x20
+ENC play clientbound 477 CPlayerAbilities 0x31
 ENC play clientbound 477 CPluginMessage 0x18
 ENC play clientbound 477 CResourcePack 0x39
 ENC play clientbound 477 CRespawn 0x3A
@@ -1854,6 +1865,7 @@ ENC play clientbound 573 CDisconnect 0x1B
 ENC play clientbound 573 CGameEvent 0x1F
 ENC play clientbound 573 CJoinGame 0x26
 ENC play clientbound 573 CKeepAlive 0x21
+ENC play clientbound 573 CPlayerAbilities 0x32
 ENC play clientbound 573 CPluginMessage 0x19
 ENC play clientbound 573 CResourcePack 0x3A
 ENC play clientbound 573 CRespawn 0x3B
@@ -1872,6 +1884,7 @@ ENC play clientbound 735 CDisconnect 0x1A
 ENC play clientbound 735 CGameEvent 0x1E
 ENC play clientbound 735 CJoinGame 0x25
 ENC play clientbound 735 CKeepAlive 0x20
+ENC play clientbound 735 CPlayerAbilities 0x31
 ENC play clientbound 735 CPluginMessage 0x18
 ENC play clientbound 735 CResourcePack 0x39
 ENC play clientbound 735 CRespawn 0x3A
@@ -1890,6 +1903,7 @@ ENC play clientbound 751 CDisconnect 0x19
 ENC play clientbound 751 CGameEvent 0x1D
 ENC play clientbound 751 CJoinGame 0x24
 ENC play clientbound 751 CKeepAlive 0x1F
+ENC play clientbound 751 CPlayerAbilities 0x30
 ENC play clientbound 751 CPluginMessage 0x17
 ENC play clientbound 751 CResourcePack 0x38
 ENC play clientbound 751 CRespawn 0x39
@@ -1908,6 +1922,7 @@ ENC play clientbound 754 CDisconnect 0x19
 ENC play clientbound 754 CGameEvent 0x1D
 ENC play clientbound 754 CJoinGame 0x24
 ENC play clientbound 754 CKeepAlive 0x1F
+ENC play clientbound 754 CPlayerAbilities 0x30
 ENC play clientbound 754 CPluginMessage 0x17
 ENC play clientbound 754 CResourcePack 0x38
 ENC play clientbound 754 CRespawn 0x39
@@ -1927,6 +1942,7 @@ ENC play clientbound 755 CDisconnect 0x1A
 ENC play clientbound 755 CGameEvent 0x1E
 ENC play clientbound 755 CJoinGame 0x26
 ENC play clientbound 755 CKeepAlive 0x21
+ENC play clientbound 755 CPlayerAbilities 0x32
 ENC play clientbound 755 CPluginMessage 0x18
 ENC play clientbound 755 CResourcePack 0x3C
 ENC play clientbound 755 CRespawn 0x3D
@@ -1948,6 +1964,7 @@ ENC play clientbound 756 CDisconnect 0x1A
 ENC play clientbound 756 CGameEvent 0x1E
 ENC play clientbound 756 CJoinGame 0x26
 ENC play clientbound 756 CKeepAlive 0x21
+ENC play clientbound 756 CPlayerAbilities 0x32
 ENC play clientbound 756 CPluginMessage 0x18
 ENC play clientbound 756 CResourcePack 0x3C
 ENC play clientbound 756 CRespawn 0x3D
@@ -1969,6 +1986,7 @@ ENC play clientbound 757 CDisconnect 0x1A
 ENC play clientbound 757 CGameEvent 0x1E
 ENC play clientbound 757 CJoinGame 0x26
 ENC play clientbound 757 CKeepAlive 0x21
+ENC play clientbound 757 CPlayerAbilities 0x32
 ENC play clientbound 757 CPluginMessage 0x18
 ENC play clientbound 757 CResourcePack 0x3C
 ENC play clientbound 757 CRespawn 0x3D
@@ -1990,6 +2008,7 @@ ENC play clientbound 758 CDisconnect 0x1A
 ENC play clientbound 758 CGameEvent 0x1E
 ENC play clientbound 758 CJoinGame 0x26
 ENC play clientbound 758 CKeepAlive 0x21
+ENC play clientbound 758 CPlayerAbilities 0x32
 ENC play clientbound 758 CPluginMessage 0x18
 ENC play clientbound 758 CResourcePack 0x3C
 ENC play clientbound 758 CRespawn 0x3D
@@ -2010,6 +2029,7 @@ ENC play clientbound 759 CDisconnect 0x17
 ENC play clientbound 759 CGameEvent 0x1B
 ENC play clientbound 759 CJoinGame 0x23
 ENC play clientbound 759 CKeepAlive 0x1E
+ENC play clientbound 759 CPlayerAbilities 0x2F
 ENC play clientbound 759 CPluginMessage 0x15
 ENC play clientbound 759 CResourcePack 0x3A
 ENC play clientbound 759 CRespawn 0x3B
@@ -2031,6 +2051,7 @@ ENC play clientbound 760 CDisconnect 0x19
 ENC play clientbound 760 CGameEvent 0x1D
 ENC play clientbound 760 CJoinGame 0x25
 ENC play clientbound 760 CKeepAlive 0x20
+ENC play clientbound 760 CPlayerAbilities 0x31
 ENC play clientbound 760 CPluginMessage 0x16
 ENC play clientbound 760 CResourcePack 0x3D
 ENC play clientbound 760 CRespawn 0x3E
@@ -2052,6 +2073,7 @@ ENC play clientbound 761 CDisconnect 0x17
 ENC play clientbound 761 CGameEvent 0x1C
 ENC play clientbound 761 CJoinGame 0x24
 ENC play clientbound 761 CKeepAlive 0x1F
+ENC play clientbound 761 CPlayerAbilities 0x30
 ENC play clientbound 761 CPluginMessage 0x15
 ENC play clientbound 761 CResourcePack 0x3C
 ENC play clientbound 761 CRespawn 0x3D
@@ -2073,6 +2095,7 @@ ENC play clientbound 762 CDisconnect 0x1A
 ENC play clientbound 762 CGameEvent 0x1F
 ENC play clientbound 762 CJoinGame 0x28
 ENC play clientbound 762 CKeepAlive 0x23
+ENC play clientbound 762 CPlayerAbilities 0x34
 ENC play clientbound 762 CPluginMessage 0x17
 ENC play clientbound 762 CResourcePack 0x40
 ENC play clientbound 762 CRespawn 0x41
@@ -2094,6 +2117,7 @@ ENC play clientbound 763 CDisconnect 0x1A
 ENC play clientbound 763 CGameEvent 0x1F
 ENC play clientbound 763 CJoinGame 0x28
 ENC play clientbound 763 CKeepAlive 0x23
+ENC play clientbound 763 CPlayerAbilities 0x34
 ENC play clientbound 763 CPluginMessage 0x17
 ENC play clientbound 763 CResourcePack 0x40
 ENC play clientbound 763 CRespawn 0x41
@@ -2117,6 +2141,7 @@ ENC play clientbound 764 CDisconnect 0x1B
 ENC play clientbound 764 CGameEvent 0x20
 ENC play clientbound 764 CJoinGame 0x29
 ENC play clientbound 764 CKeepAlive 0x24
+ENC play clientbound 764 CPlayerAbilities 0x36
 ENC play clientbound 764 CPluginMessage 0x18
 ENC play clientbound 764 CResourcePack 0x42
 ENC play clientbound 764 CRespawn 0x43
@@ -2141,6 +2166,7 @@ ENC play clientbound 765 CDisconnect 0x1B
 ENC play clientbound 765 CGameEvent 0x20
 ENC play clientbound 765 CJoinGame 0x29
 ENC play clientbound 765 CKeepAlive 0x24
+ENC play clientbound 765 CPlayerAbilities 0x36
 ENC play clientbound 765 CPluginMessage 0x18
 ENC play clientbound 765 CResourcePackPop 0x43
 ENC play clientbound 765 CResourcePackPush 0x44
@@ -2167,6 +2193,7 @@ ENC play clientbound 766 CDisconnect 0x1D
 ENC play clientbound 766 CGameEvent 0x22
 ENC play clientbound 766 CJoinGame 0x2B
 ENC play clientbound 766 CKeepAlive 0x26
+ENC play clientbound 766 CPlayerAbilities 0x38
 ENC play clientbound 766 CPluginMessage 0x19
 ENC play clientbound 766 CResourcePackPop 0x45
 ENC play clientbound 766 CResourcePackPush 0x46
@@ -2195,6 +2222,7 @@ ENC play clientbound 767 CDisconnect 0x1D
 ENC play clientbound 767 CGameEvent 0x22
 ENC play clientbound 767 CJoinGame 0x2B
 ENC play clientbound 767 CKeepAlive 0x26
+ENC play clientbound 767 CPlayerAbilities 0x38
 ENC play clientbound 767 CPluginMessage 0x19
 ENC play clientbound 767 CResourcePackPop 0x45
 ENC play clientbound 767 CResourcePackPush 0x46
@@ -2223,6 +2251,7 @@ ENC play clientbound 768 CDisconnect 0x1D
 ENC play clientbound 768 CGameEvent 0x23
 ENC play clientbound 768 CJoinGame 0x2C
 ENC play clientbound 768 CKeepAlive 0x27
+ENC play clientbound 768 CPlayerAbilities 0x3A
 ENC play clientbound 768 CPluginMessage 0x19
 ENC play clientbound 768 CResourcePackPop 0x4A
 ENC play clientbound 768 CResourcePackPush 0x4B
@@ -2251,6 +2280,7 @@ ENC play clientbound 769 CDisconnect 0x1D
 ENC play clientbound 769 CGameEvent 0x23
 ENC play clientbound 769 CJoinGame 0x2C
 ENC play clientbound 769 CKeepAlive 0x27
+ENC play clientbound 769 CPlayerAbilities 0x3A
 ENC play clientbound 769 CPluginMessage 0x19
 ENC play clientbound 769 CResourcePackPop 0x4A
 ENC play clientbound 769 CResourcePackPush 0x4B
@@ -2279,6 +2309,7 @@ ENC play clientbound 770 CDisconnect 0x1C
 ENC play clientbound 770 CGameEvent 0x22
 ENC play clientbound 770 CJoinGame 0x2B
 ENC play clientbound 770 CKeepAlive 0x26
+ENC play clientbound 770 CPlayerAbilities 0x39
 ENC play clientbound 770 CPluginMessage 0x18
 ENC play clientbound 770 CResourcePackPop 0x49
 ENC play clientbound 770 CResourcePackPush 0x4A
@@ -2307,6 +2338,7 @@ ENC play clientbound 771 CDisconnect 0x1C
 ENC play clientbound 771 CGameEvent 0x22
 ENC play clientbound 771 CJoinGame 0x2B
 ENC play clientbound 771 CKeepAlive 0x26
+ENC play clientbound 771 CPlayerAbilities 0x39
 ENC play clientbound 771 CPluginMessage 0x18
 ENC play clientbound 771 CResourcePackPop 0x49
 ENC play clientbound 771 CResourcePackPush 0x4A
@@ -2335,6 +2367,7 @@ ENC play clientbound 772 CDisconnect 0x1C
 ENC play clientbound 772 CGameEvent 0x22
 ENC play clientbound 772 CJoinGame 0x2B
 ENC play clientbound 772 CKeepAlive 0x26
+ENC play clientbound 772 CPlayerAbilities 0x39
 ENC play clientbound 772 CPluginMessage 0x18
 ENC play clientbound 772 CResourcePackPop 0x49
 ENC play clientbound 772 CResourcePackPush 0x4A
@@ -2363,6 +2396,7 @@ ENC play clientbound 773 CDisconnect 0x20
 ENC play clientbound 773 CGameEvent 0x26
 ENC play clientbound 773 CJoinGame 0x30
 ENC play clientbound 773 CKeepAlive 0x2B
+ENC play clientbound 773 CPlayerAbilities 0x3E
 ENC play clientbound 773 CPluginMessage 0x18
 ENC play clientbound 773 CResourcePackPop 0x4E
 ENC play clientbound 773 CResourcePackPush 0x4F
@@ -2391,6 +2425,7 @@ ENC play clientbound 774 CDisconnect 0x20
 ENC play clientbound 774 CGameEvent 0x26
 ENC play clientbound 774 CJoinGame 0x30
 ENC play clientbound 774 CKeepAlive 0x2B
+ENC play clientbound 774 CPlayerAbilities 0x3E
 ENC play clientbound 774 CPluginMessage 0x18
 ENC play clientbound 774 CResourcePackPop 0x4E
 ENC play clientbound 774 CResourcePackPush 0x4F
@@ -2419,6 +2454,7 @@ ENC play clientbound 775 CDisconnect 0x20
 ENC play clientbound 775 CGameEvent 0x26
 ENC play clientbound 775 CJoinGame 0x31
 ENC play clientbound 775 CKeepAlive 0x2C
+ENC play clientbound 775 CPlayerAbilities 0x40
 ENC play clientbound 775 CPluginMessage 0x18
 ENC play clientbound 775 CResourcePackPop 0x50
 ENC play clientbound 775 CResourcePackPush 0x51
@@ -2447,6 +2483,7 @@ ENC play clientbound 776 CDisconnect 0x20
 ENC play clientbound 776 CGameEvent 0x26
 ENC play clientbound 776 CJoinGame 0x31
 ENC play clientbound 776 CKeepAlive 0x2C
+ENC play clientbound 776 CPlayerAbilities 0x40
 ENC play clientbound 776 CPluginMessage 0x18
 ENC play clientbound 776 CResourcePackPop 0x50
 ENC play clientbound 776 CResourcePackPush 0x51
@@ -2475,6 +2512,7 @@ ENC play clientbound 777 CDisconnect 0x20
 ENC play clientbound 777 CGameEvent 0x27
 ENC play clientbound 777 CJoinGame 0x32
 ENC play clientbound 777 CKeepAlive 0x2D
+ENC play clientbound 777 CPlayerAbilities 0x41
 ENC play clientbound 777 CPluginMessage 0x18
 ENC play clientbound 777 CResourcePackPop 0x51
 ENC play clientbound 777 CResourcePackPush 0x52

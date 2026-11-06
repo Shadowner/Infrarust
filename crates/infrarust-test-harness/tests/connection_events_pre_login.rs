@@ -378,7 +378,13 @@ async fn every_refused_connection_is_reported_once_in_order() {
     let _alice_conn = backend.next_connection(T).await.unwrap();
 
     closed_without_answer(client("203.0.113.66", 50002).login("Eve").await);
-    closed_without_answer(client("198.51.100.1", 50003).login("Alice").await);
+    let limited = client("198.51.100.1", 50003)
+        .login("Alice")
+        .await
+        .unwrap()
+        .disconnected()
+        .unwrap();
+    assert_eq!(limited.text, "Rate limit exceeded");
     closed_without_answer(
         FakeClient::new(proxy.addr(), VERSION)
             .domain("nowhere.test")

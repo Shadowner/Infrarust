@@ -38,6 +38,8 @@ pub struct MotdConfig {
     pub crashed: Option<MotdEntry>,
     pub stopping: Option<MotdEntry>,
     pub unreachable: Option<MotdEntry>,
+    #[serde(default, skip_serializing)]
+    pub offline: Option<MotdEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +53,8 @@ pub struct MotdEntry {
     /// Version displayed in the client.
     #[serde(default)]
     pub version_name: Option<String>,
+    #[serde(default)]
+    pub version_protocol: Option<i32>,
     /// Maximum player count displayed.
     #[serde(default)]
     pub max_players: Option<u32>,

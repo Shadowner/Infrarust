@@ -1072,3 +1072,29 @@ fn test_proxy_validation_returns_its_warnings() {
     let quiet = proxy_from_toml("", dir.path());
     assert!(validate_proxy_config(&quiet).unwrap().is_empty());
 }
+
+#[test]
+fn test_the_removed_offline_motd_still_loads_with_a_warning() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["10.0.0.1:25565"]
+
+        [motd.offline]
+        text = "Offline"
+    "#,
+    );
+    let warnings = validate_server_config(&config).unwrap();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].starts_with("[motd.offline]"), "{warnings:?}");
+    assert!(!toml::to_string(&config).unwrap().contains("offline"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = proxy_from_toml("[default_motd.offline]\ntext = \"Offline\"\n", dir.path());
+    let warnings = validate_proxy_config(&proxy).unwrap();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("[default_motd.offline]"),
+        "{warnings:?}"
+    );
+}

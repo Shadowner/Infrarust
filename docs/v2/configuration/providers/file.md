@@ -114,13 +114,14 @@ text = "§eSurvival §7| §fStarting..."
 | `read` | duration | `"30s"` |
 | `write` | duration | `"30s"` |
 
-`[motd.<state>]` configures the MOTD for each server state (`online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`):
+`[motd.<state>]` configures the MOTD for each server state (`online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`):
 
 | Field | Type | Default |
 |-------|------|---------|
 | `text` | string | required |
 | `favicon` | string | none |
 | `version_name` | string | none |
+| `version_protocol` | integer | client's protocol |
 | `max_players` | integer | none |
 
 `[server_manager]` configures automatic server start/stop. See [Server Manager](../servers.md) for details.

@@ -223,6 +223,7 @@ fn convert_v1_motd_entry(entry: &V1MotdEntry) -> Option<MotdEntry> {
         text,
         favicon: entry.favicon.clone(),
         version_name: entry.version_name.clone(),
+        version_protocol: entry.protocol_version,
         max_players: entry.max_players,
     })
 }
@@ -282,12 +283,9 @@ fn convert_motds(
     }
 
     let has_dropped_fields = |entry: &Option<V1MotdEntry>| -> bool {
-        entry.as_ref().is_some_and(|e| {
-            e.enabled
-                && (e.protocol_version.is_some()
-                    || e.online_players.is_some()
-                    || !e.samples.is_empty())
-        })
+        entry
+            .as_ref()
+            .is_some_and(|e| e.enabled && (e.online_players.is_some() || !e.samples.is_empty()))
     };
 
     let all_entries = [
@@ -306,7 +304,9 @@ fn convert_motds(
         warnings.push(MigrationWarning {
             severity: MigrationSeverity::Info,
             file: filename.to_string(),
-            message: "MOTD fields 'protocol_version', 'online_players', 'samples' are not supported in V2 and were dropped".to_string(),
+            message:
+                "MOTD fields 'online_players', 'samples' are not supported in V2 and were dropped"
+                    .to_string(),
         });
     }
 
@@ -317,6 +317,7 @@ fn convert_motds(
         crashed,
         stopping,
         unreachable,
+        offline: None,
     }
 }
 
@@ -697,6 +698,7 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
                     text,
                     favicon: e.favicon.clone(),
                     version_name: e.version_name.clone(),
+                    version_protocol: e.protocol_version,
                     max_players: e.max_players,
                 }),
                 ..MotdConfig::default()
@@ -951,6 +953,44 @@ mod tests {
         });
         let result = convert_v1_to_v2(&v1, "test.yaml");
         assert!(result.config.motd.online.is_none());
+    }
+
+    #[test]
+    fn test_motd_protocol_version_is_migrated() {
+        let mut v1 = minimal_v1();
+        v1.motds = Some(V1Motds {
+            online: Some(V1MotdEntry {
+                enabled: true,
+                text: Some("Online".to_string()),
+                version_name: None,
+                max_players: None,
+                online_players: None,
+                protocol_version: Some(47),
+                favicon: None,
+                samples: vec![],
+            }),
+            offline: None,
+            unreachable: None,
+            starting: None,
+            stopping: None,
+            shutting_down: None,
+            crashed: None,
+            unknown: None,
+            unable_status: None,
+        });
+        let result = convert_v1_to_v2(&v1, "test.yaml");
+        assert_eq!(
+            result.config.motd.online.unwrap().version_protocol,
+            Some(47)
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .all(|w| !w.message.contains("were dropped")),
+            "{:?}",
+            result.warnings
+        );
     }
 
     #[test]

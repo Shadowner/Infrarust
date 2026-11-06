@@ -132,19 +132,17 @@ impl ProxyServer {
                 return Ok(());
             }
             MiddlewareResult::Reject(msg) => {
-                let is_status = ctx
-                    .extensions
-                    .get::<HandshakeData>()
-                    .is_some_and(|h| h.intent == ConnectionIntent::Status);
-                let answered = is_status
-                    && ctx.extensions.contains::<UnknownDomain>()
-                    && self.unknown_domain_behavior != UnknownDomainBehavior::Drop;
-                if !answered {
+                let intent = ctx.extensions.get::<HandshakeData>().map(|h| h.intent);
+                let unknown_domain = ctx.extensions.contains::<UnknownDomain>();
+                let dropped =
+                    unknown_domain && self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
+                if dropped || !unknown_domain || intent != Some(ConnectionIntent::Status) {
                     admission::reject_refused(&self.services.event_bus, &ctx);
-                    if self.unknown_domain_behavior == UnknownDomainBehavior::Drop {
-                        tracing::debug!("dropping connection: {msg}");
-                    } else if !is_status {
-                        self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+                    match intent {
+                        Some(ConnectionIntent::Login | ConnectionIntent::Transfer) if !dropped => {
+                            self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+                        }
+                        _ => tracing::debug!("closing rejected connection: {msg}"),
                     }
                     return Ok(());
                 }

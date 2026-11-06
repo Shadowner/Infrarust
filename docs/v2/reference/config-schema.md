@@ -594,13 +594,14 @@ Each mode has its own page under [Proxy modes](../configuration/proxy-modes/) wi
 
 MOTD entries for each server state. Each sub-table is optional.
 
-Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
+Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`. An `offline` entry from older configs still loads, but it is ignored and logs a warning.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `text` | string | **required** | MOTD text. Supports Minecraft `§` formatting codes |
 | `favicon` | string | none | Path to a PNG file, a base64-encoded PNG, or a URL |
 | `version_name` | string | none | Version string shown in the client server list |
+| `version_protocol` | integer | client's protocol | Protocol number shown in the client server list. On `online`, it replaces the backend's protocol |
 | `max_players` | integer | none | Max player count shown in the server list |
 
 ```toml

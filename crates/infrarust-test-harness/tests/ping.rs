@@ -57,6 +57,7 @@ async fn an_unknown_domain_is_answered_with_the_default_motd(version: ProtocolVe
 
     assert_eq!(json_text(&status.json["description"]), DEFAULT_MOTD);
     assert_eq!(status.json["players"]["max"], json!(42));
+    assert_eq!(status.json["version"]["protocol"], json!(version.0));
     let pings = recorder.of(EventKind::ProxyPing);
     assert_eq!(pings.len(), 1, "{pings:?}");
     assert_eq!(pings[0].description(), DEFAULT_MOTD);
@@ -101,6 +102,92 @@ async fn a_ping_pipelined_with_the_status_request_is_answered(version: ProtocolV
 }
 
 version_matrix!(a_ping_pipelined_with_the_status_request_is_answered; p47 = 47, p764 = 764, p777 = 777);
+
+fn motd_entry(text: &str, version_protocol: Option<i64>) -> Value {
+    let mut entry = Table::from_iter([("text".to_string(), Value::String(text.into()))]);
+    if let Some(protocol) = version_protocol {
+        entry.insert("version_protocol".into(), Value::Integer(protocol));
+    }
+    Value::Table(entry)
+}
+
+async fn a_proxy_built_motd_shows_the_client_protocol(version: ProtocolVersion) {
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").unreachable())
+        .start()
+        .await
+        .unwrap();
+
+    let status = proxy.client(version).status().await.unwrap();
+
+    assert_eq!(status.json["version"]["protocol"], json!(version.0));
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_proxy_built_motd_shows_the_client_protocol; p47 = 47, p764 = 764, p777 = 777);
+
+#[tokio::test]
+async fn a_configured_version_protocol_replaces_the_client_protocol() {
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").unreachable().patch(|table| {
+            table.insert(
+                "motd".into(),
+                Value::Table(Table::from_iter([(
+                    "unreachable".to_string(),
+                    motd_entry("Down", Some(47)),
+                )])),
+            );
+        }))
+        .start()
+        .await
+        .unwrap();
+
+    let status = proxy.client(ProtocolVersion::V1_21).status().await.unwrap();
+
+    assert_eq!(json_text(&status.json["description"]), "Down");
+    assert_eq!(status.json["version"]["protocol"], json!(47));
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_online_version_protocol_replaces_the_backend_protocol() {
+    let backend = FakeBackend::builder()
+        .status(json!({
+            "version": {"name": "fake", "protocol": 767},
+            "players": {"max": 20, "online": 0},
+            "description": {"text": "A fake backend"},
+        }))
+        .spawn()
+        .await
+        .unwrap();
+    let proxy = TestProxy::builder()
+        .server(
+            ServerSpec::offline("lobby")
+                .backend(backend.addr())
+                .patch(|table| {
+                    table.insert(
+                        "motd".into(),
+                        Value::Table(Table::from_iter([(
+                            "online".to_string(),
+                            motd_entry("Welcome", Some(-1)),
+                        )])),
+                    );
+                }),
+        )
+        .start()
+        .await
+        .unwrap();
+
+    let status = proxy.client(ProtocolVersion::V1_21).status().await.unwrap();
+
+    assert_eq!(json_text(&status.json["description"]), "Welcome");
+    assert_eq!(status.json["version"]["protocol"], json!(-1));
+    assert_eq!(status.json["version"]["name"], json!("fake"));
+
+    proxy.shutdown().await.unwrap();
+}
 
 fn legacy_backend_ping() -> LegacyPing {
     LegacyPing {

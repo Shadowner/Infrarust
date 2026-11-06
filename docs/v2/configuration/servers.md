@@ -182,9 +182,6 @@ favicon = "./icons/survival.png"
 version_name = "Survival 1.21"
 max_players = 100
 
-[motd.offline]
-text = "§cSurvival §7- §fOffline"
-
 [motd.sleeping]
 text = "§eSurvival §7- §fConnect to wake up!"
 version_name = "Server Sleeping"
@@ -202,7 +199,7 @@ text = "§6Survival §7- §fStopping..."
 text = "§cSurvival §7- §fUnreachable"
 ```
 
-Available states: `online`, `offline`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
+Available states: `online`, `sleeping`, `starting`, `crashed`, `stopping`, `unreachable`.
 
 Each MOTD entry supports these fields:
 
@@ -211,6 +208,7 @@ Each MOTD entry supports these fields:
 | `text` | string | MOTD text. Supports Minecraft formatting codes (`§a`, `§b`, etc.). |
 | `favicon` | string | Path to a 64x64 PNG file, a base64-encoded image, or a URL. |
 | `version_name` | string | Version text shown in the client server list. |
+| `version_protocol` | integer | Protocol number shown in the client server list. A proxy-built MOTD defaults to the client's own protocol, so the version shows as compatible. On `online`, it replaces the backend's protocol. |
 | `max_players` | integer | Max player count displayed in the server list. |
 
 ### Server manager

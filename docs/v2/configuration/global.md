@@ -145,6 +145,8 @@ What happens when a player connects with a domain that doesn't match any server 
 
 The setting also covers legacy clients (Beta to 1.6). A Beta or 1.4 ping carries no hostname and counts as an unknown domain.
 
+The setting only applies to unknown domains. A login refused by an IP filter or the rate limiter is kicked with the reason under either value.
+
 ## Rate limiting
 
 ```toml
@@ -222,6 +224,7 @@ Each MOTD entry supports these fields:
 | `text` | string | MOTD text, supports Minecraft `§` formatting codes |
 | `favicon` | string | Path to a 64x64 PNG, a base64 string, or a URL |
 | `version_name` | string | Version text shown in the client |
+| `version_protocol` | integer | Protocol number shown in the client. Defaults to the client's own, so the version shows as compatible |
 | `max_players` | integer | Max player count displayed in the server list |
 
 ## Telemetry

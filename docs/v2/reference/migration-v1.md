@@ -206,7 +206,7 @@ V1 had several overlapping MOTD states. V2 consolidates them:
 | `unknown` | `unreachable` | Merged into `unreachable` |
 | `unable_status` | `unreachable` | Merged into `unreachable` |
 
-MOTD fields `protocol_version`, `online_players`, and `samples` are not in V2 and are dropped without error.
+The MOTD field `protocol_version` becomes `version_protocol`. The fields `online_players` and `samples` are not in V2 and are dropped without error.
 
 `max_players` from the `online` MOTD state is migrated to the server-level `max_players` field.
 

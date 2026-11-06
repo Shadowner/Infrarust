@@ -6,23 +6,48 @@ on:
     paths:
       - 'crates/**'
       - 'plugins/**'
+      - 'tools/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.cargo/**'
+      - '.github/workflows/pr-checks.yml'
+      - '.github/actions/build-frontend/**'
+  push:
+    branches: [ main ]
+    paths:
+      - 'crates/**'
+      - 'plugins/**'
+      - 'tools/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - '.github/workflows/pr-checks.yml'
+      - '.github/actions/build-frontend/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: clippy, rustfmt
           targets: wasm32-wasip2
+
+      - name: Check formatting
+        run: |
+          cargo fmt -- --check
+          cargo fmt --manifest-path plugins/infrarust-plugin-stats/wasm/Cargo.toml -- --check
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.9.2
@@ -34,16 +59,30 @@ jobs:
       - name: Build Admin Frontend
         uses: ./.github/actions/build-frontend
 
-      - name: Check formatting
-        run: |
-          cargo fmt -- --check
-          cargo fmt --manifest-path plugins/infrarust-plugin-stats/wasm/Cargo.toml -- --check
-
       - name: Run clippy
         run: |
           cargo clippy -- -D warnings
           cargo clippy --manifest-path plugins/infrarust-plugin-stats/wasm/Cargo.toml \
             --target wasm32-wasip2 -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          targets: wasm32-wasip2
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.9.2
+
+      - name: Build Admin Frontend
+        uses: ./.github/actions/build-frontend
+
+      - name: Build tests
+        run: cargo test --no-run
 
       - name: Run tests
         run: |

@@ -232,3 +232,11 @@ rsa = { opt-level = 2 }
 num-bigint-dig = { opt-level = 2 }
 sha1 = { opt-level = 2 }
 sha2 = { opt-level = 2 }
+cranelift-assembler-x64 = { opt-level = 2 }
+cranelift-bforest = { opt-level = 2 }
+cranelift-codegen = { opt-level = 2 }
+cranelift-entity = { opt-level = 2 }
+cranelift-frontend = { opt-level = 2 }
+wasmtime = { opt-level = 2 }
+wasmtime-environ = { opt-level = 2 }
+wasmtime-internal-cranelift = { opt-level = 2 }

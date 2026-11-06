@@ -13,6 +13,9 @@ use infrarust_protocol::packets::play::container_content::CSetContainerContent;
 use infrarust_protocol::packets::play::dimension::DimensionInfo;
 use infrarust_protocol::packets::play::game_event::{CGameEvent, START_WAITING_CHUNKS};
 use infrarust_protocol::packets::play::join_game::CJoinGame;
+use infrarust_protocol::packets::play::player_abilities::{
+    ABILITY_FLYING, CPlayerAbilities, DEFAULT_WALKING_SPEED,
+};
 use infrarust_protocol::packets::play::player_position::CSynchronizePlayerPosition;
 use infrarust_protocol::packets::play::spawn_position::CSetDefaultSpawnPosition;
 use infrarust_protocol::registry::PacketRegistry;
@@ -24,6 +27,7 @@ use crate::session::client_bridge::ClientBridge;
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
+const LIMBO_PLAYER_ENTITY_ID: i32 = 1;
 const LIMBO_NUM_SECTIONS: usize = 16;
 const LIMBO_DIM: DimensionInfo = DimensionInfo::Legacy(1);
 
@@ -54,7 +58,21 @@ pub(crate) async fn send_spawn_sequence(
         send_clear_inventory(client, version, registry).await?;
     }
 
-    Ok(())
+    send_frozen_abilities(client, version, registry).await
+}
+
+async fn send_frozen_abilities(
+    client: &mut ClientBridge,
+    version: ProtocolVersion,
+    registry: &PacketRegistry,
+) -> Result<(), CoreError> {
+    let abilities = CPlayerAbilities {
+        flags: ABILITY_FLYING,
+        flying_speed: 0.0,
+        walking_speed: DEFAULT_WALKING_SPEED,
+    };
+    let frame = encode_packet(&abilities, version, registry)?;
+    client.write_frame(&frame).await
 }
 
 async fn send_modern_with_join(
@@ -257,7 +275,7 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
     if version.less_than(ProtocolVersion::V1_16) {
         let raw_payload = build_pre_1_16_join_game_payload(version)?;
         return Ok(CJoinGame {
-            entity_id: 0,
+            entity_id: LIMBO_PLAYER_ENTITY_ID,
             raw_payload: Some(raw_payload),
             ..Default::default()
         });
@@ -266,14 +284,14 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
     if version.less_than(ProtocolVersion::V1_20_2) {
         let raw_payload = build_1_16_to_1_20_1_join_game_payload(version)?;
         return Ok(CJoinGame {
-            entity_id: 0,
+            entity_id: LIMBO_PLAYER_ENTITY_ID,
             raw_payload: Some(raw_payload),
             ..Default::default()
         });
     }
 
     Ok(CJoinGame {
-        entity_id: 0,
+        entity_id: LIMBO_PLAYER_ENTITY_ID,
         is_hardcore: false,
         gamemode: 2, // adventure
         previous_gamemode: -1,
@@ -292,6 +310,7 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
         dimension_type: LIMBO_DIMENSION_NAME.to_string(),
         portal_cooldown: 0,
         sea_level: 0, // End has no sea
+        online_mode: false,
         enforces_secure_chat: false,
         death_dimension: None,
         death_position: None,
@@ -447,6 +466,52 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    #[tokio::test]
+    async fn every_spawn_sequence_ends_by_freezing_the_player_in_flight() {
+        use infrarust_protocol::packets::play::respawn::CRespawn;
+
+        use crate::session::test_peer::client_pair;
+
+        for version in [
+            ProtocolVersion::V1_7_2,
+            ProtocolVersion::V1_8,
+            ProtocolVersion::V1_12_2,
+            ProtocolVersion::V1_13,
+            ProtocolVersion::V1_16,
+            ProtocolVersion::V1_20,
+            ProtocolVersion::V1_20_2,
+            ProtocolVersion::V1_21_11,
+            ProtocolVersion::V26_3,
+        ] {
+            for needs_join_game in [true, false] {
+                let (mut client, mut peer) = client_pair(version).await;
+                let registry = infrarust_protocol::build_default_registry();
+                send_spawn_sequence(&mut client, version, &registry, needs_join_game)
+                    .await
+                    .unwrap();
+                drop(client);
+
+                let mut frames = Vec::new();
+                while let Some(frame) = peer.recv().await {
+                    frames.push(frame.id);
+                }
+                let abilities = peer.id::<CPlayerAbilities>();
+                let world = [peer.id::<CJoinGame>(), peer.id::<CRespawn>()];
+                let case = format!("{version} join={needs_join_game}");
+
+                assert_eq!(frames.last(), Some(&abilities), "{case}");
+                assert_eq!(
+                    frames.iter().filter(|id| **id == abilities).count(),
+                    1,
+                    "{case}"
+                );
+                if let Some(last_world) = frames.iter().rposition(|id| world.contains(id)) {
+                    assert!(last_world < frames.len() - 1, "{case}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_pre_1_16_join_game_v1_7() {
         let result = build_limbo_join_game(ProtocolVersion::V1_7_2);
@@ -456,7 +521,7 @@ mod tests {
             result.err()
         );
         let pkt = result.unwrap();
-        assert_eq!(pkt.entity_id, 0);
+        assert_eq!(pkt.entity_id, LIMBO_PLAYER_ENTITY_ID);
         let raw = pkt.raw_payload.expect("should have raw_payload");
         assert_eq!(raw.len(), 12);
     }
@@ -533,7 +598,7 @@ mod tests {
                 result.err()
             );
             let pkt = result.unwrap();
-            assert_eq!(pkt.entity_id, 0);
+            assert_eq!(pkt.entity_id, LIMBO_PLAYER_ENTITY_ID);
             assert!(
                 pkt.raw_payload.is_some(),
                 "version {:?} should use raw_payload",
@@ -548,6 +613,7 @@ mod tests {
             ProtocolVersion::V1_20_2,
             ProtocolVersion::V1_21,
             ProtocolVersion::V1_21_5,
+            ProtocolVersion::V26_3,
         ] {
             let result = build_limbo_join_game(version);
             assert!(
@@ -556,7 +622,9 @@ mod tests {
                 version,
                 result.err()
             );
-            assert!(result.unwrap().raw_payload.is_none());
+            let pkt = result.unwrap();
+            assert_eq!(pkt.entity_id, LIMBO_PLAYER_ENTITY_ID);
+            assert!(pkt.raw_payload.is_none());
         }
     }
 
