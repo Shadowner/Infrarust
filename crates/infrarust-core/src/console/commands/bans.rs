@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 use infrarust_api::services::ban_service::{
     BanEntry, BanRequest, BanService, BanSource, BanTarget, IpNet, UnbanRequest,
 };
+use infrarust_api::services::config_service::{ConfigService, ServerConfig};
 
 use crate::console::ConsoleServices;
 use crate::console::commands::{args, usage};
@@ -298,13 +299,41 @@ async fn issue_ban(
     );
 
     let banned = ban_summary(label, duration, reason.as_deref());
-    if issued.kicked == 0 {
+    let warning = unverified_identity_warning(
+        &issued.entry.target,
+        &services.config_service.get_all_server_configs(),
+    );
+    if issued.kicked == 0 && warning.is_none() {
         return CommandOutput::Success(banned);
     }
-    CommandOutput::Lines(vec![
-        OutputLine::Success(banned),
-        OutputLine::Success(format!("Kicked {} player(s){kicked_scope}", issued.kicked)),
-    ])
+    let mut lines = vec![OutputLine::Success(banned)];
+    if issued.kicked > 0 {
+        lines.push(OutputLine::Success(format!(
+            "Kicked {} player(s){kicked_scope}",
+            issued.kicked
+        )));
+    }
+    lines.extend(warning.map(OutputLine::Warning));
+    CommandOutput::Lines(lines)
+}
+
+fn unverified_identity_warning(target: &BanTarget, servers: &[ServerConfig]) -> Option<String> {
+    if matches!(target, BanTarget::Ip(_) | BanTarget::IpRange(_)) {
+        return None;
+    }
+    let mut forwarding: Vec<&str> = servers
+        .iter()
+        .filter(|server| server.proxy_mode.is_forwarding())
+        .map(|server| server.id.as_str())
+        .collect();
+    if forwarding.is_empty() {
+        return None;
+    }
+    forwarding.sort_unstable();
+    Some(format!(
+        "The proxy does not authenticate players on {}: this ban is checked against an identity it has not verified, so it can be evaded there. Add an IP ban or ban the player on the backend.",
+        forwarding.join(", ")
+    ))
 }
 
 fn ban_summary(label: &str, duration: Option<Duration>, reason: Option<&str>) -> String {

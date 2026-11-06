@@ -19,7 +19,7 @@ use infrarust_core::ban::{BAN_CHECK_UNAVAILABLE, FileBanStorage};
 use infrarust_core::console::ConsoleServices;
 use infrarust_core::console::commands::register_all;
 use infrarust_core::console::dispatcher::CommandDispatcher;
-use infrarust_core::console::output::CommandOutput;
+use infrarust_core::console::output::{CommandOutput, OutputLine};
 use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_test_harness::{
     BackendConn, ClientSession, ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend,
@@ -27,6 +27,7 @@ use infrarust_test_harness::{
 };
 use serde_json::json;
 use toml::{Table, Value};
+use uuid::Uuid;
 
 const T: Duration = DEFAULT_TIMEOUT;
 const VERSION: ProtocolVersion = ProtocolVersion(774);
@@ -643,5 +644,93 @@ async fn console_bans_are_attributed_to_the_console() {
             .is_none()
     );
 
+    proxy.shutdown().await.unwrap();
+}
+
+fn warnings(output: &CommandOutput) -> Vec<&str> {
+    match output {
+        CommandOutput::Lines(lines) => lines
+            .iter()
+            .filter_map(|line| match line {
+                OutputLine::Warning(warning) => Some(warning.as_str()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_player_ban_warns_about_the_servers_the_proxy_does_not_authenticate() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .server(ServerSpec::passthrough("survival").backend(backend.addr()))
+        .server(ServerSpec::server_only("creative").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let services = console(&proxy);
+    let mut dispatcher = CommandDispatcher::new();
+    register_all(&mut dispatcher);
+
+    let player = dispatcher.dispatch("ban Griefer", &services).await;
+    let warned = warnings(&player);
+    assert_eq!(warned.len(), 1);
+    assert!(warned[0].contains("creative, survival"), "{warned:?}");
+    assert!(!warned[0].contains("lobby"), "{warned:?}");
+
+    let address = dispatcher.dispatch("ban-ip 203.0.113.7", &services).await;
+    assert!(matches!(address, CommandOutput::Success(_)));
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_player_ban_does_not_warn_without_a_forwarding_server() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let services = console(&proxy);
+    let mut dispatcher = CommandDispatcher::new();
+    register_all(&mut dispatcher);
+
+    let output = dispatcher.dispatch("ban Griefer", &services).await;
+    assert!(matches!(output, CommandOutput::Success(_)));
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_uuid_ban_does_not_stop_a_passthrough_login_presenting_that_uuid() {
+    const BANNED: Uuid = Uuid::from_u128(0x0123_4567_89ab_4def_8123_4567_89ab_cdef);
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    proxy
+        .services()
+        .ban_manager
+        .issue(BanRequest::new(BanTarget::Uuid(BANNED)))
+        .await
+        .unwrap();
+
+    let session = proxy
+        .client(VERSION)
+        .claimed_uuid(BANNED)
+        .login("Griefer")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _conn = backend.next_connection(T).await.unwrap();
+    proxy.wait_for_player("Griefer", T).await.unwrap();
+
+    session.quit().await;
     proxy.shutdown().await.unwrap();
 }
