@@ -94,6 +94,16 @@ pub(crate) async fn perform_switch(
     validation::validate_switch_allowed(&current_config, &server_config)
         .map_err(|e| CoreError::Rejected(e.to_string()))?;
 
+    if let SwitchTarget::Unapproved { cause, .. } = &target
+        && !validation::switch_in_scope(*cause, &current_config, &server_config)
+    {
+        return Err(CoreError::Rejected(format!(
+            "server '{}' is outside the scope of '{}'",
+            requested.as_str(),
+            current_server.as_str()
+        )));
+    }
+
     let effective_target = match target {
         SwitchTarget::Approved(server) => server,
         SwitchTarget::Unapproved { server, cause } => {

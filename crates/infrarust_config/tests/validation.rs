@@ -825,6 +825,7 @@ fn test_the_bungeecord_channel_is_off_by_default() {
     let permissions = &proxy.plugin_messaging.bungeecord_permissions;
     assert!(permissions.connect && permissions.player_list && permissions.forward);
     assert!(!permissions.connect_other && !permissions.message && !permissions.kick_player);
+    assert!(!permissions.ip_other && !permissions.server_ip);
 }
 
 #[test]
