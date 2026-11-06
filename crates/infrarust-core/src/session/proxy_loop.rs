@@ -1005,26 +1005,14 @@ impl Loop<'_> {
                 }
 
                 if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
-                    services.registry_codec_cache.finalize(version);
                     self.io.client.queue_frame(&frame)?;
                     self.state.config_closing = true;
                     return Ok(BackendAction::Continue);
                 }
 
-                if state == ConnectionState::Config {
-                    services
-                        .registry_codec_cache
-                        .collect_config_frame(registry, version, &frame);
-                }
-
                 self.io.client.queue_frame(&frame)?;
             }
             Ok(DecodedPacket::Opaque { .. }) => {
-                if state == ConnectionState::Config {
-                    services
-                        .registry_codec_cache
-                        .collect_config_frame(registry, version, &frame);
-                }
                 self.io.client.queue_frame(&frame)?;
             }
             Err(e) => {
