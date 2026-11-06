@@ -13,7 +13,7 @@ use crate::ban::BanManager;
 use crate::ban::manager::Refusal;
 use crate::event_bus::{CORE_OWNER, EventBusImpl};
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused, RoutingData};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData, LoginData, Refused, RoutingData};
 
 pub const DENIED_MESSAGE: &str = "You are not allowed to connect to this server";
 
@@ -53,6 +53,10 @@ pub fn reject_refused(bus: &EventBusImpl, ctx: &ConnectionContext) {
 pub fn handoff_attempt(ctx: &ConnectionContext) -> LoginAttempt {
     let mut attempt = LoginAttempt::status(ctx.client_ip);
     attempt.stage = LoginStage::PreAuth;
+    attempt.username = ctx
+        .extensions
+        .get::<LoginData>()
+        .map(|login| login.username.clone());
     if let Some(handshake) = ctx.extensions.get::<HandshakeData>() {
         attempt = attempt.virtual_host(handshake.domain.clone());
     }
