@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_protocol::codec::VarInt;
+use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::{
     CLoginDisconnect, CLoginSuccess, SLoginAcknowledged, SLoginStart,
@@ -12,6 +13,8 @@ use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, DisconnectInfo, FakeBackend, FramedConn, LoginBehavior,
     ProtocolVersion, ServerSpec, TestProxy, version_matrix, wire,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use toml::{Table, Value};
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -127,3 +130,71 @@ async fn an_early_acknowledgement_is_not_relayed(version: ProtocolVersion) {
 }
 
 version_matrix!(an_early_acknowledgement_is_not_relayed; p764 = 764, p777 = 777);
+
+fn declared_length(length: i32) -> Vec<u8> {
+    let mut out = Vec::new();
+    VarInt(length).encode(&mut out).unwrap();
+    out
+}
+
+async fn closed_while_the_declared_bytes_are_missing(mut stream: TcpStream) {
+    let mut sink = Vec::new();
+    tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut sink))
+        .await
+        .expect("the proxy waited for a frame over its limit")
+        .ok();
+    assert!(sink.is_empty(), "{sink:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handshake_declared_over_its_limit_is_closed_at_once() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+
+    let mut stream = TcpStream::connect(proxy.addr()).await.unwrap();
+    stream.write_all(&declared_length(2049)).await.unwrap();
+    closed_while_the_declared_bytes_are_missing(stream).await;
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_start_declared_over_its_limit_is_closed_at_once() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+
+    let version = ProtocolVersion::V1_21;
+    let handshake = wire::encode(
+        &SHandshake {
+            protocol_version: VarInt(version.0),
+            server_address: proxy.domain("lobby").unwrap().to_string(),
+            server_port: 25565,
+            next_state: ConnectionState::Login,
+            transfer: false,
+        },
+        version,
+    )
+    .unwrap();
+    let mut encoder = PacketEncoder::new();
+    encoder
+        .append_raw(handshake.id, &handshake.payload)
+        .unwrap();
+    let mut sent = encoder.take().to_vec();
+    sent.extend_from_slice(&declared_length(5121));
+
+    let mut stream = TcpStream::connect(proxy.addr()).await.unwrap();
+    stream.write_all(&sent).await.unwrap();
+    closed_while_the_declared_bytes_are_missing(stream).await;
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}

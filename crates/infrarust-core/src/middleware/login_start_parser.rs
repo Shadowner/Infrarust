@@ -3,8 +3,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
-
 use infrarust_api::events::claim::LoginClaimEvent;
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::packets::Packet;
@@ -15,6 +13,7 @@ use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
+use crate::pipeline::preauth_frame::{MAX_LOGIN_START_FRAME, read_preauth_frame};
 use crate::pipeline::types::{
     HandshakeData, LayoutRefusal, LoginData, LoginStartLayout, RoutingData,
 };
@@ -73,20 +72,15 @@ impl Middleware for LoginStartParserMiddleware {
             }
 
             let mut raw_data = ctx.buffered_data.clone();
-            let frame = tokio::time::timeout(Duration::from_secs(10), async {
-                loop {
-                    if let Some(frame) = decoder.try_next_frame()? {
-                        break Ok::<_, CoreError>(frame);
-                    }
-                    let mut buf = [0u8; 1024];
-                    let n = ctx.stream_mut().read(&mut buf).await?;
-                    if n == 0 {
-                        return Err(CoreError::ConnectionClosed);
-                    }
-                    decoder.queue_bytes(&buf[..n]);
-                    raw_data.extend_from_slice(&buf[..n]);
-                }
-            })
+            let frame = tokio::time::timeout(
+                Duration::from_secs(10),
+                read_preauth_frame(
+                    ctx.stream_mut(),
+                    &mut decoder,
+                    &mut raw_data,
+                    MAX_LOGIN_START_FRAME,
+                ),
+            )
             .await
             .map_err(|_| CoreError::ConnectionClosed)??;
 
@@ -451,6 +445,52 @@ mod tests {
                 assert_eq!(login.player_uuid, expected, "{version:?}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn an_oversized_login_start_is_refused_from_its_declared_length() {
+        let mut declared = Vec::new();
+        infrarust_protocol::codec::VarInt(5121)
+            .encode(&mut declared)
+            .unwrap();
+        for mode in [ProxyMode::Passthrough, ProxyMode::Offline] {
+            let (mut ctx, _client) = login_ctx(ProtocolVersion::V1_20, Some(mode), &declared).await;
+            let refused = tokio::time::timeout(
+                Duration::from_secs(1),
+                LoginStartParserMiddleware::new().process(&mut ctx),
+            )
+            .await
+            .expect("the proxy must not wait for the declared bytes");
+            assert!(matches!(
+                refused,
+                Err(CoreError::Protocol(ProtocolError::TooLarge { .. }))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_signed_login_start_fits_and_bytes_behind_it_stay_allowed() {
+        let packet = SLoginStart {
+            name: "a".repeat(16),
+            uuid: None,
+            profile_key: Some(infrarust_protocol::packets::ProfileKey {
+                expires_at: 0,
+                public_key: vec![0; 512],
+                key_signature: vec![0; 4096],
+            }),
+        };
+        let mut payload = Vec::new();
+        packet.encode(&mut payload, ProtocolVersion::V1_19).unwrap();
+        let mut wire = framed(&payload);
+        wire.extend_from_slice(&[0xAB; 8192]);
+
+        let (result, ctx) = parse(ProtocolVersion::V1_19, Some(ProxyMode::Offline), &wire).await;
+
+        assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
+        let login = ctx.extensions.get::<LoginData>().unwrap();
+        assert_eq!(login.raw_payload.as_ref(), payload.as_slice());
+        assert!(login.profile_key.is_some());
+        assert_eq!(ctx.buffered_data.len(), 8192);
     }
 
     #[tokio::test]

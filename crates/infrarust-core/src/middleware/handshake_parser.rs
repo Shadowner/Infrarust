@@ -14,6 +14,7 @@ use crate::error::CoreError;
 use crate::handler::legacy::hello;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
+use crate::pipeline::preauth_frame::{MAX_HANDSHAKE_FRAME, read_preauth_frame};
 use crate::pipeline::types::{ConnectionIntent, HandshakeData};
 
 /// Middleware that parses the Minecraft handshake packet.
@@ -77,18 +78,13 @@ impl Middleware for HandshakeParserMiddleware {
                 decoder.queue_bytes(&ctx.buffered_data);
 
                 let mut raw_data = ctx.buffered_data.clone();
-                let frame = loop {
-                    if let Some(frame) = decoder.try_next_frame()? {
-                        break frame;
-                    }
-                    let mut buf = [0u8; 1024];
-                    let n = ctx.stream_mut().read(&mut buf).await?;
-                    if n == 0 {
-                        return Err(CoreError::ConnectionClosed);
-                    }
-                    decoder.queue_bytes(&buf[..n]);
-                    raw_data.extend_from_slice(&buf[..n]);
-                };
+                let frame = read_preauth_frame(
+                    ctx.stream_mut(),
+                    &mut decoder,
+                    &mut raw_data,
+                    MAX_HANDSHAKE_FRAME,
+                )
+                .await?;
 
                 // Separate handshake bytes from trailing data (e.g. LoginStart, SStatusRequest)
                 let remaining = decoder.into_remaining();
@@ -152,7 +148,76 @@ impl Middleware for HandshakeParserMiddleware {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use infrarust_protocol::ProtocolError;
+    use infrarust_protocol::codec::VarInt;
+    use infrarust_protocol::io::PacketEncoder;
+    use tokio::net::{TcpListener, TcpStream};
+
     use super::*;
+
+    async fn ctx_with(wire: &[u8]) -> (ConnectionContext, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (server, peer) = listener.accept().await.unwrap();
+        let mut ctx =
+            ConnectionContext::new_for_test(server, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), addr);
+        ctx.buffered_data.extend_from_slice(wire);
+        (ctx, client)
+    }
+
+    fn handshake_frame(host: &str) -> Vec<u8> {
+        let mut payload = Vec::new();
+        SHandshake {
+            protocol_version: VarInt(ProtocolVersion::V1_21.0),
+            server_address: host.to_string(),
+            server_port: 25565,
+            next_state: ConnectionState::Login,
+            transfer: false,
+        }
+        .encode(&mut payload, ProtocolVersion::V1_7_2)
+        .unwrap();
+        let mut encoder = PacketEncoder::new();
+        encoder.append_raw(0x00, &payload).unwrap();
+        encoder.take().to_vec()
+    }
+
+    #[tokio::test]
+    async fn an_oversized_handshake_is_refused_from_its_declared_length() {
+        let mut declared = Vec::new();
+        VarInt(2049).encode(&mut declared).unwrap();
+        let (mut ctx, _client) = ctx_with(&declared).await;
+
+        let refused = tokio::time::timeout(
+            Duration::from_secs(1),
+            HandshakeParserMiddleware::new().process(&mut ctx),
+        )
+        .await
+        .expect("the proxy must not wait for the declared bytes");
+
+        assert!(matches!(
+            refused,
+            Err(CoreError::Protocol(ProtocolError::TooLarge { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn bytes_behind_a_handshake_are_left_for_the_next_stage() {
+        let frame = handshake_frame("mc.example.com");
+        let mut wire = frame.clone();
+        wire.extend_from_slice(&[0xAB; 8192]);
+        let (mut ctx, _client) = ctx_with(&wire).await;
+
+        let result = HandshakeParserMiddleware::new().process(&mut ctx).await;
+
+        assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
+        let handshake = ctx.extensions.get::<HandshakeData>().unwrap();
+        assert_eq!(handshake.domain, "mc.example.com");
+        assert_eq!(handshake.raw_packets[0].as_ref(), frame.as_slice());
+        assert_eq!(ctx.buffered_data.len(), 8192);
+    }
 
     #[test]
     fn test_normalize_handshake() {
