@@ -605,6 +605,58 @@ async fn test_repeated_logins_after_a_crash_start_the_provider_once() {
 }
 
 #[tokio::test]
+async fn test_logins_join_a_server_that_came_up_despite_a_failed_start() {
+    let provider = Arc::new(CountingProvider {
+        starts: AtomicUsize::new(0),
+        outcome: || {
+            Err(ServerManagerError::Provider {
+                server_id: "test".to_string(),
+                message: "panel timed out".to_string(),
+            })
+        },
+        status_after_start: ProviderStatus::Running,
+    });
+    let service = service_with(provider.clone());
+
+    let first = service.ensure_started("test").await;
+    assert_eq!(provider_message(&first), Some("panel timed out"));
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+
+    let shutdown = CancellationToken::new();
+    let _handles = service.start_monitoring(Arc::new(MockPlayerCounter), shutdown.clone());
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while service.get_state("test") != Some(ServerState::Online) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the monitor should notice the server is up");
+
+    service.ensure_started("test").await.unwrap();
+    assert_eq!(provider.starts(), 1);
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn test_a_stopped_poll_keeps_a_failed_start_crashed() {
+    let provider = CountingProvider::refusing();
+    let service = service_with(provider.clone());
+
+    let first = service.ensure_started("test").await;
+    assert_eq!(provider_message(&first), Some("refused"));
+
+    let shutdown = CancellationToken::new();
+    let _handles = service.start_monitoring(Arc::new(MockPlayerCounter), shutdown.clone());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
 async fn test_a_login_right_after_a_start_is_throttled() {
     let provider = CountingProvider::crashing();
     let service = service_with(provider.clone());

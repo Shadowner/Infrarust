@@ -53,6 +53,10 @@ impl StartThrottle {
         self.next_backoff = (self.next_backoff * 2).min(MAX_CRASH_BACKOFF);
     }
 
+    fn running(&mut self) {
+        self.blocked_until = None;
+    }
+
     fn retry_after(&self, now: Instant) -> Option<Duration> {
         let next_start = self.last_start.map(|start| start + MIN_START_INTERVAL);
         next_start
@@ -558,10 +562,13 @@ impl ServerManagerService {
             }
 
             match new_status {
-                ProviderStatus::Starting | ProviderStatus::Running => {
+                ProviderStatus::Running => {
                     entry.unconfirmed_start_until = None;
+                    entry.throttle.running();
                 }
+                ProviderStatus::Starting => entry.unconfirmed_start_until = None,
                 ProviderStatus::Stopped if entry.is_unconfirmed_start() => return None,
+                _ if entry.state == ServerState::Crashed => return None,
                 _ => {}
             }
 
@@ -667,6 +674,14 @@ mod tests {
         service
     }
 
+    fn blocked_for(service: &ServerManagerService, server_id: &str) -> Duration {
+        let entry = service.entries.get(server_id).unwrap();
+        entry
+            .throttle
+            .retry_after(Instant::now())
+            .unwrap_or_default()
+    }
+
     /// A poll captured before `stop_server` must not resurrect the server,
     /// even when the manual op fully completes (Stopping → Sleeping) before
     /// the stale result lands.
@@ -699,6 +714,44 @@ mod tests {
         let generation = service.generation("s").unwrap();
         let applied = service.update_state("s", ProviderStatus::Crashed, generation);
         assert_eq!(applied, Some((ServerState::Online, ServerState::Crashed)));
+    }
+
+    #[tokio::test]
+    async fn crashed_only_ends_when_the_provider_reports_it_alive() {
+        let service = Arc::new(service_with_online_server("s"));
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Crashed, generation);
+        for status in [
+            ProviderStatus::Stopped,
+            ProviderStatus::Stopping,
+            ProviderStatus::Unknown,
+            ProviderStatus::Crashed,
+        ] {
+            let generation = service.generation("s").unwrap();
+            assert_eq!(service.update_state("s", status, generation), None);
+        }
+        assert_eq!(service.get_state("s"), Some(ServerState::Crashed));
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Running, generation),
+            Some((ServerState::Crashed, ServerState::Online))
+        );
+        service.ensure_started("s").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovering_from_a_crash_lifts_the_crash_backoff() {
+        let service = service_with_online_server("s");
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Crashed, generation);
+        assert!(blocked_for(&service, "s") > Duration::ZERO);
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
     }
 
     #[tokio::test]
