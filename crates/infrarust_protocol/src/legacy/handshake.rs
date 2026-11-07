@@ -1,6 +1,7 @@
 use crate::error::{ProtocolError, ProtocolResult};
 
 use super::ping::{build_kick_packet, decode_utf16be};
+use super::{MAX_HOSTNAME_CHARS, MAX_USERNAME_CHARS};
 
 #[derive(Debug, Clone)]
 pub struct LegacyHandshakeRequest {
@@ -10,13 +11,21 @@ pub struct LegacyHandshakeRequest {
     pub port: i32,
 }
 
-fn read_string16(data: &[u8], pos: usize, context: &str) -> ProtocolResult<(String, usize)> {
+fn read_string16(
+    data: &[u8],
+    pos: usize,
+    max_chars: usize,
+    context: &str,
+) -> ProtocolResult<(String, usize)> {
     if pos + 2 > data.len() {
         return Err(ProtocolError::invalid(format!(
             "legacy handshake: missing {context} length"
         )));
     }
     let char_count = usize::from(u16::from_be_bytes([data[pos], data[pos + 1]]));
+    if char_count > max_chars {
+        return Err(ProtocolError::too_large(max_chars, char_count));
+    }
     let byte_count = char_count * 2;
     let start = pos + 2;
     if start + byte_count > data.len() {
@@ -55,8 +64,8 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
         let protocol_version = data[0];
         let pos = 1;
 
-        let (username, pos) = read_string16(data, pos, "username")?;
-        let (hostname, pos) = read_string16(data, pos, "hostname")?;
+        let (username, pos) = read_string16(data, pos, MAX_USERNAME_CHARS, "username")?;
+        let (hostname, pos) = read_string16(data, pos, MAX_HOSTNAME_CHARS, "hostname")?;
 
         if pos + 4 > data.len() {
             return Err(ProtocolError::invalid("legacy handshake: missing port"));
@@ -73,33 +82,34 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
 }
 
 fn parse_pre_1_3_connection_string(s: &str) -> ProtocolResult<LegacyHandshakeRequest> {
-    if let Some((username, host_port)) = s.split_once(';') {
-        if let Some((hostname, port_str)) = host_port.rsplit_once(':') {
-            let port = port_str.parse::<u16>().map_err(|_| {
-                ProtocolError::invalid(format!("legacy handshake: invalid port {port_str:?}"))
-            })?;
-            Ok(LegacyHandshakeRequest {
-                protocol_version: 0,
-                username: username.to_string(),
-                hostname: hostname.to_string(),
-                port: i32::from(port),
-            })
-        } else {
-            Ok(LegacyHandshakeRequest {
-                protocol_version: 0,
-                username: username.to_string(),
-                hostname: host_port.to_string(),
-                port: 25565,
-            })
-        }
-    } else {
-        Ok(LegacyHandshakeRequest {
-            protocol_version: 0,
-            username: s.to_string(),
-            hostname: String::new(),
-            port: 25565,
-        })
+    let (username, hostname, port) = match s.split_once(';') {
+        Some((username, host_port)) => match host_port.rsplit_once(':') {
+            Some((hostname, port_str)) => {
+                let port = port_str.parse::<u16>().map_err(|_| {
+                    ProtocolError::invalid(format!("legacy handshake: invalid port {port_str:?}"))
+                })?;
+                (username, hostname, i32::from(port))
+            }
+            None => (username, host_port, 25565),
+        },
+        None => (s, "", 25565),
+    };
+    check_length(username, MAX_USERNAME_CHARS)?;
+    check_length(hostname, MAX_HOSTNAME_CHARS)?;
+    Ok(LegacyHandshakeRequest {
+        protocol_version: 0,
+        username: username.to_string(),
+        hostname: hostname.to_string(),
+        port,
+    })
+}
+
+fn check_length(s: &str, max_chars: usize) -> ProtocolResult<()> {
+    let chars = s.encode_utf16().count();
+    if chars > max_chars {
+        return Err(ProtocolError::too_large(max_chars, chars));
     }
+    Ok(())
 }
 
 pub fn build_legacy_kick(reason: &str) -> ProtocolResult<Vec<u8>> {
@@ -200,6 +210,51 @@ mod tests {
     fn test_parse_pre_1_3_out_of_range_port_rejected() {
         let data = build_pre_1_3_packet("Steve;mc.example.com:99999");
         assert!(parse_legacy_handshake(&data).is_err());
+    }
+
+    #[test]
+    fn test_parse_pre_1_3_oversized_fields_rejected() {
+        let long_name = "a".repeat(MAX_USERNAME_CHARS + 1);
+        for connection_string in [
+            long_name.clone(),
+            format!("{long_name};mc.example.com:25565"),
+            format!("{long_name};mc.example.com"),
+        ] {
+            let data = build_pre_1_3_packet(&connection_string);
+            assert!(
+                matches!(
+                    parse_legacy_handshake(&data),
+                    Err(ProtocolError::TooLarge { .. })
+                ),
+                "{connection_string}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_longest_fields_accepted() {
+        let name = "a".repeat(MAX_USERNAME_CHARS);
+        let host = "b".repeat(MAX_HOSTNAME_CHARS);
+        let data = build_handshake_packet(78, &name, &host, 25565);
+        let req = parse_legacy_handshake(&data).unwrap();
+        assert_eq!(req.username, name);
+        assert_eq!(req.hostname, host);
+    }
+
+    #[test]
+    fn test_parse_oversized_fields_rejected_whatever_follows() {
+        let name = "a".repeat(MAX_USERNAME_CHARS + 1);
+        let host = "b".repeat(MAX_HOSTNAME_CHARS + 1);
+        for data in [
+            build_handshake_packet(78, &name, "localhost", 25565),
+            build_handshake_packet(78, "Steve", &host, 25565),
+            [&[78][..], &u16::MAX.to_be_bytes()[..]].concat(),
+        ] {
+            assert!(matches!(
+                parse_legacy_handshake(&data),
+                Err(ProtocolError::TooLarge { .. })
+            ));
+        }
     }
 
     #[test]

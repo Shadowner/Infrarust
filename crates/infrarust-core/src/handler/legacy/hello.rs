@@ -1,7 +1,11 @@
 use std::time::Duration;
 
+use infrarust_protocol::ProtocolError;
 use infrarust_protocol::ProtocolVersion;
-use infrarust_protocol::legacy::{parse_legacy_handshake, parse_legacy_ping};
+use infrarust_protocol::legacy::{
+    MAX_HOSTNAME_CHARS, MAX_PING_CHANNEL_CHARS, MAX_PING_DATA_BYTES, MAX_USERNAME_CHARS,
+    parse_legacy_handshake, parse_legacy_ping,
+};
 
 use super::LegacyReader;
 use crate::error::CoreError;
@@ -85,11 +89,12 @@ async fn read_ping_bytes(ctx: &mut ConnectionContext) -> Result<Vec<u8>, CoreErr
     if let Ok(Ok(next)) = tokio::time::timeout(PING_WAIT, reader.read_u8()).await {
         data.push(next);
 
-        if next == 0x01
-            && let Ok(Ok(more)) =
-                tokio::time::timeout(PING_WAIT, read_remaining_v1_6_data(&mut reader)).await
-        {
-            data.extend_from_slice(&more);
+        if next == 0x01 {
+            match tokio::time::timeout(PING_WAIT, read_remaining_v1_6_data(&mut reader)).await {
+                Ok(Ok(more)) => data.extend_from_slice(&more),
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => return Err(e.into()),
+                Ok(Err(_)) | Err(_) => {}
+            }
         }
     }
 
@@ -109,15 +114,27 @@ async fn read_remaining_v1_6_data(reader: &mut LegacyReader<'_>) -> std::io::Res
     reader.read_exact(&mut channel_len).await?;
     data.extend_from_slice(&channel_len);
     let channel_chars = usize::from(u16::from_be_bytes(channel_len));
+    refuse_over_limit(channel_chars, MAX_PING_CHANNEL_CHARS)?;
     data.extend_from_slice(&reader.read_vec(channel_chars * 2).await?);
 
     let mut payload_len = [0u8; 2];
     reader.read_exact(&mut payload_len).await?;
     data.extend_from_slice(&payload_len);
     let payload = usize::from(u16::from_be_bytes(payload_len));
+    refuse_over_limit(payload, MAX_PING_DATA_BYTES)?;
     data.extend_from_slice(&reader.read_vec(payload).await?);
 
     Ok(data)
+}
+
+fn refuse_over_limit(declared: usize, limit: usize) -> std::io::Result<()> {
+    if declared > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            ProtocolError::too_large(limit, declared),
+        ));
+    }
+    Ok(())
 }
 
 async fn read_login_bytes(ctx: &mut ConnectionContext) -> Result<Vec<u8>, CoreError> {
@@ -133,8 +150,8 @@ async fn read_login_bytes(ctx: &mut ConnectionContext) -> Result<Vec<u8>, CoreEr
         data.push(chars);
         data.extend_from_slice(&reader.read_vec(usize::from(chars) * 2).await?);
     } else {
-        read_string_into(&mut reader, &mut data).await?;
-        read_string_into(&mut reader, &mut data).await?;
+        read_string_into(&mut reader, &mut data, MAX_USERNAME_CHARS).await?;
+        read_string_into(&mut reader, &mut data, MAX_HOSTNAME_CHARS).await?;
         data.extend_from_slice(&reader.read_vec(4).await?);
     }
 
@@ -145,10 +162,12 @@ async fn read_login_bytes(ctx: &mut ConnectionContext) -> Result<Vec<u8>, CoreEr
 async fn read_string_into(
     reader: &mut LegacyReader<'_>,
     data: &mut Vec<u8>,
+    max_chars: usize,
 ) -> Result<(), CoreError> {
     let mut len_bytes = [0u8; 2];
     reader.read_exact(&mut len_bytes).await?;
     let chars = usize::from(u16::from_be_bytes(len_bytes));
+    refuse_over_limit(chars, max_chars)?;
     data.extend_from_slice(&len_bytes);
     data.extend_from_slice(&reader.read_vec(chars * 2).await?);
     Ok(())
@@ -225,6 +244,46 @@ mod tests {
         }
         let request = read_ping(&[0xFE], 1).await;
         assert_eq!(request.variant, LegacyPingVariant::Beta);
+    }
+
+    #[tokio::test]
+    async fn oversized_login_fields_are_refused_without_waiting_for_their_bytes() {
+        let name_header = [&[0x02, 78][..], &17u16.to_be_bytes()[..]].concat();
+        let mut host_header = vec![0x02, 78];
+        host_header.extend_from_slice(&utf16be("Notch"));
+        host_header.extend_from_slice(&256u16.to_be_bytes());
+        for hello in [name_header, host_header] {
+            let (mut ctx, _client) = ctx_with(&hello, 1).await;
+            let refused = tokio::time::timeout(Duration::from_secs(1), read_login_hello(&mut ctx))
+                .await
+                .expect("the proxy must not wait for the declared bytes");
+            assert!(refused.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_oversized_pre_1_3_login_is_refused() {
+        let mut hello = vec![0x02, 0x00, 17];
+        for unit in "a".repeat(17).encode_utf16() {
+            hello.extend_from_slice(&unit.to_be_bytes());
+        }
+        let (mut ctx, _client) = ctx_with(&hello, 1).await;
+        assert!(read_login_hello(&mut ctx).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn oversized_v1_6_pings_are_refused_without_waiting_for_their_bytes() {
+        let channel_header = [&[0xFE, 0x01, 0xFA][..], &21u16.to_be_bytes()[..]].concat();
+        let mut data_header = vec![0xFE, 0x01, 0xFA];
+        data_header.extend_from_slice(&utf16be("MC|PingHost"));
+        data_header.extend_from_slice(&518u16.to_be_bytes());
+        for hello in [channel_header, data_header] {
+            let (mut ctx, _client) = ctx_with(&hello, 1).await;
+            assert!(read_ping_hello(&mut ctx).await.is_err());
+        }
+
+        let (mut ctx, _client) = ctx_with(&v1_6_ping(&"b".repeat(256), 25565), 1).await;
+        assert!(read_ping_hello(&mut ctx).await.is_err());
     }
 
     #[tokio::test]

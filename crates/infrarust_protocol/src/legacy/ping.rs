@@ -1,4 +1,8 @@
+use super::MAX_HOSTNAME_CHARS;
 use crate::error::{ProtocolError, ProtocolResult};
+
+pub const MAX_PING_CHANNEL_CHARS: usize = 20;
+pub const MAX_PING_DATA_BYTES: usize = 1 + 2 + MAX_HOSTNAME_CHARS * 2 + 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegacyPingVariant {
@@ -106,6 +110,12 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
     }
 
     let channel_len = usize::from(u16::from_be_bytes([data[0], data[1]]));
+    if channel_len > MAX_PING_CHANNEL_CHARS {
+        return Err(ProtocolError::too_large(
+            MAX_PING_CHANNEL_CHARS,
+            channel_len,
+        ));
+    }
     let channel_bytes = channel_len * 2;
     let offset = 2 + channel_bytes;
 
@@ -113,7 +123,10 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
         return Err(ProtocolError::invalid("V1_6 ping: truncated channel name"));
     }
 
-    let _data_len = u16::from_be_bytes([data[offset], data[offset + 1]]);
+    let data_len = usize::from(u16::from_be_bytes([data[offset], data[offset + 1]]));
+    if data_len > MAX_PING_DATA_BYTES {
+        return Err(ProtocolError::too_large(MAX_PING_DATA_BYTES, data_len));
+    }
     let mut pos = offset + 2;
 
     if pos >= data.len() {
@@ -128,6 +141,9 @@ fn parse_v1_6_ping(data: &[u8]) -> ProtocolResult<LegacyPingRequest> {
         return Err(ProtocolError::invalid("V1_6 ping: missing hostname length"));
     }
     let hostname_len = usize::from(u16::from_be_bytes([data[pos], data[pos + 1]]));
+    if hostname_len > MAX_HOSTNAME_CHARS {
+        return Err(ProtocolError::too_large(MAX_HOSTNAME_CHARS, hostname_len));
+    }
     pos += 2;
 
     let hostname_bytes = hostname_len * 2;
@@ -310,6 +326,33 @@ mod tests {
         let string_data = &bytes[3..3 + string_len * 2];
         let decoded = decode_utf16be(string_data).unwrap();
         assert!(decoded.contains("Bienvenue \u{00e0} tous!"));
+    }
+
+    #[test]
+    fn test_parse_v1_6_oversized_declarations_rejected() {
+        let channel = |chars: u16| {
+            let mut data = vec![0x01, 0xFA];
+            data.extend_from_slice(&chars.to_be_bytes());
+            data.extend(std::iter::repeat_n(0u8, usize::from(chars) * 2));
+            data
+        };
+        let mut long_channel = channel(21);
+        long_channel.extend_from_slice(&0u16.to_be_bytes());
+
+        let mut long_data = channel(1);
+        long_data.extend_from_slice(&518u16.to_be_bytes());
+
+        let mut long_host = channel(1);
+        long_host.extend_from_slice(&7u16.to_be_bytes());
+        long_host.push(78);
+        long_host.extend_from_slice(&256u16.to_be_bytes());
+
+        for data in [long_channel, long_data, long_host] {
+            assert!(matches!(
+                parse_legacy_ping(&data),
+                Err(ProtocolError::TooLarge { .. })
+            ));
+        }
     }
 
     #[test]

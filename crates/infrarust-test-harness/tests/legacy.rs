@@ -550,6 +550,29 @@ async fn an_ip_ban_turns_legacy_clients_away() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oversized_legacy_fields_never_reach_the_backend() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let proxy = legacy_proxy(&backend, Vec::new()).await;
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    closed_without_answer(client.login(&"a".repeat(17)).await);
+    let far_host = LegacyClient::new(proxy.addr()).hostname("b".repeat(256));
+    closed_without_answer(far_host.login(NOTCH).await);
+    closed_without_answer(far_host.ping().await);
+    assert_eq!(backend.accepted_connections(), 0);
+
+    let longest = client.login(&"a".repeat(16)).await.unwrap();
+    let session = longest.forwarded().unwrap();
+    let mut conn = backend.next_connection(T).await.unwrap();
+    assert_eq!(conn.username(), "a".repeat(16));
+    session.quit().await;
+    conn.closed(T).await.unwrap();
+    conn.close().await;
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_handshake_handoff_closes_legacy_clients() {
     let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
     let handoff = ScriptedPlugin::new("handoff")
