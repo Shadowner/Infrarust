@@ -1,4 +1,5 @@
 use crate::error::{ProtocolError, ProtocolResult};
+use crate::packets::login::check_login_name;
 
 use super::ping::{build_kick_packet, decode_utf16be};
 use super::{MAX_HOSTNAME_CHARS, MAX_USERNAME_CHARS};
@@ -65,6 +66,7 @@ pub fn parse_legacy_handshake(data: &[u8]) -> ProtocolResult<LegacyHandshakeRequ
         let pos = 1;
 
         let (username, pos) = read_string16(data, pos, MAX_USERNAME_CHARS, "username")?;
+        check_login_name(&username)?;
         let (hostname, pos) = read_string16(data, pos, MAX_HOSTNAME_CHARS, "hostname")?;
 
         if pos + 4 > data.len() {
@@ -95,6 +97,7 @@ fn parse_pre_1_3_connection_string(s: &str) -> ProtocolResult<LegacyHandshakeReq
         None => (s, "", 25565),
     };
     check_length(username, MAX_USERNAME_CHARS)?;
+    check_login_name(username)?;
     check_length(hostname, MAX_HOSTNAME_CHARS)?;
     Ok(LegacyHandshakeRequest {
         protocol_version: 0,

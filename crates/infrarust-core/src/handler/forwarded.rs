@@ -8,7 +8,7 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::events::lifecycle::{DisconnectCause, PreLoginResult};
 use infrarust_api::player::Player;
-use infrarust_api::types::{Component, GameProfile, ServerId};
+use infrarust_api::types::{Component, ServerId};
 use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::helpers::{MAX_KICK_REDIRECTS, cancelled_cause};
-use crate::auth::game_profile::offline_profile_uuid;
+use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
@@ -131,15 +131,11 @@ impl ForwardedLogin<'_> {
     ) -> Result<Option<Ready>, CoreError> {
         let services = self.services;
         let remote_addr = ctx.client_addr();
-        let profile = GameProfile {
-            uuid: offline_profile_uuid(
-                services.config.auth.offline_uuid,
-                &arrival.username,
-                arrival.claimed_uuid,
-            ),
-            username: arrival.username,
-            properties: vec![],
-        };
+        let profile = offline_profile(
+            services.config.auth.offline_uuid,
+            &arrival.username,
+            arrival.claimed_uuid,
+        )?;
         match pre_login(
             services,
             profile.clone(),

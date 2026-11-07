@@ -1,5 +1,22 @@
+use std::borrow::Cow;
+
 use infrarust_api::types::Component;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+
+pub fn escape_control(text: &str) -> Cow<'_, str> {
+    if !text.contains(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            escaped.extend(c.escape_debug());
+        } else {
+            escaped.push(c);
+        }
+    }
+    Cow::Owned(escaped)
+}
 
 pub fn api_version(version: ProtocolVersion) -> infrarust_api::types::ProtocolVersion {
     infrarust_api::types::ProtocolVersion::new(version.0)

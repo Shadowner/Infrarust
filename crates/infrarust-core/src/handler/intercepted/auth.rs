@@ -6,7 +6,7 @@ use infrarust_api::events::lifecycle::{OnlineAuthFailedEvent, PreLoginResult};
 use infrarust_api::types::{Component, GameProfile, ProfileProperty};
 use infrarust_protocol::version::ProtocolVersion;
 
-use crate::auth::game_profile::offline_profile_uuid;
+use crate::auth::game_profile::offline_profile;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::types::LoginData;
@@ -74,10 +74,10 @@ impl AuthStrategy {
                     );
                     return Ok(Authenticated::Player {
                         profile: offline_profile(
+                            services.config.auth.offline_uuid,
                             &login_data.username,
                             login_data.player_uuid,
-                            services,
-                        ),
+                        )?,
                         online_mode: false,
                     });
                 }
@@ -86,8 +86,11 @@ impl AuthStrategy {
             }
             Self::Offline { mojang } => {
                 let username = login_data.map(|d| d.username.clone()).unwrap_or_default();
-                let profile =
-                    offline_profile(&username, login_data.and_then(|d| d.player_uuid), services);
+                let profile = offline_profile(
+                    services.config.auth.offline_uuid,
+                    &username,
+                    login_data.and_then(|d| d.player_uuid),
+                )?;
 
                 let pre_login_result =
                     match pre_login(services, profile.clone(), remote_addr, api_version, domain)
@@ -118,18 +121,6 @@ impl AuthStrategy {
                 })
             }
         }
-    }
-}
-
-fn offline_profile(
-    username: &str,
-    claimed: Option<uuid::Uuid>,
-    services: &ProxyServices,
-) -> GameProfile {
-    GameProfile {
-        uuid: offline_profile_uuid(services.config.auth.offline_uuid, username, claimed),
-        username: username.to_string(),
-        properties: vec![],
     }
 }
 
