@@ -82,7 +82,7 @@ impl PlayerCounter for MockPlayerCounter {
 
 #[tokio::test]
 async fn test_ensure_started_already_online() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(MockProvider::new(ProviderStatus::Running));
 
     service.register_server(
@@ -291,7 +291,7 @@ async fn test_get_all_managed() {
 
 #[tokio::test]
 async fn test_server_not_found() {
-    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
 
     let result = service.ensure_started("nonexistent").await;
     assert!(matches!(
@@ -482,4 +482,184 @@ async fn test_stopped_polls_during_start_keep_the_waiter_waiting() {
     assert_eq!(service.get_state("test"), Some(ServerState::Online));
 
     shutdown.cancel();
+}
+
+struct CountingProvider {
+    starts: AtomicUsize,
+    outcome: fn() -> Result<(), ServerManagerError>,
+    status_after_start: ProviderStatus,
+}
+
+impl CountingProvider {
+    fn refusing() -> Arc<Self> {
+        Arc::new(Self {
+            starts: AtomicUsize::new(0),
+            outcome: || {
+                Err(ServerManagerError::Provider {
+                    server_id: "test".to_string(),
+                    message: "refused".to_string(),
+                })
+            },
+            status_after_start: ProviderStatus::Stopped,
+        })
+    }
+
+    fn crashing() -> Arc<Self> {
+        Arc::new(Self {
+            starts: AtomicUsize::new(0),
+            outcome: || Ok(()),
+            status_after_start: ProviderStatus::Crashed,
+        })
+    }
+
+    fn starts(&self) -> usize {
+        self.starts.load(Ordering::Acquire)
+    }
+}
+
+impl ServerProvider for CountingProvider {
+    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            self.starts.fetch_add(1, Ordering::AcqRel);
+            (self.outcome)()
+        })
+    }
+
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn check_status(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            Ok(if self.starts() == 0 {
+                ProviderStatus::Stopped
+            } else {
+                self.status_after_start
+            })
+        })
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "counting"
+    }
+}
+
+fn service_with(provider: Arc<CountingProvider>) -> Arc<ServerManagerService> {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    service.register_server(
+        "test".to_string(),
+        provider,
+        None,
+        Duration::from_secs(10),
+        Duration::from_millis(10),
+    );
+    service
+}
+
+fn is_throttled(result: &Result<(), ServerManagerError>) -> bool {
+    matches!(result, Err(ServerManagerError::StartThrottled { .. }))
+}
+
+#[tokio::test]
+async fn test_repeated_logins_after_a_failed_start_start_the_provider_once() {
+    let provider = CountingProvider::refusing();
+    let service = service_with(provider.clone());
+
+    let first = service.ensure_started("test").await;
+    assert_eq!(provider_message(&first), Some("refused"));
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+
+    for _ in 0..5 {
+        let result = service.ensure_started("test").await;
+        assert!(is_throttled(&result), "got {result:?}");
+    }
+
+    assert_eq!(provider.starts(), 1);
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+}
+
+#[tokio::test]
+async fn test_repeated_logins_after_a_crash_start_the_provider_once() {
+    let provider = CountingProvider::crashing();
+    let service = service_with(provider.clone());
+
+    let shutdown = CancellationToken::new();
+    let _handles = service.start_monitoring(Arc::new(MockPlayerCounter), shutdown.clone());
+
+    let first = service.ensure_started("test").await;
+    assert!(
+        matches!(first, Err(ServerManagerError::ProcessExited { .. })),
+        "got {first:?}"
+    );
+
+    for _ in 0..5 {
+        let result = service.ensure_started("test").await;
+        assert!(is_throttled(&result), "got {result:?}");
+    }
+
+    assert_eq!(provider.starts(), 1);
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn test_a_login_right_after_a_start_is_throttled() {
+    let provider = CountingProvider::crashing();
+    let service = service_with(provider.clone());
+
+    service.start_server("test").await.unwrap();
+    service.stop_server("test").await.unwrap();
+
+    let result = service.ensure_started("test").await;
+    assert!(is_throttled(&result), "got {result:?}");
+    assert_eq!(provider.starts(), 1);
+}
+
+#[tokio::test]
+async fn test_a_manual_start_bypasses_the_throttle() {
+    let provider = CountingProvider::refusing();
+    let service = service_with(provider.clone());
+
+    let first = service.ensure_started("test").await;
+    assert_eq!(provider_message(&first), Some("refused"));
+    assert!(is_throttled(&service.ensure_started("test").await));
+
+    let manual = service.start_server("test").await;
+    assert_eq!(provider_message(&manual), Some("refused"));
+
+    assert_eq!(provider.starts(), 2);
+}
+
+#[tokio::test]
+async fn test_an_abandoned_login_does_not_abandon_the_start() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(FailingStartProvider {
+        release: tokio::sync::Notify::new(),
+    });
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+    );
+
+    let svc = Arc::clone(&service);
+    let login = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    login.abort();
+    let _ = login.await;
+    provider.release.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while service.get_state("test") != Some(ServerState::Crashed) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the failed start should still be recorded");
 }

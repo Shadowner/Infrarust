@@ -29,7 +29,7 @@ use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
-use crate::session::wake::wake;
+use crate::session::wake::{WakeFailure, wake};
 
 use config_phase::PhaseError;
 
@@ -192,10 +192,21 @@ pub(crate) async fn perform_switch(
         )));
     }
 
-    if let Err(unavailable) = wake(services, &server_config, session.shutdown_token()).await {
-        return Ok(SwitchResult::Failed(
-            unavailable.into_kick(effective_target),
-        ));
+    match wake(
+        services,
+        &server_config,
+        session.shutdown_token(),
+        client.stream(),
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(WakeFailure::Unavailable(unavailable)) => {
+            return Ok(SwitchResult::Failed(
+                unavailable.into_kick(effective_target),
+            ));
+        }
+        Err(WakeFailure::ClientLeft) => return Err(CoreError::ClientLeft),
     }
 
     // Same strategy + unhealthy-last ordering as the login pipeline.

@@ -35,7 +35,7 @@ use crate::services::ProxyServices;
 use crate::session::admission::{self, Admission, Admitted, PreLogin, pre_login};
 use crate::session::kick::Kick;
 use crate::session::server_join::pre_connect;
-use crate::session::wake::wake;
+use crate::session::wake::{WakeFailure, wake};
 use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
@@ -276,7 +276,13 @@ impl ForwardedLogin<'_> {
                 }
             };
 
-            let woken = wake(self.services, &route.routing.server_config, &admitted.token).await;
+            let woken = wake(
+                self.services,
+                &route.routing.server_config,
+                &admitted.token,
+                ctx.stream(),
+            )
+            .await;
             if let Some(ended) = self.interrupted(ctx, &mut admitted).await {
                 admitted.lifecycle.end(ended).await;
                 return Ok(None);
@@ -315,7 +321,11 @@ impl ForwardedLogin<'_> {
                         }
                     }
                 }
-                Err(unavailable) => {
+                Err(WakeFailure::ClientLeft) => {
+                    admitted.lifecycle.end(DisconnectCause::ClientQuit).await;
+                    return Ok(None);
+                }
+                Err(WakeFailure::Unavailable(unavailable)) => {
                     tracing::info!(
                         server = %server,
                         reason = ?unavailable,

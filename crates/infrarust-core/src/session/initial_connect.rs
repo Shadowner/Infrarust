@@ -26,7 +26,7 @@ use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::server_switch::validation;
-use crate::session::wake::wake;
+use crate::session::wake::{WakeFailure, wake};
 
 pub(crate) enum ConnectionMode {
     Backend(BackendBridge),
@@ -251,7 +251,20 @@ pub(crate) async fn resolve_initial_mode(
         Pending::nothing()
     };
     let woken = if initial_mode.is_none() {
-        wake(services, server_config, player.shutdown_token()).await
+        match wake(
+            services,
+            server_config,
+            player.shutdown_token(),
+            io.client.stream(),
+        )
+        .await
+        {
+            Ok(warmed) => Ok(warmed),
+            Err(WakeFailure::Unavailable(unavailable)) => Err(unavailable),
+            Err(WakeFailure::ClientLeft) => {
+                return Ok(InitialMode::Denied(DisconnectCause::ClientQuit));
+            }
+        }
     } else {
         Ok(false)
     };

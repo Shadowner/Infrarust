@@ -282,6 +282,107 @@ async fn a_server_that_cannot_start_disconnects_with_its_message(mode: ProxyMode
 
 modes!(a_server_that_cannot_start_disconnects_with_its_message);
 
+async fn repeated_logins_against_a_broken_server_start_it_once(mode: ProxyMode) {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let provider = FakeServerProvider::broken();
+    let proxy = TestProxy::builder()
+        .server(server("lobby", mode, &backend).managed(Arc::clone(&provider)))
+        .start()
+        .await
+        .unwrap();
+
+    for round in 0..4 {
+        let info = proxy
+            .client_for("lobby", ProtocolVersion(CURRENT))
+            .unwrap()
+            .login(&format!("{STEVE}{round}"))
+            .await
+            .unwrap()
+            .disconnected()
+            .unwrap();
+        assert_eq!(info.text, UNAVAILABLE, "round {round}");
+    }
+
+    assert_eq!(provider.starts(), 1);
+    assert_eq!(state(&proxy, "lobby"), Some(ServerState::Crashed));
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+modes!(repeated_logins_against_a_broken_server_start_it_once);
+
+async fn a_client_leaving_during_a_wake_ends_its_session(mode: ProxyMode) {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let provider = FakeServerProvider::sleeping();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(server("lobby", mode, &backend).managed(Arc::clone(&provider)))
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+
+    let client = proxy.client_for("lobby", ProtocolVersion(CURRENT)).unwrap();
+    let login = tokio::spawn(async move { client.login(STEVE).await });
+    provider.wait_for_start(T).await.unwrap();
+
+    login.abort();
+
+    let disconnect = recorder
+        .wait_for(|e| e.kind == EventKind::Disconnect, T)
+        .await
+        .unwrap();
+    assert_eq!(disconnect.cause(), "client_quit", "{disconnect:?}");
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+modes!(a_client_leaving_during_a_wake_ends_its_session);
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_leaving_during_a_switch_wake_ends_its_session() {
+    let hub = FakeBackend::builder().spawn().await.unwrap();
+    let lobby = FakeBackend::builder().spawn().await.unwrap();
+    let provider = FakeServerProvider::sleeping();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(server("hub", ProxyMode::Offline, &hub))
+        .server(server("lobby", ProxyMode::Offline, &lobby).managed(Arc::clone(&provider)))
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+
+    let session = proxy
+        .client_for("hub", ProtocolVersion(CURRENT))
+        .unwrap()
+        .login(STEVE)
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _hub_conn = hub.next_connection(T).await.unwrap();
+    let player = proxy.wait_for_player(STEVE, T).await.unwrap();
+
+    let switching = Arc::clone(&player);
+    let switch = tokio::spawn(async move { switching.connect(ServerId::new("lobby")).await });
+    provider.wait_for_start(T).await.unwrap();
+
+    session.quit().await;
+
+    let disconnect = recorder
+        .wait_for(|e| e.kind == EventKind::Disconnect, T)
+        .await
+        .unwrap();
+    assert_eq!(disconnect.cause(), "client_quit", "{disconnect:?}");
+    assert_eq!(lobby.accepted_connections(), 0);
+
+    let _ = switch.await;
+    proxy.shutdown().await.unwrap();
+}
+
 async fn a_switch_to_a_sleeping_server_wakes_it(version: ProtocolVersion) {
     let hub = FakeBackend::builder().spawn().await.unwrap();
     let lobby = FakeBackend::builder().spawn().await.unwrap();

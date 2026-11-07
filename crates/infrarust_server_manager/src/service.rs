@@ -16,6 +16,52 @@ use crate::provider::{ProviderStatus, ServerProvider};
 use crate::pterodactyl::PterodactylProvider;
 use crate::state::ServerState;
 
+const MIN_START_INTERVAL: Duration = Duration::from_secs(30);
+const FIRST_CRASH_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_CRASH_BACKOFF: Duration = Duration::from_secs(10 * 60);
+const STABLE_UPTIME: Duration = MAX_CRASH_BACKOFF;
+
+/// Limits how often player logins can start a server.
+pub(crate) struct StartThrottle {
+    last_start: Option<Instant>,
+    blocked_until: Option<Instant>,
+    next_backoff: Duration,
+}
+
+impl StartThrottle {
+    const fn new() -> Self {
+        Self {
+            last_start: None,
+            blocked_until: None,
+            next_backoff: FIRST_CRASH_BACKOFF,
+        }
+    }
+
+    fn started(&mut self, now: Instant) {
+        self.last_start = Some(now);
+        self.blocked_until = None;
+    }
+
+    fn crashed(&mut self, now: Instant) {
+        let stable = self
+            .last_start
+            .is_none_or(|start| now.saturating_duration_since(start) >= STABLE_UPTIME);
+        if stable {
+            self.next_backoff = FIRST_CRASH_BACKOFF;
+        }
+        self.blocked_until = Some(now + self.next_backoff);
+        self.next_backoff = (self.next_backoff * 2).min(MAX_CRASH_BACKOFF);
+    }
+
+    fn retry_after(&self, now: Instant) -> Option<Duration> {
+        let next_start = self.last_start.map(|start| start + MIN_START_INTERVAL);
+        next_start
+            .max(self.blocked_until)?
+            .checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+    }
+}
+
 /// Trait for counting players on a server.
 ///
 /// Implemented by the connection registry in `infrarust-core` to avoid
@@ -59,11 +105,15 @@ pub(crate) struct ServerEntry {
     /// Set by a start request until the provider reports it starting or running:
     /// before this deadline a `Stopped` poll means the panel has not caught up yet.
     pub(crate) unconfirmed_start_until: Option<Instant>,
+    throttle: StartThrottle,
 }
 
 impl ServerEntry {
     /// Sole mutation point for `state`: keeps the generation in sync.
     pub(crate) fn set_state(&mut self, new_state: ServerState) {
+        if new_state == ServerState::Crashed && self.state != ServerState::Crashed {
+            self.throttle.crashed(Instant::now());
+        }
         self.generation += 1;
         self.state = new_state;
         self.unconfirmed_start_until = None;
@@ -71,7 +121,9 @@ impl ServerEntry {
 
     pub(crate) fn begin_start(&mut self) {
         self.set_state(ServerState::Starting);
-        self.unconfirmed_start_until = Some(Instant::now() + self.start_timeout);
+        let now = Instant::now();
+        self.throttle.started(now);
+        self.unconfirmed_start_until = Some(now + self.start_timeout);
     }
 
     fn is_unconfirmed_start(&self) -> bool {
@@ -131,6 +183,7 @@ impl ServerManagerService {
                     last_player_seen: None,
                     waiters: Vec::new(),
                     unconfirmed_start_until: None,
+                    throttle: StartThrottle::new(),
                 },
             );
 
@@ -165,6 +218,7 @@ impl ServerManagerService {
                 last_player_seen: None,
                 waiters: Vec::new(),
                 unconfirmed_start_until: None,
+                throttle: StartThrottle::new(),
             },
         );
     }
@@ -264,7 +318,7 @@ impl ServerManagerService {
     /// Ensures the server is started and ready for connections.
     ///
     /// - `Online` → returns Ok immediately
-    /// - `Sleeping`/`Crashed` → triggers start, then waits for Online
+    /// - `Sleeping`/`Crashed` → triggers start unless throttled, then waits for Online
     /// - `Starting` → waits for Online (joins existing waiters)
     /// - `Stopping` → returns an error
     ///
@@ -272,9 +326,13 @@ impl ServerManagerService {
     ///
     /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
     /// [`ServerManagerError::InvalidState`] if the server is stopping,
+    /// [`ServerManagerError::StartThrottled`] if it was started or crashed too recently,
     /// [`ServerManagerError::StartTimeout`] if the server doesn't start in time,
     /// or [`ServerManagerError::Provider`] if the provider fails.
-    pub async fn ensure_started(&self, server_id: &str) -> Result<(), ServerManagerError> {
+    pub async fn ensure_started(
+        self: &Arc<Self>,
+        server_id: &str,
+    ) -> Result<(), ServerManagerError> {
         let (rx, start_timeout) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
                 ServerManagerError::ServerNotFound {
@@ -294,10 +352,17 @@ impl ServerManagerService {
                 ServerState::Starting => {
                     let (tx, rx) = oneshot::channel();
                     let start_timeout = entry.start_timeout;
+                    entry.waiters.retain(|waiter| !waiter.is_closed());
                     entry.waiters.push(tx);
                     (rx, start_timeout)
                 }
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
+                    if let Some(retry_after) = entry.throttle.retry_after(Instant::now()) {
+                        return Err(ServerManagerError::StartThrottled {
+                            server_id: server_id.to_string(),
+                            retry_after,
+                        });
+                    }
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
                     entry.begin_start();
@@ -308,20 +373,13 @@ impl ServerManagerService {
 
                     self.fire_state_change(server_id, old_state, ServerState::Starting);
 
-                    if let Err(e) = provider.start().await {
-                        tracing::error!(server = %server_id, "provider start failed: {e}");
-                        if let Some(mut entry) = self.entries.get_mut(server_id) {
-                            entry.set_state(ServerState::Crashed);
-                            drop(entry);
-                            self.fire_state_change(
-                                server_id,
-                                ServerState::Starting,
-                                ServerState::Crashed,
-                            );
+                    let service = Arc::clone(self);
+                    let server_id = server_id.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = provider.start().await {
+                            service.record_failed_start(&server_id, e);
                         }
-                        self.notify_waiters(server_id, &Err(e.clone()));
-                        return Err(e);
-                    }
+                    });
 
                     (rx, start_timeout)
                 }
@@ -345,7 +403,17 @@ impl ServerManagerService {
         }
     }
 
-    /// Starts a server manually.
+    fn record_failed_start(&self, server_id: &str, error: ServerManagerError) {
+        tracing::error!(server = %server_id, "provider start failed: {error}");
+        if let Some(mut entry) = self.entries.get_mut(server_id) {
+            entry.set_state(ServerState::Crashed);
+            drop(entry);
+            self.fire_state_change(server_id, ServerState::Starting, ServerState::Crashed);
+        }
+        self.notify_waiters(server_id, &Err(error));
+    }
+
+    /// Starts a server manually, regardless of the throttle on player logins.
     ///
     /// # Errors
     ///
@@ -667,5 +735,86 @@ mod tests {
             service.update_state("s", ProviderStatus::Stopped, generation),
             Some((ServerState::Starting, ServerState::Sleeping))
         );
+    }
+
+    #[test]
+    fn a_server_never_started_is_not_throttled() {
+        assert_eq!(StartThrottle::new().retry_after(Instant::now()), None);
+    }
+
+    #[test]
+    fn two_starts_are_kept_apart_by_the_minimum_interval() {
+        let now = Instant::now();
+        let mut throttle = StartThrottle::new();
+        throttle.started(now);
+
+        let later = now + Duration::from_secs(10);
+        assert_eq!(throttle.retry_after(later), Some(Duration::from_secs(20)));
+        assert_eq!(throttle.retry_after(now + MIN_START_INTERVAL), None);
+    }
+
+    #[test]
+    fn crash_backoff_doubles_up_to_the_maximum() {
+        let mut now = Instant::now();
+        let mut throttle = StartThrottle::new();
+
+        for expected in [30, 60, 120, 240, 480, 600, 600] {
+            throttle.started(now);
+            now += Duration::from_secs(1);
+            throttle.crashed(now);
+            assert_eq!(
+                throttle.retry_after(now),
+                Some(Duration::from_secs(expected))
+            );
+            now += Duration::from_secs(expected);
+            assert_eq!(throttle.retry_after(now), None);
+        }
+    }
+
+    #[test]
+    fn crash_backoff_starts_over_after_a_stable_run() {
+        let mut now = Instant::now();
+        let mut throttle = StartThrottle::new();
+        for _ in 0..3 {
+            throttle.started(now);
+            throttle.crashed(now);
+        }
+
+        throttle.started(now);
+        now += STABLE_UPTIME;
+        throttle.crashed(now);
+
+        assert_eq!(throttle.retry_after(now), Some(FIRST_CRASH_BACKOFF));
+    }
+
+    #[test]
+    fn a_manual_start_clears_the_crash_backoff() {
+        let mut now = Instant::now();
+        let mut throttle = StartThrottle::new();
+        for _ in 0..3 {
+            throttle.started(now);
+            throttle.crashed(now);
+        }
+
+        now += Duration::from_secs(1);
+        throttle.started(now);
+
+        assert_eq!(
+            throttle.retry_after(now + MIN_START_INTERVAL),
+            None,
+            "only the minimum interval applies once the operator restarted the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_entering_the_crashed_state_counts_as_a_crash() {
+        let service = service_with_online_server("s");
+        let mut entry = service.entries.get_mut("s").unwrap();
+        entry.set_state(ServerState::Crashed);
+        let backoff = entry.throttle.next_backoff;
+
+        entry.set_state(ServerState::Crashed);
+
+        assert_eq!(entry.throttle.next_backoff, backoff);
     }
 }

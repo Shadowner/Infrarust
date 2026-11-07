@@ -73,6 +73,10 @@ impl ClientBridge {
         }
     }
 
+    pub(crate) const fn stream(&self) -> &TcpStream {
+        &self.stream
+    }
+
     /// Sets the token that cuts a stalled write short.
     pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.writes.set_cancel(cancel);
