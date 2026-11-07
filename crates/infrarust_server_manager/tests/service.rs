@@ -546,7 +546,7 @@ impl ServerProvider for CountingProvider {
     }
 }
 
-fn service_with(provider: Arc<CountingProvider>) -> Arc<ServerManagerService> {
+fn service_with(provider: Arc<dyn ServerProvider>) -> Arc<ServerManagerService> {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     service.register_server(
         "test".to_string(),
@@ -662,4 +662,95 @@ async fn test_an_abandoned_login_does_not_abandon_the_start() {
     })
     .await
     .expect("the failed start should still be recorded");
+}
+
+struct LateFailingProvider {
+    release: tokio::sync::Notify,
+    status: ProviderStatus,
+}
+
+impl ServerProvider for LateFailingProvider {
+    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            self.release.notified().await;
+            Err(ServerManagerError::Provider {
+                server_id: "test".to_string(),
+                message: "panel timed out".to_string(),
+            })
+        })
+    }
+
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn check_status(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+        Box::pin(async move { Ok(self.status) })
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "late-failing"
+    }
+}
+
+fn service_recording_crashes(
+    provider: Arc<LateFailingProvider>,
+) -> (Arc<ServerManagerService>, Arc<AtomicUsize>) {
+    let service = service_with(provider);
+    let crashes = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&crashes);
+    service.add_on_state_change(Arc::new(move |_, _, new| {
+        if new == ServerState::Crashed {
+            counted.fetch_add(1, Ordering::AcqRel);
+        }
+    }));
+    (service, crashes)
+}
+
+#[tokio::test]
+async fn test_a_late_start_failure_does_not_crash_a_server_already_online() {
+    let provider = Arc::new(LateFailingProvider {
+        release: tokio::sync::Notify::new(),
+        status: ProviderStatus::Running,
+    });
+    let (service, crashes) = service_recording_crashes(provider.clone());
+    let shutdown = CancellationToken::new();
+    let _handles = service.start_monitoring(Arc::new(MockPlayerCounter), shutdown.clone());
+
+    tokio::time::timeout(Duration::from_secs(5), service.ensure_started("test"))
+        .await
+        .expect("the poll should report the server online")
+        .unwrap();
+
+    provider.release.notify_one();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(crashes.load(Ordering::Acquire), 0);
+    assert_eq!(service.get_state("test"), Some(ServerState::Online));
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn test_a_late_start_failure_does_not_overwrite_a_manual_stop() {
+    let provider = Arc::new(LateFailingProvider {
+        release: tokio::sync::Notify::new(),
+        status: ProviderStatus::Stopped,
+    });
+    let (service, crashes) = service_recording_crashes(provider.clone());
+
+    let svc = Arc::clone(&service);
+    let login = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    service.stop_server("test").await.unwrap();
+    provider.release.notify_one();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    login.abort();
+
+    assert_eq!(crashes.load(Ordering::Acquire), 0);
+    assert_eq!(service.get_state("test"), Some(ServerState::Sleeping));
 }

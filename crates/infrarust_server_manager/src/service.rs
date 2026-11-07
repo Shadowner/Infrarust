@@ -366,6 +366,7 @@ impl ServerManagerService {
                     let provider = Arc::clone(&entry.provider);
                     let old_state = entry.state;
                     entry.begin_start();
+                    let attempt = entry.generation;
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
                     entry.waiters.push(tx);
@@ -377,7 +378,7 @@ impl ServerManagerService {
                     let server_id = server_id.to_string();
                     tokio::spawn(async move {
                         if let Err(e) = provider.start().await {
-                            service.record_failed_start(&server_id, e);
+                            service.record_failed_start(&server_id, attempt, e);
                         }
                     });
 
@@ -403,13 +404,17 @@ impl ServerManagerService {
         }
     }
 
-    fn record_failed_start(&self, server_id: &str, error: ServerManagerError) {
+    fn record_failed_start(&self, server_id: &str, attempt: u64, error: ServerManagerError) {
         tracing::error!(server = %server_id, "provider start failed: {error}");
-        if let Some(mut entry) = self.entries.get_mut(server_id) {
-            entry.set_state(ServerState::Crashed);
-            drop(entry);
-            self.fire_state_change(server_id, ServerState::Starting, ServerState::Crashed);
+        let Some(mut entry) = self.entries.get_mut(server_id) else {
+            return;
+        };
+        if entry.generation != attempt {
+            return;
         }
+        entry.set_state(ServerState::Crashed);
+        drop(entry);
+        self.fire_state_change(server_id, ServerState::Starting, ServerState::Crashed);
         self.notify_waiters(server_id, &Err(error));
     }
 
