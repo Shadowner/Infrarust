@@ -149,6 +149,17 @@ pub enum ServerValidationError {
         global: &'static str,
     },
 
+    #[error(
+        "{proxy_mode:?} mode does not verify players, but the proxy-wide [forwarding] mode \
+         \"{mode}\" would hand this backend the identity each client claims: set \
+         forwarding_mode = \"none\" on the server, or write forwarding_mode = \"{mode}\" \
+         to accept that any client can impersonate any player there"
+    )]
+    InheritedForwardingUnverified {
+        proxy_mode: ProxyMode,
+        mode: &'static str,
+    },
+
     #[error("domains must not contain an empty entry")]
     EmptyDomain,
 

@@ -1018,7 +1018,6 @@ fn a_proxy_wide_velocity_default_is_rejected_for_a_forwarding_server() {
         "{error}"
     );
     assert!(error.to_string().contains("velocity"), "{error}");
-    assert!(validate_server_forwarding(&config, ForwardingMode::BungeeCord).is_ok());
 }
 
 #[test]
@@ -1133,6 +1132,92 @@ fn the_velocity_error_recommends_turning_forwarding_off() {
         .to_string();
     assert!(message.contains(r#"forwarding_mode = "none""#), "{message}");
     assert!(!message.contains("bungee"), "{message}");
+}
+
+fn server_in_mode(proxy_mode: &str, forwarding_mode: Option<&str>) -> ServerConfig {
+    let forwarding_mode = forwarding_mode
+        .map(|mode| format!("forwarding_mode = \"{mode}\""))
+        .unwrap_or_default();
+    from_toml(&format!(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "{proxy_mode}"
+        {forwarding_mode}
+        "#,
+    ))
+}
+
+#[test]
+fn a_forwarding_server_cannot_inherit_a_bungee_default() {
+    for proxy_mode in ["passthrough", "zero_copy", "server_only"] {
+        for global in [ForwardingMode::BungeeCord, ForwardingMode::BungeeGuard] {
+            let config = server_in_mode(proxy_mode, None);
+            let error = validate_server_forwarding(&config, global.clone()).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    ConfigError::Server {
+                        reason: ServerValidationError::InheritedForwardingUnverified { .. },
+                        ..
+                    }
+                ),
+                "{proxy_mode} under {global:?}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_intercepted_server_still_inherits_a_bungee_default() {
+    for proxy_mode in ["offline", "client_only"] {
+        for global in [ForwardingMode::BungeeCord, ForwardingMode::BungeeGuard] {
+            let warnings =
+                validate_server_forwarding(&server_in_mode(proxy_mode, None), global).unwrap();
+            assert!(warnings.is_empty(), "{proxy_mode}");
+        }
+    }
+}
+
+#[test]
+fn an_explicit_bungee_override_on_a_forwarding_server_only_warns() {
+    for proxy_mode in ["passthrough", "zero_copy", "server_only"] {
+        for (explicit, global) in [
+            ("bungee_cord", ForwardingMode::None),
+            ("bungee_cord", ForwardingMode::BungeeCord),
+            ("bungee_cord", ForwardingMode::BungeeGuard),
+            ("bungee_cord", ForwardingMode::Velocity),
+            ("bungee_guard", ForwardingMode::BungeeGuard),
+        ] {
+            let config = server_in_mode(proxy_mode, Some(explicit));
+            let warnings = validate_server_forwarding(&config, global).unwrap();
+            assert_eq!(warnings.len(), 1, "{proxy_mode} {explicit}");
+            assert!(warnings[0].contains(explicit), "{}", warnings[0]);
+        }
+    }
+}
+
+#[test]
+fn an_opt_out_on_a_forwarding_server_is_silent_under_any_default() {
+    for global in [
+        ForwardingMode::None,
+        ForwardingMode::BungeeCord,
+        ForwardingMode::BungeeGuard,
+        ForwardingMode::Velocity,
+    ] {
+        let warnings =
+            validate_server_forwarding(&server_in_mode("passthrough", Some("none")), global)
+                .unwrap();
+        assert!(warnings.is_empty());
+    }
+}
+
+#[test]
+fn a_forwarding_server_without_any_forwarding_stays_valid() {
+    let warnings =
+        validate_server_forwarding(&server_in_mode("passthrough", None), ForwardingMode::None)
+            .unwrap();
+    assert!(warnings.is_empty());
 }
 
 #[test]

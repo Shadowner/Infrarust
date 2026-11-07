@@ -346,6 +346,49 @@ fn routed(proxy: &TestProxy, server: &str) -> bool {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_passthrough_server_needs_an_explicit_line_under_a_bungee_default() {
+    let secrets = tempfile::tempdir().unwrap();
+    let secret_file = secrets.path().join("forwarding.secret");
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("inherited").backend(backend.addr()))
+        .server(
+            ServerSpec::passthrough("optout")
+                .backend(backend.addr())
+                .patch(|table| {
+                    table.insert("forwarding_mode".into(), toml::Value::String("none".into()));
+                }),
+        )
+        .server(
+            ServerSpec::passthrough("accepted")
+                .backend(backend.addr())
+                .patch(|table| {
+                    table.insert(
+                        "forwarding_mode".into(),
+                        toml::Value::String("bungee_cord".into()),
+                    );
+                }),
+        )
+        .server(ServerSpec::offline("verified").backend(backend.addr()))
+        .patch_config(move |table| {
+            table.insert(
+                "forwarding".into(),
+                forwarding_table("bungee_cord", &secret_file),
+            );
+        })
+        .start()
+        .await
+        .unwrap();
+
+    assert!(!routed(&proxy, "inherited"));
+    assert!(routed(&proxy, "optout"));
+    assert!(routed(&proxy, "accepted"));
+    assert!(routed(&proxy, "verified"));
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bungee_guard_override_under_a_velocity_default_is_not_routed() {
     let secrets = tempfile::tempdir().unwrap();
     let secret_file = secrets.path().join("forwarding.secret");

@@ -186,7 +186,12 @@ async fn event_loop(
 
 fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
     match infrarust_config::validate_server_forwarding(&pc.config, default_forwarding.clone()) {
-        Ok(()) => true,
+        Ok(warnings) => {
+            for warning in warnings {
+                tracing::warn!(id = %pc.id, "{warning}");
+            }
+            true
+        }
         Err(error) => {
             tracing::error!(id = %pc.id, %error, "server config rejected");
             false
@@ -319,6 +324,20 @@ mod tests {
             "the rejected server must not be routed"
         );
         assert!(reloads.is_empty());
+    }
+
+    #[test]
+    fn a_forwarding_server_inheriting_a_bungee_default_is_not_published() {
+        for default in [ForwardingMode::BungeeCord, ForwardingMode::BungeeGuard] {
+            let router = DomainRouter::new();
+            let lobby = passthrough("lobby");
+            let id = lobby.id.clone();
+
+            let reloads = apply(&router, &default, ProviderEvent::Added(lobby));
+
+            assert!(router.get(&id).is_none(), "{default:?}");
+            assert!(reloads.is_empty(), "{default:?}");
+        }
     }
 
     #[test]
