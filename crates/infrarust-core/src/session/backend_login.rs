@@ -70,7 +70,7 @@ async fn start_login(
     config: &ServerConfig,
     backend: &mut BackendBridge,
 ) -> Result<ForwardingHandler, CoreError> {
-    let handler = ctx.services.resolve_forwarding_handler(config);
+    let handler = ctx.services.resolve_forwarding_handler(config)?;
     if handler.modifies_handshake() {
         let mut handshake = build_handshake_for_backend(&ctx.handshake, config);
         handler.apply_handshake(&mut handshake, &ctx.forwarding_data());

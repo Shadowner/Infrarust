@@ -269,20 +269,26 @@ pub(crate) async fn resolve_initial_mode(
         let warmed = matches!(woken, Ok(true)).then(|| fresh_targets(routing, ctx, pending_ticket));
         let backend_targets = warmed.as_ref().or(backend_targets);
 
-        let forwarding_handler = services.resolve_forwarding_handler(server_config);
-        let bridged = progress.bridges_backend_login(&forwarding_handler);
-
         let mut join = ServerJoin::new(player, target_server_id.clone());
-        let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
-        let login = if progress.completed {
-            Login::Proxied
-        } else if bridged {
-            Login::Bridged(&mut *io)
-        } else {
-            Login::Relay
+        let connected = match services.resolve_forwarding_handler(server_config) {
+            Ok(forwarding_handler) => {
+                let bridged = progress.bridges_backend_login(&forwarding_handler);
+                let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
+                let login = if progress.completed {
+                    Login::Proxied
+                } else if bridged {
+                    Login::Bridged(&mut *io)
+                } else {
+                    Login::Relay
+                };
+                connect_backend(ctx, &routing.config_id, server_config, &addresses, login)
+                    .await
+                    .map(|backend| (backend, bridged))
+            }
+            Err(mismatch) => Err(mismatch.into()),
         };
-        match connect_backend(ctx, &routing.config_id, server_config, &addresses, login).await {
-            Ok(backend) => {
+        match connected {
+            Ok((backend, bridged)) => {
                 progress.completed |= bridged;
                 if progress.completed {
                     join.connected(&services.event_bus).await;
@@ -786,6 +792,31 @@ mod tests {
             format!("origin.test\0127.0.0.1\0{}\0[]", uuid.as_simple())
         );
         assert!(matches!(mode, InitialMode::Connected(_)));
+    }
+
+    #[tokio::test]
+    async fn an_override_without_its_secret_kicks_without_reaching_the_backend() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let services = test_proxy_services();
+        let routing = origin(&services, &backend, "forwarding_mode = \"velocity\"");
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+        let (client, _peer) = client_pair(V).await;
+        let mut io = test_io(&ctx, client);
+
+        let mode = resolve(&ctx, &mut io, &routing, offline_login()).await;
+
+        let InitialMode::Connected(initial) = mode else {
+            panic!("the mismatch must surface as a kick");
+        };
+        assert!(matches!(initial.mode, ConnectionMode::Kicked(_)));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), backend.accept())
+                .await
+                .is_err(),
+            "the backend must not be contacted"
+        );
     }
 
     #[tokio::test]

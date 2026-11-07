@@ -562,7 +562,7 @@ async fn send_initial_packets(
     data: &ForwardingData,
     pipelined: &[u8],
 ) -> Result<(), CoreError> {
-    let handler = services.resolve_forwarding_handler(server_config);
+    let handler = services.resolve_forwarding_handler(server_config)?;
 
     if matches!(handler, ForwardingHandler::Velocity(_)) {
         tracing::error!(

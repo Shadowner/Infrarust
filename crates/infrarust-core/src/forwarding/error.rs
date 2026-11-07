@@ -22,4 +22,10 @@ pub enum ForwardingError {
 
     #[error("backend rejected connection during forwarding: {0}")]
     Rejected(String),
+
+    #[error(
+        "server overrides forwarding to {requested}, but the proxy-wide [forwarding] mode \
+         does not hold a secret for it"
+    )]
+    SecretMismatch { requested: &'static str },
 }

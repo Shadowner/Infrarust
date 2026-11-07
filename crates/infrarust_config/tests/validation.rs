@@ -1049,6 +1049,93 @@ fn velocity_forwarding_on_an_intercepted_server_is_valid() {
 }
 
 #[test]
+fn a_bungee_guard_override_never_reuses_a_proxy_wide_velocity_secret() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "offline"
+        forwarding_mode = "bungee_guard"
+    "#,
+    );
+    let error = validate_server_forwarding(&config, ForwardingMode::Velocity).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ConfigError::Server {
+                reason: ServerValidationError::ForwardingSecretMismatch {
+                    requested: "bungee_guard",
+                    global: "velocity",
+                },
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(validate_server_forwarding(&config, ForwardingMode::BungeeGuard).is_ok());
+}
+
+#[test]
+fn an_override_needing_a_secret_is_rejected_when_the_global_mode_has_none_for_it() {
+    for (requested, global) in [
+        ("bungee_guard", ForwardingMode::None),
+        ("bungee_guard", ForwardingMode::BungeeCord),
+        ("velocity", ForwardingMode::None),
+        ("velocity", ForwardingMode::BungeeCord),
+        ("velocity", ForwardingMode::BungeeGuard),
+    ] {
+        let config = from_toml(&format!(
+            r#"
+            domains = ["mc.example.com"]
+            addresses = ["127.0.0.1:25565"]
+            proxy_mode = "offline"
+            forwarding_mode = "{requested}"
+            "#,
+        ));
+        let error = validate_server_forwarding(&config, global.clone()).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ConfigError::Server {
+                    reason: ServerValidationError::ForwardingSecretMismatch { .. },
+                    ..
+                }
+            ),
+            "{requested} under {global:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_bungee_guard_override_loads_before_the_global_mode_is_known() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "offline"
+        forwarding_mode = "bungee_guard"
+    "#,
+    );
+    assert!(validate_server_config(&config).is_ok());
+}
+
+#[test]
+fn the_velocity_error_recommends_turning_forwarding_off() {
+    let config = from_toml(
+        r#"
+        domains = ["mc.example.com"]
+        addresses = ["127.0.0.1:25565"]
+        proxy_mode = "passthrough"
+    "#,
+    );
+    let message = validate_server_forwarding(&config, ForwardingMode::Velocity)
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains(r#"forwarding_mode = "none""#), "{message}");
+    assert!(!message.contains("bungee"), "{message}");
+}
+
+#[test]
 fn test_server_validation_returns_its_warnings() {
     let config = from_toml(
         r#"

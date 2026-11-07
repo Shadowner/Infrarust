@@ -327,6 +327,57 @@ fn current() -> ProtocolVersion {
     ProtocolVersion(infrarust_test_harness::versions::CURRENT)
 }
 
+fn forwarding_table(mode: &str, secret_file: &std::path::Path) -> toml::Value {
+    toml::Value::Table(toml::Table::from_iter([
+        ("mode".to_string(), toml::Value::String(mode.into())),
+        (
+            "secret_file".to_string(),
+            toml::Value::String(secret_file.to_string_lossy().into_owned()),
+        ),
+    ]))
+}
+
+fn routed(proxy: &TestProxy, server: &str) -> bool {
+    proxy
+        .services()
+        .domain_router
+        .find_route_by_server_id(server)
+        .is_some()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bungee_guard_override_under_a_velocity_default_is_not_routed() {
+    let secrets = tempfile::tempdir().unwrap();
+    let secret_file = secrets.path().join("forwarding.secret");
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(
+            ServerSpec::offline("guarded")
+                .backend(backend.addr())
+                .patch(|table| {
+                    table.insert(
+                        "forwarding_mode".into(),
+                        toml::Value::String("bungee_guard".into()),
+                    );
+                }),
+        )
+        .server(ServerSpec::offline("signed").backend(backend.addr()))
+        .patch_config(move |table| {
+            table.insert(
+                "forwarding".into(),
+                forwarding_table("velocity", &secret_file),
+            );
+        })
+        .start()
+        .await
+        .unwrap();
+
+    assert!(!routed(&proxy, "guarded"));
+    assert!(routed(&proxy, "signed"));
+
+    proxy.shutdown().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_non_velocity_server_gets_not_understood_at_login() {
     let network = velocity_network().await;
