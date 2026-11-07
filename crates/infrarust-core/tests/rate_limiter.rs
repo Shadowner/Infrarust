@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use infrarust_config::RateLimitConfig;
@@ -41,6 +42,43 @@ async fn admits(limiter: &RateLimiterMiddleware, ip: &str) -> bool {
         MiddlewareResult::Reject(_) => false,
         _ => panic!("the rate limiter only continues or rejects"),
     }
+}
+
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn only_the_first_refusal_warns_and_it_names_the_fix() {
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(move || writer.clone())
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+
+    let limiter = one_login_per(Duration::from_secs(3600));
+    assert!(admits(&limiter, "192.0.2.1").await);
+    assert!(!admits(&limiter, "192.0.2.1").await);
+    assert!(!admits(&limiter, "192.0.2.1").await);
+    drop(guard);
+
+    let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(logs.matches("WARN").count(), 1, "{logs}");
+    assert!(logs.contains("[rate_limit]"), "{logs}");
+    assert!(logs.contains("trusted_proxies"), "{logs}");
 }
 
 #[tokio::test]

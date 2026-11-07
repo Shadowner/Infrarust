@@ -2,6 +2,7 @@ use std::future::Future;
 use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use governor::clock::DefaultClock;
@@ -29,6 +30,7 @@ pub struct RateLimiterMiddleware {
     enabled: bool,
     login_limiter: Arc<KeyedLimiter>,
     status_limiter: Arc<KeyedLimiter>,
+    warned: Arc<AtomicBool>,
 }
 
 impl RateLimiterMiddleware {
@@ -40,6 +42,7 @@ impl RateLimiterMiddleware {
             enabled: config.enabled,
             login_limiter: Arc::new(login_limiter),
             status_limiter: Arc::new(status_limiter),
+            warned: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -118,6 +121,16 @@ impl Middleware for RateLimiterMiddleware {
                     intent = ?handshake.intent,
                     "rate limit exceeded"
                 );
+                if !self.warned.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(
+                        key = %IpKey::from(ctx.client_ip),
+                        "refusing connections over [rate_limit]; clients behind playit, frp, \
+                         ngrok, Docker userland proxy or NAT share one address: send the real \
+                         address with receive_proxy_protocol and trusted_proxies, raise \
+                         max_connections and status_max, or set enabled = false. This warning \
+                         is logged once"
+                    );
+                }
                 ctx.extensions.insert(Refused(RejectReason::RateLimit));
                 Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
             }
