@@ -4,9 +4,12 @@
 use std::collections::HashMap;
 
 use infrarust_config::{DockerProviderConfig, ForwardingMode, validate_server_forwarding};
+use infrarust_core::provider::ConfigProvider;
 use infrarust_core::provider::docker::{
-    DomainsNotAllowed, container_server_config, labels_to_server_config, resolve_container_address,
+    DockerProvider, DomainsNotAllowed, container_server_config, labels_to_server_config,
+    resolve_container_address,
 };
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 fn make_labels(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     pairs
@@ -322,4 +325,72 @@ fn test_policy_settings_default_to_closed() {
 
     assert!(parsed.allowed_domains.is_empty());
     assert!(!parsed.inherit_forwarding);
+}
+
+async fn answer_with_no_containers(mut stream: impl AsyncRead + AsyncWrite + Unpin) {
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+        let read = stream.read(&mut chunk).await.unwrap();
+        assert_ne!(read, 0, "the client closed before finishing its request");
+        request.extend_from_slice(&chunk[..read]);
+    }
+    let request = String::from_utf8_lossy(&request);
+    assert!(request.contains("/containers/json"), "{request}");
+    stream
+        .write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+              Content-Length: 2\r\nConnection: close\r\n\r\n[]",
+        )
+        .await
+        .unwrap();
+    stream.shutdown().await.unwrap();
+}
+
+fn provider_at(endpoint: String) -> DockerProvider {
+    DockerProvider::new(&DockerProviderConfig {
+        endpoint,
+        ..Default::default()
+    })
+}
+
+#[tokio::test]
+async fn test_provider_connects_to_the_configured_tcp_endpoint() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("tcp://{}", listener.local_addr().unwrap());
+    let daemon = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        answer_with_no_containers(stream).await;
+    });
+
+    let configs = provider_at(endpoint).load_initial().await.unwrap();
+
+    assert!(configs.is_empty());
+    daemon.await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_provider_connects_to_the_configured_unix_socket() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("docker.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let endpoint = format!("unix://{}", socket.display());
+    let daemon = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        answer_with_no_containers(stream).await;
+    });
+
+    let configs = provider_at(endpoint).load_initial().await.unwrap();
+
+    assert!(configs.is_empty());
+    daemon.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_provider_refuses_an_endpoint_it_cannot_honour() {
+    for endpoint in ["/var/run/docker.sock", "ftp://daemon.lan:2375"] {
+        let result = provider_at(endpoint.to_string()).load_initial().await;
+        assert!(result.is_err(), "{endpoint}");
+    }
 }

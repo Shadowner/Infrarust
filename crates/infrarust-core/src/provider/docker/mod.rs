@@ -52,18 +52,10 @@ impl DockerProvider {
         }
     }
 
-    /// Connects to the Docker daemon.
+    /// Connects to the configured Docker daemon.
     fn connect(&self) -> Result<Docker, CoreError> {
-        let docker = if self.config.endpoint.starts_with("unix://") {
-            Docker::connect_with_socket_defaults()
-        } else if self.config.endpoint.starts_with("tcp://") {
-            Docker::connect_with_http_defaults()
-        } else {
-            Docker::connect_with_local_defaults()
-        }
-        .map_err(|e| CoreError::DockerConnection(e.to_string()))?;
-
-        Ok(docker)
+        Docker::connect_with_host(&self.config.endpoint)
+            .map_err(|e| CoreError::DockerConnection(e.to_string()))
     }
 
     /// Scans all running containers with `infrarust.enable=true`.
