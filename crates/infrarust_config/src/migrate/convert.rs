@@ -744,6 +744,8 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
             .map(Duration::from_secs)
             .unwrap_or_else(crate::defaults::docker_poll_interval),
         reconnect_delay: crate::defaults::docker_reconnect_delay(),
+        allowed_domains: Vec::new(),
+        inherit_forwarding: false,
     });
 
     let config = ProxyConfig {

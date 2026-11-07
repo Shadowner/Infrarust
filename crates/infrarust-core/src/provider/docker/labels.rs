@@ -6,8 +6,11 @@
 use std::collections::HashMap;
 
 use bollard::models::ContainerInspectResponse;
+use wildmatch::WildMatch;
 
-use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
+use infrarust_config::{
+    DockerProviderConfig, ForwardingMode, ProxyMode, ServerAddress, ServerConfig,
+};
 
 /// Default Minecraft port.
 /// Converts Docker container labels to a `ServerConfig`.
@@ -114,6 +117,54 @@ pub fn labels_to_server_config(
             bungeecord_channel: false,
         }
     })
+}
+
+/// A container whose labels claim domains the `[docker]` section does not allow.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DomainsNotAllowed {
+    /// The complete `allowed_domains` line that would admit this container.
+    pub allowing_line: String,
+}
+
+/// Builds the config of a container under the `[docker]` policy.
+pub fn container_server_config(
+    policy: &DockerProviderConfig,
+    container_name: &str,
+    labels: &HashMap<String, String>,
+    address: &str,
+) -> Result<ServerConfig, DomainsNotAllowed> {
+    let mut config = labels_to_server_config(container_name, labels, address);
+
+    let own_domain = format!("{container_name}.docker.local").to_lowercase();
+    let allowed: Vec<String> = policy
+        .allowed_domains
+        .iter()
+        .map(|domain| domain.to_lowercase())
+        .collect();
+    let mut refused: Vec<String> = config
+        .domains
+        .iter()
+        .map(|domain| domain.to_lowercase())
+        .filter(|domain| *domain != own_domain && !domain_allowed(&allowed, domain))
+        .collect();
+    if !refused.is_empty() {
+        refused.dedup();
+        return Err(DomainsNotAllowed {
+            allowing_line: format!("allowed_domains = {:?}", [allowed, refused].concat()),
+        });
+    }
+
+    if !policy.inherit_forwarding {
+        config.forwarding_mode = Some(ForwardingMode::None);
+    }
+    Ok(config)
+}
+
+fn domain_allowed(allowed: &[String], domain: &str) -> bool {
+    let is_pattern = domain.contains(['*', '?']);
+    allowed
+        .iter()
+        .any(|entry| entry == domain || (!is_pattern && WildMatch::new(entry).matches(domain)))
 }
 
 /// Resolves the best address for a Docker container.

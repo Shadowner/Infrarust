@@ -7,7 +7,9 @@
 
 pub mod labels;
 
-pub use labels::{labels_to_server_config, resolve_container_address};
+pub use labels::{
+    DomainsNotAllowed, container_server_config, labels_to_server_config, resolve_container_address,
+};
 
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
@@ -37,6 +39,8 @@ pub struct DockerProvider {
     config: DockerProviderConfig,
     /// Known containers: container_name → ServerConfig
     known: Mutex<HashMap<String, ServerConfig>>,
+    /// Last refusal logged per container, so polling does not repeat it.
+    refusals: Mutex<HashMap<String, String>>,
 }
 
 impl DockerProvider {
@@ -44,6 +48,7 @@ impl DockerProvider {
         Self {
             config: config.clone(),
             known: Mutex::new(HashMap::new()),
+            refusals: Mutex::new(HashMap::new()),
         }
     }
 
@@ -79,6 +84,7 @@ impl DockerProvider {
 
         let mut configs = Vec::new();
         let mut unreadable = HashSet::new();
+        let mut listed = HashSet::new();
 
         for container in &containers {
             let container_id = match &container.id {
@@ -92,6 +98,7 @@ impl DockerProvider {
                 .and_then(|names| names.first())
                 .map(|n| n.trim_start_matches('/').to_string())
                 .unwrap_or_else(|| container_id[..12.min(container_id.len())].to_string());
+            listed.insert(container_name.clone());
 
             match self
                 .inspect_and_build(docker, container_id, &container_name)
@@ -109,6 +116,11 @@ impl DockerProvider {
                 }
             }
         }
+
+        self.refusals
+            .lock()
+            .await
+            .retain(|name, _| listed.contains(name));
 
         Ok(ContainerScan {
             configs,
@@ -144,7 +156,22 @@ impl DockerProvider {
 
         let address = resolve_container_address(&info, self.config.network.as_deref(), port);
 
-        let config = labels_to_server_config(container_name, labels, &address);
+        let config = match container_server_config(&self.config, container_name, labels, &address) {
+            Ok(config) => config,
+            Err(DomainsNotAllowed { allowing_line }) => {
+                self.log_refusal(
+                    container_name,
+                    format!(
+                        "container not routed: its infrarust.domains label claims domains \
+                         outside the allowlist. To allow them, set this line in [docker]: \
+                         {allowing_line}"
+                    ),
+                )
+                .await;
+                return Ok(None);
+            }
+        };
+        self.refusals.lock().await.remove(container_name);
 
         let warnings = match infrarust_config::validate_server_config(&config) {
             Ok(warnings) => warnings,
@@ -165,6 +192,14 @@ impl DockerProvider {
             id: ProviderId::docker(container_name),
             config,
         }))
+    }
+
+    async fn log_refusal(&self, container_name: &str, reason: String) {
+        let mut refusals = self.refusals.lock().await;
+        if refusals.get(container_name) != Some(&reason) {
+            tracing::warn!(container = %container_name, "{reason}");
+            refusals.insert(container_name.to_string(), reason);
+        }
     }
 
     /// Watches Docker events with automatic reconnection.

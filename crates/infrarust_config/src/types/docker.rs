@@ -30,6 +30,16 @@ pub struct DockerProviderConfig {
     #[serde(default = "defaults::docker_reconnect_delay")]
     #[serde(with = "humantime_serde")]
     pub reconnect_delay: Duration,
+
+    /// Domains containers may claim through `infrarust.domains`. Entries accept
+    /// `*` and `?`. A container may always use `<container>.docker.local`.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+
+    /// Lets containers inherit the proxy-wide `[forwarding]` mode, which hands
+    /// them the forwarding secret. Otherwise they get `forwarding_mode = "none"`.
+    #[serde(default)]
+    pub inherit_forwarding: bool,
 }
 
 impl Default for DockerProviderConfig {
@@ -39,6 +49,8 @@ impl Default for DockerProviderConfig {
             network: None,
             poll_interval: defaults::docker_poll_interval(),
             reconnect_delay: defaults::docker_reconnect_delay(),
+            allowed_domains: Vec::new(),
+            inherit_forwarding: false,
         }
     }
 }

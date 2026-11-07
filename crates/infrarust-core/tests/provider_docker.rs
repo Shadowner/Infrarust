@@ -3,7 +3,10 @@
 
 use std::collections::HashMap;
 
-use infrarust_core::provider::docker::{labels_to_server_config, resolve_container_address};
+use infrarust_config::{DockerProviderConfig, ForwardingMode, validate_server_forwarding};
+use infrarust_core::provider::docker::{
+    DomainsNotAllowed, container_server_config, labels_to_server_config, resolve_container_address,
+};
 
 fn make_labels(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     pairs
@@ -131,4 +134,168 @@ fn test_address_resolution_picks_first_network_by_name() {
 
     let addr = resolve_container_address(&info, None, 25565);
     assert_eq!(addr, "10.0.0.2:25565");
+}
+
+fn policy(allowed_domains: &[&str]) -> DockerProviderConfig {
+    DockerProviderConfig {
+        allowed_domains: allowed_domains.iter().map(ToString::to_string).collect(),
+        ..Default::default()
+    }
+}
+
+fn claiming(domains: &str) -> HashMap<String, String> {
+    make_labels(&[("infrarust.enable", "true"), ("infrarust.domains", domains)])
+}
+
+const ADDRESS: &str = "172.17.0.2:25565";
+
+#[test]
+fn test_policy_refuses_label_domains_by_default() {
+    let refusal = container_server_config(
+        &DockerProviderConfig::default(),
+        "mc-evil",
+        &claiming("play.mc.com"),
+        ADDRESS,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        refusal,
+        DomainsNotAllowed {
+            allowing_line: r#"allowed_domains = ["play.mc.com"]"#.to_string()
+        }
+    );
+}
+
+#[test]
+fn test_policy_allowing_line_keeps_the_existing_entries() {
+    let refusal = container_server_config(
+        &policy(&["*.lan.mc.com"]),
+        "mc-test",
+        &claiming("a.lan.mc.com, Play.MC.com"),
+        ADDRESS,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        refusal.allowing_line,
+        r#"allowed_domains = ["*.lan.mc.com", "play.mc.com"]"#
+    );
+}
+
+#[test]
+fn test_policy_routes_the_automatic_domain_without_an_allowlist() {
+    let labels = make_labels(&[("infrarust.enable", "true")]);
+    let config = container_server_config(
+        &DockerProviderConfig::default(),
+        "mc-test",
+        &labels,
+        ADDRESS,
+    )
+    .unwrap();
+
+    assert_eq!(config.domains, vec!["mc-test.docker.local"]);
+}
+
+#[test]
+fn test_policy_does_not_extend_the_automatic_domain_to_other_containers() {
+    let refusal = container_server_config(
+        &DockerProviderConfig::default(),
+        "mc-evil",
+        &claiming("mc-other.docker.local"),
+        ADDRESS,
+    );
+
+    assert!(refusal.is_err());
+}
+
+#[test]
+fn test_policy_allows_listed_domains_and_patterns() {
+    let config = container_server_config(
+        &policy(&["Exact.mc.com", "*.lan.mc.com"]),
+        "mc-test",
+        &claiming("exact.mc.com, a.lan.mc.com"),
+        ADDRESS,
+    )
+    .unwrap();
+
+    assert_eq!(config.domains, vec!["exact.mc.com", "a.lan.mc.com"]);
+}
+
+#[test]
+fn test_policy_refuses_one_outside_domain_among_allowed_ones() {
+    let refusal = container_server_config(
+        &policy(&["*.lan.mc.com"]),
+        "mc-test",
+        &claiming("a.lan.mc.com, play.mc.com"),
+        ADDRESS,
+    );
+
+    assert!(refusal.is_err());
+}
+
+#[test]
+fn test_policy_refuses_a_label_pattern_an_entry_only_matches_as_text() {
+    for (entry, label) in [
+        ("?", "*"),
+        ("*.mc.com", "*.mc.com*"),
+        ("?.mc.com", "*.mc.com"),
+    ] {
+        let refusal =
+            container_server_config(&policy(&[entry]), "mc-test", &claiming(label), ADDRESS);
+        assert!(refusal.is_err(), "{entry} must not admit {label}");
+    }
+
+    let same_pattern = container_server_config(
+        &policy(&["*.lan.mc.com"]),
+        "mc-test",
+        &claiming("*.lan.mc.com"),
+        ADDRESS,
+    );
+    assert!(same_pattern.is_ok());
+}
+
+#[test]
+fn test_policy_keeps_containers_out_of_proxy_wide_forwarding() {
+    let labels = make_labels(&[("infrarust.enable", "true")]);
+    let config = container_server_config(
+        &DockerProviderConfig::default(),
+        "mc-test",
+        &labels,
+        ADDRESS,
+    )
+    .unwrap();
+
+    assert_eq!(config.forwarding_mode, Some(ForwardingMode::None));
+    for global in [
+        ForwardingMode::None,
+        ForwardingMode::BungeeCord,
+        ForwardingMode::BungeeGuard,
+        ForwardingMode::Velocity,
+    ] {
+        assert!(
+            validate_server_forwarding(&config, global.clone()).is_ok(),
+            "{global:?}"
+        );
+    }
+}
+
+#[test]
+fn test_policy_inherit_forwarding_leaves_the_mode_unset() {
+    let labels = make_labels(&[("infrarust.enable", "true")]);
+    let policy = DockerProviderConfig {
+        inherit_forwarding: true,
+        ..Default::default()
+    };
+    let config = container_server_config(&policy, "mc-test", &labels, ADDRESS).unwrap();
+
+    assert_eq!(config.forwarding_mode, None);
+}
+
+#[test]
+fn test_policy_settings_default_to_closed() {
+    let parsed: DockerProviderConfig = toml::from_str("").unwrap();
+
+    assert!(parsed.allowed_domains.is_empty());
+    assert!(!parsed.inherit_forwarding);
 }
