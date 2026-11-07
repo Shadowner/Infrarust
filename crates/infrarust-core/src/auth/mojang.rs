@@ -24,6 +24,7 @@ use infrarust_protocol::version::{ConnectionState, Direction};
 
 use crate::auth::game_profile::GameProfile;
 use crate::error::CoreError;
+use crate::pipeline::preauth_frame::MAX_ENCRYPTION_RESPONSE_FRAME;
 use crate::session::client_bridge::ClientBridge;
 
 const DEFAULT_SESSION_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
@@ -173,7 +174,7 @@ impl MojangAuth {
 
         // Read EncryptionResponse
         let frame = client
-            .read_frame()
+            .read_preauth_frame(MAX_ENCRYPTION_RESPONSE_FRAME)
             .await?
             .ok_or(CoreError::ConnectionClosed)?;
 

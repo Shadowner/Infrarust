@@ -21,6 +21,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::pipeline::preauth_frame::refuse_oversized;
 use crate::player::packets::encode_for_state;
 use crate::session::bounded_write::WriteGuard;
 use crate::util::text;
@@ -86,6 +87,30 @@ impl ClientBridge {
     /// Returns `CoreError` on I/O or protocol decode errors.
     pub async fn read_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         loop {
+            if let Some(frame) = self.decoder.try_next_frame()? {
+                return Ok(Some(frame));
+            }
+
+            if self.fill_decoder().await? == 0 {
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Reads the next frame, refusing it as soon as its declared length
+    /// exceeds `limit`.
+    ///
+    /// Returns `Ok(None)` on clean disconnect (EOF).
+    ///
+    /// # Errors
+    /// Returns `CoreError` on I/O or protocol decode errors, or when the
+    /// frame is over `limit`.
+    pub(crate) async fn read_preauth_frame(
+        &mut self,
+        limit: usize,
+    ) -> Result<Option<PacketFrame>, CoreError> {
+        loop {
+            refuse_oversized(self.decoder.read_buf_mut(), limit)?;
             if let Some(frame) = self.decoder.try_next_frame()? {
                 return Ok(Some(frame));
             }

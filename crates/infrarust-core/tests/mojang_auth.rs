@@ -8,6 +8,8 @@ use infrarust_core::auth::mojang::{AuthLimits, MojangAuth};
 use infrarust_core::error::CoreError;
 use infrarust_core::test_support::ClientBridge;
 use infrarust_protocol::Packet;
+use infrarust_protocol::ProtocolError;
+use infrarust_protocol::codec::VarInt;
 use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
 use infrarust_protocol::packets::login::{
     CEncryptionRequest, EncryptionProof, SEncryptionResponse,
@@ -117,6 +119,36 @@ async fn a_silent_client_expires() {
     .expect("the authentication outlived its deadline");
 
     assert!(matches!(result, Err(CoreError::Timeout(_))), "{result:?}");
+}
+
+#[tokio::test]
+async fn an_encryption_response_declared_over_its_limit_is_refused_at_once() {
+    let (_server, url) = session_server().await;
+    let auth = MojangAuth::with_limits(url, AuthLimits::default()).unwrap();
+    let registry = build_default_registry();
+    let (mut bridge, mut peer) = bridge_and_peer(BytesMut::new()).await;
+
+    let mut declared = Vec::new();
+    VarInt(2049).encode(&mut declared).unwrap();
+    peer.write_all(&declared).await.unwrap();
+
+    let result = timeout(
+        GUARD,
+        auth.authenticate(&mut bridge, "Steve", None, &registry),
+    )
+    .await
+    .expect("the proxy waited for a frame over its limit");
+
+    assert!(
+        matches!(
+            result,
+            Err(CoreError::Protocol(ProtocolError::TooLarge {
+                max: 2048,
+                actual: 2049
+            }))
+        ),
+        "{result:?}"
+    );
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@ use crate::error::CoreError;
 pub const MAX_HANDSHAKE_FRAME: usize = 2 * 1024;
 pub const MAX_LOGIN_START_FRAME: usize = 5 * 1024;
 pub const MAX_STATUS_FRAME: usize = 64;
+pub const MAX_ENCRYPTION_RESPONSE_FRAME: usize = 2 * 1024;
 
 /// Reads the next frame, refusing it as soon as its declared length exceeds
 /// `limit`. Bytes read from the stream are also appended to `raw`.
@@ -35,7 +36,7 @@ pub async fn read_preauth_frame(
     }
 }
 
-fn refuse_oversized(buffered: &[u8], limit: usize) -> Result<(), ProtocolError> {
+pub(crate) fn refuse_oversized(buffered: &[u8], limit: usize) -> Result<(), ProtocolError> {
     if let Ok((VarInt(declared), _)) = VarInt::decode_partial(buffered)
         && let Ok(declared) = usize::try_from(declared)
         && declared > limit
@@ -49,11 +50,28 @@ fn refuse_oversized(buffered: &[u8], limit: usize) -> Result<(), ProtocolError> 
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use infrarust_protocol::Packet;
+    use infrarust_protocol::packets::login::{EncryptionProof, SEncryptionResponse};
+    use infrarust_protocol::version::ProtocolVersion;
 
     fn declared(length: i32) -> Vec<u8> {
         let mut out = Vec::new();
         VarInt(length).encode(&mut out).unwrap();
         out
+    }
+
+    #[test]
+    fn the_largest_signed_encryption_response_fits() {
+        let response = SEncryptionResponse {
+            shared_secret: vec![0; 128],
+            proof: EncryptionProof::Signature {
+                salt: 0,
+                signature: vec![0; 1024],
+            },
+        };
+        let mut frame = vec![0x01];
+        response.encode(&mut frame, ProtocolVersion::V1_19).unwrap();
+        assert!(frame.len() <= MAX_ENCRYPTION_RESPONSE_FRAME);
     }
 
     #[test]
