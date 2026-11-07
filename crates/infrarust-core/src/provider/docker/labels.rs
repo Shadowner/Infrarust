@@ -171,7 +171,7 @@ fn domain_allowed(allowed: &[String], domain: &str) -> bool {
 ///
 /// Priority:
 /// 1. Network IP from the preferred network (or first available)
-/// 2. Port bindings → `host_ip:host_port`
+/// 2. Ports the daemon published → `host_ip:host_port`
 pub fn resolve_container_address(
     info: &ContainerInspectResponse,
     preferred_network: Option<&str>,
@@ -203,17 +203,17 @@ pub fn resolve_container_address(
         }
     }
 
-    // 2. Port bindings
-    if let Some(bindings) = info
-        .host_config
+    // 2. Published ports
+    if let Some(ports) = info
+        .network_settings
         .as_ref()
-        .and_then(|hc| hc.port_bindings.as_ref())
+        .and_then(|ns| ns.ports.as_ref())
     {
         let key = format!("{port}/tcp");
-        if let Some(Some(binding_list)) = bindings.get(&key)
+        if let Some(Some(binding_list)) = ports.get(&key)
             && let Some(binding) = binding_list.first()
+            && let Some(host_port) = binding.host_port.as_deref()
         {
-            let host_port = binding.host_port.as_deref().unwrap_or("25565");
             let host_ip = binding.host_ip.as_deref().unwrap_or("0.0.0.0");
             let actual_ip = if host_ip == "0.0.0.0" {
                 "127.0.0.1"

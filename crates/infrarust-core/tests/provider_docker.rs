@@ -111,21 +111,22 @@ fn test_address_resolution_never_falls_back_to_the_container_name() {
     assert_eq!(resolve_container_address(&info, None, 25565), None);
 }
 
+fn port_map(host_ip: &str, host_port: &str) -> bollard::models::PortMap {
+    let binding = bollard::models::PortBinding {
+        host_ip: Some(host_ip.to_string()),
+        host_port: Some(host_port.to_string()),
+    };
+    HashMap::from([("25565/tcp".to_string(), Some(vec![binding]))])
+}
+
 #[test]
 fn test_address_resolution_uses_a_published_port_without_a_network_ip() {
-    use bollard::models::{ContainerInspectResponse, HostConfig, PortBinding};
+    use bollard::models::{ContainerInspectResponse, NetworkSettings};
 
-    let binding = PortBinding {
-        host_ip: Some("0.0.0.0".to_string()),
-        host_port: Some("30000".to_string()),
-    };
     let info = ContainerInspectResponse {
         name: Some("/mc-survival".to_string()),
-        host_config: Some(HostConfig {
-            port_bindings: Some(HashMap::from([(
-                "25565/tcp".to_string(),
-                Some(vec![binding]),
-            )])),
+        network_settings: Some(NetworkSettings {
+            ports: Some(port_map("0.0.0.0", "30000")),
             ..Default::default()
         }),
         ..Default::default()
@@ -135,6 +136,40 @@ fn test_address_resolution_uses_a_published_port_without_a_network_ip() {
         resolve_container_address(&info, None, 25565).as_deref(),
         Some("127.0.0.1:30000")
     );
+}
+
+#[test]
+fn test_address_resolution_ignores_requested_bindings_the_daemon_did_not_publish() {
+    use bollard::models::{
+        ContainerInspectResponse, EndpointSettings, HostConfig, NetworkSettings,
+    };
+
+    for (host_ip, host_port) in [("0.0.0.0", "25566"), ("10.0.0.5", "22")] {
+        let info = ContainerInspectResponse {
+            host_config: Some(HostConfig {
+                port_bindings: Some(port_map(host_ip, host_port)),
+                ..Default::default()
+            }),
+            network_settings: Some(NetworkSettings {
+                networks: Some(HashMap::from([(
+                    "none".to_string(),
+                    EndpointSettings {
+                        ip_address: Some(String::new()),
+                        ..Default::default()
+                    },
+                )])),
+                ports: Some(HashMap::new()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_container_address(&info, None, 25565),
+            None,
+            "{host_ip}:{host_port}"
+        );
+    }
 }
 
 #[test]
