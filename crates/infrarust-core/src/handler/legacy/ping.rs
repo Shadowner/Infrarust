@@ -1,127 +1,42 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use infrarust_api::events::handshake::{ConnectionHandshakeEvent, HandshakeIntent, RejectReason};
 use infrarust_api::events::proxy::{PingResponse, ProxyPingEvent};
-use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::{Component, LEGACY_SECTION, ServerId};
 use infrarust_config::{ServerAddress, ServerConfig};
-use infrarust_protocol::legacy::{LegacyPingRequest, LegacyPingVariant, parse_legacy_ping};
+use infrarust_protocol::legacy::{LegacyPingRequest, LegacyPingVariant};
 use infrarust_protocol::{LegacyPingResponse, ProtocolVersion};
 use infrarust_server_manager::ServerState;
 
-use super::{LegacyHandler, LegacyReader};
+use super::LegacyHandler;
 use crate::error::CoreError;
 use crate::loadbalancer::peek_backend_addresses;
-use crate::pipeline::admission::{self, Admission};
+use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
+use crate::pipeline::types::RoutingData;
 use crate::status::motd::{DEFAULT_PROXY_MOTD, default_entry, state_max_players, state_motd};
-use crate::util::normalize_handshake;
+use crate::status::relay_gate::RelayTurn;
 
 const LEGACY_REPLY_PREFIX: &str = "\u{a7}1\0";
 
 impl LegacyHandler {
-    pub(super) async fn handle_ping(&self, ctx: &mut ConnectionContext) -> Result<(), CoreError> {
-        let raw_data = self.read_legacy_ping_data(ctx).await?;
-        let request = parse_legacy_ping(&raw_data)?;
-
-        tracing::debug!(
-            variant = ?request.variant,
-            hostname = ?request.hostname,
-            "legacy ping parsed"
-        );
-
-        let virtual_host = request
-            .hostname
-            .as_deref()
-            .map(|host| normalize_handshake(host).to_lowercase());
-        let mut attempt = LoginAttempt::status(ctx.client_ip);
-        if let Some(host) = &virtual_host {
-            attempt = attempt.virtual_host(host.clone());
-        }
-        if let Some(refusal) = self.services.ban_manager.refuse(&attempt).await {
-            admission::reject(
-                &self.services.event_bus,
-                ctx.client_addr(),
-                virtual_host,
-                refusal.reason,
-            );
-            return Ok(());
-        }
-        let route = virtual_host
-            .as_deref()
-            .and_then(|host| self.services.domain_router.resolve_route(host));
-        if route.is_none() && self.drops_unknown_domains() {
-            tracing::debug!(hostname = ?request.hostname, "legacy ping: unknown domain, dropping");
-            admission::reject(
-                &self.services.event_bus,
-                ctx.client_addr(),
-                virtual_host,
-                RejectReason::UnknownDomain,
-            );
-            return Ok(());
-        }
-
-        let screened = admission::screen(&self.services.event_bus, || {
-            ConnectionHandshakeEvent::new(
-                ctx.client_addr(),
-                HandshakeIntent::Status,
-                infrarust_api::types::ProtocolVersion::new(
-                    request.protocol_version.map_or(0, i32::from),
-                ),
-            )
-            .with_host(
-                request.hostname.clone().unwrap_or_default(),
-                virtual_host.clone(),
-                request
-                    .port
-                    .and_then(|port| u16::try_from(port).ok())
-                    .unwrap_or(0),
-            )
-            .with_server(
-                route
-                    .as_ref()
-                    .map(|(_, config, _)| ServerId::new(config.effective_id())),
-            )
-            .with_legacy(true)
-        })
-        .await;
-        if screened != Admission::Admitted {
-            return Ok(());
-        }
-
-        let (server, response) = match route {
-            Some((_provider_id, config, load_balancer)) => {
-                let addresses = peek_backend_addresses(
-                    &config,
-                    load_balancer.as_ref(),
-                    self.services.backend_load.as_ref(),
-                    self.services.backend_health.as_ref(),
-                )
-                .to_vec();
-                let full_ping = reconstruct_ping_packet(&raw_data);
-                let response = match tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    self.forward_ping_to_backend(&full_ping, &config, &addresses, ctx),
-                )
-                .await
-                {
-                    Ok(Ok(response)) => response,
-                    Ok(Err(e)) => {
-                        tracing::debug!(error = %e, "ping passthrough failed, using fallback");
-                        self.config_response(Some(&config))
-                    }
-                    Err(_) => {
-                        tracing::debug!("ping passthrough timed out, using fallback");
-                        self.config_response(Some(&config))
-                    }
-                };
-                (Some(ServerId::new(config.effective_id())), response)
-            }
+    pub(crate) async fn handle_ping(
+        &self,
+        ctx: &mut ConnectionContext,
+        request: &LegacyPingRequest,
+        raw: &[u8],
+    ) -> Result<(), CoreError> {
+        let virtual_host = admission::virtual_host(ctx);
+        let routing = ctx.extensions.get::<RoutingData>().cloned();
+        let (server, response) = match routing {
+            Some(routing) => (
+                Some(ServerId::new(routing.server_config.effective_id())),
+                self.backend_response(ctx, &routing, raw).await,
+            ),
             None => (None, self.config_response(None)),
         };
 
         let response = self
-            .fire_ping(ctx, server, virtual_host, &request, response)
+            .fire_ping(ctx, server, virtual_host, request, response)
             .await;
         let bytes = match request.variant {
             LegacyPingVariant::Beta => response.build_beta_response()?,
@@ -137,6 +52,56 @@ impl LegacyHandler {
         );
 
         Ok(())
+    }
+
+    async fn backend_response(
+        &self,
+        ctx: &ConnectionContext,
+        routing: &RoutingData,
+        raw: &[u8],
+    ) -> LegacyPingResponse {
+        let config = &routing.server_config;
+        let config_id = routing.config_id.as_str();
+        if let Some(cached) = self.status_cache.get_fresh_legacy(config_id) {
+            return cached;
+        }
+        let leader = match self.relay_gate.enter(config_id).await {
+            RelayTurn::Leader(leader) => leader,
+            RelayTurn::Unreachable | RelayTurn::Busy => return self.config_response(Some(config)),
+        };
+        if let Some(cached) = self.status_cache.get_fresh_legacy(config_id) {
+            return cached;
+        }
+
+        let addresses = peek_backend_addresses(
+            config,
+            routing.load_balancer.as_ref(),
+            self.services.backend_load.as_ref(),
+            self.services.backend_health.as_ref(),
+        )
+        .to_vec();
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.forward_ping_to_backend(raw, config, &addresses, ctx),
+        )
+        .await
+        {
+            Ok(Ok(response)) => {
+                self.status_cache.put_legacy(config_id, response.clone());
+                leader.succeeded();
+                response
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(error = %e, "ping passthrough failed, using fallback");
+                leader.failed();
+                self.config_response(Some(config))
+            }
+            Err(_) => {
+                tracing::debug!("ping passthrough timed out, using fallback");
+                leader.failed();
+                self.config_response(Some(config))
+            }
+        }
     }
 
     async fn fire_ping(
@@ -265,63 +230,10 @@ impl LegacyHandler {
         }
     }
 
-    async fn read_legacy_ping_data(
-        &self,
-        ctx: &mut ConnectionContext,
-    ) -> Result<Vec<u8>, CoreError> {
-        let mut reader = LegacyReader::new(ctx);
-        let mut data = Vec::with_capacity(128);
-        let wait = std::time::Duration::from_millis(100);
-
-        if let Ok(Ok(next)) = tokio::time::timeout(wait, reader.read_u8()).await {
-            data.push(next);
-
-            if next == 0x01
-                && let Ok(Ok(more)) =
-                    tokio::time::timeout(wait, read_remaining_v1_6_data(&mut reader)).await
-            {
-                data.extend_from_slice(&more);
-            }
-        }
-
-        Ok(data)
-    }
-
     fn default_motd_text(&self) -> String {
         default_entry(&self.services.config)
             .map_or_else(|| DEFAULT_PROXY_MOTD.to_string(), |e| e.text.clone())
     }
-}
-
-async fn read_remaining_v1_6_data(reader: &mut LegacyReader<'_>) -> std::io::Result<Vec<u8>> {
-    let mut data = Vec::new();
-
-    let marker = reader.read_u8().await?;
-    data.push(marker);
-    if marker != 0xFA {
-        return Ok(data);
-    }
-
-    let mut channel_len = [0u8; 2];
-    reader.read_exact(&mut channel_len).await?;
-    data.extend_from_slice(&channel_len);
-    let channel_chars = usize::from(u16::from_be_bytes(channel_len));
-    data.extend_from_slice(&reader.read_vec(channel_chars * 2).await?);
-
-    let mut payload_len = [0u8; 2];
-    reader.read_exact(&mut payload_len).await?;
-    data.extend_from_slice(&payload_len);
-    let payload = usize::from(u16::from_be_bytes(payload_len));
-    data.extend_from_slice(&reader.read_vec(payload).await?);
-
-    Ok(data)
-}
-
-fn reconstruct_ping_packet(raw_data: &[u8]) -> Vec<u8> {
-    let mut packet = Vec::with_capacity(1 + raw_data.len());
-    packet.push(0xFE);
-    packet.extend_from_slice(raw_data);
-    packet
 }
 
 async fn read_legacy_kick_text(stream: &mut tokio::net::TcpStream) -> Result<String, CoreError> {
@@ -400,79 +312,12 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::sync::Arc;
 
-    use std::net::{IpAddr, Ipv4Addr};
-
     use infrarust_transport::BackendConnector;
-    use tokio::net::{TcpListener, TcpStream};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::limbo::test_helpers::test_proxy_services;
-
-    fn utf16be(s: &str) -> Vec<u8> {
-        let units: Vec<u16> = s.encode_utf16().collect();
-        let mut out = u16::try_from(units.len()).unwrap().to_be_bytes().to_vec();
-        for unit in units {
-            out.extend_from_slice(&unit.to_be_bytes());
-        }
-        out
-    }
-
-    fn v1_6_ping(hostname: &str, port: i32) -> Vec<u8> {
-        let mut data = vec![78];
-        data.extend_from_slice(&utf16be(hostname));
-        data.extend_from_slice(&port.to_be_bytes());
-        let mut ping = vec![0xFE, 0x01, 0xFA];
-        ping.extend_from_slice(&utf16be("MC|PingHost"));
-        ping.extend_from_slice(&u16::try_from(data.len()).unwrap().to_be_bytes());
-        ping.extend_from_slice(&data);
-        ping
-    }
-
-    async fn read_ping(sent: &[u8], read_ahead: usize) -> LegacyPingRequest {
-        let handler = LegacyHandler::new(
-            test_proxy_services(),
-            Arc::new(BackendConnector::new(
-                std::time::Duration::from_secs(2),
-                infrarust_config::KeepaliveConfig::default(),
-            )),
-            CancellationToken::new(),
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let local = listener.local_addr().unwrap();
-        let mut client = TcpStream::connect(local).await.unwrap();
-        let (stream, peer) = listener.accept().await.unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(stream, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
-        ctx.buffered_data.extend_from_slice(&sent[..read_ahead]);
-        client.write_all(&sent[read_ahead..]).await.unwrap();
-        let raw = handler.read_legacy_ping_data(&mut ctx).await.unwrap();
-        assert_eq!(raw, sent[1..], "read ahead {read_ahead}");
-        drop(client);
-        parse_legacy_ping(&raw).unwrap()
-    }
-
-    #[tokio::test]
-    async fn a_v1_6_ping_is_read_whole_however_much_was_read_ahead() {
-        let ping = v1_6_ping("lobby.test", 25565);
-        for read_ahead in [1, 2, 3, 4, 7, 20, ping.len() - 1, ping.len()] {
-            let request = read_ping(&ping, read_ahead).await;
-            assert_eq!(request.variant, LegacyPingVariant::V1_6, "{read_ahead}");
-            assert_eq!(request.hostname.as_deref(), Some("lobby.test"));
-            assert_eq!(request.port, Some(25565));
-            assert_eq!(request.protocol_version, Some(78));
-        }
-    }
-
-    #[tokio::test]
-    async fn a_v1_4_and_a_beta_ping_are_read_from_what_was_read_ahead() {
-        for read_ahead in [1, 2] {
-            let request = read_ping(&[0xFE, 0x01], read_ahead).await;
-            assert_eq!(request.variant, LegacyPingVariant::V1_4, "{read_ahead}");
-        }
-        let request = read_ping(&[0xFE], 1).await;
-        assert_eq!(request.variant, LegacyPingVariant::Beta);
-    }
+    use crate::status::StatusCache;
 
     #[test]
     fn legacy_and_modern_state_motds_report_the_same_max_players_and_text() {
@@ -484,6 +329,7 @@ mod tests {
                 infrarust_config::KeepaliveConfig::default(),
             )),
             CancellationToken::new(),
+            Arc::new(StatusCache::new(std::time::Duration::from_secs(5))),
         );
         let mut cfg: ServerConfig = toml::from_str(
             "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25566\"]\nmax_players = 42\n",

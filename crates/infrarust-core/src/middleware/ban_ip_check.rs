@@ -6,6 +6,7 @@ use infrarust_api::services::ban_service::LoginAttempt;
 
 use crate::ban::BanManager;
 use crate::error::CoreError;
+use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused};
@@ -37,8 +38,10 @@ impl Middleware for BanIpCheckMiddleware {
                 return Ok(MiddlewareResult::Continue);
             }
 
-            let attempt =
-                LoginAttempt::status(ctx.client_ip).virtual_host(handshake.domain.clone());
+            let mut attempt = LoginAttempt::status(ctx.client_ip);
+            if let Some(host) = admission::virtual_host(ctx) {
+                attempt = attempt.virtual_host(host);
+            }
             match self.ban_manager.refuse(&attempt).await {
                 Some(refusal) => {
                     ctx.extensions.insert(Refused(refusal.reason));

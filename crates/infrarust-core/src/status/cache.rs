@@ -7,6 +7,7 @@
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use infrarust_protocol::LegacyPingResponse;
 
 use super::response::ServerPingResponse;
 
@@ -16,7 +17,13 @@ use super::response::ServerPingResponse;
 /// No background cleanup — expiry is checked lazily on `get_fresh()`.
 pub struct StatusCache {
     entries: DashMap<String, CachedStatus>,
+    legacy_entries: DashMap<String, CachedLegacy>,
     default_ttl: Duration,
+}
+
+struct CachedLegacy {
+    response: LegacyPingResponse,
+    fetched_at: Instant,
 }
 
 struct CachedStatus {
@@ -31,6 +38,7 @@ impl StatusCache {
     pub fn new(default_ttl: Duration) -> Self {
         Self {
             entries: DashMap::new(),
+            legacy_entries: DashMap::new(),
             default_ttl,
         }
     }
@@ -72,14 +80,32 @@ impl StatusCache {
         );
     }
 
-    /// Removes a single server's cache entry.
+    /// Returns the reply a backend gave to a legacy ping if the TTL has not expired.
+    pub fn get_fresh_legacy(&self, server_id: &str) -> Option<LegacyPingResponse> {
+        let entry = self.legacy_entries.get(server_id)?;
+        (entry.fetched_at.elapsed() < self.default_ttl).then(|| entry.response.clone())
+    }
+
+    pub fn put_legacy(&self, server_id: &str, response: LegacyPingResponse) {
+        self.legacy_entries.insert(
+            server_id.to_string(),
+            CachedLegacy {
+                response,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+
+    /// Removes a single server's cache entries.
     pub fn invalidate(&self, server_id: &str) {
         self.entries.remove(server_id);
+        self.legacy_entries.remove(server_id);
     }
 
     /// Removes all cache entries.
     pub fn invalidate_all(&self) {
         self.entries.clear();
+        self.legacy_entries.clear();
     }
 }
 
@@ -126,6 +152,27 @@ mod tests {
         assert!(cache.get_fresh("srv").is_none());
         let (resp, _) = cache.get_stale("srv").expect("stale should exist");
         assert_eq!(resp.players.max, 100);
+    }
+
+    #[test]
+    fn test_legacy_entries_expire_and_are_invalidated_with_the_rest() {
+        let reply = || LegacyPingResponse {
+            protocol_version: 78,
+            server_version: "1.6.4".to_string(),
+            motd: "Test".to_string(),
+            online_players: 1,
+            max_players: 2,
+        };
+        let cache = StatusCache::new(Duration::from_secs(60));
+        cache.put_legacy("srv", reply());
+        assert_eq!(cache.get_fresh_legacy("srv").unwrap().max_players, 2);
+        cache.invalidate_all();
+        assert!(cache.get_fresh_legacy("srv").is_none());
+
+        let expired = StatusCache::new(Duration::from_millis(1));
+        expired.put_legacy("srv", reply());
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(expired.get_fresh_legacy("srv").is_none());
     }
 
     #[test]

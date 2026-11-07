@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use infrarust_api::error::PlayerError;
 use infrarust_api::event::EventPriority;
+use infrarust_api::events::handshake::ConnectionHandshakeEvent;
 use infrarust_api::events::lifecycle::PreLoginEvent;
+use infrarust_api::handoff::Handoff;
 use infrarust_api::services::ban_service::{BanRequest, BanTarget};
 use infrarust_api::types::{Component, NamedColor};
 use infrarust_core::auth::game_profile::offline_uuid;
@@ -16,6 +18,8 @@ use infrarust_test_harness::{
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::task::JoinSet;
+use toml::{Table, Value};
 
 const T: Duration = DEFAULT_TIMEOUT;
 const NOTCH: &str = "Notch";
@@ -265,7 +269,7 @@ async fn a_legacy_login_sent_with_its_proxy_header_in_one_write_is_forwarded() {
     let proxy = TestProxy::builder()
         .server(ServerSpec::passthrough("old").backend(backend.addr()))
         .patch_config(|table| {
-            table.insert("receive_proxy_protocol".into(), toml::Value::Boolean(true));
+            table.insert("receive_proxy_protocol".into(), Value::Boolean(true));
         })
         .start()
         .await
@@ -369,8 +373,195 @@ async fn an_unknown_domain_answers_legacy_clients_by_default() {
     );
     assert_eq!(
         stranger.login(NOTCH).await.unwrap().kicked().unwrap(),
-        "Unknown server"
+        "Unknown server: nowhere.test"
     );
+
+    proxy.shutdown().await.unwrap();
+}
+
+fn rate_limited(table: &mut Table) {
+    table.insert(
+        "rate_limit".into(),
+        Value::Table(Table::from_iter([
+            ("enabled".to_string(), Value::Boolean(true)),
+            ("max_connections".to_string(), Value::Integer(1)),
+            ("window".to_string(), Value::String("60s".into())),
+            ("status_max".to_string(), Value::Integer(1)),
+            ("status_window".to_string(), Value::String("60s".into())),
+        ])),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rate_limited_legacy_login_never_reaches_the_backend() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("old").backend(backend.addr()))
+        .plugin(recorder.plugin())
+        .patch_config(rate_limited)
+        .start()
+        .await
+        .unwrap();
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    let session = client.login(NOTCH).await.unwrap().forwarded().unwrap();
+    let mut conn = backend.next_connection(T).await.unwrap();
+    assert_eq!(
+        client.login("Other").await.unwrap().kicked().unwrap(),
+        "Rate limit exceeded"
+    );
+    assert_eq!(backend.accepted_connections(), 1);
+    assert_eq!(recorder.for_username("Other").len(), 0);
+
+    session.quit().await;
+    conn.closed(T).await.unwrap();
+    conn.close().await;
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_rate_limited_legacy_ping_is_closed_without_an_answer() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("old").backend(backend.addr()))
+        .patch_config(rate_limited)
+        .start()
+        .await
+        .unwrap();
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    assert_eq!(client.ping().await.unwrap(), backend_ping());
+    closed_without_answer(client.ping().await);
+    assert_eq!(backend.accepted_connections(), 1);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_ip_filter_turns_legacy_clients_away() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(
+            ServerSpec::passthrough("old")
+                .backend(backend.addr())
+                .patch(|table| {
+                    let filter: Table = toml::from_str("blacklist = [\"127.0.0.1/32\"]").unwrap();
+                    table.insert("ip_filter".into(), Value::Table(filter));
+                }),
+        )
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    closed_without_answer(client.ping().await);
+    let reason = client.login(NOTCH).await.unwrap().kicked().unwrap();
+    assert_eq!(reason, "IP 127.0.0.1 is not allowed on this server");
+    assert_eq!(backend.accepted_connections(), 0);
+    assert_eq!(recorder.count(EventKind::PreLogin), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_legacy_login_cannot_reach_a_server_where_the_proxy_runs_the_login() {
+    for spec in [ServerSpec::offline("old"), ServerSpec::client_only("old")] {
+        let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+        let recorder = Recorder::new();
+        let proxy = TestProxy::builder()
+            .server(spec.backend(backend.addr()))
+            .plugin(recorder.plugin())
+            .start()
+            .await
+            .unwrap();
+
+        let reason = proxy
+            .legacy_client_for("old")
+            .unwrap()
+            .login(NOTCH)
+            .await
+            .unwrap()
+            .kicked()
+            .unwrap();
+
+        assert_eq!(reason, "This server cannot be joined from here");
+        assert_eq!(backend.accepted_connections(), 0);
+        assert_eq!(recorder.count(EventKind::PreLogin), 0);
+        assert_eq!(proxy.connection_count(), 0);
+        tokio::time::timeout(T, proxy.bus().flush())
+            .await
+            .expect("the event queue never drained");
+        let rejected = recorder.of(EventKind::ConnectionRejected);
+        assert_eq!(rejected.len(), 1, "{rejected:?}");
+        assert_eq!(rejected[0].detail_str("reason"), "server_unavailable");
+
+        proxy.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn many_legacy_pings_open_one_backend_connection() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("old").backend(backend.addr()))
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    for _ in 0..5 {
+        assert_eq!(client.ping().await.unwrap(), backend_ping());
+    }
+    let mut pings = JoinSet::new();
+    for _ in 0..5 {
+        let client = client.clone();
+        pings.spawn(async move { client.ping().await.unwrap() });
+    }
+    while let Some(ping) = pings.join_next().await {
+        assert_eq!(ping.unwrap(), backend_ping());
+    }
+
+    assert_eq!(backend.accepted_connections(), 1);
+    assert_eq!(recorder.count(EventKind::ProxyPing), 10);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_ip_ban_turns_legacy_clients_away() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let proxy = legacy_proxy(&backend, Vec::new()).await;
+    let bans = &proxy.services().ban_manager;
+    bans.issue(BanRequest::new(BanTarget::Ip("127.0.0.1".parse().unwrap())).reason("griefing"))
+        .await
+        .unwrap();
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    closed_without_answer(client.ping().await);
+    client.login(NOTCH).await.unwrap().kicked().unwrap();
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handshake_handoff_closes_legacy_clients() {
+    let backend = FakeLegacyBackend::spawn(backend_ping()).await.unwrap();
+    let handoff = ScriptedPlugin::new("handoff")
+        .on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
+            event.handoff(Handoff::route())
+        });
+    let proxy = legacy_proxy(&backend, vec![handoff]).await;
+    let client = proxy.legacy_client_for("old").unwrap();
+
+    closed_without_answer(client.ping().await);
+    closed_without_answer(client.login(NOTCH).await);
+    assert_eq!(backend.accepted_connections(), 0);
 
     proxy.shutdown().await.unwrap();
 }

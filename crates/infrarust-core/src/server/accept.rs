@@ -19,8 +19,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::pipeline::types::{
-    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyDetected, Refused, RoutingData,
-    UnknownDomain,
+    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain,
 };
 use crate::player::SHUTDOWN_REASON;
 
@@ -134,9 +133,6 @@ impl ProxyServer {
         match common {
             MiddlewareResult::Continue => {}
             MiddlewareResult::ShortCircuit => {
-                if ctx.extensions.contains::<LegacyDetected>() {
-                    return self.legacy_handler.handle(&mut ctx).await;
-                }
                 admission::reject_refused(&self.services.event_bus, &ctx);
                 return Ok(());
             }
@@ -181,6 +177,10 @@ impl ProxyServer {
                 return Ok(());
             }
             Admission::Dropped => return Ok(()),
+            Admission::Handoff(_) if ctx.extensions.contains::<LegacyHello>() => {
+                tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
+                return Ok(());
+            }
             Admission::Handoff(handoff) => {
                 let refused = tokio::select! {
                     biased;
@@ -199,6 +199,21 @@ impl ProxyServer {
                     .await;
                 return Ok(());
             }
+        }
+
+        if let Some(hello) = ctx.extensions.get::<LegacyHello>().cloned() {
+            return match hello {
+                LegacyHello::Ping { request, raw } => {
+                    self.legacy_handler
+                        .handle_ping(&mut ctx, &request, &raw)
+                        .await
+                }
+                LegacyHello::Login { request, raw } => {
+                    self.legacy_handler
+                        .handle_login(&mut ctx, &request, &raw)
+                        .await
+                }
+            };
         }
 
         match intent {
@@ -365,6 +380,9 @@ impl ProxyServer {
         ctx: &mut ConnectionContext,
         reason: &Component,
     ) -> Result<(), CoreError> {
+        if ctx.extensions.contains::<LegacyHello>() {
+            return crate::handler::helpers::send_legacy_kick(ctx.stream_mut(), reason).await;
+        }
         let version = ctx
             .extensions
             .get::<HandshakeData>()

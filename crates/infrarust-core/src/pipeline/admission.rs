@@ -13,7 +13,9 @@ use crate::ban::BanManager;
 use crate::ban::manager::Refusal;
 use crate::event_bus::{CORE_OWNER, EventBusImpl};
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, LoginData, Refused, RoutingData};
+use crate::pipeline::types::{
+    ConnectionIntent, HandshakeData, LegacyHello, LoginData, Refused, RoutingData,
+};
 
 pub const DENIED_MESSAGE: &str = "You are not allowed to connect to this server";
 
@@ -40,13 +42,22 @@ pub fn reject(
     }
 }
 
+pub fn virtual_host(ctx: &ConnectionContext) -> Option<String> {
+    if ctx
+        .extensions
+        .get::<LegacyHello>()
+        .is_some_and(LegacyHello::is_hostless)
+    {
+        return None;
+    }
+    ctx.extensions
+        .get::<HandshakeData>()
+        .map(|h| h.domain.clone())
+}
+
 pub fn reject_refused(bus: &EventBusImpl, ctx: &ConnectionContext) {
     if let Some(Refused(reason)) = ctx.extensions.get::<Refused>() {
-        let virtual_host = ctx
-            .extensions
-            .get::<HandshakeData>()
-            .map(|h| h.domain.clone());
-        reject(bus, ctx.client_addr(), virtual_host, reason.clone());
+        reject(bus, ctx.client_addr(), virtual_host(ctx), reason.clone());
     }
 }
 
@@ -125,9 +136,10 @@ pub async fn screen_connection(bus: &EventBusImpl, ctx: &ConnectionContext) -> A
             ctx.extensions
                 .get::<RoutingData>()
                 .map(|routing| ServerId::new(routing.config_id.clone())),
-        );
+        )
+        .with_legacy(ctx.extensions.contains::<LegacyHello>());
         match handshake {
-            Some(h) => event.with_host(h.raw_host.clone(), Some(h.domain.clone()), h.port),
+            Some(h) => event.with_host(h.raw_host.clone(), virtual_host(ctx), h.port),
             None => event,
         }
     })

@@ -7,7 +7,7 @@ use infrarust_api::events::handshake::RejectReason;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, Refused, RoutingData, UnknownDomain};
+use crate::pipeline::types::{HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain};
 use crate::routing::DomainRouter;
 
 /// Middleware that resolves the target server from the handshake domain.
@@ -41,10 +41,15 @@ impl Middleware for DomainRouterMiddleware {
 
             let domain = &handshake.domain;
 
-            // Resolve domain to server config
-            let Some((_provider_id, server_config, load_balancer)) =
-                self.domain_router.resolve_route(domain)
-            else {
+            let hostless = ctx
+                .extensions
+                .get::<LegacyHello>()
+                .is_some_and(LegacyHello::is_hostless);
+            let route = (!hostless)
+                .then(|| self.domain_router.resolve_route(domain))
+                .flatten();
+
+            let Some((_provider_id, server_config, load_balancer)) = route else {
                 tracing::debug!(domain, "no server found for domain");
                 let reason = format!("Unknown server: {domain}");
                 ctx.extensions.insert(UnknownDomain);

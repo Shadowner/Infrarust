@@ -11,13 +11,15 @@ use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::handler::legacy::hello;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyDetected};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData};
 
 /// Middleware that parses the Minecraft handshake packet.
 ///
-/// Detects legacy clients (0xFE first byte) and short-circuits.
+/// Legacy clients (first byte 0xFE or 0x02) get an ordinary `HandshakeData` next
+/// to their `LegacyHello`, so the rest of the pipeline treats them alike.
 /// For modern clients, decodes the `SHandshake` packet directly (without the
 /// packet registry), strips FML markers, and inserts `HandshakeData` into
 /// the context extensions.
@@ -61,14 +63,12 @@ impl Middleware for HandshakeParserMiddleware {
 
                 match legacy::detect(first_byte) {
                     legacy::LegacyDetection::LegacyPing => {
-                        tracing::debug!("legacy ping detected (0xFE)");
-                        ctx.extensions.insert(LegacyDetected);
-                        return Ok(MiddlewareResult::ShortCircuit);
+                        hello::read_ping_hello(ctx).await?;
+                        return Ok(MiddlewareResult::Continue);
                     }
                     legacy::LegacyDetection::LegacyLogin => {
-                        tracing::debug!("legacy login detected (0x02) — unsupported");
-                        ctx.extensions.insert(LegacyDetected);
-                        return Ok(MiddlewareResult::ShortCircuit);
+                        hello::read_login_hello(ctx).await?;
+                        return Ok(MiddlewareResult::Continue);
                     }
                     legacy::LegacyDetection::Modern => {}
                 }

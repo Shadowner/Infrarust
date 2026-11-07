@@ -62,8 +62,22 @@ pub(crate) struct Arrival {
 
 #[derive(Clone)]
 pub(crate) struct Route {
-    pub(crate) routing: RoutingData,
-    pub(crate) addresses: Vec<ServerAddress>,
+    routing: RoutingData,
+    addresses: Vec<ServerAddress>,
+}
+
+impl Route {
+    /// Only a forwarding server yields a route, and `select` only runs for one.
+    pub(crate) fn forwarding(
+        routing: RoutingData,
+        select: impl FnOnce(&RoutingData) -> Vec<ServerAddress>,
+    ) -> Option<Self> {
+        if !routing.server_config.proxy_mode.is_forwarding() {
+            return None;
+        }
+        let addresses = select(&routing);
+        Some(Self { routing, addresses })
+    }
 }
 
 pub(crate) struct ForwardedLogin<'a> {
@@ -370,28 +384,28 @@ impl ForwardedLogin<'_> {
             );
             return Err(UNKNOWN_SERVER);
         };
-        if matches!(
-            server_config.proxy_mode,
-            ProxyMode::Offline | ProxyMode::ClientOnly
-        ) {
-            tracing::warn!(
-                from = %origin.routing.config_id,
-                to = %server,
-                mode = ?server_config.proxy_mode,
-                "plugin redirected a forwarded connection to a server where the proxy runs the login, which a forwarded connection cannot do; disconnecting the player"
-            );
-            return Err(PROXY_LOGIN_SERVER);
-        }
+        let mode = server_config.proxy_mode;
         let routing = RoutingData {
             server_config,
             config_id: server.to_string(),
             load_balancer,
         };
-        let addresses = self.select(ctx, &routing);
-        Ok(Route { routing, addresses })
+        Route::forwarding(routing, |routing| self.select(ctx, routing)).ok_or_else(|| {
+            tracing::warn!(
+                from = %origin.routing.config_id,
+                to = %server,
+                ?mode,
+                "plugin redirected a forwarded connection to a server where the proxy runs the login, which a forwarded connection cannot do; disconnecting the player"
+            );
+            PROXY_LOGIN_SERVER
+        })
     }
 
-    fn select(&self, ctx: &mut ConnectionContext, routing: &RoutingData) -> Vec<ServerAddress> {
+    pub(crate) fn select(
+        &self,
+        ctx: &mut ConnectionContext,
+        routing: &RoutingData,
+    ) -> Vec<ServerAddress> {
         let services = self.services;
         let addresses = select_backend_addresses(
             &routing.server_config,
@@ -602,4 +616,46 @@ async fn send_with_forwarding(
     backend.write_all(&encoder.take()).await?;
     send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::cell::Cell;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::loadbalancer::FirstAvailable;
+
+    fn routing(mode: ProxyMode) -> RoutingData {
+        let mut config: ServerConfig =
+            toml::from_str("domains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25565\"]\n")
+                .unwrap();
+        config.proxy_mode = mode;
+        RoutingData {
+            server_config: Arc::new(config),
+            config_id: "lobby".to_string(),
+            load_balancer: Arc::new(FirstAvailable),
+        }
+    }
+
+    #[test]
+    fn only_a_forwarding_mode_yields_a_route() {
+        for (mode, routed) in [
+            (ProxyMode::Passthrough, true),
+            (ProxyMode::ZeroCopy, true),
+            (ProxyMode::ServerOnly, true),
+            (ProxyMode::Offline, false),
+            (ProxyMode::ClientOnly, false),
+            (ProxyMode::Full, false),
+        ] {
+            let selected = Cell::new(false);
+            let route = Route::forwarding(routing(mode), |_| {
+                selected.set(true);
+                Vec::new()
+            });
+            assert_eq!(route.is_some(), routed, "{mode:?}");
+            assert_eq!(selected.get(), routed, "{mode:?}");
+        }
+    }
 }

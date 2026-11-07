@@ -3,6 +3,7 @@ use std::sync::Arc;
 use bytes::{Bytes, BytesMut};
 use infrarust_config::ServerConfig;
 use infrarust_protocol::ProtocolVersion;
+use infrarust_protocol::legacy::{LegacyHandshakeRequest, LegacyPingRequest};
 use infrarust_protocol::packets::ProfileKey;
 use uuid::Uuid;
 
@@ -75,9 +76,25 @@ pub enum LoginStartLayout {
     Mismatched,
 }
 
-/// Marker type inserted into extensions when a legacy ping is detected (first byte 0xFE).
-#[derive(Debug, Clone, Copy)]
-pub struct LegacyDetected;
+/// Hello of a pre-1.7 client, inserted next to its `HandshakeData`. `raw` is the
+/// exact bytes received, first byte included.
+#[derive(Debug, Clone)]
+pub enum LegacyHello {
+    Ping {
+        request: LegacyPingRequest,
+        raw: Vec<u8>,
+    },
+    Login {
+        request: LegacyHandshakeRequest,
+        raw: Vec<u8>,
+    },
+}
+
+impl LegacyHello {
+    pub const fn is_hostless(&self) -> bool {
+        matches!(self, Self::Ping { request, .. } if request.hostname.is_none())
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct UnknownDomain;

@@ -301,6 +301,7 @@ impl ProxyServer {
             services.clone(),
             Arc::clone(&backend_connector),
             sessions.clone(),
+            Arc::clone(&status_cache),
         );
 
         let passthrough_handler =
