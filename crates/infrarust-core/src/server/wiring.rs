@@ -283,7 +283,14 @@ impl ProxyServer {
             Arc::clone(&ban_manager),
         )));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
-        login_pipeline.add(Box::new(TelemetryMiddleware));
+        login_pipeline.add(Box::new(
+            config
+                .telemetry
+                .as_ref()
+                .map_or_else(TelemetryMiddleware::default, |telemetry| {
+                    TelemetryMiddleware::new(&telemetry.traces)
+                }),
+        ));
         login_pipeline.add(Box::new(
             BackendSelectionMiddleware::new(
                 Arc::clone(&backend_load) as _,

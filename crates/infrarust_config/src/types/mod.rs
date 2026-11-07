@@ -39,7 +39,9 @@ pub use server_manager::{
     CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
-pub use telemetry::{MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TracesConfig};
+pub use telemetry::{
+    MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TraceClientIp, TracesConfig,
+};
 pub use wasm::{
     PluginWasmCodecQuarantineConfig, PluginWasmConfig, PluginWasmQuotasConfig,
     PluginWasmRecoveryConfig, WasmCodecQuarantineConfig, WasmConfig, WasmLimits, WasmQuotasConfig,
