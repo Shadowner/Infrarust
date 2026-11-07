@@ -53,6 +53,17 @@ impl StartThrottle {
         self.next_backoff = (self.next_backoff * 2).min(MAX_CRASH_BACKOFF);
     }
 
+    fn exited(&mut self, now: Instant) {
+        let unstable = self
+            .last_start
+            .is_some_and(|start| now.saturating_duration_since(start) < STABLE_UPTIME);
+        if unstable {
+            self.crashed(now);
+        } else {
+            self.next_backoff = FIRST_CRASH_BACKOFF;
+        }
+    }
+
     fn running(&mut self) {
         self.blocked_until = None;
     }
@@ -586,6 +597,11 @@ impl ServerManagerService {
                 "state transition"
             );
 
+            if new_status == ProviderStatus::Stopped
+                && matches!(old_state, ServerState::Starting | ServerState::Online)
+            {
+                entry.throttle.exited(Instant::now());
+            }
             entry.set_state(new_state);
             drop(entry);
             (old_state, new_state)
@@ -751,6 +767,84 @@ mod tests {
 
         let generation = service.generation("s").unwrap();
         service.update_state("s", ProviderStatus::Running, generation);
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    fn rewind_last_start(service: &ServerManagerService, server_id: &str, by: Duration) {
+        let mut entry = service.entries.get_mut(server_id).unwrap();
+        entry.throttle.last_start = Some(Instant::now() - by);
+    }
+
+    fn boot_and_fall_back_to_stopped(service: &ServerManagerService, server_id: &str) {
+        let mut entry = service.entries.get_mut(server_id).unwrap();
+        entry.begin_start();
+        drop(entry);
+        rewind_last_start(
+            service,
+            server_id,
+            MIN_START_INTERVAL + Duration::from_secs(1),
+        );
+
+        let generation = service.generation(server_id).unwrap();
+        service.update_state(server_id, ProviderStatus::Starting, generation);
+        let applied = service.update_state(server_id, ProviderStatus::Stopped, generation);
+        assert_eq!(
+            applied,
+            Some((ServerState::Starting, ServerState::Sleeping))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_boot_that_falls_back_to_stopped_backs_off() {
+        let service = service_with_online_server("s");
+
+        boot_and_fall_back_to_stopped(&service, "s");
+        let first = blocked_for(&service, "s");
+        assert!(
+            first > Duration::ZERO && first <= FIRST_CRASH_BACKOFF,
+            "{first:?}"
+        );
+
+        boot_and_fall_back_to_stopped(&service, "s");
+        let second = blocked_for(&service, "s");
+        assert!(second > FIRST_CRASH_BACKOFF, "{second:?}");
+    }
+
+    #[tokio::test]
+    async fn a_server_dying_soon_after_its_start_backs_off() {
+        let service = service_with_online_server("s");
+        service.entries.get_mut("s").unwrap().begin_start();
+        rewind_last_start(&service, "s", MIN_START_INTERVAL + Duration::from_secs(1));
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert!(blocked_for(&service, "s") > Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn a_stable_server_seen_stopped_is_not_blocked() {
+        let service = service_with_online_server("s");
+        service.entries.get_mut("s").unwrap().begin_start();
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        rewind_last_start(&service, "s", STABLE_UPTIME + Duration::from_secs(1));
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_poll_of_a_server_nobody_started_is_not_blocked() {
+        let service = service_with_online_server("s");
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
         assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
     }
 
