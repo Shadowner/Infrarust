@@ -2,4 +2,4 @@
 
 mod domain_router;
 
-pub use domain_router::DomainRouter;
+pub use domain_router::{DomainRouter, RoutingChanges};

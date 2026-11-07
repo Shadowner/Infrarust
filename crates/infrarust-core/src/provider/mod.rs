@@ -12,5 +12,5 @@ pub mod provider_id;
 pub mod registry;
 pub mod traits;
 
-pub use provider_id::ProviderId;
+pub use provider_id::{ProviderId, ProviderTrust};
 pub use traits::*;

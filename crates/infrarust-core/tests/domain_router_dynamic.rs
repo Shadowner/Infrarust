@@ -383,3 +383,159 @@ fn test_update_never_unroutes_a_domain_it_keeps() {
     assert!(router.resolve("lobby-new.mc").is_none());
     assert!(router.resolve("lobby-old.mc").is_some());
 }
+
+#[test]
+fn test_discovered_config_never_takes_a_configured_domain() {
+    let file = ProviderId::file("lobby.toml");
+    let docker = ProviderId::docker("mc-evil");
+
+    let docker_last = DomainRouter::new();
+    docker_last.add(file.clone(), make_config(&["play.mc.com"]));
+    docker_last.add(docker.clone(), make_config(&["play.mc.com"]));
+    assert_eq!(docker_last.resolve("play.mc.com").unwrap().0, file);
+
+    let docker_first = DomainRouter::new();
+    docker_first.add(docker.clone(), make_config(&["play.mc.com"]));
+    docker_first.add(file.clone(), make_config(&["play.mc.com"]));
+    docker_first.update(docker.clone(), make_config(&["play.mc.com"]));
+    assert_eq!(docker_first.resolve("play.mc.com").unwrap().0, file);
+
+    docker_first.remove(&file);
+    assert_eq!(docker_first.resolve("play.mc.com").unwrap().0, docker);
+}
+
+#[test]
+fn test_remove_hands_the_domain_to_the_next_claimant() {
+    let router = DomainRouter::new();
+    let first = ProviderId::file("a.toml");
+    let second = ProviderId::file("b.toml");
+
+    router.add(first.clone(), make_config(&["shared.mc.com"]));
+    router.add(second.clone(), make_config(&["shared.mc.com"]));
+    router.remove(&second);
+
+    assert_eq!(router.resolve("shared.mc.com").unwrap().0, first);
+}
+
+#[test]
+fn test_update_hands_a_dropped_domain_to_the_next_claimant() {
+    let router = DomainRouter::new();
+    let first = ProviderId::file("a.toml");
+    let second = ProviderId::file("b.toml");
+
+    router.add(first.clone(), make_config(&["shared.mc.com"]));
+    router.add(second.clone(), make_config(&["shared.mc.com"]));
+    router.update(second, make_config(&["other.mc.com"]));
+
+    assert_eq!(router.resolve("shared.mc.com").unwrap().0, first);
+}
+
+#[test]
+fn test_overlapping_wildcards_follow_trust_then_registration_order() {
+    let router = DomainRouter::new();
+    let older = ProviderId::file("older.toml");
+    let newer = ProviderId::file("newer.toml");
+
+    for index in 0..32 {
+        router.add(
+            ProviderId::docker(format!("mc-{index}")),
+            make_config(&["*.mc.com"]),
+        );
+    }
+    router.add(older, make_config(&["*.mc.com"]));
+    router.add(newer.clone(), make_config(&["play.*"]));
+    for index in 32..64 {
+        router.add(
+            ProviderId::docker(format!("mc-{index}")),
+            make_config(&["play.*"]),
+        );
+    }
+
+    assert_eq!(router.resolve("play.mc.com").unwrap().0, newer);
+}
+
+#[test]
+fn test_duplicate_server_id_holds_the_less_trusted_config() {
+    let router = DomainRouter::new();
+    let file = ProviderId::file("lobby.toml");
+    let docker = ProviderId::docker("mc-evil");
+
+    router.add(file.clone(), make_named_config("lobby", &["lobby.mc.com"]));
+    let changes = router.add(docker.clone(), make_named_config("lobby", &["evil.mc.com"]));
+
+    assert!(changes.entered.is_empty());
+    assert!(router.get(&docker).is_none());
+    assert!(router.resolve("evil.mc.com").is_none());
+    assert_eq!(
+        router.find_by_server_id("lobby").unwrap().domains,
+        vec!["lobby.mc.com"]
+    );
+    assert_eq!(router.len(), 1);
+
+    let changes = router.remove(&file);
+    assert_eq!(changes.entered, vec![docker.clone()]);
+    assert_eq!(router.resolve("evil.mc.com").unwrap().0, docker);
+}
+
+#[test]
+fn test_configured_server_id_evicts_a_discovered_holder() {
+    let router = DomainRouter::new();
+    let file = ProviderId::file("lobby.toml");
+    let docker = ProviderId::docker("mc-evil");
+
+    router.add(docker.clone(), make_named_config("lobby", &["evil.mc.com"]));
+    let changes = router.add(file.clone(), make_named_config("lobby", &["lobby.mc.com"]));
+
+    assert_eq!(changes.left.len(), 1);
+    assert_eq!(changes.left[0].0, docker);
+    assert!(router.resolve("evil.mc.com").is_none());
+
+    router.update(file, make_named_config("renamed", &["lobby.mc.com"]));
+    assert_eq!(router.resolve("evil.mc.com").unwrap().0, docker);
+}
+
+#[test]
+fn test_removing_a_held_config_keeps_it_from_coming_back() {
+    let router = DomainRouter::new();
+    let file = ProviderId::file("lobby.toml");
+    let docker = ProviderId::docker("mc-evil");
+
+    router.add(file.clone(), make_named_config("lobby", &["lobby.mc.com"]));
+    router.add(docker.clone(), make_named_config("lobby", &["evil.mc.com"]));
+    router.remove(&docker);
+    router.remove(&file);
+
+    assert!(router.is_empty());
+    assert!(router.resolve("evil.mc.com").is_none());
+}
+
+#[test]
+fn test_configs_without_id_or_name_are_not_duplicates() {
+    let router = DomainRouter::new();
+
+    router.add(ProviderId::file("a.toml"), make_config(&["a.mc.com"]));
+    router.add(ProviderId::docker("mc-1"), make_config(&["b.mc.com"]));
+
+    assert!(router.resolve("a.mc.com").is_some());
+    assert!(router.resolve("b.mc.com").is_some());
+    assert_eq!(router.len(), 2);
+}
+
+#[test]
+fn test_same_trust_duplicates_resolve_to_the_latest() {
+    let router = DomainRouter::new();
+
+    router.add(
+        ProviderId::file("a.toml"),
+        make_named_config("lobby", &["a.mc.com"]),
+    );
+    router.add(
+        ProviderId::file("b.toml"),
+        make_named_config("lobby", &["b.mc.com"]),
+    );
+
+    assert_eq!(
+        router.find_by_server_id("lobby").unwrap().domains,
+        vec!["b.mc.com"]
+    );
+}
