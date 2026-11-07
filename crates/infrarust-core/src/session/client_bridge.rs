@@ -7,6 +7,7 @@
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 use infrarust_api::types::Component;
 use infrarust_protocol::Packet;
@@ -21,6 +22,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::player::packets::encode_for_state;
+use crate::session::bounded_write::WriteGuard;
 use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;
@@ -31,6 +33,7 @@ const READ_CHUNK: usize = 16 * 1024;
 /// with optional encryption and compression.
 pub struct ClientBridge {
     stream: TcpStream,
+    writes: WriteGuard,
     decoder: PacketDecoder,
     encoder: PacketEncoder,
     encrypt_cipher: Option<EncryptCipher>,
@@ -57,6 +60,7 @@ impl ClientBridge {
 
         Self {
             stream,
+            writes: WriteGuard::new(),
             decoder,
             encoder: PacketEncoder::new(),
             encrypt_cipher: None,
@@ -65,6 +69,11 @@ impl ClientBridge {
             state: ConnectionState::Login,
             awaiting_config_ack: false,
         }
+    }
+
+    /// Sets the token that cuts a stalled write short.
+    pub fn set_cancel(&mut self, cancel: CancellationToken) {
+        self.writes.set_cancel(cancel);
     }
 
     /// Reads the next packet frame from the client.
@@ -122,13 +131,12 @@ impl ClientBridge {
     pub async fn flush(&mut self) -> Result<(), CoreError> {
         let mut data = self.encoder.take();
         if data.is_empty() {
-            return Ok(());
+            return self.writes.check();
         }
         if let Some(cipher) = &mut self.encrypt_cipher {
             cipher.encrypt(&mut data);
         }
-        self.stream.write_all(&data).await?;
-        Ok(())
+        self.writes.write_all(&mut self.stream, &data).await
     }
 
     /// Writes an encoded packet frame to the client (with any queued bytes).

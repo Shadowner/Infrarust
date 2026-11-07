@@ -38,6 +38,7 @@ pub(crate) async fn connect_backend(
     let address = connection.server_address().clone();
     let mut backend =
         BackendBridge::new(connection.into_stream(), version).with_server_address(address);
+    backend.set_cancel(ctx.token.clone());
 
     match login {
         Login::Relay => {

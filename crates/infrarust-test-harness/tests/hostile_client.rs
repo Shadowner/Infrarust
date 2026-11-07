@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use bytes::Bytes;
+use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_protocol::codec::VarInt;
 use infrarust_protocol::io::PacketEncoder;
@@ -11,10 +13,11 @@ use infrarust_protocol::packets::login::{
 };
 use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, DisconnectInfo, FakeBackend, FramedConn, LoginBehavior,
-    ProtocolVersion, ServerSpec, TestProxy, version_matrix, wire,
+    PacketFrame, ProtocolVersion, ServerSpec, TestProxy, version_matrix, wire,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::task::JoinHandle;
 use toml::{Table, Value};
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -198,3 +201,89 @@ async fn a_login_start_declared_over_its_limit_is_closed_at_once() {
 
     proxy.shutdown().await.unwrap();
 }
+
+struct StalledClient {
+    proxy: TestProxy,
+    _backend: FakeBackend,
+    _conn: FramedConn,
+    flood: JoinHandle<()>,
+}
+
+async fn a_client_that_stopped_reading(version: ProtocolVersion) -> StalledClient {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let conn = logging_in(&proxy, version).await;
+    let mut backend_conn = backend.next_connection(T).await.unwrap();
+    let frame = PacketFrame::new(0x7F, Bytes::from(vec![0; 64 * 1024]));
+    let flood = tokio::spawn(async move { while backend_conn.send_frame(&frame).await.is_ok() {} });
+    StalledClient {
+        proxy,
+        _backend: backend,
+        _conn: conn,
+        flood,
+    }
+}
+
+async fn a_client_that_stops_reading_loses_its_session_at_the_write_limit(
+    version: ProtocolVersion,
+) {
+    let stalled = a_client_that_stopped_reading(version).await;
+    stalled.proxy.wait_for_player(USERNAME, T).await.unwrap();
+
+    let started = tokio::time::Instant::now();
+    stalled
+        .proxy
+        .wait_for_connection_count(0, Duration::from_secs(36))
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() >= Duration::from_secs(25),
+        "the session ended after {:?}, before the write limit",
+        started.elapsed()
+    );
+
+    stalled.flood.abort();
+    stalled.proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_client_that_stops_reading_loses_its_session_at_the_write_limit; p763 = 763);
+
+async fn disconnecting_a_client_that_stopped_reading_ends_within_the_grace(
+    version: ProtocolVersion,
+) {
+    let stalled = a_client_that_stopped_reading(version).await;
+    let player = stalled.proxy.wait_for_player(USERNAME, T).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    player.disconnect(Component::text("bye")).await;
+
+    stalled
+        .proxy
+        .wait_for_connection_count(0, Duration::from_secs(8))
+        .await
+        .unwrap();
+
+    stalled.flood.abort();
+    stalled.proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(disconnecting_a_client_that_stopped_reading_ends_within_the_grace; p763 = 763);
+
+async fn shutdown_does_not_wait_for_a_client_that_stopped_reading(version: ProtocolVersion) {
+    let stalled = a_client_that_stopped_reading(version).await;
+    stalled.proxy.wait_for_player(USERNAME, T).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    tokio::time::timeout(Duration::from_secs(8), stalled.proxy.shutdown())
+        .await
+        .expect("shutdown waited on a client that reads nothing")
+        .unwrap();
+
+    stalled.flood.abort();
+}
+
+version_matrix!(shutdown_does_not_wait_for_a_client_that_stopped_reading; p763 = 763);

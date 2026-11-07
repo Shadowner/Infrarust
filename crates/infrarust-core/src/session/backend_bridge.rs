@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
@@ -22,6 +23,7 @@ use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::pipeline::types::HandshakeData;
 use crate::player::packets::encode_for_state;
+use crate::session::bounded_write::WriteGuard;
 use crate::session::kick::BackendKick;
 use crate::session::login_messages::LoginMessages;
 use crate::util::domain_rewrite::rewrite_handshake;
@@ -36,6 +38,7 @@ const ONLINE_BACKEND: &str =
 /// Can be replaced during a server switch (Phase 4+).
 pub struct BackendBridge {
     stream: TcpStream,
+    writes: WriteGuard,
     decoder: PacketDecoder,
     encoder: PacketEncoder,
     /// Current protocol state.
@@ -49,6 +52,7 @@ impl BackendBridge {
     pub fn new(stream: TcpStream, protocol_version: ProtocolVersion) -> Self {
         Self {
             stream,
+            writes: WriteGuard::new(),
             decoder: PacketDecoder::new(),
             encoder: PacketEncoder::new(),
             state: ConnectionState::Login,
@@ -65,6 +69,11 @@ impl BackendBridge {
 
     pub const fn server_address(&self) -> Option<&infrarust_config::ServerAddress> {
         self.server_address.as_ref()
+    }
+
+    /// Sets the token that cuts a stalled write short.
+    pub fn set_cancel(&mut self, cancel: CancellationToken) {
+        self.writes.set_cancel(cancel);
     }
 
     /// Reads the next packet frame from the backend.
@@ -105,10 +114,9 @@ impl BackendBridge {
     pub async fn flush(&mut self) -> Result<(), CoreError> {
         let data = self.encoder.take();
         if data.is_empty() {
-            return Ok(());
+            return self.writes.check();
         }
-        self.stream.write_all(&data).await?;
-        Ok(())
+        self.writes.write_all(&mut self.stream, &data).await
     }
 
     pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
@@ -164,11 +172,13 @@ impl BackendBridge {
     ) -> Result<(), CoreError> {
         // Write (possibly rewritten) handshake
         let handshake_bytes = rewrite_handshake(handshake_data, server_config)?;
-        self.stream.write_all(&handshake_bytes).await?;
+        self.writes
+            .write_all(&mut self.stream, &handshake_bytes)
+            .await?;
 
         // Forward remaining raw packets (login start, etc.) as-is
         for raw in handshake_data.raw_packets.iter().skip(1) {
-            self.stream.write_all(raw).await?;
+            self.writes.write_all(&mut self.stream, raw).await?;
         }
 
         self.stream.flush().await?;
@@ -180,13 +190,11 @@ impl BackendBridge {
         handshake.encode(&mut payload, self.protocol_version)?;
         self.encoder.append_raw(0x00, &payload)?;
         let data = self.encoder.take();
-        self.stream.write_all(&data).await?;
-        Ok(())
+        self.writes.write_all(&mut self.stream, &data).await
     }
 
     pub async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), CoreError> {
-        self.stream.write_all(bytes).await?;
-        Ok(())
+        self.writes.write_all(&mut self.stream, bytes).await
     }
 
     pub async fn send_login_start(

@@ -422,14 +422,15 @@ impl Loop<'_> {
                         outcome => outcome,
                     };
                     self.deliver();
-                    if let Err(e) = self.io.client.flush().await {
-                        tracing::warn!("failed to flush player command: {e}");
-                    }
+                    let flushed = self.io.client.flush().await;
                     if let Err(e) = self.backend.flush().await {
                         tracing::warn!("failed to flush a plugin message to the backend: {e}");
                     }
                     if let Some(end) = self.settle(outcome).await {
                         break end;
+                    }
+                    if let Err(e) = flushed {
+                        break ended(e, Side::Client, Side::Client);
                     }
                 }
                 LoopEvent::CommandsChanged => {
@@ -441,7 +442,7 @@ impl Loop<'_> {
                             tracing::warn!("failed to queue the refreshed command tree: {e}");
                         }
                         if let Err(e) = self.io.client.flush().await {
-                            tracing::warn!("failed to flush the refreshed command tree: {e}");
+                            break ended(e, Side::Client, Side::Client);
                         }
                     }
                 }

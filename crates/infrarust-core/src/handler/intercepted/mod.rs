@@ -112,6 +112,7 @@ impl InterceptedHandler {
         let registry = &self.services.packet_registry;
 
         let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
+        client.set_cancel(shutdown.clone());
 
         let (profile, online_mode) = match self
             .auth_strategy
@@ -155,6 +156,7 @@ impl InterceptedHandler {
                 return Ok(());
             }
         };
+        client.set_cancel(session_token.clone());
         let commands = CommandInbox::new(cmd_rx).with_session(Arc::clone(&player));
         let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
             &self.services.codec_filter_registry,
