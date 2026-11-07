@@ -110,7 +110,9 @@ async fn the_slot_is_held_during_a_forward_and_freed_when_it_ends() {
     let refused = proxy.client(VERSION).timeout(PROMPTLY).status().await;
     assert!(refused.is_err(), "the forward holds the only slot");
 
+    let mut backend_conn = backend.next_connection(PROMPTLY).await.unwrap();
     session.quit().await;
+    backend_conn.close().await;
 
     let deadline = Instant::now() + PROMPTLY;
     loop {
