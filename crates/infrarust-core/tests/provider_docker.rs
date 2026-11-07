@@ -97,17 +97,41 @@ fn test_labels_to_config_proxy_mode() {
 }
 
 #[test]
-fn test_address_resolution_hostname_fallback() {
+fn test_address_resolution_never_falls_back_to_the_container_name() {
     use bollard::models::ContainerInspectResponse;
 
-    // Empty container info → falls back to container name
     let info = ContainerInspectResponse {
         name: Some("/mc-survival".to_string()),
         ..Default::default()
     };
 
-    let addr = resolve_container_address(&info, None, 25565);
-    assert_eq!(addr, "mc-survival:25565");
+    assert_eq!(resolve_container_address(&info, None, 25565), None);
+}
+
+#[test]
+fn test_address_resolution_uses_a_published_port_without_a_network_ip() {
+    use bollard::models::{ContainerInspectResponse, HostConfig, PortBinding};
+
+    let binding = PortBinding {
+        host_ip: Some("0.0.0.0".to_string()),
+        host_port: Some("30000".to_string()),
+    };
+    let info = ContainerInspectResponse {
+        name: Some("/mc-survival".to_string()),
+        host_config: Some(HostConfig {
+            port_bindings: Some(HashMap::from([(
+                "25565/tcp".to_string(),
+                Some(vec![binding]),
+            )])),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        resolve_container_address(&info, None, 25565).as_deref(),
+        Some("127.0.0.1:30000")
+    );
 }
 
 #[test]
@@ -133,7 +157,7 @@ fn test_address_resolution_picks_first_network_by_name() {
     };
 
     let addr = resolve_container_address(&info, None, 25565);
-    assert_eq!(addr, "10.0.0.2:25565");
+    assert_eq!(addr.as_deref(), Some("10.0.0.2:25565"));
 }
 
 fn policy(allowed_domains: &[&str]) -> DockerProviderConfig {

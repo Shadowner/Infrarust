@@ -154,7 +154,17 @@ impl DockerProvider {
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(infrarust_config::DEFAULT_MC_PORT);
 
-        let address = resolve_container_address(&info, self.config.network.as_deref(), port);
+        let Some(address) = resolve_container_address(&info, self.config.network.as_deref(), port)
+        else {
+            self.log_refusal(
+                container_name,
+                format!(
+                    "container not routed: it has no network IP and does not publish port {port}"
+                ),
+            )
+            .await;
+            return Ok(None);
+        };
 
         let config = match container_server_config(&self.config, container_name, labels, &address) {
             Ok(config) => config,

@@ -172,12 +172,11 @@ fn domain_allowed(allowed: &[String], domain: &str) -> bool {
 /// Priority:
 /// 1. Network IP from the preferred network (or first available)
 /// 2. Port bindings → `host_ip:host_port`
-/// 3. Container name as hostname
 pub fn resolve_container_address(
     info: &ContainerInspectResponse,
     preferred_network: Option<&str>,
     port: u16,
-) -> String {
+) -> Option<String> {
     // 1. Network IP
     if let Some(networks) = info
         .network_settings
@@ -190,7 +189,7 @@ pub fn resolve_container_address(
             && let Some(ip) = &net.ip_address
             && !ip.is_empty()
         {
-            return format!("{ip}:{port}");
+            return Some(format!("{ip}:{port}"));
         }
         let first_by_name = networks
             .iter()
@@ -200,7 +199,7 @@ pub fn resolve_container_address(
             })
             .min();
         if let Some((_, ip)) = first_by_name {
-            return format!("{ip}:{port}");
+            return Some(format!("{ip}:{port}"));
         }
     }
 
@@ -221,15 +220,9 @@ pub fn resolve_container_address(
             } else {
                 host_ip
             };
-            return format!("{actual_ip}:{host_port}");
+            return Some(format!("{actual_ip}:{host_port}"));
         }
     }
 
-    // 3. Container name
-    let name = info
-        .name
-        .as_deref()
-        .unwrap_or("unknown")
-        .trim_start_matches('/');
-    format!("{name}:{port}")
+    None
 }
