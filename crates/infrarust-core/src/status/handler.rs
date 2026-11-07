@@ -7,9 +7,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
-use tokio::sync::Mutex as TokioMutex;
-
 use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
@@ -27,6 +24,7 @@ use super::cache::StatusCache;
 use super::favicon::FaviconCache;
 use super::motd::{DEFAULT_PROXY_MOTD, state_max_players, state_motd};
 use super::relay::{StatusRelayClient, read_frame_within, send_packet};
+use super::relay_gate::{RelayGate, RelayTurn};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
@@ -50,8 +48,7 @@ pub struct StatusHandler {
     health: Arc<dyn BackendHealthView>,
     #[cfg(feature = "telemetry")]
     metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
-    /// Only one relay runs at a time per server; concurrent requests wait.
-    inflight_locks: DashMap<String, Arc<TokioMutex<()>>>,
+    relay_gate: RelayGate,
 }
 
 impl StatusHandler {
@@ -79,7 +76,7 @@ impl StatusHandler {
             health,
             #[cfg(feature = "telemetry")]
             metrics: None,
-            inflight_locks: DashMap::new(),
+            relay_gate: RelayGate::default(),
         }
     }
 
@@ -209,8 +206,8 @@ impl StatusHandler {
 
     /// Attempts relay → cache → stale → synthetic fallback.
     ///
-    /// Uses per-server locking to prevent cache stampede: only one relay
-    /// runs at a time per server, concurrent requests wait and re-check cache.
+    /// Only one relay runs at a time per server. Other requests wait briefly for
+    /// its result and then fall back, so a silent backend cannot queue them up.
     async fn relay_or_cache(
         &self,
         ctx: &ConnectionContext,
@@ -225,12 +222,18 @@ impl StatusHandler {
             return response;
         }
 
-        let lock = self
-            .inflight_locks
-            .entry(config_id.to_string())
-            .or_insert_with(|| Arc::new(TokioMutex::new(())))
-            .clone();
-        let _guard = lock.lock().await;
+        let leader = match self.relay_gate.enter(config_id).await {
+            RelayTurn::Leader(leader) => leader,
+            RelayTurn::Unreachable | RelayTurn::Busy => {
+                return self.get_unreachable_motd(
+                    config,
+                    connection_registry,
+                    config_id,
+                    client_version,
+                    false,
+                );
+            }
+        };
 
         if let Some((response, _latency)) = self.cache.get_fresh(config_id) {
             return response;
@@ -267,6 +270,7 @@ impl StatusHandler {
                 }
                 self.cache
                     .put(config_id, result.response.clone(), result.latency, None);
+                leader.succeeded();
                 return result.response;
             }
             Err(e) => {
@@ -275,10 +279,11 @@ impl StatusHandler {
                     error = %e,
                     "status relay failed, trying cache fallback"
                 );
+                leader.failed();
             }
         }
 
-        self.get_unreachable_motd(config, connection_registry, config_id, client_version)
+        self.get_unreachable_motd(config, connection_registry, config_id, client_version, true)
     }
 
     pub(crate) fn build_state_motd(
@@ -352,6 +357,7 @@ impl StatusHandler {
         connection_registry: &ConnectionRegistry,
         config_id: &str,
         client_version: ProtocolVersion,
+        relay_just_failed: bool,
     ) -> ServerPingResponse {
         if let Some(motd) = &config.motd.unreachable {
             ServerPingResponse::from_entry(
@@ -360,10 +366,12 @@ impl StatusHandler {
                 motd.max_players.map(u32::cast_signed),
             )
         } else if let Some((response, _latency)) = self.cache.get_stale(config_id) {
-            tracing::warn!(
-                server = config_id,
-                "serving stale cached status (backend unreachable)"
-            );
+            if relay_just_failed {
+                tracing::warn!(
+                    server = config_id,
+                    "serving stale cached status (backend unreachable)"
+                );
+            }
             response
         } else {
             self.build_unreachable_motd(config, connection_registry, config_id, client_version)

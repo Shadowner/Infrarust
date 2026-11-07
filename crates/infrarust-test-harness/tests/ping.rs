@@ -1,7 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use infrarust_api::event::EventPriority;
 use infrarust_api::events::proxy::ProxyPingEvent;
@@ -14,6 +15,8 @@ use infrarust_test_harness::{
     version_matrix,
 };
 use serde_json::json;
+use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 use toml::{Table, Value};
 use uuid::Uuid;
 
@@ -457,3 +460,53 @@ async fn an_untouched_player_sample_is_relayed_verbatim(version: ProtocolVersion
 }
 
 version_matrix!(an_untouched_player_sample_is_relayed_verbatim; p47 = 47, p764 = 764, p777 = 777);
+
+async fn spawn_mute_backend() -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&accepted);
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            counter.fetch_add(1, Ordering::SeqCst);
+            held.push(stream);
+        }
+    });
+    (addr, accepted)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pings_against_a_mute_backend_do_not_queue_behind_each_other() {
+    let (addr, accepted) = spawn_mute_backend().await;
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(addr))
+        .start()
+        .await
+        .unwrap();
+
+    let started = Instant::now();
+    let mut pings = JoinSet::new();
+    for _ in 0..3 {
+        let client = proxy
+            .client(ProtocolVersion::V1_21)
+            .timeout(Duration::from_secs(15));
+        pings.spawn(async move { client.status().await.unwrap() });
+    }
+    while let Some(ping) = pings.join_next().await {
+        ping.unwrap();
+    }
+    assert!(started.elapsed() < Duration::from_secs(8), "{started:?}");
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+    let again = Instant::now();
+    proxy.client(ProtocolVersion::V1_21).status().await.unwrap();
+    assert!(again.elapsed() < Duration::from_secs(1), "{again:?}");
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        1,
+        "a recent failure must not reconnect"
+    );
+
+    proxy.shutdown().await.unwrap();
+}
