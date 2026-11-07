@@ -10,6 +10,7 @@ use crate::error::CoreError;
 
 pub const MAX_HANDSHAKE_FRAME: usize = 2 * 1024;
 pub const MAX_LOGIN_START_FRAME: usize = 5 * 1024;
+pub const MAX_STATUS_FRAME: usize = 64;
 
 /// Reads the next frame, refusing it as soon as its declared length exceeds
 /// `limit`. Bytes read from the stream are also appended to `raw`.

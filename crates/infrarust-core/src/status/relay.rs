@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use infrarust_config::{DomainRewrite, ServerAddress, ServerConfig};
@@ -25,6 +26,7 @@ use infrarust_transport::connection::ConnectionInfo;
 use super::STATUS_PROTOCOL_VERSION;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
+use crate::pipeline::preauth_frame::{MAX_STATUS_FRAME, read_preauth_frame};
 use crate::player::packets::packet_id;
 
 /// Result of a successful status relay.
@@ -262,7 +264,9 @@ pub(super) async fn read_frame_within(
     timeout: Duration,
     what: &str,
 ) -> Result<PacketFrame, CoreError> {
-    tokio::time::timeout(timeout, read_next_frame(stream, decoder))
+    let mut raw = BytesMut::new();
+    let read = read_preauth_frame(stream, decoder, &mut raw, MAX_STATUS_FRAME);
+    tokio::time::timeout(timeout, read)
         .await
         .map_err(|_| CoreError::Timeout(format!("{what} read timed out")))?
 }
