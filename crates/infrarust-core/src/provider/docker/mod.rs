@@ -9,10 +9,12 @@ pub mod labels;
 
 pub use labels::{
     DomainsNotAllowed, container_server_config, labels_to_server_config, resolve_container_address,
+    withheld_forwarding_warning,
 };
 
 use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
+use std::sync::Once;
 use std::time::Duration;
 
 use bollard::Docker;
@@ -23,7 +25,7 @@ use futures_util::StreamExt;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::{DockerProviderConfig, ServerConfig};
+use infrarust_config::{DockerProviderConfig, ForwardingMode, ServerConfig};
 
 use crate::error::CoreError;
 use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
@@ -37,6 +39,8 @@ struct ContainerScan {
 /// Docker provider that auto-discovers containers with `infrarust.*` labels.
 pub struct DockerProvider {
     config: DockerProviderConfig,
+    proxy_wide_forwarding: ForwardingMode,
+    withheld_forwarding_warned: Once,
     /// Known containers: container_name → ServerConfig
     known: Mutex<HashMap<String, ServerConfig>>,
     /// Last refusal logged per container, so polling does not repeat it.
@@ -44,9 +48,11 @@ pub struct DockerProvider {
 }
 
 impl DockerProvider {
-    pub fn new(config: &DockerProviderConfig) -> Self {
+    pub fn new(config: &DockerProviderConfig, proxy_wide_forwarding: ForwardingMode) -> Self {
         Self {
             config: config.clone(),
+            proxy_wide_forwarding,
+            withheld_forwarding_warned: Once::new(),
             known: Mutex::new(HashMap::new()),
             refusals: Mutex::new(HashMap::new()),
         }
@@ -188,6 +194,15 @@ impl DockerProvider {
         };
         for warning in warnings {
             tracing::warn!(container = %container_name, "{warning}");
+        }
+        if let Some(warning) = withheld_forwarding_warning(
+            &self.config,
+            &self.proxy_wide_forwarding,
+            container_name,
+            &config,
+        ) {
+            self.withheld_forwarding_warned
+                .call_once(|| tracing::warn!("{warning}"));
         }
 
         Ok(Some(ProviderConfig {

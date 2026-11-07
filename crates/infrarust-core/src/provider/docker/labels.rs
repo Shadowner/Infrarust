@@ -160,6 +160,28 @@ pub fn container_server_config(
     Ok(config)
 }
 
+/// The warning owed when the `[docker]` policy keeps a container on an
+/// intercepted proxy mode out of the proxy-wide forwarding mode.
+pub fn withheld_forwarding_warning(
+    policy: &DockerProviderConfig,
+    proxy_wide: &ForwardingMode,
+    container_name: &str,
+    config: &ServerConfig,
+) -> Option<String> {
+    if policy.inherit_forwarding
+        || *proxy_wide == ForwardingMode::None
+        || !config.proxy_mode.is_intercepted()
+    {
+        return None;
+    }
+    Some(format!(
+        "container {container_name} and any other container on an intercepted proxy mode get \
+         no player forwarding, although [forwarding] selects {proxy_wide:?}: a backend that \
+         expects it rejects every player. To hand containers the mode and its secret, set \
+         inherit_forwarding = true in [docker]"
+    ))
+}
+
 fn domain_allowed(allowed: &[String], domain: &str) -> bool {
     let is_pattern = domain.contains(['*', '?']);
     allowed

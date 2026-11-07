@@ -99,17 +99,18 @@ impl ProxyServer {
         let favicon_cache =
             Arc::new(FaviconCache::load_from_configs(&[], config.default_motd.as_ref()).await?);
 
+        let proxy_wide_forwarding = config
+            .forwarding
+            .as_ref()
+            .map(|forwarding| forwarding.mode.clone())
+            .unwrap_or_default();
         let mut provider_registry = ProviderRegistry::new(
             Arc::clone(&domain_router),
             Arc::clone(&event_bus),
             Arc::clone(&status_cache),
             Arc::clone(&favicon_cache),
             background.clone(),
-            config
-                .forwarding
-                .as_ref()
-                .map(|forwarding| forwarding.mode.clone())
-                .unwrap_or_default(),
+            proxy_wide_forwarding.clone(),
         );
 
         provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
@@ -118,6 +119,7 @@ impl ProxyServer {
         if let Some(ref docker_config) = config.docker {
             provider_registry.add_provider(Box::new(crate::provider::docker::DockerProvider::new(
                 docker_config,
+                proxy_wide_forwarding,
             )));
         }
 

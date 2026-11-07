@@ -7,7 +7,7 @@ use infrarust_config::{DockerProviderConfig, ForwardingMode, validate_server_for
 use infrarust_core::provider::ConfigProvider;
 use infrarust_core::provider::docker::{
     DockerProvider, DomainsNotAllowed, container_server_config, labels_to_server_config,
-    resolve_container_address,
+    resolve_container_address, withheld_forwarding_warning,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -355,6 +355,65 @@ fn test_policy_inherit_forwarding_leaves_the_mode_unset() {
 }
 
 #[test]
+fn test_withheld_forwarding_warns_with_the_setting_that_restores_it() {
+    let labels = make_labels(&[
+        ("infrarust.enable", "true"),
+        ("infrarust.proxy_mode", "client_only"),
+    ]);
+    let policy = DockerProviderConfig::default();
+    let config = container_server_config(&policy, "mc-test", &labels, ADDRESS).unwrap();
+
+    for proxy_wide in [
+        ForwardingMode::BungeeCord,
+        ForwardingMode::BungeeGuard,
+        ForwardingMode::Velocity,
+    ] {
+        let warning =
+            withheld_forwarding_warning(&policy, &proxy_wide, "mc-test", &config).unwrap();
+        assert!(warning.contains("mc-test"), "{warning}");
+        assert!(warning.contains("inherit_forwarding = true"), "{warning}");
+    }
+}
+
+#[test]
+fn test_withheld_forwarding_stays_quiet_when_nothing_is_withheld() {
+    let intercepted = make_labels(&[
+        ("infrarust.enable", "true"),
+        ("infrarust.proxy_mode", "client_only"),
+    ]);
+    let forwarding = make_labels(&[("infrarust.enable", "true")]);
+    let closed = DockerProviderConfig::default();
+    let inheriting = DockerProviderConfig {
+        inherit_forwarding: true,
+        ..Default::default()
+    };
+    let config = |policy, labels| container_server_config(policy, "mc-test", labels, ADDRESS);
+
+    for (policy, proxy_wide, built) in [
+        (
+            &closed,
+            ForwardingMode::None,
+            config(&closed, &intercepted).unwrap(),
+        ),
+        (
+            &inheriting,
+            ForwardingMode::Velocity,
+            config(&inheriting, &intercepted).unwrap(),
+        ),
+        (
+            &closed,
+            ForwardingMode::Velocity,
+            config(&closed, &forwarding).unwrap(),
+        ),
+    ] {
+        assert_eq!(
+            withheld_forwarding_warning(policy, &proxy_wide, "mc-test", &built),
+            None
+        );
+    }
+}
+
+#[test]
 fn test_policy_settings_default_to_closed() {
     let parsed: DockerProviderConfig = toml::from_str("").unwrap();
 
@@ -383,10 +442,13 @@ async fn answer_with_no_containers(mut stream: impl AsyncRead + AsyncWrite + Unp
 }
 
 fn provider_at(endpoint: String) -> DockerProvider {
-    DockerProvider::new(&DockerProviderConfig {
-        endpoint,
-        ..Default::default()
-    })
+    DockerProvider::new(
+        &DockerProviderConfig {
+            endpoint,
+            ..Default::default()
+        },
+        ForwardingMode::None,
+    )
 }
 
 #[tokio::test]
