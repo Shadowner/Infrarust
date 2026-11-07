@@ -44,6 +44,7 @@ impl PluginServices {
                 provider_events,
                 Arc::new(DomainRouter::new()),
                 CancellationToken::new(),
+                infrarust_config::ForwardingMode::None,
             )),
             proxy_shutdown: CancellationToken::new(),
             proxy_info: ProxyInfo::default(),

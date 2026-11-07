@@ -184,7 +184,7 @@ async fn event_loop(
     }
 }
 
-fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
+pub(super) fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
     match infrarust_config::validate_server_forwarding(&pc.config, default_forwarding.clone()) {
         Ok(warnings) => {
             for warning in warnings {

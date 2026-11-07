@@ -9,8 +9,10 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::provider::{
     PluginConfigProvider, PluginProviderEvent, PluginProviderSender, ServerDocument,
 };
+use infrarust_config::ForwardingMode;
 
 use crate::provider::provider_id::ProviderId;
+use crate::provider::registry::accepted;
 use crate::provider::traits::{ProviderConfig, ProviderEvent};
 use crate::routing::DomainRouter;
 use crate::util::sync::lock;
@@ -118,6 +120,7 @@ pub struct PluginProviderActivator {
     sender: mpsc::Sender<ProviderEvent>,
     router: Arc<DomainRouter>,
     shutdown: CancellationToken,
+    default_forwarding: ForwardingMode,
     started: AtomicBool,
     active: Mutex<HashMap<String, Vec<Activation>>>,
 }
@@ -127,11 +130,13 @@ impl PluginProviderActivator {
         sender: mpsc::Sender<ProviderEvent>,
         router: Arc<DomainRouter>,
         shutdown: CancellationToken,
+        default_forwarding: ForwardingMode,
     ) -> Self {
         Self {
             sender,
             router,
             shutdown,
+            default_forwarding,
             started: AtomicBool::new(false),
             active: Mutex::new(HashMap::new()),
         }
@@ -191,10 +196,15 @@ impl PluginProviderActivator {
             let mut config_ids = Vec::new();
             for doc in &documents {
                 match parse_document(doc) {
-                    Ok(server_config) => {
-                        let pid = ProviderId::plugin(plugin_id, &kind, doc.id.as_str());
-                        self.router.add(pid.clone(), server_config);
-                        config_ids.push(pid);
+                    Ok(config) => {
+                        let pc = ProviderConfig {
+                            id: ProviderId::plugin(plugin_id, &kind, doc.id.as_str()),
+                            config,
+                        };
+                        if accepted(&pc, &self.default_forwarding) {
+                            self.router.add(pc.id.clone(), pc.config);
+                            config_ids.push(pc.id);
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -404,6 +414,79 @@ mod tests {
             !sender
                 .send(PluginProviderEvent::Removed(ServerId::new("lobby")))
                 .await
+        );
+    }
+
+    struct InitialDocuments(Vec<ServerDocument>);
+
+    impl PluginConfigProvider for InitialDocuments {
+        fn provider_type(&self) -> &str {
+            "test"
+        }
+
+        fn load_initial(
+            &self,
+        ) -> BoxFuture<'_, Result<Vec<ServerDocument>, infrarust_api::error::PluginError>> {
+            let documents = self.0.clone();
+            Box::pin(async move { Ok(documents) })
+        }
+
+        fn watch(
+            &self,
+            _sender: Box<dyn PluginProviderSender>,
+        ) -> BoxFuture<'_, Result<(), infrarust_api::error::PluginError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    async fn activated_under(default_forwarding: ForwardingMode) -> Vec<String> {
+        let router = Arc::new(DomainRouter::new());
+        let activator = PluginProviderActivator::new(
+            mpsc::channel(1).0,
+            Arc::clone(&router),
+            CancellationToken::new(),
+            default_forwarding,
+        );
+        let provider = InitialDocuments(vec![
+            document(
+                "inherited",
+                "domains = [\"inherited.example.com\"]\naddresses = [\"10.0.0.1:25565\"]\n\
+                 proxy_mode = \"passthrough\"",
+            ),
+            document(
+                "optout",
+                "domains = [\"optout.example.com\"]\naddresses = [\"10.0.0.1:25565\"]\n\
+                 proxy_mode = \"passthrough\"\nforwarding_mode = \"none\"",
+            ),
+        ]);
+
+        activator.activate("plugin", Box::new(provider)).await;
+
+        let mut routed: Vec<String> = router
+            .list_all()
+            .into_iter()
+            .map(|(_, config)| config.effective_id())
+            .collect();
+        routed.sort();
+        routed
+    }
+
+    #[tokio::test]
+    async fn initial_documents_follow_the_proxy_wide_forwarding_rules() {
+        for refusing in [
+            ForwardingMode::BungeeCord,
+            ForwardingMode::BungeeGuard,
+            ForwardingMode::Velocity,
+        ] {
+            assert_eq!(
+                activated_under(refusing.clone()).await,
+                ["optout"],
+                "{refusing:?}"
+            );
+        }
+        assert_eq!(
+            activated_under(ForwardingMode::None).await,
+            ["inherited", "optout"]
         );
     }
 

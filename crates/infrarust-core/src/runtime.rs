@@ -305,6 +305,12 @@ fn plugin_services(
             services.provider_event_sender.clone(),
             Arc::clone(&services.domain_router),
             background,
+            services
+                .config
+                .forwarding
+                .as_ref()
+                .map(|forwarding| forwarding.mode.clone())
+                .unwrap_or_default(),
         )),
         proxy_shutdown,
         proxy_info,
