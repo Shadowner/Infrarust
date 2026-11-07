@@ -594,3 +594,53 @@ async fn a_cursor_that_is_not_one_of_ours_is_refused() {
     let (storage, _dir) = temp_storage().await;
     assert!(storage.list(BanQuery::new().after("abc")).await.is_err());
 }
+
+#[tokio::test]
+async fn a_corrupt_ban_file_is_refused_and_stays_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bans.json");
+    let corrupt = "{ \"bans\": [ truncated";
+    std::fs::write(&path, corrupt).unwrap();
+
+    let storage = FileBanStorage::new(path.clone());
+    let error = storage.load().await.unwrap_err().to_string();
+
+    assert!(error.contains("corrupt"), "{error}");
+    assert!(error.contains(path.to_str().unwrap()), "{error}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["bans.json"]);
+}
+
+#[tokio::test]
+async fn a_missing_ban_file_still_starts_empty() {
+    let (storage, _dir) = temp_storage().await;
+    storage.load().await.unwrap();
+    assert!(storage.get_all_active().await.unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn saving_keeps_a_restricted_ban_file_restricted() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (storage, dir) = temp_storage().await;
+    let path = dir.path().join("test_bans.json");
+    storage.save().await.unwrap();
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), 0o600);
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    storage.save().await.unwrap();
+    assert_eq!(mode(&path), 0o640);
+
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["test_bans.json"]);
+}

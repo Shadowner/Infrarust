@@ -500,3 +500,19 @@ async fn only_the_builtin_provider_runs_a_purge_task() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn a_corrupt_ban_file_refuses_the_startup() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("bans.json");
+    std::fs::write(&file, "not json").unwrap();
+    let config = infrarust_config::BanConfig {
+        file: file.clone(),
+        ..Default::default()
+    };
+
+    let built = BanManager::from_config(&config, Arc::new(ConnectionRegistry::new()), bus()).await;
+
+    assert!(built.is_err());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json");
+}

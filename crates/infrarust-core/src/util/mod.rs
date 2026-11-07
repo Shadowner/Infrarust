@@ -1,3 +1,4 @@
+pub(crate) mod atomic_file;
 pub mod domain_rewrite;
 pub(crate) mod guard;
 pub mod provider_slot;

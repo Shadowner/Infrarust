@@ -15,6 +15,7 @@ use infrarust_api::services::ban_service::{
 use crate::ban::storage::{BanStorage, StorageFuture};
 use crate::ban::types::{BanAction, BanAuditLogEntry, BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
+use crate::util::atomic_file::write_atomic;
 use crate::util::sync::{read, write};
 
 const MAX_AUDIT_LOG_ENTRIES: usize = 10_000;
@@ -278,9 +279,10 @@ impl FileBanStorage {
         let data = self.serialize_all(&audit_log)?;
         drop(audit_log);
 
-        let tmp_path = self.file_path.with_extension("json.tmp");
-        tokio::fs::write(&tmp_path, &data).await?;
-        tokio::fs::rename(&tmp_path, &self.file_path).await?;
+        let path = self.file_path.clone();
+        tokio::task::spawn_blocking(move || write_atomic(&path, &data))
+            .await
+            .map_err(std::io::Error::other)??;
 
         Ok(())
     }
@@ -312,32 +314,21 @@ impl BanStorage for FileBanStorage {
         Box::pin(async move {
             match tokio::fs::read_to_string(&self.file_path).await {
                 Ok(contents) => {
-                    match serde_json::from_str::<BanFileData>(&contents) {
-                        Ok(mut data) => {
-                            let audit_log = std::mem::take(&mut data.audit_log);
-                            self.populate(data);
-                            *self.audit_log.write().await = audit_log;
-                            tracing::info!(
-                                path = %self.file_path.display(),
-                                bans = self.read().by_id.len(),
-                                "loaded ban data"
-                            );
-                        }
-                        Err(e) => {
-                            let backup = self.file_path.with_extension("json.bak");
-                            tracing::warn!(
-                                path = %self.file_path.display(),
-                                error = %e,
-                                backup = %backup.display(),
-                                "ban file is corrupt, backing up and starting empty"
-                            );
-                            if let Err(rename_err) =
-                                tokio::fs::rename(&self.file_path, &backup).await
-                            {
-                                tracing::warn!(error = %rename_err, "failed to back up corrupt ban file");
-                            }
-                        }
-                    }
+                    let mut data =
+                        serde_json::from_str::<BanFileData>(&contents).map_err(|e| {
+                            CoreError::Ban(format!(
+                                "ban file {} is corrupt: {e}. Repair it, or move it away to start with no bans",
+                                self.file_path.display()
+                            ))
+                        })?;
+                    let audit_log = std::mem::take(&mut data.audit_log);
+                    self.populate(data);
+                    *self.audit_log.write().await = audit_log;
+                    tracing::info!(
+                        path = %self.file_path.display(),
+                        bans = self.read().by_id.len(),
+                        "loaded ban data"
+                    );
                     Ok(())
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
