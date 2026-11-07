@@ -43,6 +43,36 @@ fn backend_frame(
     Ok(frame)
 }
 
+async fn backend_frame_while_client_stays(
+    client: &mut ClientBridge,
+    backend: &mut BackendBridge,
+    kick_id: Option<i32>,
+    state: ConnectionState,
+    version: ProtocolVersion,
+) -> Result<PacketFrame, PhaseError> {
+    tokio::select! {
+        read = backend.read_frame() => backend_frame(read, kick_id, state, version),
+        left = client.closed() => Err(PhaseError::Client(left)),
+    }
+}
+
+/// Reads the first Play frame of the new backend, for every protocol version.
+pub(super) async fn first_play_frame(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    backend: &mut BackendBridge,
+) -> Result<PacketFrame, PhaseError> {
+    let version = ctx.version();
+    backend_frame_while_client_stays(
+        client,
+        backend,
+        ctx.registry().get_packet_id::<CDisconnect>(version),
+        ConnectionState::Play,
+        version,
+    )
+    .await
+}
+
 async fn client_frame(client: &mut ClientBridge) -> Result<PacketFrame, PhaseError> {
     client
         .read_frame()
@@ -69,12 +99,14 @@ pub(super) async fn handle_config_phase_switch(
 
     let mut pending = None;
     if client.state() == ConnectionState::Play {
-        let first = backend_frame(
-            backend.read_frame().await,
+        let first = backend_frame_while_client_stays(
+            client,
+            backend,
             config_kick,
             ConnectionState::Config,
             version,
-        )?;
+        )
+        .await?;
         *stranded = true;
         client
             .send_packet(&CStartConfiguration, registry)
@@ -158,11 +190,5 @@ pub(super) async fn handle_config_phase_switch(
     client.set_state(ConnectionState::Play);
     backend.set_state(ConnectionState::Play);
 
-    let play_kick = registry.get_packet_id::<CDisconnect>(version);
-    backend_frame(
-        backend.read_frame().await,
-        play_kick,
-        ConnectionState::Play,
-        version,
-    )
+    first_play_frame(ctx, client, backend).await
 }

@@ -26,6 +26,7 @@ use crate::session::bounded_write::WriteGuard;
 use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;
+const MAX_HELD_BYTES: usize = 1024 * 1024;
 
 /// The client side of a proxied connection.
 ///
@@ -89,18 +90,35 @@ impl ClientBridge {
                 return Ok(Some(frame));
             }
 
-            let buf = self.decoder.read_buf_mut();
-            buf.reserve(READ_CHUNK);
-            let old_len = buf.len();
-            let n = self.stream.read_buf(buf).await?;
-            if n == 0 {
+            if self.fill_decoder().await? == 0 {
                 return Ok(None);
             }
+        }
+    }
 
-            if let Some(cipher) = &mut self.decrypt_cipher {
-                cipher.decrypt(&mut self.decoder.read_buf_mut()[old_len..]);
+    async fn fill_decoder(&mut self) -> Result<usize, CoreError> {
+        let buf = self.decoder.read_buf_mut();
+        buf.reserve(READ_CHUNK);
+        let old_len = buf.len();
+        let n = self.stream.read_buf(buf).await?;
+        if let Some(cipher) = &mut self.decrypt_cipher {
+            cipher.decrypt(&mut self.decoder.read_buf_mut()[old_len..]);
+        }
+        Ok(n)
+    }
+
+    /// Resolves once the client has left. What it sends in the meantime stays
+    /// in the decoder for the next read, up to `MAX_HELD_BYTES`; past that the
+    /// socket is left alone and this no longer resolves.
+    pub(crate) async fn closed(&mut self) -> CoreError {
+        while self.decoder.read_buf_mut().len() < MAX_HELD_BYTES {
+            match self.fill_decoder().await {
+                Ok(0) => return CoreError::ConnectionClosed,
+                Ok(_) => {}
+                Err(e) => return e,
             }
         }
+        std::future::pending().await
     }
 
     /// Extracts the next frame already buffered in the decoder, without
