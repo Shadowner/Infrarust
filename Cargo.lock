@@ -2219,6 +2219,7 @@ dependencies = [
  "humantime-serde",
  "ipnet",
  "serde",
+ "serde_json",
  "serde_yml",
  "tempfile",
  "thiserror 2.0.21",

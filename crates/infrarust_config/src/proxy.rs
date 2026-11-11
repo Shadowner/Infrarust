@@ -1,12 +1,12 @@
 //! Global proxy configuration (`infrarust.toml`).
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use ipnet::IpNet;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::defaults;
 use crate::types::{
@@ -22,6 +22,26 @@ pub enum UnknownDomainBehavior {
     #[default]
     DefaultMotd,
     Drop,
+}
+
+fn deserialize_trusted_proxies<'de, D>(deserializer: D) -> Result<Vec<IpNet>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer)?
+        .into_iter()
+        .map(|entry| {
+            entry
+                .parse::<IpNet>()
+                .or_else(|_| entry.parse::<IpAddr>().map(IpNet::from))
+                .map_err(|_| {
+                    serde::de::Error::custom(format_args!(
+                        "invalid trusted_proxies entry {entry:?}: expected an IP address such \
+                         as 192.168.1.10 or a CIDR range such as 10.0.0.0/8"
+                    ))
+                })
+        })
+        .collect()
 }
 
 /// Corresponds to the `infrarust.toml` file.
@@ -56,7 +76,7 @@ pub struct ProxyConfig {
 
     /// Peers allowed to send a proxy protocol header. Any other peer is closed
     /// without reading. Required when `receive_proxy_protocol` is enabled.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_trusted_proxies")]
     pub trusted_proxies: Vec<IpNet>,
 
     /// Path to the server configuration directory
