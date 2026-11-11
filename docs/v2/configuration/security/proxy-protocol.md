@@ -27,7 +27,11 @@ This is an all-or-nothing setting. Once enabled, connections without a proxy pro
 
 ### Trusted proxies
 
-A proxy protocol header is a claim about the client address, and anyone who can reach the port can write one. `trusted_proxies` lists the peers whose header Infrarust accepts. Each entry is a CIDR range, IPv4 or IPv6. Write a single address with its full prefix length: `10.0.0.5/32` or `2001:db8::5/128`. A bare address without a prefix is a configuration error.
+A proxy protocol header is a claim about the client address, and anyone who can reach the port can write one. `trusted_proxies` lists the peers whose header Infrarust accepts. Each entry is an IPv4 or IPv6 address, which trusts that single host, or a CIDR range: `10.0.0.5`, `2001:db8::5` and `10.0.1.0/24` are all valid. With any other entry, such as a hostname, the proxy refuses to start with an error that names it:
+
+```
+invalid trusted_proxies entry "lb.internal": expected an IP address such as 192.168.1.10 or a CIDR range such as 10.0.0.0/8
+```
 
 `trusted_proxies` is required when `receive_proxy_protocol = true`. With an empty list the proxy refuses to start:
 
@@ -121,5 +125,5 @@ send_proxy_protocol = true
 | Option | File | Type | Default | Description |
 |---|---|---|---|---|
 | `receive_proxy_protocol` | `infrarust.toml` | `bool` | `false` | Decode proxy protocol headers on incoming connections |
-| `trusted_proxies` | `infrarust.toml` | list of CIDR ranges | `[]` | Peers allowed to send a proxy protocol header. Required when `receive_proxy_protocol` is `true` |
+| `trusted_proxies` | `infrarust.toml` | list of IP addresses and CIDR ranges | `[]` | Peers allowed to send a proxy protocol header. Required when `receive_proxy_protocol` is `true` |
 | `send_proxy_protocol` | server config | `bool` | `false` | Send a v2 proxy protocol header to the backend |

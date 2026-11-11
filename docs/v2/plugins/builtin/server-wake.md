@@ -29,7 +29,7 @@ limbo_handlers = ["server_wake"]
 
 The plugin will not intercept connections for a server that doesn't list it here. A server config without a `[server_manager]` section is also passed through without any limbo hold.
 
-A managed server that does not list the plugin is still woken by the proxy when a player joins, with a [start throttle](../../guide/server-management#start-throttle): repeated logins cannot restart a crashing server in a loop. The plugin's own start requests are not throttled.
+A managed server that does not list the plugin is still woken by the proxy when a player joins. Both paths obey the same [start throttle](../../guide/server-management#start-throttle), so repeated logins cannot restart a crashing server in a loop. A player who joins while the throttle holds the server back is kicked with the `failed_kick` message. If the provider fails to start the server, the player is kicked with the same message and the server becomes `Crashed`, which starts the throttle's wait.
 
 ## Server manager configuration
 

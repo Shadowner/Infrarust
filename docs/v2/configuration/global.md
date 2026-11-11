@@ -126,7 +126,7 @@ trusted_proxies = []
 
 When `receive_proxy_protocol` is `true`, the proxy expects incoming connections to start with a HAProxy PROXY protocol header (v1 or v2). Enable this if Infrarust sits behind a load balancer that sends proxy protocol, such as HAProxy or AWS NLB. The address from the header is the player's address everywhere: IP bans and filters, the per-IP connection limit, `PreLoginEvent.remote_addr` and `Player::remote_addr()`.
 
-`trusted_proxies` lists the peers allowed to send that header, as CIDR ranges (a single address is written `10.0.0.5/32`). A connection from any other peer is closed without being read. The list is required: with `receive_proxy_protocol = true` and an empty `trusted_proxies`, the proxy refuses to start.
+`trusted_proxies` lists the peers allowed to send that header, as IP addresses or CIDR ranges (a bare address such as `10.0.0.5` is a single host). A connection from any other peer is closed without being read. The list is required: with `receive_proxy_protocol = true` and an empty `trusted_proxies`, the proxy refuses to start.
 
 ```toml
 receive_proxy_protocol = true
@@ -297,7 +297,7 @@ The provider uses Docker events for real-time updates and also rescans the conta
 
 `allowed_domains` lists the domains a container may claim through its `infrarust.domains` label. Entries accept `*` and `?`, so `"*.mc.example.com"` allows every subdomain. A container can always use `<container>.docker.local`, which needs no entry. A container whose label claims a domain that matches no entry is not routed, and the warning in the log gives the `allowed_domains` line that would allow it. A label that is itself a wildcard must appear in the list as written.
 
-`inherit_forwarding` decides whether containers get the proxy-wide `[forwarding]` mode. With `false` (the default) every container runs with `forwarding_mode = "none"`, so the forwarding secret is never used toward a container. Set it to `true` when your containers expect the forwarding mode of `[forwarding]`; containers on `passthrough`, `zero_copy` or `server_only` are then refused while `[forwarding]` selects a mode. While it is `false` and `[forwarding]` selects a mode, the proxy logs one warning for the first container it finds on `client_only` or `offline`, since a backend that expects forwarding rejects every player.
+`inherit_forwarding` decides whether containers get the proxy-wide `[forwarding]` mode. With `false` (the default) every container runs with `forwarding_mode = "none"`, so the forwarding secret is never used toward a container. Set it to `true` when your containers expect the forwarding mode of `[forwarding]`. Only containers on `client_only` or `offline` then inherit it: containers on `passthrough`, `zero_copy` or `server_only` keep `forwarding_mode = "none"` and are still routed, and while `[forwarding]` selects a mode the proxy logs one warning for the first of them. While it is `false` and `[forwarding]` selects a mode, the proxy logs one warning for the first container it finds on `client_only` or `offline`, since a backend that expects forwarding rejects every player.
 
 <!-- Link to Docker discovery docs when available -->
 

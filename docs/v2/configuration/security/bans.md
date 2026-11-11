@@ -75,7 +75,7 @@ ban NotWelcome permanent
 ban TempBan 2h
 ```
 
-When some servers use a forwarding proxy mode (`passthrough`, `zero_copy`, `server_only`), the command also prints a warning that names them: the proxy does not authenticate players there, so the ban is checked against a name it has not verified. See [what each proxy mode can enforce](#what-each-proxy-mode-can-enforce).
+When some servers use a forwarding proxy mode (`passthrough`, `zero_copy`, `server_only`), the command also prints a warning that names them: the proxy does not authenticate players there, so the ban is checked against a name it has not verified. The warning suggests an IP ban or a ban on the backend. Servers on `offline` get a warning of their own: nobody authenticates players there, so the ban only blocks the name or UUID a client presents, and the player can get back in under another name. That warning suggests an IP ban. See [what each proxy mode can enforce](#what-each-proxy-mode-can-enforce).
 
 ### ban-ip
 
@@ -157,6 +157,8 @@ A ban holds only as far as the proxy knows who the player is. Only `client_only`
 In `offline` and the forwarding modes, the UUID is the name-based offline UUID, or the one the client sends with [`[auth] offline_uuid = "client"`](../global#authentication). A ban on a player's Mojang UUID does not match there with the default setting.
 
 In the forwarding modes every check runs before authentication: the backend authenticates the player after the proxy has let the connection through, and the proxy never sees the result. For those servers, add an IP ban or ban the player on the backend as well.
+
+In `offline` nobody verifies the name, so a banned player can come back under another one. For those servers, add an IP ban.
 
 ## Storage
 

@@ -25,7 +25,7 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | `connect_timeout` | duration | `"5s"` | Timeout when connecting to a backend server |
 | `connect_max_attempts` | integer | `3` | Backend addresses tried before giving up. 0 = try them all |
 | `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream. Requires `trusted_proxies` |
-| `trusted_proxies` | array of strings | `[]` | CIDR ranges (`"10.0.0.5/32"` for a single address) of the peers allowed to send a PROXY protocol header. Any other peer is closed without being read. The proxy refuses to start when `receive_proxy_protocol` is `true` and this list is empty. `["0.0.0.0/0", "::/0"]` trusts every peer |
+| `trusted_proxies` | array of strings | `[]` | IP addresses (`"10.0.0.5"`, a single host) or CIDR ranges (`"10.0.1.0/24"`) of the peers allowed to send a PROXY protocol header. Any other peer is closed without being read. The proxy refuses to start when `receive_proxy_protocol` is `true` and this list is empty. `["0.0.0.0/0", "::/0"]` trusts every peer |
 | `servers_dir` | string | `"./servers"` | Path to the directory containing server TOML files |
 | `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files. Only the files directly in it are loaded; subdirectories are not scanned |
 | `worker_threads` | integer | `0` | Number of tokio worker threads. 0 = auto (one per CPU core) |
@@ -162,7 +162,7 @@ Auto-discovers servers from Docker container labels. Requires Infrarust to be co
 | `poll_interval` | duration | `"30s"` | How often to rescan labelled containers; a resync also runs when the event stream first connects |
 | `reconnect_delay` | duration | `"5s"` | Delay before reconnecting after Docker daemon disconnection |
 | `allowed_domains` | array of strings | `[]` | Domains containers may claim through the `infrarust.domains` label. Entries accept `*` and `?`. `<container>.docker.local` is always allowed. A container that claims a domain matching no entry is not routed |
-| `inherit_forwarding` | boolean | `false` | Let containers inherit the proxy-wide `[forwarding]` mode and its secret. When `false`, containers get `forwarding_mode = "none"`. When `true` and `[forwarding]` selects a mode, containers on `passthrough`, `zero_copy` or `server_only` are refused |
+| `inherit_forwarding` | boolean | `false` | Let containers inherit the proxy-wide `[forwarding]` mode and its secret. When `false`, containers get `forwarding_mode = "none"`. When `true`, only containers on `client_only` or `offline` inherit it; containers on `passthrough`, `zero_copy` or `server_only` keep `forwarding_mode = "none"` and are still routed |
 
 ```toml
 [docker]

@@ -245,7 +245,7 @@ Mounting `/var/run/docker.sock` gives Infrarust read access to all containers on
 
 **Container not routed**: If the logs show `container not routed: its infrarust.domains label claims domains outside the allowlist`, replace the `allowed_domains` line of your `[docker]` section with the `allowed_domains = [...]` line from that warning and restart Infrarust.
 
-**Backend rejects every player**: Containers do not inherit the proxy-wide `[forwarding]` mode. If your `client_only` or `offline` backends expect Velocity or BungeeCord forwarding, set `inherit_forwarding = true` in `[docker]`. Containers on `passthrough`, `zero_copy` or `server_only` are then refused. See [Forwarding inheritance](../configuration/providers/docker.md#forwarding-inheritance).
+**Backend rejects every player**: Containers do not inherit the proxy-wide `[forwarding]` mode. If your `client_only` or `offline` backends expect Velocity or BungeeCord forwarding, set `inherit_forwarding = true` in `[docker]`. Containers on `passthrough`, `zero_copy` or `server_only` still get no forwarding: only `client_only` and `offline` containers inherit the mode. See [Forwarding inheritance](../configuration/providers/docker.md#forwarding-inheritance).
 
 **Wrong IP resolved**: If Infrarust connects to the wrong container IP, set `network = "minecraft"` in your `[docker]` section to pin address resolution to the Compose network.
 

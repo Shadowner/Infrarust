@@ -67,7 +67,7 @@ The warning is logged once per container, not on every rescan. `[docker]` is par
 
 Containers do not inherit the proxy-wide [`[forwarding]`](../proxy-forwarding.md) mode. Each discovered server gets `forwarding_mode = "none"`, so the forwarding secret is never sent to a backend only because it carries `infrarust.*` labels.
 
-If `[forwarding]` selects a mode other than `none` and a container uses an intercepted proxy mode (`client_only` or `offline`), Infrarust logs one warning: the container gets no player forwarding, and a backend that expects it rejects every player.
+If `[forwarding]` selects a mode other than `none` and a container uses an intercepted proxy mode (`client_only` or `offline`), Infrarust logs one warning while `inherit_forwarding` is `false`: the container gets no player forwarding, and a backend that expects it rejects every player.
 
 To give containers the proxy-wide mode and its secret, set:
 
@@ -78,7 +78,11 @@ inherit_forwarding = true
 
 Only enable this if you trust everyone who can start a labeled container on that Docker daemon.
 
-With `inherit_forwarding = true` and a `[forwarding]` mode other than `none`, a container on `passthrough`, `zero_copy` or `server_only` is refused and logged as `server config rejected`, because those proxy modes cannot forward a verified player. Run every container on `client_only` or `offline` before you enable it.
+Only containers on `client_only` or `offline` inherit the mode. A container on `passthrough` (the default), `zero_copy` or `server_only` keeps `forwarding_mode = "none"` and is still routed, because those proxy modes relay the login untouched and the proxy cannot vouch for the player. If `[forwarding]` selects a mode other than `none`, Infrarust logs one warning for the first such container:
+
+```
+WARN container mc-survival and any other container on Passthrough or another proxy mode that relays logins untouched get no player forwarding, although [docker] sets inherit_forwarding = true and [forwarding] selects Velocity: the proxy cannot vouch for a player it does not log in. Only containers labelled infrarust.proxy_mode=client_only or offline inherit the mode
+```
 
 ## Container labels
 

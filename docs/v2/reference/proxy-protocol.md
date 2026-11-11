@@ -37,7 +37,7 @@ Once a proxy protocol header is decoded, the client's real IP and port are store
 
 ### Trusted proxies
 
-`trusted_proxies` is a list of CIDR ranges, IPv4 or IPv6, empty by default. A single address is written with its full prefix length (`10.0.0.5/32`, `2001:db8::5/128`); an entry without a prefix fails to parse, and the proxy stops with `invalid IP address syntax` pointing at that entry. It is required when `receive_proxy_protocol` is `true`: with an empty list, configuration validation fails and the proxy does not start.
+`trusted_proxies` is a list of IP addresses and CIDR ranges, IPv4 or IPv6, empty by default. A bare address is a single host: `10.0.0.5` is read as `10.0.0.5/32`, and `2001:db8::5` as `2001:db8::5/128`. An entry that is neither fails to parse, and the proxy refuses to start with `invalid trusted_proxies entry "<entry>": expected an IP address such as 192.168.1.10 or a CIDR range such as 10.0.0.0/8`. It is required when `receive_proxy_protocol` is `true`: with an empty list, configuration validation fails and the proxy does not start.
 
 ```
 receive_proxy_protocol requires trusted_proxies: list the addresses of your load balancers, or ["0.0.0.0/0", "::/0"] to trust every peer

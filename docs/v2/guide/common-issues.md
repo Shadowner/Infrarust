@@ -133,7 +133,7 @@ receive_proxy_protocol = true
 trusted_proxies = ["10.0.0.5/32"]
 ```
 
-`trusted_proxies` lists the peers allowed to send the header, as CIDR ranges (a single address is written with `/32`, or `/128` for IPv6). It is required: with `receive_proxy_protocol = true` and no `trusted_proxies`, the proxy refuses to start with "receive_proxy_protocol requires trusted_proxies".
+`trusted_proxies` lists the peers allowed to send the header, as IP addresses or CIDR ranges (a bare address such as `10.0.0.5` is a single host). It is required: with `receive_proxy_protocol = true` and no `trusted_proxies`, the proxy refuses to start with "receive_proxy_protocol requires trusted_proxies".
 
 ::: danger
 When `receive_proxy_protocol` is enabled, Infrarust expects every incoming connection to start with a PROXY protocol header. Connections without the header will fail immediately with "data does not start with a proxy protocol signature". Do not enable this unless your upstream actually sends proxy protocol.

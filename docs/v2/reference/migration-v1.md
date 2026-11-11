@@ -322,8 +322,8 @@ Some changes cannot be automated:
 - Per-server rate limiting and cache settings are global in V2. Consolidate them into `infrarust.toml` under `[rate_limit]` and `[status_cache]`.
 - Multiple `proxies_path` directories collapse to one `servers_dir`. If you split configs across directories in V1, merge them or restructure before migrating.
 - The `logging` block has no V2 equivalent. Control verbosity with the `RUST_LOG` environment variable or the `--log-level` flag.
-- If V1 received proxy protocol, add `trusted_proxies` to `infrarust.toml` with the addresses of your load balancers, as CIDR ranges (`"10.0.0.5/32"` for a single address). The migrator emits a `WARN` line for this, and the proxy does not start while `receive_proxy_protocol = true` has an empty `trusted_proxies`.
-- If you use the Docker provider, list the domains your containers claim in `[docker].allowed_domains`. A container whose `infrarust.domains` label names a domain outside that list is not routed; only `<container>.docker.local` works without an entry. Containers also stop inheriting the `[forwarding]` mode unless you set `inherit_forwarding = true`.
+- If V1 received proxy protocol, add `trusted_proxies` to `infrarust.toml` with the addresses or CIDR ranges of your load balancers. The migrator emits a `WARN` line for this, and the proxy does not start while `receive_proxy_protocol = true` has an empty `trusted_proxies`.
+- If you use the Docker provider, list the domains your containers claim in `[docker].allowed_domains`. A container whose `infrarust.domains` label names a domain outside that list is not routed; only `<container>.docker.local` works without an entry. Containers also stop inheriting the `[forwarding]` mode unless you set `inherit_forwarding = true`, which hands it only to containers on `client_only` or `offline`.
 - The migrator writes `max_connections = 0` (unlimited) into `infrarust.toml`, while a V2 file without the key defaults to `10000`. Remove the line or set a limit if you want one.
 
 ## After migration

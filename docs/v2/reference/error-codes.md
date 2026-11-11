@@ -258,7 +258,7 @@ The PROXY protocol header was recognized but contained invalid data. Check the u
 peer <ip> is not in trusted_proxies
 ```
 
-`receive_proxy_protocol` is on and the connection came from an address outside `trusted_proxies`. The connection is closed without being read, and the event is logged at debug level. If the peer is one of your load balancers, add its address to `trusted_proxies` as a CIDR range (`10.0.0.5/32` for a single address).
+`receive_proxy_protocol` is on and the connection came from an address outside `trusted_proxies`. The connection is closed without being read, and the event is logged at debug level. If the peer is one of your load balancers, add its address (such as `10.0.0.5`) or a CIDR range that covers it to `trusted_proxies`.
 
 ### `IpLimitReached`
 
@@ -458,7 +458,7 @@ A catch-all for config validation failures that don't fit other variants.
 receive_proxy_protocol requires trusted_proxies: list the addresses of your load balancers, or ["0.0.0.0/0", "::/0"] to trust every peer
 ```
 
-`receive_proxy_protocol = true` is set with an empty `trusted_proxies`. The proxy refuses to start. Add the CIDR ranges of the load balancers that send the PROXY protocol header.
+`receive_proxy_protocol = true` is set with an empty `trusted_proxies`. The proxy refuses to start. Add the addresses or CIDR ranges of the load balancers that send the PROXY protocol header.
 
 ### `ForwardingSecretMismatch`
 
@@ -550,7 +550,7 @@ A managed server process terminated. Check the server's logs for the cause. An e
 server <server_id> is not being started again for another <duration>
 ```
 
-A player's login or server switch asked to start a server that was started less than 30 seconds ago, or that is still in the wait after a crash. A failed start, a crash reported by the provider, and a stop on its own within 10 minutes of the last start all count as a crash. The wait starts at 30 seconds and doubles with each further crash, up to 10 minutes. The player is told the server is unavailable. A manual start is not throttled.
+A player's login or server switch, or the `server-wake` plugin, asked to start a server that was started less than 30 seconds ago, or that is still in the wait after a crash. A failed start, a crash reported by the provider, and a stop on its own within 10 minutes of the last start all count as a crash. The wait starts at 30 seconds and doubles with each further crash, up to 10 minutes. The player is told the server is unavailable, or gets the plugin's `failed_kick` message on a server that uses `server-wake`. A manual start is not throttled.
 
 ### `Shutdown`
 

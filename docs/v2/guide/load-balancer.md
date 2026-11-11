@@ -37,7 +37,7 @@ receive_proxy_protocol = true
 trusted_proxies = ["10.0.0.5/32", "10.0.1.0/24"]
 ```
 
-`trusted_proxies` takes CIDR ranges, so a single address is written `10.0.0.5/32`. It is required: the proxy refuses to start when `receive_proxy_protocol` is `true` and the list is empty.
+`trusted_proxies` takes IP addresses and CIDR ranges: `10.0.0.5` and `10.0.0.5/32` both trust a single host. It is required: the proxy refuses to start when `receive_proxy_protocol` is `true` and the list is empty.
 
 ::: danger
 A proxy protocol header is only as trustworthy as the peer that sent it. Infrarust reads the header only from peers listed in `trusted_proxies` and closes every other connection without reading it, so a client that reaches Infrarust directly cannot forge its source IP. Keep the list to the addresses of your load balancers. `["0.0.0.0/0", "::/0"]` trusts every peer and brings the forgery back unless a firewall restricts the port.
