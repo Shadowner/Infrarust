@@ -22,6 +22,13 @@ pub trait ServerManager: Send + Sync + private::Sealed {
     /// or the ID is unknown.
     fn start(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>>;
 
+    /// Starts a server for a player who is trying to join it.
+    ///
+    /// Unlike [`start`](Self::start), this obeys the proxy's start throttle: it returns
+    /// [`ServiceError::Unavailable`] when the server was started or crashed too
+    /// recently. A server that is already online or starting is left as it is.
+    fn wake(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>>;
+
     /// Stops a server. Returns an error if the server is not running
     /// or the ID is unknown.
     fn stop(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>>;

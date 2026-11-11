@@ -605,6 +605,24 @@ async fn test_repeated_logins_after_a_crash_start_the_provider_once() {
 }
 
 #[tokio::test]
+async fn test_repeated_wakes_after_a_failed_start_start_the_provider_once() {
+    let provider = CountingProvider::refusing();
+    let service = service_with(provider.clone());
+
+    let first = service.wake("test").await;
+    assert_eq!(provider_message(&first), Some("refused"));
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+
+    for _ in 0..5 {
+        let result = service.wake("test").await;
+        assert!(is_throttled(&result), "got {result:?}");
+    }
+
+    assert_eq!(provider.starts(), 1);
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+}
+
+#[tokio::test]
 async fn test_logins_join_a_server_that_came_up_despite_a_failed_start() {
     let provider = Arc::new(CountingProvider {
         starts: AtomicUsize::new(0),

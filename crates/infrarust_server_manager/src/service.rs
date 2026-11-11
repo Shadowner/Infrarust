@@ -3,6 +3,7 @@ use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use dashmap::mapref::one::RefMut;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -382,31 +383,9 @@ impl ServerManagerService {
                     (rx, start_timeout)
                 }
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
-                    if let Some(retry_after) = entry.throttle.retry_after(Instant::now()) {
-                        return Err(ServerManagerError::StartThrottled {
-                            server_id: server_id.to_string(),
-                            retry_after,
-                        });
-                    }
-                    let provider = Arc::clone(&entry.provider);
-                    let old_state = entry.state;
-                    entry.begin_start();
-                    let attempt = entry.generation;
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
-                    entry.waiters.push(tx);
-                    drop(entry);
-
-                    self.fire_state_change(server_id, old_state, ServerState::Starting);
-
-                    let service = Arc::clone(self);
-                    let server_id = server_id.to_string();
-                    tokio::spawn(async move {
-                        if let Err(e) = provider.start().await {
-                            service.record_failed_start(&server_id, attempt, e);
-                        }
-                    });
-
+                    drop(self.start_unless_throttled(entry, server_id, Some(tx))?);
                     (rx, start_timeout)
                 }
             }
@@ -427,6 +406,77 @@ impl ServerManagerService {
                 timeout: start_timeout,
             }),
         }
+    }
+
+    /// Starts a server for a player who is not kept waiting on this call.
+    ///
+    /// Obeys the same throttle as [`ensure_started`](Self::ensure_started). A server
+    /// that is already online or starting is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
+    /// [`ServerManagerError::InvalidState`] if the server is stopping,
+    /// [`ServerManagerError::StartThrottled`] if it was started or crashed too recently,
+    /// or a provider-specific error if the start command fails.
+    pub async fn wake(self: &Arc<Self>, server_id: &str) -> Result<(), ServerManagerError> {
+        let entry =
+            self.entries
+                .get_mut(server_id)
+                .ok_or_else(|| ServerManagerError::ServerNotFound {
+                    server_id: server_id.to_string(),
+                })?;
+        let start = match entry.state {
+            ServerState::Online | ServerState::Starting => return Ok(()),
+            ServerState::Stopping => {
+                return Err(ServerManagerError::InvalidState {
+                    server_id: server_id.to_string(),
+                    state: ServerState::Stopping,
+                    action: "start".to_string(),
+                });
+            }
+            ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
+                self.start_unless_throttled(entry, server_id, None)?
+            }
+        };
+        start.await.unwrap_or_else(|e| {
+            Err(ServerManagerError::Provider {
+                server_id: server_id.to_string(),
+                message: format!("start task failed: {e}"),
+            })
+        })
+    }
+
+    fn start_unless_throttled(
+        self: &Arc<Self>,
+        mut entry: RefMut<'_, String, ServerEntry>,
+        server_id: &str,
+        waiter: Option<oneshot::Sender<Result<(), ServerManagerError>>>,
+    ) -> Result<JoinHandle<Result<(), ServerManagerError>>, ServerManagerError> {
+        if let Some(retry_after) = entry.throttle.retry_after(Instant::now()) {
+            return Err(ServerManagerError::StartThrottled {
+                server_id: server_id.to_string(),
+                retry_after,
+            });
+        }
+        let provider = Arc::clone(&entry.provider);
+        let old_state = entry.state;
+        entry.begin_start();
+        let attempt = entry.generation;
+        entry.waiters.extend(waiter);
+        drop(entry);
+
+        self.fire_state_change(server_id, old_state, ServerState::Starting);
+
+        let service = Arc::clone(self);
+        let server_id = server_id.to_string();
+        Ok(tokio::spawn(async move {
+            let started = provider.start().await;
+            if let Err(e) = &started {
+                service.record_failed_start(&server_id, attempt, e.clone());
+            }
+            started
+        }))
     }
 
     fn record_failed_start(&self, server_id: &str, attempt: u64, error: ServerManagerError) {

@@ -70,6 +70,10 @@ impl ServerManager for MockServerManager {
         Box::pin(async move { result })
     }
 
+    fn wake(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
+        self.start(server)
+    }
+
     fn stop(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
         let result = self.known(server);
         if result.is_ok() {

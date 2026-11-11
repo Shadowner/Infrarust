@@ -51,6 +51,10 @@ impl FakeServerProvider {
     pub fn boot(&self) {
         self.status.send_replace(ProviderStatus::Running);
     }
+
+    pub fn crash(&self) {
+        self.status.send_replace(ProviderStatus::Crashed);
+    }
 }
 
 impl ServerProvider for FakeServerProvider {

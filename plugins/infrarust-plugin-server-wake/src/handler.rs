@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use infrarust_api::prelude::ConfigService;
 
+use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::{HandlerResult, LimboHandler, LimboOutcome, SessionEndReason};
@@ -146,8 +147,15 @@ impl LimboHandler for ServerWakeHandler {
             match current_state {
                 ServerState::Online => return HandlerResult::Accept,
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Offline => {
-                    if let Err(e) = self.server_manager.start(&target).await {
-                        tracing::error!(server = %target, error = %e, "failed to start server");
+                    if let Err(e) = self.server_manager.wake(&target).await {
+                        match e {
+                            ServiceError::Unavailable(_) => {
+                                tracing::info!(server = %target, error = %e, "server not started");
+                            }
+                            _ => {
+                                tracing::error!(server = %target, error = %e, "failed to start server");
+                            }
+                        }
                         return HandlerResult::Deny(Component::from_legacy(
                             &self.state.config.messages.failed_kick,
                         ));

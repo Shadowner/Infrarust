@@ -9,9 +9,10 @@ use infrarust_api::events::lifecycle::PreLoginEvent;
 use infrarust_api::player::ConnectionResult;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_config::ProxyMode;
+use infrarust_plugin_server_wake::ServerWakePlugin;
 use infrarust_server_manager::ServerState;
 use infrarust_test_harness::recorder::component_value;
-use infrarust_test_harness::versions::CURRENT;
+use infrarust_test_harness::versions::{CURRENT, LIMBO};
 use infrarust_test_harness::{
     DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeServerProvider, ProtocolVersion, Recorder,
     ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
@@ -20,6 +21,7 @@ use infrarust_test_harness::{
 const T: Duration = DEFAULT_TIMEOUT;
 const STEVE: &str = "Steve";
 const UNAVAILABLE: &str = "Server is unavailable. Please try again later.";
+const WAKE_FAILED: &str = "The server failed to start. Please try again later.";
 
 macro_rules! modes {
     ($body:ident) => {
@@ -311,6 +313,41 @@ async fn repeated_logins_against_a_broken_server_start_it_once(mode: ProxyMode) 
 }
 
 modes!(repeated_logins_against_a_broken_server_start_it_once);
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_logins_through_server_wake_start_a_crashed_server_once() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let provider = FakeServerProvider::sleeping();
+    let proxy = TestProxy::builder()
+        .server(
+            server("lobby", ProxyMode::Offline, &backend)
+                .limbo_handlers(["server_wake"])
+                .managed(Arc::clone(&provider)),
+        )
+        .plugin(ServerWakePlugin::new())
+        .start()
+        .await
+        .unwrap();
+
+    let client = proxy.client_for("lobby", ProtocolVersion(LIMBO)).unwrap();
+
+    let mut first = client.login(STEVE).await.unwrap().joined().unwrap();
+    provider.wait_for_start(T).await.unwrap();
+    provider.crash();
+    assert_eq!(first.expect_disconnect(T).await.unwrap().text, WAKE_FAILED);
+
+    for round in 1..4 {
+        let name = format!("{STEVE}{round}");
+        let info = client.login(&name).await.unwrap().disconnected().unwrap();
+        assert_eq!(info.text, WAKE_FAILED, "round {round}");
+    }
+
+    assert_eq!(provider.starts(), 1);
+    assert_eq!(state(&proxy, "lobby"), Some(ServerState::Crashed));
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
 
 async fn a_client_leaving_during_a_wake_ends_its_session(mode: ProxyMode) {
     let backend = FakeBackend::builder().spawn().await.unwrap();
