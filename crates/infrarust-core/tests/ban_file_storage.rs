@@ -622,6 +622,28 @@ async fn a_missing_ban_file_still_starts_empty() {
     assert!(storage.get_all_active().await.unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn an_empty_ban_file_starts_empty_and_can_be_saved_over() {
+    for blank in ["", " \n\t\r\n"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bans.json");
+        std::fs::write(&path, blank).unwrap();
+
+        let storage = FileBanStorage::new(path.clone());
+        storage.load().await.unwrap();
+        assert!(storage.get_all_active().await.unwrap().is_empty());
+
+        storage
+            .add_ban(permanent_ban(BanTarget::Username("Steve".into())))
+            .await
+            .unwrap();
+        storage.save().await.unwrap();
+        let reloaded = FileBanStorage::new(path);
+        reloaded.load().await.unwrap();
+        assert_eq!(reloaded.get_all_active().await.unwrap().len(), 1);
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn saving_keeps_a_restricted_ban_file_restricted() {

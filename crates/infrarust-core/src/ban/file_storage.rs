@@ -313,6 +313,10 @@ impl BanStorage for FileBanStorage {
     fn load(&self) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             match tokio::fs::read_to_string(&self.file_path).await {
+                Ok(contents) if contents.trim().is_empty() => {
+                    tracing::debug!(path = %self.file_path.display(), "ban file is empty, starting empty");
+                    Ok(())
+                }
                 Ok(contents) => {
                     let mut data =
                         serde_json::from_str::<BanFileData>(&contents).map_err(|e| {
