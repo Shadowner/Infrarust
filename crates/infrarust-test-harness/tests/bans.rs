@@ -664,7 +664,7 @@ fn warnings(output: &CommandOutput) -> Vec<&str> {
 async fn a_player_ban_warns_about_the_servers_the_proxy_does_not_authenticate() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let proxy = TestProxy::builder()
-        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .server(ServerSpec::client_only("lobby").backend(backend.addr()))
         .server(ServerSpec::passthrough("survival").backend(backend.addr()))
         .server(ServerSpec::server_only("creative").backend(backend.addr()))
         .start()
@@ -678,6 +678,7 @@ async fn a_player_ban_warns_about_the_servers_the_proxy_does_not_authenticate() 
     let warned = warnings(&player);
     assert_eq!(warned.len(), 1);
     assert!(warned[0].contains("creative, survival"), "{warned:?}");
+    assert!(warned[0].contains("on the backend"), "{warned:?}");
     assert!(!warned[0].contains("lobby"), "{warned:?}");
 
     let address = dispatcher.dispatch("ban-ip 203.0.113.7", &services).await;
@@ -687,10 +688,41 @@ async fn a_player_ban_warns_about_the_servers_the_proxy_does_not_authenticate() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_player_ban_does_not_warn_without_a_forwarding_server() {
+async fn a_player_ban_warns_about_offline_servers_in_their_own_words() {
     let backend = FakeBackend::builder().spawn().await.unwrap();
     let proxy = TestProxy::builder()
         .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .server(ServerSpec::offline("arena").backend(backend.addr()))
+        .server(ServerSpec::passthrough("survival").backend(backend.addr()))
+        .start()
+        .await
+        .unwrap();
+    let services = console(&proxy);
+    let mut dispatcher = CommandDispatcher::new();
+    register_all(&mut dispatcher);
+
+    let player = dispatcher.dispatch("ban Griefer", &services).await;
+    let warned = warnings(&player);
+    assert_eq!(warned.len(), 2, "{warned:?}");
+    assert!(warned[0].contains("survival"), "{warned:?}");
+    assert!(!warned[0].contains("lobby"), "{warned:?}");
+    assert!(warned[1].contains("arena, lobby"), "{warned:?}");
+    assert!(warned[1].contains("another name"), "{warned:?}");
+    assert!(warned[1].contains("IP ban"), "{warned:?}");
+    assert!(!warned[1].contains("backend"), "{warned:?}");
+    assert!(!warned[1].contains("survival"), "{warned:?}");
+
+    let address = dispatcher.dispatch("ban-ip 203.0.113.7", &services).await;
+    assert!(matches!(address, CommandOutput::Success(_)));
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_player_ban_does_not_warn_when_the_proxy_verifies_every_player() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::client_only("lobby").backend(backend.addr()))
         .start()
         .await
         .unwrap();

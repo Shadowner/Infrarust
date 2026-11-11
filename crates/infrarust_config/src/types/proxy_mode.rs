@@ -22,6 +22,14 @@ pub enum ProxyMode {
     Full,
 }
 
+/// Who checks that a player owns the name and UUID they log in with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IdentityCheck {
+    Proxy,
+    Backend,
+    Nobody,
+}
+
 impl ProxyMode {
     /// Returns `true` if the proxy parses packets beyond the handshake.
     pub const fn is_intercepted(&self) -> bool {
@@ -37,6 +45,14 @@ impl ProxyMode {
         match self {
             Self::ClientOnly | Self::Full => true,
             Self::Passthrough | Self::ZeroCopy | Self::Offline | Self::ServerOnly => false,
+        }
+    }
+
+    pub const fn identity_check(&self) -> IdentityCheck {
+        match self {
+            Self::ClientOnly | Self::Full => IdentityCheck::Proxy,
+            Self::Passthrough | Self::ZeroCopy | Self::ServerOnly => IdentityCheck::Backend,
+            Self::Offline => IdentityCheck::Nobody,
         }
     }
 }

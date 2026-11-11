@@ -7,8 +7,8 @@ use infrarust_api::services::config_service::{
     ConfigService, ConfigWriteError, ProxyMode, ServerConfig, ServerSource,
 };
 use infrarust_api::types::{ServerAddress, ServerId};
-use infrarust_config::ProxyConfig;
 use infrarust_config::secrets::{PROXY_SECRETS, SERVER_SECRETS, redact, reinject, still_redacted};
+use infrarust_config::{IdentityCheck, ProxyConfig};
 use toml_edit::DocumentMut;
 
 use crate::routing::DomainRouter;
@@ -34,6 +34,14 @@ impl ConfigServiceImpl {
             config,
             write_lock: std::sync::Mutex::new(()),
         }
+    }
+
+    pub fn identity_checks(&self) -> Vec<(String, IdentityCheck)> {
+        self.router
+            .list_all()
+            .into_iter()
+            .map(|(_, config)| (config.effective_id(), config.proxy_mode.identity_check()))
+            .collect()
     }
 
     /// The configuration file as it currently is on disk.

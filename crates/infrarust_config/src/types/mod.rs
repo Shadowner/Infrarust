@@ -33,7 +33,7 @@ pub use ip_filter::IpFilterConfig;
 pub use network::{KeepaliveConfig, TimeoutConfig};
 pub use permissions::{PermissionProviderSelection, PermissionsConfig};
 pub use plugin_messaging::PluginMessagingConfig;
-pub use proxy_mode::ProxyMode;
+pub use proxy_mode::{IdentityCheck, ProxyMode};
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{
     CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
