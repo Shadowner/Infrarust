@@ -510,3 +510,62 @@ async fn pings_against_a_mute_backend_do_not_queue_behind_each_other() {
 
     proxy.shutdown().await.unwrap();
 }
+
+async fn spawn_closing_backend() -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&accepted);
+    tokio::spawn(async move {
+        while listener.accept().await.is_ok() {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    (addr, accepted)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_modern_relay_is_remembered_for_legacy_pings() {
+    let (addr, accepted) = spawn_closing_backend().await;
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("lobby").backend(addr))
+        .start()
+        .await
+        .unwrap();
+
+    proxy.client(ProtocolVersion::V1_21).status().await.unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+    proxy
+        .legacy_client_for("lobby")
+        .unwrap()
+        .ping()
+        .await
+        .unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_legacy_relay_is_remembered_for_modern_pings() {
+    let (addr, accepted) = spawn_closing_backend().await;
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("lobby").backend(addr))
+        .start()
+        .await
+        .unwrap();
+
+    proxy
+        .legacy_client_for("lobby")
+        .unwrap()
+        .ping()
+        .await
+        .unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+    proxy.client(ProtocolVersion::V1_21).status().await.unwrap();
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+
+    proxy.shutdown().await.unwrap();
+}

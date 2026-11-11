@@ -61,7 +61,7 @@ pub struct LegacyHandler {
     backend_connector: Arc<BackendConnector>,
     shutdown: CancellationToken,
     status_cache: Arc<StatusCache>,
-    relay_gate: RelayGate,
+    relay_gate: Arc<RelayGate>,
 }
 
 impl LegacyHandler {
@@ -70,13 +70,14 @@ impl LegacyHandler {
         backend_connector: Arc<BackendConnector>,
         shutdown: CancellationToken,
         status_cache: Arc<StatusCache>,
+        relay_gate: Arc<RelayGate>,
     ) -> Self {
         Self {
             services,
             backend_connector,
             shutdown,
             status_cache,
-            relay_gate: RelayGate::default(),
+            relay_gate,
         }
     }
 }

@@ -48,7 +48,7 @@ pub struct StatusHandler {
     health: Arc<dyn BackendHealthView>,
     #[cfg(feature = "telemetry")]
     metrics: Option<Arc<crate::telemetry::ProxyMetrics>>,
-    relay_gate: RelayGate,
+    relay_gate: Arc<RelayGate>,
 }
 
 impl StatusHandler {
@@ -63,6 +63,7 @@ impl StatusHandler {
         event_bus: Arc<EventBusImpl>,
         counts: Arc<dyn AddressConnectionCount>,
         health: Arc<dyn BackendHealthView>,
+        relay_gate: Arc<RelayGate>,
     ) -> Self {
         Self {
             relay_client,
@@ -76,7 +77,7 @@ impl StatusHandler {
             health,
             #[cfg(feature = "telemetry")]
             metrics: None,
-            relay_gate: RelayGate::default(),
+            relay_gate,
         }
     }
 

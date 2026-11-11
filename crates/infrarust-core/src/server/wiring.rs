@@ -40,6 +40,7 @@ use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::session::connection_registry::ConnectionRegistry;
+use crate::status::relay_gate::RelayGate;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 impl ProxyServer {
@@ -191,6 +192,7 @@ impl ProxyServer {
             Duration::from_secs(5),
         );
 
+        let relay_gate = Arc::new(RelayGate::default());
         let status_handler = StatusHandler::new(
             relay_client,
             Arc::clone(&status_cache),
@@ -201,6 +203,7 @@ impl ProxyServer {
             Arc::clone(&event_bus),
             Arc::clone(&backend_load) as _,
             Arc::clone(&backend_health) as _,
+            Arc::clone(&relay_gate),
         );
 
         #[cfg(feature = "telemetry")]
@@ -311,6 +314,7 @@ impl ProxyServer {
             Arc::clone(&backend_connector),
             sessions.clone(),
             Arc::clone(&status_cache),
+            relay_gate,
         );
 
         let passthrough_handler =

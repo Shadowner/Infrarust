@@ -162,6 +162,7 @@ mod tests {
             )),
             CancellationToken::new(),
             Arc::new(StatusCache::new(std::time::Duration::from_secs(5))),
+            Arc::default(),
         ))
     }
 

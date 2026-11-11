@@ -333,6 +333,7 @@ mod tests {
             )),
             CancellationToken::new(),
             Arc::new(StatusCache::new(std::time::Duration::from_secs(5))),
+            Arc::default(),
         );
         let mut cfg: ServerConfig = toml::from_str(
             "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25566\"]\nmax_players = 42\n",
