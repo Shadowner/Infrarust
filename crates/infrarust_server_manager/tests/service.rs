@@ -806,3 +806,82 @@ async fn test_a_late_start_failure_does_not_overwrite_a_manual_stop() {
     assert_eq!(crashes.load(Ordering::Acquire), 0);
     assert_eq!(service.get_state("test"), Some(ServerState::Sleeping));
 }
+
+const PANEL_LAG: Duration = Duration::from_millis(200);
+
+#[derive(Default)]
+struct LaggingStopProvider {
+    running: AtomicBool,
+    stopped_at: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl ServerProvider for LaggingStopProvider {
+    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            self.running.store(true, Ordering::Release);
+            Ok(())
+        })
+    }
+
+    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            *self.stopped_at.lock().unwrap() = Some(std::time::Instant::now());
+            self.running.store(false, Ordering::Release);
+            Ok(())
+        })
+    }
+
+    fn check_status(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+        Box::pin(async move {
+            let still_reported = self
+                .stopped_at
+                .lock()
+                .unwrap()
+                .is_some_and(|stopped_at| stopped_at.elapsed() < PANEL_LAG);
+            Ok(if self.running.load(Ordering::Acquire) || still_reported {
+                ProviderStatus::Running
+            } else {
+                ProviderStatus::Stopped
+            })
+        })
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "lagging"
+    }
+}
+
+async fn wait_for_state(service: &ServerManagerService, state: ServerState) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while service.get_state("test") != Some(state) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("the server never became {state}"));
+}
+
+#[tokio::test]
+async fn test_a_requested_stop_the_panel_reports_late_is_not_an_early_exit() {
+    let service = service_with(Arc::new(LaggingStopProvider::default()));
+    let shutdown = CancellationToken::new();
+    let _handles = service.start_monitoring(Arc::new(MockPlayerCounter), shutdown.clone());
+
+    for _ in 0..2 {
+        service.start_server("test").await.unwrap();
+        wait_for_state(&service, ServerState::Online).await;
+        service.stop_server("test").await.unwrap();
+        wait_for_state(&service, ServerState::Online).await;
+        wait_for_state(&service, ServerState::Sleeping).await;
+    }
+
+    let result = service.ensure_started("test").await;
+    let Err(ServerManagerError::StartThrottled { retry_after, .. }) = result else {
+        panic!("a login right after a start is throttled, got {result:?}");
+    };
+    assert!(retry_after <= Duration::from_secs(30), "{retry_after:?}");
+
+    shutdown.cancel();
+}

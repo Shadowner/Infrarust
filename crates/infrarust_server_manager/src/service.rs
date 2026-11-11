@@ -26,6 +26,7 @@ pub(crate) struct StartThrottle {
     last_start: Option<Instant>,
     blocked_until: Option<Instant>,
     next_backoff: Duration,
+    stop_requested: bool,
 }
 
 impl StartThrottle {
@@ -34,12 +35,18 @@ impl StartThrottle {
             last_start: None,
             blocked_until: None,
             next_backoff: FIRST_CRASH_BACKOFF,
+            stop_requested: false,
         }
     }
 
     fn started(&mut self, now: Instant) {
         self.last_start = Some(now);
         self.blocked_until = None;
+        self.stop_requested = false;
+    }
+
+    const fn stop_requested(&mut self) {
+        self.stop_requested = true;
     }
 
     fn crashed(&mut self, now: Instant) {
@@ -54,6 +61,9 @@ impl StartThrottle {
     }
 
     fn exited(&mut self, now: Instant) {
+        if std::mem::take(&mut self.stop_requested) {
+            return;
+        }
         let unstable = self
             .last_start
             .is_some_and(|start| now.saturating_duration_since(start) < STABLE_UPTIME);
@@ -497,6 +507,7 @@ impl ServerManagerService {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             entry.set_state(ServerState::Sleeping);
             entry.last_player_seen = None;
+            entry.throttle.stop_requested();
         }
 
         self.fire_state_change(server_id, ServerState::Stopping, ServerState::Sleeping);
