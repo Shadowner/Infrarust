@@ -60,18 +60,36 @@ mode = "none"
 
 ### Per-server override
 
-Individual servers can override the global forwarding mode:
+A server can set its own `forwarding_mode`. Without it, the server uses the proxy-wide `[forwarding] mode`. The usual case is a network that forwards with Velocity and has one backend that authenticates players itself:
 
 ```toml
-domains = ["lobby.mc.example.com"]
-addresses = ["10.0.1.10:25565"]
-proxy_mode = "client_only"
-forwarding_mode = "velocity"
+# infrarust.toml has [forwarding] mode = "velocity"
+domains = ["vanilla.mc.example.com"]
+addresses = ["10.0.1.20:25565"]
+proxy_mode = "passthrough"
+forwarding_mode = "none"
 ```
 
-Useful for mixed networks, like a Paper lobby with Velocity forwarding alongside a vanilla server with forwarding disabled.
+There is one secret file, and it belongs to the proxy-wide mode. An override to `velocity` or `bungee_guard` is therefore accepted only when `[forwarding] mode` is the same mode. A Velocity secret is never reused as a BungeeGuard token, which travels in clear text in the handshake. `none` and `bungee_cord` need no secret and can be set on any server.
 
-Velocity forwarding is negotiated inside the login sequence, which the forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) never parse. A server in one of those modes that resolves to `velocity`, from its own `forwarding_mode` or from the proxy-wide `[forwarding] mode`, is rejected when its configuration is loaded. Give it `forwarding_mode = "none"`, `"bungee_cord"` or `"bungee_guard"`, or move it to an intercepted mode.
+The forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) add two rules, because the proxy does not authenticate players there:
+
+- Velocity forwarding is negotiated inside the login sequence, which those modes never parse. A server that resolves to `velocity`, from its own `forwarding_mode` or from the proxy-wide mode, is rejected.
+- `bungee_cord` and `bungee_guard` would hand the backend the name and UUID the client claims, unverified. A server that inherits one of them from the proxy-wide mode is rejected. Written explicitly on the server, it is accepted and a warning is logged.
+
+| `forwarding_mode` on the server | `client_only`, `offline` | `passthrough`, `zero_copy`, `server_only` |
+|---|---|---|
+| omitted | Uses the proxy-wide mode | Accepted when the proxy-wide mode is `none`, rejected otherwise |
+| `none` | Accepted | Accepted |
+| `bungee_cord` | Accepted | Accepted with a warning |
+| `bungee_guard` | Accepted when the proxy-wide mode is `bungee_guard` | Same condition, with a warning |
+| `velocity` | Accepted when the proxy-wide mode is `velocity` | Rejected |
+
+A rejected server is refused when its configuration is loaded, and the logged error names the fix. For a server in a forwarding proxy mode, the fix is `forwarding_mode = "none"` or a move to an intercepted mode.
+
+::: danger
+In a forwarding proxy mode with `bungee_cord` or `bungee_guard`, any client can join that backend as any player: the backend runs in offline mode and trusts an identity nobody checked. Write the override only for a backend where that is acceptable.
+:::
 
 ## Velocity forwarding
 

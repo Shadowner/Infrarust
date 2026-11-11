@@ -36,15 +36,17 @@ The WASM toolchain talks across a frozen contract rather than a Rust dependency.
 
 A connection is handled by `ProxyServer`, built in `ProxyServer::new` and driven by `ProxyServer::run` (`crates/infrarust-core/src/server.rs`). Startup loads server configs through the provider registry, builds the status, ban, and forwarding subsystems, assembles the shared services, and then constructs two pipelines and the per-mode handlers. After that, `run` binds the listener and enters the accept loop.
 
-For each accepted socket the server spawns a task. The accept loop never reads from the socket: the task reads the PROXY protocol header when `receive_proxy_protocol` is on, runs the transport filters, and then runs the connection through the common pipeline. Once the handshake is parsed, the connection branches on its declared intent.
+For each accepted socket the server spawns a task. The accept loop never reads from the socket. When `receive_proxy_protocol` is on, the task closes a peer that is not in `trusted_proxies` without reading from it, and reads the PROXY protocol header of a trusted one. It then takes the connection's `max_connections_per_ip` slot against the real client address, runs the transport filters, and runs the connection through the common pipeline. Once the handshake is parsed, the connection branches on its declared intent.
 
-A status ping (`ConnectionIntent::Status`) goes straight to the status handler, which answers from the status cache or relays a live request to the backend. It never enters the login pipeline.
+A status ping (`ConnectionIntent::Status`) goes straight to the status handler, which answers from the status cache or relays a live request to the backend. It never enters the login pipeline. A relay gate (`crates/infrarust-core/src/status/relay_gate.rs`) lets one relay run per server at a time; see [Status Cache](../configuration/monitoring/status-cache#how-the-cache-works).
+
+A legacy client (Beta to 1.6) runs through the common pipeline like any other and is then handed to the legacy handler (`crates/infrarust-core/src/handler/legacy/`). Its ping is answered through the same relay gate. Its login is forwarded on a forwarding `proxy_mode` and kicked on `client_only` and `offline`.
 
 A login (`ConnectionIntent::Login`) runs through the login pipeline and is then dispatched to a handler chosen by the resolved server's `proxy_mode`. A client arriving with the transfer intent (handshake `next_state` 3, sent after a Transfer packet) takes the same path as a login; plugins see it as `HandshakeIntent::Transfer` and the backend receives the intent the client sent.
 
-Pipelines are sequential. A `Pipeline` (`crates/infrarust-core/src/pipeline/mod.rs`) holds a `Vec<Box<dyn Middleware>>` and runs each middleware in insertion order, stopping at the first non-continue result. Each middleware returns one of three outcomes defined by `MiddlewareResult`: `Continue` moves to the next middleware, `ShortCircuit` ends pipeline processing (for example when a legacy ping is detected and answered inline), and `Reject(String)` closes the connection, normally after sending a kick packet with the given reason.
+Pipelines are sequential. A `Pipeline` (`crates/infrarust-core/src/pipeline/mod.rs`) holds a `Vec<Box<dyn Middleware>>` and runs each middleware in insertion order, stopping at the first non-continue result. Each middleware returns one of four outcomes defined by `MiddlewareResult`: `Continue` moves to the next middleware, `ShortCircuit` ends pipeline processing (for example when a status ping comes from a banned address, or a plugin claims the login), `Reject(String)` closes the connection, normally after sending a kick packet with the given reason, and `Kick(Component)` sends a formatted kick message (a ban message, for example) and closes the connection.
 
-State accumulates in a `ConnectionContext` that flows through both pipelines. Middleware reads and writes typed entries in the context's extension map: the handshake parser inserts `HandshakeData`, the domain router inserts `RoutingData`, and the login-start parser inserts `LoginData`. A handler downstream pulls those back out by type. These types live in `crates/infrarust-core/src/pipeline/types.rs`.
+State accumulates in a `ConnectionContext` that flows through both pipelines. Middleware reads and writes typed entries in the context's extension map: the handshake parser inserts `HandshakeData` (and `LegacyHello` for a pre-1.7 client), the domain router inserts `RoutingData`, and the login-start parser inserts `LoginData`. A handler downstream pulls those back out by type. These types live in `crates/infrarust-core/src/pipeline/types.rs`.
 
 ## Middleware order
 
@@ -53,9 +55,9 @@ Two pipelines run on every login connection, in this order.
 The common pipeline runs on every connection regardless of intent:
 
 1. `IpFilter` checks the peer address against the configured allow and deny rules.
-2. `HandshakeParser` reads the handshake packet, detects legacy pings, strips FML markers from the domain, and records the protocol version and intent.
+2. `HandshakeParser` reads the handshake packet, or the ping or login of a legacy client, strips FML markers from the domain, and records the protocol version and intent. A legacy client continues through the next middlewares like a modern one.
 3. `BanIpCheck` refuses status connections from IP-banned addresses. Login connections pass through to `BanCheck` in the login pipeline.
-4. `RateLimiter` applies the connection rate limit per source address.
+4. `RateLimiter` applies the connection rate limit per client address (one IPv4 address or one IPv6 /64). It is enabled by default.
 5. `DomainRouter` resolves the requested domain to a server config and inserts `RoutingData`.
 
 The login pipeline runs only after a connection is identified as a login:

@@ -11,11 +11,12 @@ Infrarust supports both receiving proxy protocol headers from an upstream proxy 
 
 ## Receiving proxy protocol
 
-Set `receive_proxy_protocol` in your `infrarust.toml` to decode incoming proxy protocol headers:
+Set `receive_proxy_protocol` in your `infrarust.toml` to decode incoming proxy protocol headers, and list the addresses of your load balancers in `trusted_proxies`:
 
-```toml{2}
+```toml{2-3}
 bind = "0.0.0.0:25565"
 receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.5/32", "10.0.1.0/24"]
 ```
 
 When enabled, Infrarust expects every incoming connection to start with a valid proxy protocol header. It auto-detects whether the header uses v1 (text) or v2 (binary) format.
@@ -24,9 +25,30 @@ When enabled, Infrarust expects every incoming connection to start with a valid 
 This is an all-or-nothing setting. Once enabled, connections without a proxy protocol header will be rejected. Only enable this if all traffic comes through a proxy that sends these headers.
 :::
 
+### Trusted proxies
+
+A proxy protocol header is a claim about the client address, and anyone who can reach the port can write one. `trusted_proxies` lists the peers whose header Infrarust accepts. Each entry is a CIDR range, IPv4 or IPv6. Write a single address with its full prefix length: `10.0.0.5/32` or `2001:db8::5/128`. A bare address without a prefix is a configuration error.
+
+`trusted_proxies` is required when `receive_proxy_protocol = true`. With an empty list the proxy refuses to start:
+
+```
+receive_proxy_protocol requires trusted_proxies: list the addresses of your load balancers, or ["0.0.0.0/0", "::/0"] to trust every peer
+```
+
+A connection from a peer outside the list is closed before its header is read. Nothing is sent back, and the only trace is a `debug` log line: `closing connection from a peer outside trusted_proxies`. If every connection is closed after you enable proxy protocol, check that the list holds the address Infrarust sees for your load balancer, which can be a private or container address and not its public one.
+
+To accept a header from any peer, as earlier versions did, say so explicitly:
+
+```toml
+trusted_proxies = ["0.0.0.0/0", "::/0"]
+```
+
+Only do this when a firewall already restricts the port to your load balancers. Otherwise any client can send a header and choose the IP that rate limiting, IP filters and bans will see.
+
 The decoded client IP becomes the "real IP" for the connection. Infrarust uses it for:
 
 - IP-based rate limiting
+- The per-IP connection limit (`max_connections_per_ip`)
 - IP filtering (allow/deny lists)
 - Ban enforcement
 - Logging
@@ -83,6 +105,7 @@ The `infrarust.toml` config for this scenario:
 ```toml
 bind = "0.0.0.0:25565"
 receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.5/32"]
 ```
 
 And each server config that needs the real IP forwarded:
@@ -98,4 +121,5 @@ send_proxy_protocol = true
 | Option | File | Type | Default | Description |
 |---|---|---|---|---|
 | `receive_proxy_protocol` | `infrarust.toml` | `bool` | `false` | Decode proxy protocol headers on incoming connections |
+| `trusted_proxies` | `infrarust.toml` | list of CIDR ranges | `[]` | Peers allowed to send a proxy protocol header. Required when `receive_proxy_protocol` is `true` |
 | `send_proxy_protocol` | server config | `bool` | `false` | Send a v2 proxy protocol header to the backend |

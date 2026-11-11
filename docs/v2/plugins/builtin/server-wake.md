@@ -29,6 +29,8 @@ limbo_handlers = ["server_wake"]
 
 The plugin will not intercept connections for a server that doesn't list it here. A server config without a `[server_manager]` section is also passed through without any limbo hold.
 
+A managed server that does not list the plugin is still woken by the proxy when a player joins, with a [start throttle](../../guide/server-management#start-throttle): repeated logins cannot restart a crashing server in a loop. The plugin's own start requests are not throttled.
+
 ## Server manager configuration
 
 The server manager is configured per-server in your server config file, not in the plugin config. You pick one of three provider types: `local`, `pterodactyl`, or `crafty`.

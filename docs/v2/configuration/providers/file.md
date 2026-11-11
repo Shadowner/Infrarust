@@ -97,7 +97,7 @@ text = "§eSurvival §7| §fStarting..."
 | `domains` | list of strings | `[]` | Domains that route to this server. Supports wildcards (`*.example.com`). |
 | `addresses` | list | required | Backend addresses, each `"host:port"` or `{ address = "host:port", weight = 3 }`. Port defaults to `25565`. Multiple addresses are load balanced per the server's `balance` strategy. |
 | `proxy_mode` | string | `"passthrough"` | One of: `passthrough`, `zero_copy`, `client_only`, `offline`, `server_only`. |
-| `forwarding_mode` | string | `"none"` | Per-server player identity forwarding override. One of: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Overrides the global `[forwarding]` setting for this server only. |
+| `forwarding_mode` | string | global mode | Per-server player identity forwarding override. One of: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Overrides the global `[forwarding]` setting for this server only. `velocity` and `bungee_guard` are accepted only when the global mode is the same, and forwarding proxy modes have further limits: see [per-server override](../proxy-forwarding#per-server-override). |
 | `send_proxy_protocol` | bool | `false` | Send PROXY protocol to the backend. |
 | `domain_rewrite` | string or table | `"none"` | Rewrite domain in handshake: `"none"`, `"from_backend"`, or `{ explicit = "domain" }`. |
 | `max_players` | integer | `0` | Max players for status response. 0 means unlimited. |

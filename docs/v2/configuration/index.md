@@ -49,9 +49,11 @@ Here is a full example showing every section with its default values:
 
 ```toml
 bind = "0.0.0.0:25565"
-max_connections = 0
+max_connections = 10000
+max_connections_per_ip = 32
 connect_timeout = "5s"
 receive_proxy_protocol = false
+trusted_proxies = []
 servers_dir = "./servers"
 plugins_dir = "./plugins"
 worker_threads = 0
@@ -60,8 +62,8 @@ announce_proxy_commands = true
 so_reuseport = false
 
 [rate_limit]
-enabled = false
-max_connections = 3
+enabled = true
+max_connections = 10
 window = "10s"
 status_max = 300
 status_window = "10s"
@@ -97,6 +99,8 @@ export_interval = "15s"
 [telemetry.traces]
 enabled = true
 sampling_ratio = 0.1
+client_ip = "truncated"
+username = true
 
 [telemetry.resource]
 service_name = "infrarust"

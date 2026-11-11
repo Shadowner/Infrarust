@@ -31,9 +31,12 @@ bind = "0.0.0.0:25565"
 
 [docker]
 network = "minecraft"
+allowed_domains = ["mc.example.com", "*.mc.example.com"]
 ```
 
 The `[docker]` section activates the Docker provider. Setting `network = "minecraft"` tells Infrarust to resolve container IPs from that specific Docker network. Without it, Infrarust picks the first available network IP from each container, which can be wrong if containers are attached to multiple networks.
+
+`allowed_domains` lists the domains containers may claim with the `infrarust.domains` label. It is empty by default, and a container that claims a domain outside the list is not routed. See [Domain allowlist](../configuration/providers/docker.md#domain-allowlist).
 
 Note that `[docker].network` is about IP resolution only. The `infrarust.network` container label is a separate concept: it groups servers into a named set for in-game server switching.
 
@@ -128,7 +131,7 @@ Every Minecraft container needs `infrarust.enable: "true"` for Infrarust to pick
 | Label | Default | What it does |
 |-------|---------|--------------|
 | `infrarust.enable` | required | Must be `"true"` for discovery. |
-| `infrarust.domains` | `<container_name>.docker.local` | Comma-separated domains that route to this server. |
+| `infrarust.domains` | `<container_name>.docker.local` | Comma-separated domains that route to this server. Each one must match `allowed_domains` in `[docker]`. |
 | `infrarust.port` | `25565` | Minecraft port inside the container. |
 | `infrarust.proxy_mode` | `passthrough` | One of: `passthrough`, `client_only`, `offline`, `server_only`, `zero_copy`. |
 | `infrarust.send_proxy_protocol` | `false` | Set to `"true"` or `"1"` to send PROXY protocol headers. |
@@ -170,12 +173,22 @@ labels:
   infrarust.domains: "*.mc.example.com"
 ```
 
+A wildcard label needs the same pattern as an entry of `allowed_domains`, here `"*.mc.example.com"`.
+
 Or list multiple domains on one server:
 
 ```yaml
 labels:
   infrarust.enable: "true"
   infrarust.domains: "mc.example.com, play.example.com"
+```
+
+Every listed domain must be allowed. With the config above, `play.example.com` is missing, so add it:
+
+```toml
+[docker]
+network = "minecraft"
+allowed_domains = ["mc.example.com", "*.mc.example.com", "play.example.com"]
 ```
 
 ## Custom port
@@ -196,6 +209,8 @@ modded:
     - minecraft
 ```
 
+Add `"modded.example.com"` to `allowed_domains` for this container to be routed.
+
 ## Mixing Docker discovery and file-based servers
 
 Docker and file providers feed into the same routing table. You can discover some servers from containers and define others as `.toml` files:
@@ -207,6 +222,7 @@ servers_dir = "/app/config/servers"
 
 [docker]
 network = "minecraft"
+allowed_domains = ["mc.example.com", "*.mc.example.com"]
 ```
 
 ```toml
@@ -226,6 +242,10 @@ Mounting `/var/run/docker.sock` gives Infrarust read access to all containers on
 ## Troubleshooting
 
 **Container not discovered**: Check that `infrarust.enable` is set to exactly `"true"` (string, not boolean). In YAML, quote it: `infrarust.enable: "true"`.
+
+**Container not routed**: If the logs show `container not routed: its infrarust.domains label claims domains outside the allowlist`, replace the `allowed_domains` line of your `[docker]` section with the `allowed_domains = [...]` line from that warning and restart Infrarust.
+
+**Backend rejects every player**: Containers do not inherit the proxy-wide `[forwarding]` mode. If your `client_only` or `offline` backends expect Velocity or BungeeCord forwarding, set `inherit_forwarding = true` in `[docker]`. Containers on `passthrough`, `zero_copy` or `server_only` are then refused. See [Forwarding inheritance](../configuration/providers/docker.md#forwarding-inheritance).
 
 **Wrong IP resolved**: If Infrarust connects to the wrong container IP, set `network = "minecraft"` in your `[docker]` section to pin address resolution to the Compose network.
 

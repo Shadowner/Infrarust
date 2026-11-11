@@ -29,16 +29,21 @@ Infrarust supports both proxy protocol v1 (text) and v2 (binary).
 
 ### Receiving proxy protocol
 
-To accept proxy protocol headers from your load balancer, set `receive_proxy_protocol` in your global config:
+To accept proxy protocol headers from your load balancer, set `receive_proxy_protocol` in your global config and list the load balancer's addresses in `trusted_proxies`:
 
-```toml{2}
+```toml{2-3}
 # infrarust.toml
 receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.5/32", "10.0.1.0/24"]
 ```
 
+`trusted_proxies` takes CIDR ranges, so a single address is written `10.0.0.5/32`. It is required: the proxy refuses to start when `receive_proxy_protocol` is `true` and the list is empty.
+
 ::: danger
-Only enable `receive_proxy_protocol` if your load balancer actually sends proxy protocol headers. If you enable it without a load balancer in front, clients can forge their source IP by sending a fake proxy protocol header.
+A proxy protocol header is only as trustworthy as the peer that sent it. Infrarust reads the header only from peers listed in `trusted_proxies` and closes every other connection without reading it, so a client that reaches Infrarust directly cannot forge its source IP. Keep the list to the addresses of your load balancers. `["0.0.0.0/0", "::/0"]` trusts every peer and brings the forgery back unless a firewall restricts the port.
 :::
+
+Use the address Infrarust sees the load balancer connect from. Behind NAT or inside a container network this is often a private address, not the load balancer's public one. A connection closed for this reason is logged at `debug` level only.
 
 ### Sending proxy protocol to backends
 
@@ -68,7 +73,7 @@ backend infrarust
     server infrarust2 10.0.0.11:25565 send-proxy-v2
 ```
 
-Then enable `receive_proxy_protocol = true` in Infrarust.
+Then enable `receive_proxy_protocol = true` in Infrarust and add the HAProxy host's address to `trusted_proxies`.
 
 ### nginx configuration
 
@@ -139,14 +144,19 @@ This only works on Linux.
 
 ## Connection limits
 
-To prevent a single Infrarust instance from accepting more connections than it can handle, set `max_connections`:
+Two settings bound the number of open connections on one Infrarust instance:
 
 ```toml
 # infrarust.toml
 max_connections = 10000
+max_connections_per_ip = 32
 ```
 
-A value of `0` (the default) means no limit.
+`max_connections` is the total across all clients. It defaults to `10000`, and `0` means no limit. Once the limit is reached, new connections wait until an open one closes.
+
+`max_connections_per_ip` is the number of connections one client address may hold at the same time. It defaults to `32`, and `0` means no limit. An IPv4 client is counted by its address, an IPv6 client by its /64. A connection over the limit is closed.
+
+The per-IP count uses the real client address, taken from the proxy protocol header when `receive_proxy_protocol` is on. Without proxy protocol, every player arrives from the load balancer's address and shares one count, so 32 connections is the ceiling for every player behind that load balancer. Enable proxy protocol, or raise `max_connections_per_ip`. The same applies to the [rate limiter](../configuration/security/rate-limiting#clients-that-share-one-address).
 
 ## Common pitfalls
 
@@ -155,6 +165,10 @@ A value of `0` (the default) means no limit.
 If the load balancer sends proxy protocol but Infrarust doesn't expect it, connections fail immediately. The reverse is also true: if Infrarust expects proxy protocol but the load balancer doesn't send it, Infrarust tries to parse the Minecraft handshake as a proxy protocol header and drops the connection.
 
 Both sides must agree. Enable proxy protocol on both the load balancer and Infrarust, or on neither.
+
+### Load balancer missing from `trusted_proxies`
+
+If every connection is closed right after you enable `receive_proxy_protocol`, and the log shows nothing at the default level, the load balancer's address is probably not covered by `trusted_proxies`. Run with `--log-level debug` and look for `closing connection from a peer outside trusted_proxies`: the line carries the peer address to add.
 
 ### Using an HTTP load balancer
 

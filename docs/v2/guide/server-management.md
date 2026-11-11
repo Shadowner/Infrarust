@@ -24,6 +24,20 @@ If the server was already online the connection proceeds normally with no delay.
 
 Auto-shutdown runs on the same polling loop. Once the last player disconnects, the manager starts a timer. When `shutdown_after` elapses with no players, it calls the provider's stop method.
 
+### Start throttle
+
+Without a limit, anyone who can reach the login could restart a crashing server in a loop. When the proxy itself wakes a server for a joining player, it therefore limits how often it does so, per server:
+
+- At most one start every 30 seconds.
+- A server that fails to start, that its provider reports as crashed, or that stops on its own less than 10 minutes after its start, counts as crashed. The proxy then waits 30 seconds before the next start, and doubles that wait on each further crash, up to 10 minutes. The doubling starts over at 30 seconds when the server crashes or stops on its own 10 minutes or more after its start. A wait is lifted as soon as the provider reports the server running.
+- A stop the proxy asked for (auto-shutdown, a console or API stop, a plugin) is not a crash.
+
+A player who connects during the wait is disconnected with "Server is unavailable. Please try again later." These values are fixed.
+
+The throttle does not apply to a start requested explicitly: from the console, the admin API, or a plugin through the server manager service, which includes the `server-wake` plugin. Such a start also clears the crash wait.
+
+While a player waits for a server to start, the proxy checks every second that the client is still connected and stops waiting when it has left.
+
 ## Server states
 
 | State | Meaning |

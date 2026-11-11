@@ -34,9 +34,12 @@ With Docker labels:
 
 ```yaml
 labels:
+  infrarust.enable: "true"
   infrarust.domains: "mc.example.com"
   infrarust.proxy_mode: "zero_copy"
 ```
+
+The domain must match an entry of [`allowed_domains`](../providers/docker.md#domain-allowlist) under `[docker]`.
 
 All the same options from [passthrough](./passthrough.md#config-options) apply: `send_proxy_protocol`, `domain_rewrite`, `timeouts`, `max_players`, `disconnect_message`.
 

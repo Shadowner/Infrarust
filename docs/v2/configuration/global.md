@@ -45,10 +45,17 @@ Number of Tokio async runtime threads. `0` (the default) lets the runtime pick a
 ## Connection limits
 
 ```toml
-max_connections = 0
+max_connections = 10000
+max_connections_per_ip = 32
 ```
 
-Maximum simultaneous client connections. `0` means unlimited. When the limit is reached, the proxy stops accepting connections until existing ones close: new clients wait in the operating system's backlog instead of being refused.
+`max_connections` is the maximum number of simultaneous client connections. `0` means unlimited. When the limit is reached, the proxy stops accepting connections until existing ones close: new clients wait in the operating system's backlog instead of being refused.
+
+`max_connections_per_ip` is the maximum number of simultaneous connections from one client address. An IPv4 address counts on its own, and an IPv6 /64 counts as one address. `0` means unlimited. A connection over the limit is closed without an answer, and the proxy logs one warning the first time it happens.
+
+::: warning
+Players who reach the proxy through a tunnel or a NAT (playit, frp, ngrok, the Docker userland proxy) share one address and one limit. Have the tunnel send the real address with [proxy protocol](#proxy-protocol), or raise `max_connections_per_ip`.
+:::
 
 ## Timeouts
 
@@ -114,9 +121,19 @@ Keep compression on for modded servers: a modpack's tags, recipes and registries
 
 ```toml
 receive_proxy_protocol = false
+trusted_proxies = []
 ```
 
-When `true`, the proxy expects incoming connections to start with a HAProxy PROXY protocol header (v1 or v2). Enable this if Infrarust sits behind a load balancer that sends proxy protocol, such as HAProxy or AWS NLB. The address from the header is the player's address everywhere: IP bans and filters, `PreLoginEvent.remote_addr` and `Player::remote_addr()`.
+When `receive_proxy_protocol` is `true`, the proxy expects incoming connections to start with a HAProxy PROXY protocol header (v1 or v2). Enable this if Infrarust sits behind a load balancer that sends proxy protocol, such as HAProxy or AWS NLB. The address from the header is the player's address everywhere: IP bans and filters, the per-IP connection limit, `PreLoginEvent.remote_addr` and `Player::remote_addr()`.
+
+`trusted_proxies` lists the peers allowed to send that header, as CIDR ranges (a single address is written `10.0.0.5/32`). A connection from any other peer is closed without being read. The list is required: with `receive_proxy_protocol = true` and an empty `trusted_proxies`, the proxy refuses to start.
+
+```toml
+receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.0/8", "2001:db8::/32"]
+```
+
+To accept the header from every peer, write `trusted_proxies = ["0.0.0.0/0", "::/0"]`. Any client that reaches the port can then claim any address, so only do this when a firewall already limits who can connect.
 
 ::: warning
 Only enable this if your upstream actually sends proxy protocol headers. Regular Minecraft clients do not, and connections will fail if this is on without a proxy protocol source.
@@ -151,16 +168,16 @@ The setting only applies to unknown domains. A login refused by an IP filter or 
 
 ```toml
 [rate_limit]
-enabled = false
-max_connections = 3
+enabled = true
+max_connections = 10
 window = "10s"
 status_max = 300
 status_window = "10s"
 ```
 
-Controls how many connections a single IP can make within a sliding time window. Rate limiting is disabled by default; set `enabled = true` to activate it. Login attempts and status pings have separate limits.
+Controls how many connections a single IP can make within a sliding time window. Rate limiting is enabled by default; set `enabled = false` to turn it off. Login attempts and status pings have separate limits. An IPv6 /64 counts as one IP.
 
-`max_connections` is the number of login attempts allowed per IP within `window`. `status_max` and `status_window` do the same for server-list ping requests. The defaults allow 3 login attempts and 300 status pings per 10-second window per IP.
+`max_connections` is the number of login attempts allowed per IP within `window`. `status_max` and `status_window` do the same for server-list ping requests. The defaults allow 10 login attempts and 300 status pings per 10-second window per IP.
 
 ## Status cache
 
@@ -204,7 +221,7 @@ disconnect_deadline = "15s"
 transport_filter_timeout = "5s"
 ```
 
-`provider` picks who decides who is banned: `"builtin"` (the default) uses the ban file, `"none"` turns ban checks off, and a plugin id hands bans to that plugin. See [Bans](./security/bans#choosing-a-provider). `file` is the path to the JSON file where the built-in provider stores bans. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged. `check_timeout` (default `5s`) bounds each ban check: a login whose check gets no answer in time is refused, a server list ping is answered.
+`provider` picks who decides who is banned: `"builtin"` (the default) uses the ban file, `"none"` turns ban checks off, and a plugin id hands bans to that plugin. See [Bans](./security/bans#choosing-a-provider). `file` is the path to the JSON file where the built-in provider stores bans. A missing or empty file starts with no bans; a file that cannot be parsed stops the proxy at startup. `purge_interval` controls how often expired bans are removed from the file. When `enable_audit_log` is `true`, every ban and unban operation is logged. `check_timeout` (default `5s`) bounds each ban check: a login whose check gets no answer in time is refused, a server list ping is answered.
 
 ## Default MOTD
 
@@ -242,6 +259,8 @@ export_interval = "15s"
 [telemetry.traces]
 enabled = true
 sampling_ratio = 0.1
+client_ip = "truncated"
+username = true
 
 [telemetry.resource]
 service_name = "infrarust"
@@ -252,6 +271,8 @@ Infrarust can export metrics and traces via OpenTelemetry. The `[telemetry]` sec
 `protocol` is either `"grpc"` or `"http"`, matching the OTLP export protocol your collector expects.
 
 `sampling_ratio` controls what fraction of status ping traces are sampled (0.0 to 1.0). Login traces are always sampled at 100% regardless of this value.
+
+`client_ip` sets how much of the player's address a connection span records: `"truncated"` (the default) keeps the /24 of an IPv4 address and the /48 of an IPv6 address, `"full"` records the whole address, and `"off"` records none. `username` (default `true`) records the player's username on connection spans; set it to `false` to leave it out. See [Telemetry](./monitoring/telemetry#traces).
 
 `service_name` is set as an OTEL resource attribute. `service_version` defaults to the Infrarust binary version and is usually left unset.
 
@@ -266,11 +287,17 @@ Omitting the `[telemetry]` section entirely disables telemetry. No collector con
 endpoint = "unix:///var/run/docker.sock"
 poll_interval = "30s"
 reconnect_delay = "5s"
+allowed_domains = []
+inherit_forwarding = false
 ```
 
 Enables automatic server discovery from Docker container labels. `endpoint` is the Docker daemon socket or HTTP API URL. `network` (optional) specifies which Docker network to use when resolving container addresses.
 
-The provider uses Docker events for real-time updates and falls back to polling every `poll_interval` if the event stream disconnects. After a disconnect, it waits `reconnect_delay` before reconnecting.
+The provider uses Docker events for real-time updates and also rescans the containers every `poll_interval` while it is connected. After a disconnect, it waits `reconnect_delay` before reconnecting.
+
+`allowed_domains` lists the domains a container may claim through its `infrarust.domains` label. Entries accept `*` and `?`, so `"*.mc.example.com"` allows every subdomain. A container can always use `<container>.docker.local`, which needs no entry. A container whose label claims a domain that matches no entry is not routed, and the warning in the log gives the `allowed_domains` line that would allow it. A label that is itself a wildcard must appear in the list as written.
+
+`inherit_forwarding` decides whether containers get the proxy-wide `[forwarding]` mode. With `false` (the default) every container runs with `forwarding_mode = "none"`, so the forwarding secret is never used toward a container. Set it to `true` when your containers expect the forwarding mode of `[forwarding]`; containers on `passthrough`, `zero_copy` or `server_only` are then refused while `[forwarding]` selects a mode. While it is `false` and `[forwarding]` selects a mode, the proxy logs one warning for the first container it finds on `client_only` or `offline`, since a backend that expects forwarding rejects every player.
 
 <!-- Link to Docker discovery docs when available -->
 
@@ -420,7 +447,7 @@ bungeecord = false
 connect = true
 connect_other = false
 ip = true
-ip_other = true
+ip_other = false
 player_count = true
 player_list = true
 get_servers = true
@@ -430,7 +457,7 @@ forward = true
 forward_to_player = true
 uuid = true
 uuid_other = true
-server_ip = true
+server_ip = false
 message = false
 message_raw = false
 kick_player = false
@@ -439,7 +466,7 @@ kick_player_raw = false
 
 `bungeecord` lets the proxy answer the requests backend plugins send on the `BungeeCord` channel (`bungeecord:main` since 1.13): move a player, count and list players, forward a message to another server. It is off by default, and it only applies to the servers that also set [`bungeecord_channel = true`](./servers#proxy-behavior). For any other server, or while `bungeecord` is off, a BungeeCord message is forwarded to the client as before. Requests only see the requesting server's [network](./servers#identity).
 
-`bungeecord_permissions` allows each subchannel. Reads are allowed by default. `connect_other`, `message`, `message_raw`, `kick_player` and `kick_player_raw` act on other players and are off by default. The keys also accept the subchannel names (`ConnectOther`, `KickPlayer`...). A refused subchannel gets no answer.
+`bungeecord_permissions` allows each subchannel. Most reads are allowed by default. `ip_other` and `server_ip` give out the address of another player or of a backend and are off by default. `connect_other`, `message`, `message_raw`, `kick_player` and `kick_player_raw` act on other players and are off by default. The keys also accept the subchannel names (`ConnectOther`, `KickPlayer`...). A refused subchannel gets no answer.
 
 See [Plugin messaging](../plugins/dev/messaging#the-bungeecord-channel) for the request and response formats. The section is read at startup.
 
@@ -604,9 +631,11 @@ A complete `infrarust.toml` showing the main sections and their defaults:
 
 ```toml
 bind = "0.0.0.0:25565"
-max_connections = 0
+max_connections = 10000
+max_connections_per_ip = 32
 connect_timeout = "5s"
 receive_proxy_protocol = false
+trusted_proxies = []
 servers_dir = "./servers"
 plugins_dir = "./plugins"
 worker_threads = 0
@@ -616,8 +645,8 @@ announce_proxy_commands = true
 compression_threshold = 256
 
 [rate_limit]
-enabled = false
-max_connections = 3
+enabled = true
+max_connections = 10
 window = "10s"
 status_max = 300
 status_window = "10s"
@@ -679,6 +708,8 @@ permission_nodes = 256
 # [telemetry.traces]
 # enabled = true
 # sampling_ratio = 0.1
+# client_ip = "truncated"
+# username = true
 #
 # [telemetry.resource]
 # service_name = "infrarust"

@@ -65,9 +65,18 @@ A login plugin message can only reach the client while it is still logging in. A
 
 When a limbo handler or the server manager holds the player before the first backend, the proxy has to finish the client's login first. The first backend is then joined like a switch, with the same limit on login plugin messages.
 
+The limbo world always uses the vanilla registry data embedded in the proxy. Registries a modded backend sent earlier are not replayed there, so a player moved from a modded server to limbo gets vanilla data. A client newer than the newest version the build embeds cannot enter limbo and its session ends with an error.
+
 ### Command suggestions
 
-The proxy adds its own commands to the command tree the backend sends. If that tree uses argument types the proxy cannot parse, which modded servers often register, the tree is forwarded unchanged. Proxy commands still run, but the client does not suggest them.
+The proxy adds its own commands to the command tree the backend sends. If that tree uses argument types the proxy cannot parse, which modded servers often register, the tree is forwarded unchanged. Proxy commands still run, but the client does not suggest them. The same happens to a tree larger than 1 MiB or with more than 32,768 nodes, which large modpacks can reach.
+
+### Other bounds on backend data
+
+The proxy does not trust a backend to stay within reasonable sizes:
+
+- It tracks at most 256 backend boss bars per session, to remove them on a server switch for clients older than 1.20.2. Bars beyond that are still shown, but may stay on screen after a switch.
+- A client that stops reading loses its session once a write to it has been blocked for 30 seconds.
 
 ## Mods that open their own connections
 

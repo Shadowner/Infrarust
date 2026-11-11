@@ -33,9 +33,12 @@ With Docker labels:
 
 ```yaml
 labels:
+  infrarust.enable: "true"
   infrarust.domains: "mc.example.com"
   infrarust.proxy_mode: "client_only"
 ```
+
+The domain must match an entry of [`allowed_domains`](../providers/docker.md#domain-allowlist) under `[docker]`.
 
 ::: danger Backend must be offline
 Your backend Minecraft server **must** have `online-mode=false` in its `server.properties`. The proxy already verified the player's identity, so the backend doesn't need to check again. If the backend has `online-mode=true`, it asks the proxy for encryption, and the proxy refuses the login right away and logs that the backend is in online mode.
@@ -87,7 +90,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 ## How it works
 
-1. The proxy reads the client's handshake and login start packets.
+1. The proxy reads the client's handshake and login start packets. A login name that contains a control character is refused.
 2. It fires a `PreLoginEvent`, giving plugins a chance to deny the connection.
 3. It performs Mojang authentication: sends an `EncryptionRequest` with the proxy's RSA public key, reads the `EncryptionResponse`, decrypts the shared secret, and verifies the session against `sessionserver.mojang.com`. If this fails, it fires `OnlineAuthFailedEvent` and disconnects the client.
 4. It fires a `GameProfileRequestEvent`, where plugins may rewrite the profile, then checks bans against the final UUID. A banned player is disconnected while still in the login phase.

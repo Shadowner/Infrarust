@@ -128,7 +128,14 @@ services:
       infrarust.domains: "survival.example.com"
 ```
 
-Add `[docker]` to your `infrarust.toml` and containers with `infrarust.enable=true` get registered automatically. When they start or stop, routing updates in real time.
+Add a `[docker]` section to your `infrarust.toml` that lists the domains containers may claim:
+
+```toml
+[docker]
+allowed_domains = ["survival.example.com"]
+```
+
+Containers with `infrarust.enable=true` then get registered automatically. When they start or stop, routing updates in real time.
 
 ## Monitoring
 

@@ -12,18 +12,20 @@ This page walks through what happens inside Infrarust when a Minecraft client co
 
 ```mermaid
 flowchart TD
-    A[Player connects on port 25565] --> TF{Transport filters}
-    TF -->|Rejected| DROP[Drop connection]
+    A[Player connects on port 25565] --> LIM{Connection limits}
+    LIM -->|Untrusted PROXY peer or per-IP limit| DROP[Drop connection]
+    LIM -->|Within limits| TF{Transport filters}
+    TF -->|Rejected| DROP
     TF -->|Accepted| CP[Common pipeline]
 
     CP --> IP[IP filter]
     IP --> HS[Handshake parser]
-    HS -->|Legacy client| LEGACY[Legacy handler]
-    HS -->|Modern client| BAN_IP[Ban IP check]
+    HS --> BAN_IP[Ban IP check]
     BAN_IP --> RL[Rate limiter]
     RL --> DR[Domain router]
     DR -->|No match| REJECT[Kick or drop]
 
+    DR -->|Legacy client, Beta to 1.6| LEGACY[Legacy handler]
     DR -->|Status intent| STATUS[Status handler]
     DR -->|Login intent| LP[Login pipeline]
 
@@ -44,9 +46,13 @@ flowchart TD
 
 ## TCP accept and transport filters
 
-Infrarust binds a TCP listener on the configured address (default `0.0.0.0:25565`). The default `max_connections` is `0`, which means unlimited and no limiting. When `max_connections` is set above zero, the listener creates a semaphore of that size and acquires a permit before each accept; once the permits run out, new connections wait until an open one is dropped. The permit is held for the lifetime of the connection.
+Infrarust binds a TCP listener on the configured address (default `0.0.0.0:25565`). The default `max_connections` is `10000`. The listener creates a semaphore of that size and acquires a permit before each accept; once the permits run out, new connections wait until an open one is dropped. The permit is held for the lifetime of the connection. Setting `max_connections` to `0` removes the semaphore and the limit.
 
-Each accepted connection is handed to its own task. The listener never reads from a client itself. When `receive_proxy_protocol` is on, the task first reads the PROXY protocol header, so the real client IP is known before anything else looks at the connection. A client that connects and sends nothing, or sends its header slowly, holds up only its own connection: it keeps its `max_connections` permit until the 5-second header timeout closes it, and the listener goes on accepting others in the meantime. Before any packet parsing, the task runs the transport filters that native plugins registered. A filter sees the connection's `TransportContext` (remote address, local address, the real client IP from the PROXY protocol header, connection time and a connection id) and answers `Continue` or `Reject`. A rejected connection is closed without an answer, and a filter that panics or runs past `[events] transport_filter_timeout` rejects it too. Because the filters run in the connection's task, a slow filter holds up only that connection, never the listener. Every filter that let a connection through is told when it closes. See [transport filters](../plugins/dev/architecture#layer-1-transportfilter).
+Each accepted connection is handed to its own task. The listener never reads from a client itself. When `receive_proxy_protocol` is on, the task first checks the peer address against `trusted_proxies`: a peer outside the list is closed without its header being read, and only a `debug` line records it. For a trusted peer the task reads the PROXY protocol header, so the real client IP is known before anything else looks at the connection. A client that connects and sends nothing, or sends its header slowly, holds up only its own connection: it keeps its `max_connections` permit until the 5-second header timeout closes it, and the listener goes on accepting others in the meantime.
+
+Once the client IP is known, the task takes a per-IP slot. `max_connections_per_ip` (default `32`, `0` for unlimited) is the number of connections one IPv4 address or one IPv6 /64 may hold at the same time. A connection over the limit is closed, and the first refusal logs a one-time warning. The slot is held for the lifetime of the connection, like the permit.
+
+Before any packet parsing, the task runs the transport filters that native plugins registered. A filter sees the connection's `TransportContext` (remote address, local address, the real client IP from the PROXY protocol header, connection time and a connection id) and answers `Continue` or `Reject`. A rejected connection is closed without an answer, and a filter that panics or runs past `[events] transport_filter_timeout` rejects it too. Because the filters run in the connection's task, a slow filter holds up only that connection, never the listener. Every filter that let a connection through is told when it closes. See [transport filters](../plugins/dev/architecture#layer-1-transportfilter).
 
 ## The common pipeline
 
@@ -62,11 +68,15 @@ The first real protocol work. The middleware reads bytes from the TCP stream wit
 
 The first byte determines the client type:
 
-- `0xFE` indicates a legacy ping (Minecraft Beta through 1.6). The middleware inserts a `LegacyDetected` marker and short-circuits the pipeline. The legacy handler takes over from there.
-- `0x02` indicates a legacy login (1.6 and older). It also short-circuits: the legacy handler checks bans, fires the same player events as the passthrough handler, then forwards the login to the backend.
+- `0xFE` indicates a legacy ping (Minecraft Beta through 1.6). The middleware reads it and stores a `LegacyHello` next to an ordinary `HandshakeData` with the status intent.
+- `0x02` indicates a legacy login (1.6 and older). It is stored the same way, with the login intent.
 - Any other value is treated as a modern Minecraft frame (1.7+).
 
-For modern clients, the middleware decodes the `SHandshake` packet (always packet ID `0x00`). This packet has been stable since Minecraft 1.7, so Infrarust can proxy any protocol version without knowing its specific packet layout.
+A legacy client does not leave the pipeline here. It continues through the ban IP check, the rate limiter and the domain router like a modern client, and the legacy handler takes over once the common pipeline has passed. A ping from Beta to 1.5 carries no hostname, so the domain router treats it as an unknown domain. The name and host lengths a legacy client declares are checked before the proxy reads them.
+
+The legacy handler answers a ping from the backend or from the configured MOTD. For a login it checks bans, then looks at the server's `proxy_mode`: on a forwarding mode (`passthrough`, `zero_copy`, `server_only`) it fires the same player events as the passthrough handler and forwards the login to the backend. On `client_only` and `offline` the proxy would have to run the login itself, which it cannot do for these clients, so the client is kicked with "This server cannot be joined from here".
+
+For modern clients, the middleware decodes the `SHandshake` packet (always packet ID `0x00`). A handshake frame that declares more than 2 KiB is refused before it is buffered. This packet has been stable since Minecraft 1.7, so Infrarust can proxy any protocol version without knowing its specific packet layout.
 
 The handshake contains four fields:
 
@@ -81,11 +91,11 @@ The middleware strips Forge Mod Loader markers (`\0FML\0`, `\0FML2\0`, `\0FML3\0
 
 ### Ban IP check
 
-Runs after the handshake parser, and only for status connections: it checks the client IP against the ban system, so a banned IP cannot receive the MOTD or status ping. Login connections pass through and are checked by the ban check in the login pipeline. Legacy clients never reach it; the legacy handler checks bans itself.
+Runs after the handshake parser, and only for status connections: it checks the client IP against the ban system, so a banned IP cannot receive the MOTD or status ping. Login connections pass through and are checked by the ban check in the login pipeline. Legacy pings are checked here too; a legacy login is checked by the legacy handler.
 
 ### Rate limiter
 
-Applies per-IP rate limits with separate budgets for status pings and login attempts. Uses a token-bucket algorithm. Excess connections get rejected.
+Applies per-IP rate limits with separate budgets for status pings and login attempts. Uses a token-bucket algorithm. Excess connections get rejected. It is enabled by default with 10 logins and 300 status pings per 10 seconds, and it logs a one-time warning the first time it refuses a connection. See [Rate Limiting](../configuration/security/rate-limiting).
 
 ### Domain router
 
@@ -104,7 +114,7 @@ The result is stored as `RoutingData` containing the matched `ServerConfig` and 
 
 ## Intent branching
 
-After the common pipeline completes, the connection branches on the `next_state` field from the handshake.
+After the common pipeline completes, the connection branches on the `next_state` field from the handshake. A legacy client goes to the legacy handler, as described above.
 
 Status connections go to the status handler, which returns the server list ping response (MOTD, player count, favicon). If the server manager is configured, offline servers show a "starting" message. Login connections continue into the login pipeline.
 
@@ -114,7 +124,7 @@ Login connections run through a second pipeline: the login start parser, the ban
 
 ### Login start parser
 
-Reads and decodes the `SLoginStart` packet from the client. Extracts the player's username and UUID (UUID is present in protocol versions 1.20.2 and later). The raw packet bytes are appended to `HandshakeData.raw_packets` so the passthrough handler can forward them to the backend as-is.
+Reads and decodes the `SLoginStart` packet from the client. A frame that declares more than 5 KiB is refused before it is buffered. Extracts the player's username and UUID (UUID is present in protocol versions 1.20.2 and later). The raw packet bytes are appended to `HandshakeData.raw_packets` so the passthrough handler can forward them to the backend as-is.
 
 ### Ban check
 
@@ -170,8 +180,8 @@ The key extension types in order:
 
 | Type | Inserted by | Contains |
 |------|------------|----------|
-| `LegacyDetected` | Handshake parser | Marker for pre-1.7 clients |
 | `HandshakeData` | Handshake parser | Domain, port, protocol version, intent, raw bytes |
+| `LegacyHello` | Handshake parser | The ping or login of a pre-1.7 client, parsed and raw |
 | `RoutingData` | Domain router | Matched server config and config ID |
 | `LoginData` | Login start parser | Username and optional UUID |
 | `ConnectionSpan` | Telemetry middleware | Tracing span for the session |

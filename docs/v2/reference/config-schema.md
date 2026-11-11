@@ -20,10 +20,12 @@ All duration values use human-readable strings: `"5s"`, `"10m"`, `"1h30m"`.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `bind` | string | `"0.0.0.0:25565"` | Listen address and port |
-| `max_connections` | integer | `0` | Maximum simultaneous connections. 0 = unlimited |
+| `max_connections` | integer | `10000` | Maximum simultaneous connections. 0 = unlimited |
+| `max_connections_per_ip` | integer | `32` | Maximum simultaneous connections per IPv4 address or IPv6 /64. A connection over the limit is closed. 0 = unlimited |
 | `connect_timeout` | duration | `"5s"` | Timeout when connecting to a backend server |
 | `connect_max_attempts` | integer | `3` | Backend addresses tried before giving up. 0 = try them all |
-| `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream |
+| `receive_proxy_protocol` | boolean | `false` | Accept HAProxy v1/v2 PROXY protocol from upstream. Requires `trusted_proxies` |
+| `trusted_proxies` | array of strings | `[]` | CIDR ranges (`"10.0.0.5/32"` for a single address) of the peers allowed to send a PROXY protocol header. Any other peer is closed without being read. The proxy refuses to start when `receive_proxy_protocol` is `true` and this list is empty. `["0.0.0.0/0", "::/0"]` trusts every peer |
 | `servers_dir` | string | `"./servers"` | Path to the directory containing server TOML files |
 | `plugins_dir` | string | `"./plugins"` | Path to the directory containing WASM plugin files. Only the files directly in it are loaded; subdirectories are not scanned |
 | `worker_threads` | integer | `0` | Number of tokio worker threads. 0 = auto (one per CPU core) |
@@ -43,12 +45,12 @@ servers_dir = "./servers"
 
 ### `[rate_limit]`
 
-Per-IP rate limiting. Login attempts and status pings have separate limits. Rate limiting is off by default; set `enabled = true` to turn it on.
+Per-IP rate limiting. Login attempts and status pings have separate limits. An IPv6 /64 counts as one IP. Rate limiting is on by default; set `enabled = false` to turn it off.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enabled` | boolean | `false` | Master switch for rate limiting |
-| `max_connections` | integer | `3` | Maximum login connections per IP per window |
+| `enabled` | boolean | `true` | Master switch for rate limiting |
+| `max_connections` | integer | `10` | Maximum login connections per IP per window |
 | `window` | duration | `"10s"` | Time window for login rate limiting |
 | `status_max` | integer | `300` | Maximum status ping connections per IP per window |
 | `status_window` | duration | `"10s"` | Time window for status ping rate limiting |
@@ -56,7 +58,7 @@ Per-IP rate limiting. Login attempts and status pings have separate limits. Rate
 ```toml
 [rate_limit]
 enabled = true
-max_connections = 5
+max_connections = 10
 window = "10s"
 status_max = 300
 status_window = "10s"
@@ -126,7 +128,7 @@ Persistent ban system with automatic expiration.
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `provider` | string | `"builtin"` | `"builtin"`, `"none"` (no ban checks) or the id of the plugin that provides bans |
-| `file` | string | `"bans.json"` | Path to the JSON file storing active bans (built-in provider) |
+| `file` | string | `"bans.json"` | Path to the JSON file storing active bans (built-in provider). A missing or empty file starts with no bans; a file that cannot be parsed stops the proxy at startup |
 | `purge_interval` | duration | `"300s"` | How often expired bans are purged from the file |
 | `enable_audit_log` | boolean | `true` | Log ban/unban operations |
 | `check_timeout` | duration | `"5s"` | How long a ban check may take. A login whose check runs out is refused; a ping is answered. Must be greater than zero |
@@ -159,6 +161,8 @@ Auto-discovers servers from Docker container labels. Requires Infrarust to be co
 | `network` | string | none | Preferred Docker network name for resolving container addresses |
 | `poll_interval` | duration | `"30s"` | How often to rescan labelled containers; a resync also runs when the event stream first connects |
 | `reconnect_delay` | duration | `"5s"` | Delay before reconnecting after Docker daemon disconnection |
+| `allowed_domains` | array of strings | `[]` | Domains containers may claim through the `infrarust.domains` label. Entries accept `*` and `?`. `<container>.docker.local` is always allowed. A container that claims a domain matching no entry is not routed |
+| `inherit_forwarding` | boolean | `false` | Let containers inherit the proxy-wide `[forwarding]` mode and its secret. When `false`, containers get `forwarding_mode = "none"`. When `true` and `[forwarding]` selects a mode, containers on `passthrough`, `zero_copy` or `server_only` are refused |
 
 ```toml
 [docker]
@@ -166,6 +170,8 @@ endpoint = "unix:///var/run/docker.sock"
 network = "my-minecraft-network"
 poll_interval = "30s"
 reconnect_delay = "5s"
+allowed_domains = ["*.mc.example.com"]
+inherit_forwarding = false
 ```
 
 ### `[telemetry]`
@@ -191,6 +197,8 @@ OpenTelemetry export for metrics and traces. Omit this entire section to disable
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable traces export |
 | `sampling_ratio` | float | `0.1` | Sampling ratio for status pings (0.0 to 1.0). Login connections are always traced at 100% |
+| `client_ip` | string | `"truncated"` | How much of the client address a connection span records. `"full"`: the whole address. `"truncated"`: the /24 of an IPv4 address, the /48 of an IPv6 address. `"off"`: nothing |
+| `username` | boolean | `true` | Record the player's username on connection spans |
 
 #### `[telemetry.resource]`
 
@@ -212,6 +220,8 @@ export_interval = "15s"
 [telemetry.traces]
 enabled = true
 sampling_ratio = 0.1
+client_ip = "truncated"
+username = true
 
 [telemetry.resource]
 service_name = "infrarust"
@@ -318,7 +328,7 @@ The `BungeeCord` plugin messaging channel (`bungeecord:main` since 1.13) that ba
 | `bungeecord` | boolean | `false` | Answer BungeeCord channel requests from the servers that set `bungeecord_channel = true` |
 | `bungeecord_permissions` | table | see below | Which subchannels are answered |
 
-`bungeecord_permissions` has one boolean per subchannel: `connect`, `connect_other`, `ip`, `ip_other`, `player_count`, `player_list`, `get_servers`, `get_server`, `get_player_server`, `forward`, `forward_to_player`, `uuid`, `uuid_other`, `server_ip`, `message`, `message_raw`, `kick_player`, `kick_player_raw` (the subchannel names such as `KickPlayer` are accepted too). All are `true` except `connect_other`, `message`, `message_raw`, `kick_player` and `kick_player_raw`.
+`bungeecord_permissions` has one boolean per subchannel: `connect`, `connect_other`, `ip`, `ip_other`, `player_count`, `player_list`, `get_servers`, `get_server`, `get_player_server`, `forward`, `forward_to_player`, `uuid`, `uuid_other`, `server_ip`, `message`, `message_raw`, `kick_player`, `kick_player_raw` (the subchannel names such as `KickPlayer` are accepted too). All are `true` except `connect_other`, `ip_other`, `server_ip`, `message`, `message_raw`, `kick_player` and `kick_player_raw`.
 
 ```toml
 [plugin_messaging]
@@ -541,7 +551,7 @@ Each file in the `servers_dir` directory defines one backend server. The filenam
 | `slow_start_aggression` | float | `1.0` | Slow start curve. `1.0` is linear, higher is gentler at the start |
 | `active_health` | table | inherits global | Per-server override of the global `[active_health]` block |
 | `proxy_mode` | string | `"passthrough"` | How the proxy handles traffic. See [Proxy modes](#proxy-modes) |
-| `forwarding_mode` | string | none | Per-server override of the global `[forwarding]` mode: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"`. Inherits the global setting when omitted |
+| `forwarding_mode` | string | none | Per-server override of the global `[forwarding]` mode: `"none"`, `"bungee_cord"`, `"bungee_guard"`, or `"velocity"`. Inherits the global setting when omitted. `"velocity"` and `"bungee_guard"` use the proxy-wide secret, so they are only accepted when `[forwarding] mode` is the same value. On `passthrough`, `zero_copy` and `server_only`, `"velocity"` is rejected, and so is a server that would inherit a global `bungee_cord` or `bungee_guard` mode: set `"none"`, or write the mode on the server to accept that the backend gets unverified identities |
 | `send_proxy_protocol` | boolean | `false` | Send PROXY protocol header to the backend |
 | `domain_rewrite` | string or table | `"none"` | Rewrite the domain in the handshake before forwarding. `"none"`, `"from_backend"`, or `{ explicit = "domain" }` |
 | `max_players` | integer | `0` | Maximum players on this server. 0 = unlimited |
@@ -580,7 +590,6 @@ limbo_handlers = ["server_wake"]
 | Client Only | `"client_only"` | Proxy handles Mojang authentication. Backend runs in `online_mode=false` |
 | Offline | `"offline"` | No authentication. Transparent relay with packet parsing |
 | Server Only | `"server_only"` | Authentication handled entirely by the backend |
-| Full | `"full"` | Accepted but not implemented: connections fall back to passthrough, with a warning logged for each one |
 
 ::: tip
 `passthrough`, `zero_copy`, and `server_only` forward raw bytes after the handshake. The proxy cannot inspect or modify packets in these modes.
@@ -742,10 +751,12 @@ A complete `infrarust.toml` with the main sections:
 bind = "0.0.0.0:25565"
 servers_dir = "./servers"
 plugins_dir = "./plugins"
-max_connections = 500
+max_connections = 10000
+max_connections_per_ip = 32
 connect_timeout = "5s"
 worker_threads = 0
 receive_proxy_protocol = false
+trusted_proxies = []
 so_reuseport = false
 unknown_domain_behavior = "default_motd"
 announce_proxy_commands = true
@@ -753,7 +764,7 @@ compression_threshold = 256
 
 [rate_limit]
 enabled = true
-max_connections = 3
+max_connections = 10
 window = "10s"
 status_max = 300
 status_window = "10s"
@@ -805,6 +816,8 @@ endpoint = "unix:///var/run/docker.sock"
 network = "minecraft-net"
 poll_interval = "30s"
 reconnect_delay = "5s"
+allowed_domains = ["*.mc.example.com"]
+inherit_forwarding = false
 
 [telemetry]
 enabled = true
@@ -818,6 +831,8 @@ export_interval = "15s"
 [telemetry.traces]
 enabled = true
 sampling_ratio = 0.1
+client_ip = "truncated"
+username = true
 
 [telemetry.resource]
 service_name = "infrarust"

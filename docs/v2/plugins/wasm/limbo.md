@@ -8,6 +8,8 @@ outline: [2, 3]
 
 A limbo session is a player the proxy holds in a minimal world of its own instead of connecting them to a backend. The player sees a flat void, can receive chat, titles, and action-bar messages, and can run commands, but no backend is involved until the handler releases them. Use limbo for an auth gate, a queue, or a maintenance screen.
 
+For clients on 1.20.2 and later, the limbo world is built from vanilla registry data embedded in the proxy, one set per protocol version from 1.20.2 (protocol 764) to 26.3 (protocol 777). The proxy never replays registry data captured from a backend, so a player who comes from a modded backend still gets the vanilla registries in limbo. A client whose version the build has no data for cannot enter limbo: the limbo login fails with a registry data error and the session ends.
+
 This page covers the WASM limbo API: the `LimboHandler` trait, the borrowed `LimboSession`, the storable `SessionHandle`, and the outcome types that release, deny, or redirect a held player.
 
 ## Capability

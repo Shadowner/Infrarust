@@ -74,7 +74,7 @@ The table below shows which V1 top-level keys map to V2. Items marked **dropped*
 | `keepAliveTimeout` | `[keepalive].time` | Only `time` is migrated; `interval` and `retries` take defaults |
 | `file_provider.proxies_path[0]` | `servers_dir` | Only the first path is used |
 | `file_provider.watch` | N/A | Hot-reload always works in V2 |
-| `proxy_protocol.receive_enabled` | `receive_proxy_protocol` | Boolean, top-level |
+| `proxy_protocol.receive_enabled` | `receive_proxy_protocol` | Boolean, top-level. WARN: V2 also requires `trusted_proxies`, which the migrator leaves empty |
 | `proxy_protocol.receive_timeout_secs` | dropped | Not in V2 |
 | `proxy_protocol.receive_allowed_versions` | dropped | V1 and V2 are both accepted automatically |
 | `cache.status_ttl_seconds` | `[status_cache].ttl` | In seconds, same meaning |
@@ -92,7 +92,7 @@ The table below shows which V1 top-level keys map to V2. Items marked **dropped*
 | `telemetry.enable_tracing` | `[telemetry].traces.enabled` | |
 | `logging` | dropped | Use `RUST_LOG` env var or `--log-level` CLI flag |
 | `managers_config` | per-server `[server_manager]` | Credentials moved to each server file |
-| `docker_provider.docker_host` | `[docker].endpoint` | |
+| `docker_provider.docker_host` | `[docker].endpoint` | Domains from container labels now need `[docker].allowed_domains`, which the migrator leaves empty |
 | `docker_provider.polling_interval` | `[docker].poll_interval` | In seconds |
 | `motds.unreachable` | `[default_motd]` | Used as the fallback MOTD for unknown domains |
 
@@ -322,10 +322,14 @@ Some changes cannot be automated:
 - Per-server rate limiting and cache settings are global in V2. Consolidate them into `infrarust.toml` under `[rate_limit]` and `[status_cache]`.
 - Multiple `proxies_path` directories collapse to one `servers_dir`. If you split configs across directories in V1, merge them or restructure before migrating.
 - The `logging` block has no V2 equivalent. Control verbosity with the `RUST_LOG` environment variable or the `--log-level` flag.
+- If V1 received proxy protocol, add `trusted_proxies` to `infrarust.toml` with the addresses of your load balancers, as CIDR ranges (`"10.0.0.5/32"` for a single address). The migrator emits a `WARN` line for this, and the proxy does not start while `receive_proxy_protocol = true` has an empty `trusted_proxies`.
+- If you use the Docker provider, list the domains your containers claim in `[docker].allowed_domains`. A container whose `infrarust.domains` label names a domain outside that list is not routed; only `<container>.docker.local` works without an entry. Containers also stop inheriting the `[forwarding]` mode unless you set `inherit_forwarding = true`.
+- The migrator writes `max_connections = 0` (unlimited) into `infrarust.toml`, while a V2 file without the key defaults to `10000`. Remove the line or set a limit if you want one.
 
 ## After migration
 
 1. Replace any `TODO:` placeholder values in the converted files.
 2. Move per-server `rate_limiter` and `cache` config into `infrarust.toml`.
-3. Start the proxy with `--log-level debug` on the first run to catch any remaining config problems early.
-4. Check the [config schema](./config-schema) if a field name or valid value is unclear.
+3. Add `trusted_proxies` if `receive_proxy_protocol` is `true`, and `[docker].allowed_domains` if you use Docker labels.
+4. Start the proxy with `--log-level debug` on the first run to catch any remaining config problems early.
+5. Check the [config schema](./config-schema) if a field name or valid value is unclear.

@@ -75,6 +75,8 @@ ban NotWelcome permanent
 ban TempBan 2h
 ```
 
+When some servers use a forwarding proxy mode (`passthrough`, `zero_copy`, `server_only`), the command also prints a warning that names them: the proxy does not authenticate players there, so the ban is checked against a name it has not verified. See [what each proxy mode can enforce](#what-each-proxy-mode-can-enforce).
+
 ### ban-ip
 
 Ban an IP address or a CIDR range. All players currently connected from a matching address are disconnected. Also available as `banip`.
@@ -138,7 +140,23 @@ Infrarust asks the provider at three points:
 2. **Login start**, after the client sends its username and before authentication. The built-in provider checks the IP, IP ranges and the username (case-insensitive).
 3. **After authentication**, once the final profile is known (after `GameProfileRequestEvent`, in every proxy mode). The built-in provider now also checks the UUID.
 
+A connection that a plugin takes over with a [connection handoff](../../plugins/wasm/connection-handoff) is checked before it is relayed, on the address and, for a claimed login, on the username from the Login Start, so a banned name is not handed off. UUID bans do not apply to a handoff.
+
 A refused login is disconnected in the login state with the ban message. With the built-in provider the message shows the ban reason and, for temporary bans, the remaining time; a plugin provider shows its own message.
+
+### What each proxy mode can enforce
+
+A ban holds only as far as the proxy knows who the player is. Only `client_only` verifies the name and UUID with the session server. In the other modes the proxy checks what the client claims:
+
+| Ban type | `client_only` | `offline` | `passthrough`, `zero_copy`, `server_only` |
+|----------|---------------|-----------|-------------------------------------------|
+| IP, IP range | Enforced | Enforced | Enforced |
+| Username | Enforced on the verified name | Checked against the claimed name | Checked against the claimed name |
+| UUID | Enforced on the Mojang UUID | Checked against the UUID derived from the name | Checked against the UUID derived from the name |
+
+In `offline` and the forwarding modes, the UUID is the name-based offline UUID, or the one the client sends with [`[auth] offline_uuid = "client"`](../global#authentication). A ban on a player's Mojang UUID does not match there with the default setting.
+
+In the forwarding modes every check runs before authentication: the backend authenticates the player after the proxy has let the connection through, and the proxy never sees the result. For those servers, add an IP ban or ban the player on the backend as well.
 
 ## Storage
 
@@ -162,7 +180,11 @@ Every ban gets an `id` that is never reused, even across restarts (the file keep
 Files written by earlier versions still load: entries without an `id` get one, and a plain string `source` is read as before (`"console"` is the console, `"plugin"` becomes a plugin source named `plugin`).
 
 ::: tip
-You don't need to create `bans.json` manually. Infrarust creates it the first time you issue a ban. If the file doesn't exist at startup, the proxy starts with an empty ban list. If the file is corrupt, Infrarust renames it to `bans.json.bak` and starts fresh rather than refusing to start.
+You don't need to create `bans.json` manually. Infrarust creates it the first time you issue a ban. If the file doesn't exist at startup, or is empty, the proxy starts with an empty ban list.
+:::
+
+::: warning
+If the file has content that cannot be parsed, Infrarust refuses to start with `ban file <path> is corrupt`, because starting without it would lift every ban. Repair the file, or move it away to start with no bans.
 :::
 
 Writes are crash-safe: the proxy writes to a temporary file first, then atomically renames it over the existing file. The audit log is capped at 10,000 entries to keep the file from growing without bound.

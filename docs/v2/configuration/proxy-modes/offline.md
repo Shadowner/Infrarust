@@ -31,9 +31,12 @@ With Docker labels:
 
 ```yaml
 labels:
+  infrarust.enable: "true"
   infrarust.domains: "mc.example.com"
   infrarust.proxy_mode: "offline"
 ```
+
+The domain must match an entry of [`allowed_domains`](../providers/docker.md#domain-allowlist) under `[docker]`.
 
 ### Full example
 
@@ -81,7 +84,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 ## How it works
 
-1. The proxy reads the client's handshake and login start packets.
+1. The proxy reads the client's handshake and login start packets. A login name that contains a control character is refused.
 2. It fires a `PreLoginEvent`, giving plugins a chance to deny the connection.
 3. It fires a `GameProfileRequestEvent`, where plugins may rewrite the player's profile, then checks bans against the final profile. No RSA key exchange, no encryption, no Mojang session verification.
 4. It fires `PermissionsSetupEvent` and `LoginEvent`; a plugin can still refuse the player here.

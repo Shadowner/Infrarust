@@ -130,13 +130,28 @@ Enable this in `infrarust.toml` when Infrarust sits behind a load balancer or an
 
 ```toml
 receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.5/32"]
 ```
+
+`trusted_proxies` lists the peers allowed to send the header, as CIDR ranges (a single address is written with `/32`, or `/128` for IPv6). It is required: with `receive_proxy_protocol = true` and no `trusted_proxies`, the proxy refuses to start with "receive_proxy_protocol requires trusted_proxies".
 
 ::: danger
 When `receive_proxy_protocol` is enabled, Infrarust expects every incoming connection to start with a PROXY protocol header. Connections without the header will fail immediately with "data does not start with a proxy protocol signature". Do not enable this unless your upstream actually sends proxy protocol.
 :::
 
 If you see "connection closed before proxy protocol header" in the logs, the upstream is closing the connection before sending the header. Check your load balancer configuration.
+
+### Every connection is closed and the logs show nothing
+
+A connection from a peer that is not in `trusted_proxies` is closed before its header is read. This is logged at `debug` level only, so at the default log level a wrong `trusted_proxies` looks like a proxy that silently drops everyone.
+
+Run Infrarust with `--log-level debug` and look for this line:
+
+```
+closing connection from a peer outside trusted_proxies
+```
+
+Its `peer` field is the address Infrarust sees for your load balancer. Add that address or its range to `trusted_proxies`. Behind NAT or in a container network it is often a private address and not the load balancer's public one.
 
 ### Sending proxy protocol (Infrarust → backend)
 
@@ -159,6 +174,38 @@ Infrarust always sends **v2 (binary)** when `send_proxy_protocol` is enabled. It
 
 When the client connects over IPv4 but the backend listens on IPv6 (or vice versa), Infrarust maps IPv4 addresses to IPv6 (`::ffff:1.2.3.4`) in the proxy protocol header. Some backends may not handle mapped addresses correctly. If the backend logs unexpected IPs, check whether it supports IPv4-mapped IPv6 addresses.
 
+## Players behind a shared address are refused
+
+Some players connect fine, then others are disconnected or see "Rate limit exceeded", usually once several people are online. This happens when all players reach Infrarust from the same address: through playit, frp, ngrok, the Docker userland proxy, carrier-grade NAT, or a Kubernetes service that rewrites the source address.
+
+Two limits count per client address (one IPv4 address, or one IPv6 /64), and both are on by default:
+
+- `max_connections_per_ip` allows 32 open connections per address. A connection over the limit is closed without a message.
+- `[rate_limit]` allows 10 logins per 10 seconds per address. A login over the limit is kicked with "Rate limit exceeded".
+
+Each limit logs a warning the first time it refuses a connection, and only that time:
+
+```
+refusing connections over max_connections_per_ip; clients behind playit, frp, ngrok, Docker userland proxy or NAT share one address: send the real address with receive_proxy_protocol and trusted_proxies, or raise max_connections_per_ip (0 disables it). This warning is logged once
+```
+
+```
+refusing connections over [rate_limit]; clients behind playit, frp, ngrok, Docker userland proxy or NAT share one address: send the real address with receive_proxy_protocol and trusted_proxies, raise max_connections and status_max, or set enabled = false. This warning is logged once
+```
+
+Later refusals are logged at `debug` level.
+
+The fix that keeps both limits useful is to give Infrarust the real client address: have the tunnel or load balancer send PROXY protocol, then set `receive_proxy_protocol = true` and `trusted_proxies` (see above). If the tunnel cannot send PROXY protocol, raise the limits in `infrarust.toml` or turn them off:
+
+```toml
+max_connections_per_ip = 0   # 0 disables the per-IP limit
+
+[rate_limit]
+enabled = false
+```
+
+See [Rate Limiting](../configuration/security/rate-limiting.md#clients-that-share-one-address).
+
 ## Config not reloading
 
 Infrarust watches the server config directory for changes and applies them automatically. You don't need to restart the proxy or run a reload command.
@@ -178,7 +225,8 @@ The file provider watches the `servers_dir` directory (default: `./servers/`) fo
 The `infrarust.toml` global config is **not** hot-reloaded. Changes to these settings require restarting the proxy:
 
 - `bind` (listen address)
-- `receive_proxy_protocol`
+- `receive_proxy_protocol` and `trusted_proxies`
+- `max_connections` and `max_connections_per_ip`
 - `connect_timeout`
 - `worker_threads`
 - `rate_limit`

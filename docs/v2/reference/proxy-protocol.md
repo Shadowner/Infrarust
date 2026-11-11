@@ -13,34 +13,47 @@ Infrarust supports both proxy protocol v1 (text) and v2 (binary) on the receive 
 
 Proxy protocol has two independent settings that control different directions:
 
-`receive_proxy_protocol` is a global setting in `infrarust.toml`. It tells the listener to expect a proxy protocol header from the upstream connection (your load balancer). Every incoming connection must include the header when this is enabled.
+`receive_proxy_protocol` is a global setting in `infrarust.toml`. It tells the listener to expect a proxy protocol header from the upstream connection (your load balancer). Every incoming connection must include the header when this is enabled. It comes with `trusted_proxies`, the list of peers allowed to send that header.
 
 `send_proxy_protocol` is a per-server setting. It tells Infrarust to prepend a v2 proxy protocol header when connecting to that backend. Enable this when your Minecraft server (or another proxy in front of it) expects proxy protocol.
 
 ## Receiving proxy protocol
 
-Add `receive_proxy_protocol = true` to your `infrarust.toml`:
+Add `receive_proxy_protocol = true` and `trusted_proxies` to your `infrarust.toml`:
 
-```toml{4}
+```toml{4-5}
 bind = "0.0.0.0:25565"
 max_connections = 1000
 
 receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.5/32", "10.0.1.0/24"]
 ```
 
 ::: danger
 When `receive_proxy_protocol` is enabled, every incoming connection must start with a valid proxy protocol header. Connections without a header (direct player connections, monitoring probes) will be rejected. Only enable this if all traffic comes through a proxy that sends the header.
 :::
 
-Once a proxy protocol header is decoded, the client's real IP and port are stored in the connection metadata. Any feature that uses the client address (rate limiting, IP filters, bans, logging) will see the original client IP rather than the load balancer's address.
+Once a proxy protocol header is decoded, the client's real IP and port are stored in the connection metadata. Any feature that uses the client address (rate limiting, the per-IP connection limit, IP filters, bans, logging) will see the original client IP rather than the load balancer's address.
+
+### Trusted proxies
+
+`trusted_proxies` is a list of CIDR ranges, IPv4 or IPv6, empty by default. A single address is written with its full prefix length (`10.0.0.5/32`, `2001:db8::5/128`); an entry without a prefix fails to parse, and the proxy stops with `invalid IP address syntax` pointing at that entry. It is required when `receive_proxy_protocol` is `true`: with an empty list, configuration validation fails and the proxy does not start.
+
+```
+receive_proxy_protocol requires trusted_proxies: list the addresses of your load balancers, or ["0.0.0.0/0", "::/0"] to trust every peer
+```
+
+The listener compares the TCP peer address of each accepted connection with the list. A peer outside it is closed without a single byte of its header being read, and the close is logged at `debug` only (`closing connection from a peer outside trusted_proxies`), so a scan of the port does not fill the logs. An IPv4 peer that reaches a dual-stack socket as `::ffff:a.b.c.d` is compared as IPv4, so it matches IPv4 entries and not `::/0`.
+
+`trusted_proxies = ["0.0.0.0/0", "::/0"]` accepts a header from every peer, which is what the proxy did before this option existed. With that value, any client that can reach the port chooses the address the proxy records for it.
 
 ### What gets parsed
 
 The decoder reads up to 536 bytes from the start of the connection. It checks for the v2 binary signature first (the 12-byte magic), then falls back to the v1 text prefix (`PROXY `). Both IPv4 and IPv6 addresses are supported in either version. If neither signature matches after 16 bytes, the connection is closed with an error. The whole header must arrive within 5 seconds, otherwise the read times out and the connection is dropped.
 
-The header is read in the connection's own task, after the listener has accepted it and before transport filters or the handshake parser run. A client that opens a connection and stays silent, or trickles its header in, delays only that connection, never the listener. While it waits for its header, the connection counts toward `max_connections`, and it gives its slot back when it is dropped.
+The header is read in the connection's own task, after the listener has accepted it and before transport filters or the handshake parser run. A client that opens a connection and stays silent, or trickles its header in, delays only that connection, never the listener. While it waits for its header, the connection counts toward `max_connections`, and it gives its slot back when it is dropped. The `max_connections_per_ip` slot is taken after the header is decoded, so it is counted against the real client address and not against the load balancer.
 
-A v1 `PROXY UNKNOWN` header is accepted (HAProxy sends it for health checks) but carries no address, so no real client IP is recorded for that connection. Address families other than TCP over IPv4 or IPv6, such as Unix sockets, are rejected.
+A v1 `PROXY UNKNOWN` header is accepted (HAProxy sends it for health checks) but carries no address, so no real client IP is recorded for that connection, and it counts toward `max_connections_per_ip` under the load balancer's address. Address families other than TCP over IPv4 or IPv6, such as Unix sockets, are rejected.
 
 ## Sending proxy protocol
 
@@ -79,6 +92,7 @@ In `infrarust.toml`:
 
 ```toml
 receive_proxy_protocol = true
+trusted_proxies = ["10.0.0.5/32"]
 ```
 
 In `servers/backend.toml`:
@@ -104,7 +118,9 @@ When the source and destination addresses use different IP versions (one IPv4, o
 | `ProxyProtocolDecode: proxy protocol header read timed out` | Header did not arrive within 5 seconds |
 | `ProxyProtocolDecode` | Malformed header that matches a signature but fails to parse |
 
-All proxy protocol errors are fatal. The connection is closed immediately with no fallback.
+All proxy protocol errors are fatal. The connection is closed immediately with no fallback, and the error is logged at `warn` as a connection error.
+
+A peer outside `trusted_proxies` is not in this table: no header is read, and the close is logged at `debug`.
 
 ## Backend compatibility
 

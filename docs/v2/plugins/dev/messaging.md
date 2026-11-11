@@ -234,7 +234,9 @@ A plugin that registered `ChannelId::bungeecord()` gets the message first and ca
 
 ### Network scoping
 
-Every request is scoped to the requesting server's `network`, with the rule server switches use: the requesting server sees itself, the servers of its network and the servers that have no network. A server of another network, and its players, do not exist for it: they are left out of `ALL`, and a request naming them gets no response and changes nothing.
+Every request is scoped to the requesting server's `network`: the requesting server sees itself and the servers of its network. A server that has no `network` is a scope of its own and sees only itself: `Connect`, `ServerIP` and `GetServers` only find that server, `IPOther` and `PlayerCount` or `PlayerList` with `ALL` only see its own players, and `Forward` to `ALL` reaches no server. Any other server, and its players, do not exist for the requester: they are left out of `ALL`, and a request naming them gets no response and changes nothing.
+
+This is stricter than the rule for switches an operator or a plugin asks for (`/ir send`, `/ir server`, the plugin API), which still allows a server without a network to be the source or the target.
 
 ### Subchannels
 
@@ -245,7 +247,7 @@ Requests and responses are Java `DataOutput` streams: `UTF` is `writeUTF` (a big
 | `Connect` | `UTF` server | none, the player is switched | `connect` (on) |
 | `ConnectOther` | `UTF` player, `UTF` server | none, that player is switched | `connect_other` (off) |
 | `IP` | | `UTF` IP, `int` port of the player | `ip` (on) |
-| `IPOther` | `UTF` player | `UTF` player, `UTF` IP, `int` port | `ip_other` (on) |
+| `IPOther` | `UTF` player | `UTF` player, `UTF` IP, `int` port | `ip_other` (off) |
 | `PlayerCount` | `UTF` server or `ALL` | `UTF` server or `ALL`, `int` count | `player_count` (on) |
 | `PlayerList` | `UTF` server or `ALL` | `UTF` server or `ALL`, `UTF` names separated by `", "` | `player_list` (on) |
 | `GetServers` | | `UTF` server names separated by `", "` | `get_servers` (on) |
@@ -253,7 +255,7 @@ Requests and responses are Java `DataOutput` streams: `UTF` is `writeUTF` (a big
 | `GetPlayerServer` | `UTF` player | `UTF` player, `UTF` server | `get_player_server` (on) |
 | `UUID` | | `UTF` UUID without dashes | `uuid` (on) |
 | `UUIDOther` | `UTF` player | `UTF` player, `UTF` UUID without dashes | `uuid_other` (on) |
-| `ServerIP` | `UTF` server | `UTF` server, `UTF` host, `short` port of its first address | `server_ip` (on) |
+| `ServerIP` | `UTF` server | `UTF` server, `UTF` host, `short` port of its first address | `server_ip` (off) |
 | `Message` | `UTF` player or `ALL`, `UTF` legacy text (`§` codes) | none, the text is sent in chat | `message` (off) |
 | `MessageRaw` | `UTF` player or `ALL`, `UTF` component JSON | none | `message_raw` (off) |
 | `KickPlayer` | `UTF` player, `UTF` legacy text | none, the player is disconnected | `kick_player` (off) |

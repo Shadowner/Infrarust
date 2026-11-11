@@ -126,7 +126,7 @@ An error in the IP forwarding layer (Velocity modern forwarding). See [Forwardin
 invalid session state: <details>
 ```
 
-A session reached a state the proxy never expects: a packet arrived in the wrong connection phase, or a server configuration that validation rejects (the reserved `proxy_mode = "full"`, velocity forwarding under a forwarding proxy mode) still reached the session handler. The log line just before carries the server id.
+A session reached a state the proxy never expects: a packet arrived in the wrong connection phase, or a server configuration that validation rejects (velocity forwarding under a forwarding proxy mode) still reached the session handler. The log line just before carries the server id.
 
 ### `InvalidStatus`
 
@@ -150,7 +150,7 @@ A JSON document the proxy produces (status response, ban file, registry data) fa
 registry data error: <details>
 ```
 
-The embedded or extracted registry data for a protocol version is missing, truncated or written in an unsupported format. Connect a player to a real backend first, or add registry data for that version.
+The proxy has no embedded registry data for the client's protocol version, so the client cannot enter limbo. Registry data a backend sent is never reused for limbo: a client newer than the newest version embedded in the build needs a build that embeds its version.
 
 ### `UnknownLimboHandler`
 
@@ -183,6 +183,14 @@ ban storage error: <details>
 ```
 
 The file ban storage received a target type it cannot key, or a `list` cursor that is not one it issued.
+
+At startup, the same error reports a ban file that cannot be parsed:
+
+```
+ban storage error: ban file <path> is corrupt: <details>. Repair it, or move it away to start with no bans
+```
+
+The proxy refuses to start rather than run with no bans. Fix the JSON, or move the file away to start with an empty ban list. A missing or empty file is not an error.
 
 ## Transport errors
 
@@ -243,6 +251,22 @@ proxy protocol decode error: <details>
 ```
 
 The PROXY protocol header was recognized but contained invalid data. Check the upstream proxy's PROXY protocol version and configuration.
+
+### `UntrustedProxyPeer`
+
+```
+peer <ip> is not in trusted_proxies
+```
+
+`receive_proxy_protocol` is on and the connection came from an address outside `trusted_proxies`. The connection is closed without being read, and the event is logged at debug level. If the peer is one of your load balancers, add its address to `trusted_proxies` as a CIDR range (`10.0.0.5/32` for a single address).
+
+### `IpLimitReached`
+
+```
+<ip> is at the per-IP connection limit
+```
+
+The client's IPv4 address, or the /64 of its IPv6 address, already holds `max_connections_per_ip` connections, so the new one is closed. This is logged at debug level, with one warning the first time it happens. Players behind a tunnel or a NAT share one address: send the real address with `receive_proxy_protocol` and `trusted_proxies`, or raise `max_connections_per_ip`.
 
 ### `SocketConfig`
 
@@ -352,6 +376,14 @@ backend rejected connection during forwarding: <reason>
 
 The backend sent an explicit disconnect during the forwarding handshake. The reason string comes from the backend.
 
+### `SecretMismatch`
+
+```
+server overrides forwarding to <mode>, but the proxy-wide [forwarding] mode does not hold a secret for it
+```
+
+A server sets `forwarding_mode` to `velocity` or `bungee_guard` while the global `[forwarding]` mode is a different one, so there is no secret to use for it. Configuration validation refuses such a server first with [`ForwardingSecretMismatch`](#forwardingsecretmismatch), so this error only shows if a server reached a connection without that check. Set `[forwarding] mode` to the same value, or change `forwarding_mode` on the server.
+
 ## Configuration errors
 
 These come from `infrarust_config` and are raised when loading or validating config files.
@@ -420,6 +452,30 @@ validation error: <details>
 
 A catch-all for config validation failures that don't fit other variants.
 
+### `ProxyProtocolWithoutTrustedProxies`
+
+```
+receive_proxy_protocol requires trusted_proxies: list the addresses of your load balancers, or ["0.0.0.0/0", "::/0"] to trust every peer
+```
+
+`receive_proxy_protocol = true` is set with an empty `trusted_proxies`. The proxy refuses to start. Add the CIDR ranges of the load balancers that send the PROXY protocol header.
+
+### `ForwardingSecretMismatch`
+
+```
+server '<id>': forwarding_mode = "<requested>" needs its own secret, but the proxy-wide [forwarding] mode is "<global>": set [forwarding] mode = "<requested>" or change forwarding_mode on the server; a velocity secret is never reused as a bungee_guard token, which travels in clear text
+```
+
+A server sets `forwarding_mode` to `velocity` or `bungee_guard` while the global `[forwarding]` mode is a different one. The server config is rejected: a new server is not routed, and a server already loaded keeps its previous config. Set `[forwarding] mode` to the same value, or change `forwarding_mode` on the server.
+
+### `InheritedForwardingUnverified`
+
+```
+server '<id>': <proxy_mode> mode does not verify players, but the proxy-wide [forwarding] mode "<mode>" would hand this backend the identity each client claims: set forwarding_mode = "none" on the server, or write forwarding_mode = "<mode>" to accept that any client can impersonate any player there
+```
+
+A `passthrough`, `zero_copy` or `server_only` server has no `forwarding_mode` of its own while the global `[forwarding]` mode is `bungee_cord` or `bungee_guard`. The server config is rejected: a new server is not routed, and a server already loaded keeps its previous config. Set `forwarding_mode = "none"` on the server. Writing the mode on the server instead loads it with a warning.
+
 ## Server manager errors
 
 These come from `infrarust_server_manager` and relate to server lifecycle operations (start, stop, wake).
@@ -487,6 +543,14 @@ server <server_id> process exited with code <code>
 ```
 
 A managed server process terminated. Check the server's logs for the cause. An exit code of `None` usually means the process was killed by a signal.
+
+### `StartThrottled`
+
+```
+server <server_id> is not being started again for another <duration>
+```
+
+A player's login or server switch asked to start a server that was started less than 30 seconds ago, or that is still in the wait after a crash. A failed start, a crash reported by the provider, and a stop on its own within 10 minutes of the last start all count as a crash. The wait starts at 30 seconds and doubles with each further crash, up to 10 minutes. The player is told the server is unavailable. A manual start is not throttled.
 
 ### `Shutdown`
 
