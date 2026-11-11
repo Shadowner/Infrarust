@@ -154,32 +154,43 @@ pub fn container_server_config(
         });
     }
 
-    if !policy.inherit_forwarding {
+    if !(policy.inherit_forwarding && config.proxy_mode.is_intercepted()) {
         config.forwarding_mode = Some(ForwardingMode::None);
     }
     Ok(config)
 }
 
-/// The warning owed when the `[docker]` policy keeps a container on an
-/// intercepted proxy mode out of the proxy-wide forwarding mode.
+/// The warning owed when a container does not get the proxy-wide forwarding
+/// mode its operator may expect it to have.
 pub fn withheld_forwarding_warning(
     policy: &DockerProviderConfig,
     proxy_wide: &ForwardingMode,
     container_name: &str,
     config: &ServerConfig,
 ) -> Option<String> {
-    if policy.inherit_forwarding
-        || *proxy_wide == ForwardingMode::None
-        || !config.proxy_mode.is_intercepted()
-    {
+    if *proxy_wide == ForwardingMode::None {
         return None;
     }
-    Some(format!(
-        "container {container_name} and any other container on an intercepted proxy mode get \
-         no player forwarding, although [forwarding] selects {proxy_wide:?}: a backend that \
-         expects it rejects every player. To hand containers the mode and its secret, set \
-         inherit_forwarding = true in [docker]"
-    ))
+    match (
+        policy.inherit_forwarding,
+        config.proxy_mode.is_intercepted(),
+    ) {
+        (false, true) => Some(format!(
+            "container {container_name} and any other container on an intercepted proxy mode \
+             get no player forwarding, although [forwarding] selects {proxy_wide:?}: a backend \
+             that expects it rejects every player. To hand containers the mode and its secret, \
+             set inherit_forwarding = true in [docker]"
+        )),
+        (true, false) => Some(format!(
+            "container {container_name} and any other container on {:?} or another proxy mode \
+             that relays logins untouched get no player forwarding, although [docker] sets \
+             inherit_forwarding = true and [forwarding] selects {proxy_wide:?}: the proxy \
+             cannot vouch for a player it does not log in. Only containers labelled \
+             infrarust.proxy_mode=client_only or offline inherit the mode",
+            config.proxy_mode
+        )),
+        (false, false) | (true, true) => None,
+    }
 }
 
 fn domain_allowed(allowed: &[String], domain: &str) -> bool {

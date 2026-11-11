@@ -342,16 +342,88 @@ fn test_policy_keeps_containers_out_of_proxy_wide_forwarding() {
     }
 }
 
-#[test]
-fn test_policy_inherit_forwarding_leaves_the_mode_unset() {
-    let labels = make_labels(&[("infrarust.enable", "true")]);
-    let policy = DockerProviderConfig {
+fn inheriting_policy() -> DockerProviderConfig {
+    DockerProviderConfig {
         inherit_forwarding: true,
         ..Default::default()
-    };
-    let config = container_server_config(&policy, "mc-test", &labels, ADDRESS).unwrap();
+    }
+}
 
-    assert_eq!(config.forwarding_mode, None);
+fn labels_in_mode(proxy_mode: &str) -> HashMap<String, String> {
+    make_labels(&[
+        ("infrarust.enable", "true"),
+        ("infrarust.proxy_mode", proxy_mode),
+    ])
+}
+
+#[test]
+fn test_policy_inherit_forwarding_leaves_the_mode_unset_on_intercepted_modes() {
+    for proxy_mode in ["client_only", "offline"] {
+        let config = container_server_config(
+            &inheriting_policy(),
+            "mc-test",
+            &labels_in_mode(proxy_mode),
+            ADDRESS,
+        )
+        .unwrap();
+
+        assert_eq!(config.forwarding_mode, None, "{proxy_mode}");
+    }
+}
+
+#[test]
+fn test_policy_inherit_forwarding_keeps_forwarding_modes_routable() {
+    let unlabelled = make_labels(&[("infrarust.enable", "true")]);
+    for labels in [
+        unlabelled,
+        labels_in_mode("passthrough"),
+        labels_in_mode("zero_copy"),
+        labels_in_mode("server_only"),
+    ] {
+        let config =
+            container_server_config(&inheriting_policy(), "mc-test", &labels, ADDRESS).unwrap();
+
+        assert_eq!(
+            config.forwarding_mode,
+            Some(ForwardingMode::None),
+            "{labels:?}"
+        );
+        for global in [
+            ForwardingMode::None,
+            ForwardingMode::BungeeCord,
+            ForwardingMode::BungeeGuard,
+            ForwardingMode::Velocity,
+        ] {
+            assert!(
+                validate_server_forwarding(&config, global.clone()).is_ok(),
+                "{labels:?} under {global:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_inherit_forwarding_warns_about_containers_it_cannot_reach() {
+    let policy = inheriting_policy();
+    let config =
+        container_server_config(&policy, "mc-test", &labels_in_mode("passthrough"), ADDRESS)
+            .unwrap();
+
+    for proxy_wide in [
+        ForwardingMode::BungeeCord,
+        ForwardingMode::BungeeGuard,
+        ForwardingMode::Velocity,
+    ] {
+        let warning =
+            withheld_forwarding_warning(&policy, &proxy_wide, "mc-test", &config).unwrap();
+        assert!(warning.contains("mc-test"), "{warning}");
+        assert!(warning.contains("inherit_forwarding = true"), "{warning}");
+        assert!(warning.contains("client_only"), "{warning}");
+    }
+    assert_eq!(
+        withheld_forwarding_warning(&policy, &ForwardingMode::None, "mc-test", &config),
+        None
+    );
 }
 
 #[test]
