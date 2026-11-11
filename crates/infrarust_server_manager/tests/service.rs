@@ -903,3 +903,35 @@ async fn test_a_requested_stop_the_panel_reports_late_is_not_an_early_exit() {
 
     shutdown.cancel();
 }
+
+#[tokio::test]
+async fn test_an_exit_after_a_confirmed_stop_is_counted() {
+    let provider = Arc::new(MockProvider::with_status_after_start(
+        ProviderStatus::Stopped,
+        ProviderStatus::Running,
+    ));
+    let service = service_with(provider.clone());
+    let shutdown = CancellationToken::new();
+    let _handles = service.start_monitoring(Arc::new(MockPlayerCounter), shutdown.clone());
+
+    service.start_server("test").await.unwrap();
+    wait_for_state(&service, ServerState::Online).await;
+    service.stop_server("test").await.unwrap();
+    let polls = provider.polls.load(Ordering::Acquire);
+    provider.wait_for_polls(polls + 2).await;
+
+    for _ in 0..2 {
+        *provider.status.lock().await = ProviderStatus::Running;
+        wait_for_state(&service, ServerState::Online).await;
+        *provider.status.lock().await = ProviderStatus::Stopped;
+        wait_for_state(&service, ServerState::Sleeping).await;
+    }
+
+    let result = service.ensure_started("test").await;
+    let Err(ServerManagerError::StartThrottled { retry_after, .. }) = result else {
+        panic!("two early exits in a row block logins, got {result:?}");
+    };
+    assert!(retry_after > Duration::from_secs(30), "{retry_after:?}");
+
+    shutdown.cancel();
+}

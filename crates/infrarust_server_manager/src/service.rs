@@ -46,15 +46,24 @@ impl StartThrottle {
         self.stop_requested = false;
     }
 
-    const fn stop_requested(&mut self) {
+    fn ran_stably(&self, now: Instant) -> bool {
+        self.last_start
+            .is_none_or(|start| now.saturating_duration_since(start) >= STABLE_UPTIME)
+    }
+
+    fn stop_requested(&mut self, now: Instant) {
         self.stop_requested = true;
+        if self.ran_stably(now) {
+            self.next_backoff = FIRST_CRASH_BACKOFF;
+        }
+    }
+
+    const fn stop_confirmed(&mut self) {
+        self.stop_requested = false;
     }
 
     fn crashed(&mut self, now: Instant) {
-        let stable = self
-            .last_start
-            .is_none_or(|start| now.saturating_duration_since(start) >= STABLE_UPTIME);
-        if stable {
+        if self.ran_stably(now) {
             self.next_backoff = FIRST_CRASH_BACKOFF;
         }
         self.blocked_until = Some(now + self.next_backoff);
@@ -62,16 +71,11 @@ impl StartThrottle {
     }
 
     fn exited(&mut self, now: Instant) {
-        if std::mem::take(&mut self.stop_requested) {
-            return;
-        }
-        let unstable = self
-            .last_start
-            .is_some_and(|start| now.saturating_duration_since(start) < STABLE_UPTIME);
-        if unstable {
-            self.crashed(now);
-        } else {
+        let requested = std::mem::take(&mut self.stop_requested);
+        if self.ran_stably(now) {
             self.next_backoff = FIRST_CRASH_BACKOFF;
+        } else if !requested {
+            self.crashed(now);
         }
     }
 
@@ -557,7 +561,7 @@ impl ServerManagerService {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             entry.set_state(ServerState::Sleeping);
             entry.last_player_seen = None;
-            entry.throttle.stop_requested();
+            entry.throttle.stop_requested(Instant::now());
         }
 
         self.fire_state_change(server_id, ServerState::Stopping, ServerState::Sleeping);
@@ -640,6 +644,9 @@ impl ServerManagerService {
                 }
                 ProviderStatus::Starting => entry.unconfirmed_start_until = None,
                 ProviderStatus::Stopped if entry.is_unconfirmed_start() => return None,
+                ProviderStatus::Stopped if entry.state == ServerState::Sleeping => {
+                    entry.throttle.stop_confirmed();
+                }
                 _ if entry.state == ServerState::Crashed => return None,
                 _ => {}
             }
@@ -907,6 +914,77 @@ mod tests {
         service.update_state("s", ProviderStatus::Stopped, generation);
 
         assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    fn crash_repeatedly_then_run(
+        service: &ServerManagerService,
+        server_id: &str,
+        uptime: Duration,
+    ) {
+        let mut entry = service.entries.get_mut(server_id).unwrap();
+        for _ in 0..3 {
+            entry.begin_start();
+            entry.set_state(ServerState::Crashed);
+        }
+        assert!(entry.throttle.next_backoff > FIRST_CRASH_BACKOFF);
+        entry.begin_start();
+        entry.set_state(ServerState::Online);
+        drop(entry);
+        rewind_last_start(service, server_id, uptime);
+    }
+
+    fn next_backoff(service: &ServerManagerService, server_id: &str) -> Duration {
+        service
+            .entries
+            .get(server_id)
+            .unwrap()
+            .throttle
+            .next_backoff
+    }
+
+    #[tokio::test]
+    async fn a_requested_stop_after_a_stable_run_resets_the_crash_backoff() {
+        let service = service_with_online_server("s");
+        crash_repeatedly_then_run(&service, "s", STABLE_UPTIME + Duration::from_secs(1));
+
+        service.stop_server("s").await.unwrap();
+
+        assert_eq!(next_backoff(&service, "s"), FIRST_CRASH_BACKOFF);
+    }
+
+    #[tokio::test]
+    async fn a_requested_stop_after_a_short_run_keeps_the_crash_backoff() {
+        let service = service_with_online_server("s");
+        crash_repeatedly_then_run(&service, "s", MIN_START_INTERVAL + Duration::from_secs(1));
+        let before = next_backoff(&service, "s");
+
+        service.stop_server("s").await.unwrap();
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert_eq!(next_backoff(&service, "s"), before);
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn a_stop_the_panel_confirmed_does_not_excuse_a_later_exit() {
+        let service = service_with_online_server("s");
+        service.entries.get_mut("s").unwrap().begin_start();
+        rewind_last_start(&service, "s", MIN_START_INTERVAL + Duration::from_secs(1));
+        service.stop_server("s").await.unwrap();
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            None
+        );
+        service.update_state("s", ProviderStatus::Running, generation);
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert!(blocked_for(&service, "s") > Duration::ZERO);
     }
 
     #[tokio::test]
