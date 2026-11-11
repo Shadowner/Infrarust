@@ -97,6 +97,10 @@ impl ProxyServer {
                     tracing::debug!(%ip, "closing connection over the per-IP limit");
                     return Ok(());
                 }
+                Err(TransportError::UntrustedProxyPeer { peer }) => {
+                    tracing::debug!(%peer, "closing connection from a peer outside trusted_proxies");
+                    return Ok(());
+                }
                 Err(e) => return Err(e.into()),
             },
         };
