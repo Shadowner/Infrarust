@@ -30,7 +30,8 @@ impl LegacyHandler {
         let (server, response) = match routing {
             Some(routing) => (
                 Some(ServerId::new(routing.server_config.effective_id())),
-                self.backend_response(ctx, &routing, raw).await,
+                self.backend_response(ctx, &routing, request.variant, raw)
+                    .await,
             ),
             None => (None, self.config_response(None)),
         };
@@ -58,18 +59,19 @@ impl LegacyHandler {
         &self,
         ctx: &ConnectionContext,
         routing: &RoutingData,
+        variant: LegacyPingVariant,
         raw: &[u8],
     ) -> LegacyPingResponse {
         let config = &routing.server_config;
         let config_id = routing.config_id.as_str();
-        if let Some(cached) = self.status_cache.get_fresh_legacy(config_id) {
+        if let Some(cached) = self.status_cache.get_fresh_legacy(config_id, variant) {
             return cached;
         }
         let leader = match self.relay_gate.enter(config_id).await {
             RelayTurn::Leader(leader) => leader,
             RelayTurn::Unreachable | RelayTurn::Busy => return self.config_response(Some(config)),
         };
-        if let Some(cached) = self.status_cache.get_fresh_legacy(config_id) {
+        if let Some(cached) = self.status_cache.get_fresh_legacy(config_id, variant) {
             return cached;
         }
 
@@ -87,7 +89,8 @@ impl LegacyHandler {
         .await
         {
             Ok(Ok(response)) => {
-                self.status_cache.put_legacy(config_id, response.clone());
+                self.status_cache
+                    .put_legacy(config_id, variant, response.clone());
                 leader.succeeded();
                 response
             }

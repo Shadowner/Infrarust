@@ -4,7 +4,7 @@ use crate::error::{ProtocolError, ProtocolResult};
 pub const MAX_PING_CHANNEL_CHARS: usize = 20;
 pub const MAX_PING_DATA_BYTES: usize = 1 + 2 + MAX_HOSTNAME_CHARS * 2 + 4;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LegacyPingVariant {
     Beta,
     V1_4,

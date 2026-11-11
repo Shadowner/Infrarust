@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use infrarust_protocol::LegacyPingResponse;
+use infrarust_protocol::legacy::LegacyPingVariant;
 
 use super::response::ServerPingResponse;
 
@@ -17,7 +18,7 @@ use super::response::ServerPingResponse;
 /// No background cleanup — expiry is checked lazily on `get_fresh()`.
 pub struct StatusCache {
     entries: DashMap<String, CachedStatus>,
-    legacy_entries: DashMap<String, CachedLegacy>,
+    legacy_entries: DashMap<(String, LegacyPingVariant), CachedLegacy>,
     default_ttl: Duration,
 }
 
@@ -81,14 +82,23 @@ impl StatusCache {
     }
 
     /// Returns the reply a backend gave to a legacy ping if the TTL has not expired.
-    pub fn get_fresh_legacy(&self, server_id: &str) -> Option<LegacyPingResponse> {
-        let entry = self.legacy_entries.get(server_id)?;
+    pub fn get_fresh_legacy(
+        &self,
+        server_id: &str,
+        variant: LegacyPingVariant,
+    ) -> Option<LegacyPingResponse> {
+        let entry = self.legacy_entries.get(&(server_id.to_string(), variant))?;
         (entry.fetched_at.elapsed() < self.default_ttl).then(|| entry.response.clone())
     }
 
-    pub fn put_legacy(&self, server_id: &str, response: LegacyPingResponse) {
+    pub fn put_legacy(
+        &self,
+        server_id: &str,
+        variant: LegacyPingVariant,
+        response: LegacyPingResponse,
+    ) {
         self.legacy_entries.insert(
-            server_id.to_string(),
+            (server_id.to_string(), variant),
             CachedLegacy {
                 response,
                 fetched_at: Instant::now(),
@@ -99,7 +109,7 @@ impl StatusCache {
     /// Removes a single server's cache entries.
     pub fn invalidate(&self, server_id: &str) {
         self.entries.remove(server_id);
-        self.legacy_entries.remove(server_id);
+        self.legacy_entries.retain(|(id, _), _| id != server_id);
     }
 
     /// Removes all cache entries.
@@ -113,6 +123,7 @@ impl StatusCache {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use infrarust_protocol::ProtocolVersion;
+    use infrarust_protocol::legacy::LegacyPingVariant;
 
     use super::*;
 
@@ -164,15 +175,67 @@ mod tests {
             max_players: 2,
         };
         let cache = StatusCache::new(Duration::from_secs(60));
-        cache.put_legacy("srv", reply());
-        assert_eq!(cache.get_fresh_legacy("srv").unwrap().max_players, 2);
+        cache.put_legacy("srv", LegacyPingVariant::V1_6, reply());
+        assert_eq!(
+            cache
+                .get_fresh_legacy("srv", LegacyPingVariant::V1_6)
+                .unwrap()
+                .max_players,
+            2
+        );
         cache.invalidate_all();
-        assert!(cache.get_fresh_legacy("srv").is_none());
+        assert!(
+            cache
+                .get_fresh_legacy("srv", LegacyPingVariant::V1_6)
+                .is_none()
+        );
 
         let expired = StatusCache::new(Duration::from_millis(1));
-        expired.put_legacy("srv", reply());
+        expired.put_legacy("srv", LegacyPingVariant::V1_6, reply());
         std::thread::sleep(Duration::from_millis(5));
-        assert!(expired.get_fresh_legacy("srv").is_none());
+        assert!(
+            expired
+                .get_fresh_legacy("srv", LegacyPingVariant::V1_6)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_legacy_entries_are_kept_per_ping_variant() {
+        let reply = |protocol_version| LegacyPingResponse {
+            protocol_version,
+            server_version: String::new(),
+            motd: "Test".to_string(),
+            online_players: 1,
+            max_players: 2,
+        };
+        let cache = StatusCache::new(Duration::from_secs(60));
+        cache.put_legacy("srv", LegacyPingVariant::Beta, reply(0));
+        assert!(
+            cache
+                .get_fresh_legacy("srv", LegacyPingVariant::V1_6)
+                .is_none()
+        );
+
+        cache.put_legacy("srv", LegacyPingVariant::V1_6, reply(78));
+        cache.put_legacy("other", LegacyPingVariant::V1_6, reply(78));
+        let protocol = |variant| {
+            cache
+                .get_fresh_legacy("srv", variant)
+                .map(|cached| cached.protocol_version)
+        };
+        assert_eq!(protocol(LegacyPingVariant::Beta), Some(0));
+        assert_eq!(protocol(LegacyPingVariant::V1_6), Some(78));
+        assert_eq!(protocol(LegacyPingVariant::V1_4), None);
+
+        cache.invalidate("srv");
+        assert_eq!(protocol(LegacyPingVariant::Beta), None);
+        assert_eq!(protocol(LegacyPingVariant::V1_6), None);
+        assert!(
+            cache
+                .get_fresh_legacy("other", LegacyPingVariant::V1_6)
+                .is_some()
+        );
     }
 
     #[test]
