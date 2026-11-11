@@ -144,7 +144,7 @@ impl ConnectionRegistry {
             .map(|sessions| sessions.clone())
             .unwrap_or_default();
         matches
-            .sort_by_key(|s| Reverse((s.kind().identity_rank(), s.profile().username == username)));
+            .sort_by_key(|s| Reverse((s.profile().username == username, s.kind().identity_rank())));
         matches
     }
 
@@ -284,6 +284,11 @@ mod tests {
         let mut ids: Vec<u64> = sessions.iter().map(|s| s.id().as_u64()).collect();
         ids.sort_unstable();
         ids
+    }
+
+    fn named(registry: &ConnectionRegistry, username: &str) -> Vec<u64> {
+        let sessions = registry.find_all_by_username(username);
+        sessions.iter().map(|s| s.id().as_u64()).collect()
     }
 
     fn found_id(registry: &ConnectionRegistry, username: &str) -> Option<u64> {
@@ -696,21 +701,29 @@ mod tests {
         let _forwarded_second = registry.register(of_kind(2, Uuid::new_v4(), "Steve", FORWARDED));
         assert_eq!(found_id(&registry, "Steve"), Some(1));
 
-        let _offline = registry.register(of_kind(3, Uuid::new_v4(), "steve", OFFLINE));
+        let _offline = registry.register(of_kind(3, Uuid::new_v4(), "Steve", OFFLINE));
         assert_eq!(found_id(&registry, "Steve"), Some(3));
+        assert_eq!(found_id(&registry, "steve"), Some(3));
 
         let _verified = registry.register(of_kind(4, Uuid::new_v4(), "Steve", VERIFIED));
+        assert_eq!(found_id(&registry, "Steve"), Some(4));
         assert_eq!(found_id(&registry, "steve"), Some(4));
 
         drop(forwarded_first);
-        assert_eq!(
-            registry
-                .find_all_by_username("STEVE")
-                .iter()
-                .map(|s| s.id().as_u64())
-                .collect::<Vec<_>>(),
-            [4, 3, 2]
-        );
+        assert_eq!(named(&registry, "Steve"), [4, 3, 2]);
+        assert_eq!(named(&registry, "STEVE"), [4, 3, 2]);
+    }
+
+    #[test]
+    fn an_exact_spelling_wins_over_a_better_ranked_other_case() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let _offline = registry.register(of_kind(1, Uuid::new_v4(), "Steve", OFFLINE));
+        let _verified = registry.register(of_kind(2, Uuid::new_v4(), "steve", VERIFIED));
+        let _forwarded = registry.register(of_kind(3, Uuid::new_v4(), "Steve", FORWARDED));
+
+        assert_eq!(named(&registry, "Steve"), [1, 3, 2]);
+        assert_eq!(named(&registry, "steve"), [2, 1, 3]);
+        assert_eq!(named(&registry, "STEVE"), [2, 1, 3]);
     }
 
     #[test]
