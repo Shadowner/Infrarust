@@ -84,7 +84,7 @@ impl InstanceFactory {
         generation: u64,
         instance: InstanceRef,
     ) -> Result<LiveInstance, WasmLoaderError> {
-        let state = build_load_state(&self.setup, generation, instance)?;
+        let state = build_load_state(&self.setup, generation, instance).await?;
         let mut store = Store::new(&self.engine, state);
         install_epoch_control(&mut store, self.setup.sandbox.max_epoch_yields);
         store.limiter(|s: &mut PluginStoreState| {

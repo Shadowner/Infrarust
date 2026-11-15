@@ -567,12 +567,26 @@ fn build_wasi_ctx(
     Ok(builder.build())
 }
 
-pub(crate) fn build_load_state(
+async fn wasi_ctx(setup: &PluginSetup) -> Result<WasiCtx, WasmLoaderError> {
+    let data_dir = setup.data_dir.clone();
+    let network = Arc::clone(&setup.network);
+    let mounts = Arc::clone(&setup.mounts);
+    tokio::task::spawn_blocking(move || build_wasi_ctx(&data_dir, &network, &mounts))
+        .await
+        .unwrap_or_else(|e| {
+            Err(WasmLoaderError::WasiSetup {
+                path: setup.data_dir.clone(),
+                source: std::io::Error::other(e),
+            })
+        })
+}
+
+pub(crate) async fn build_load_state(
     setup: &PluginSetup,
     generation: u64,
     instance: InstanceRef,
 ) -> Result<PluginStoreState, WasmLoaderError> {
-    let wasi = build_wasi_ctx(&setup.data_dir, &setup.network, &setup.mounts)?;
+    let wasi = wasi_ctx(setup).await?;
     setup.network.warm_in_background();
     Ok(PluginStoreState {
         sandbox: Sandbox::new(wasi, Arc::clone(&setup.network), &setup.sandbox),
