@@ -6,11 +6,11 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -116,25 +116,22 @@ impl FileProvider {
         sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let (changes_tx, changes) = mpsc::unbounded_channel::<()>();
-        let _watcher = watch_directory(&self.servers_dir, changes_tx)?;
+        let changes = Arc::new(Notify::new());
+        let _watcher = watch_directory(&self.servers_dir, Arc::clone(&changes))?;
         let published = self.lock_published().take().unwrap_or_default();
-        follow(&self.servers_dir, published, changes, &sender, &shutdown).await;
+        follow(&self.servers_dir, published, &changes, &sender, &shutdown).await;
         Ok(())
     }
 }
 
-fn watch_directory(
-    dir: &Path,
-    changes: mpsc::UnboundedSender<()>,
-) -> Result<RecommendedWatcher, CoreError> {
+fn watch_directory(dir: &Path, changes: Arc<Notify>) -> Result<RecommendedWatcher, CoreError> {
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
                 use notify::EventKind;
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        let _ = changes.send(());
+                        changes.notify_one();
                     }
                     _ => {}
                 }
@@ -149,7 +146,7 @@ fn watch_directory(
 async fn follow(
     dir: &Path,
     mut known: HashMap<PathBuf, ServerConfig>,
-    mut changes: mpsc::UnboundedReceiver<()>,
+    changes: &Notify,
     sender: &mpsc::Sender<Vec<ProviderChange>>,
     shutdown: &CancellationToken,
 ) {
@@ -172,10 +169,7 @@ async fn follow(
                     return;
                 }
             }
-            change = changes.recv() => {
-                if change.is_none() {
-                    return;
-                }
+            () = changes.notified() => {
                 let now = Instant::now();
                 pending = Some(Pending {
                     quiet_until: now + QUIET_PERIOD,
@@ -330,7 +324,7 @@ mod tests {
     struct Follower {
         dir: tempfile::TempDir,
         start: Instant,
-        changes: mpsc::UnboundedSender<()>,
+        changes: Arc<Notify>,
         shutdown: CancellationToken,
         received: JoinHandle<Vec<(u64, String)>>,
     }
@@ -343,14 +337,15 @@ mod tests {
             let known = HashMap::from([(path.clone(), load_server_config(&path).unwrap())]);
 
             let start = Instant::now() + Duration::from_secs(1);
-            let (changes, changes_rx) = mpsc::unbounded_channel();
+            let changes = Arc::new(Notify::new());
+            let notified = Arc::clone(&changes);
             let (tx, mut rx) = mpsc::channel(32);
             let shutdown = CancellationToken::new();
 
             let watched = dir.path().to_path_buf();
             let token = shutdown.clone();
             tokio::spawn(async move {
-                follow(&watched, known, changes_rx, &tx, &token).await;
+                follow(&watched, known, &notified, &tx, &token).await;
             });
             let received = tokio::spawn(async move {
                 let mut received = Vec::new();
@@ -377,7 +372,7 @@ mod tests {
 
         fn write(&self, content: &str) {
             std::fs::write(self.dir.path().join(SERVER), content).unwrap();
-            self.changes.send(()).unwrap();
+            self.changes.notify_one();
         }
 
         fn append(&self, content: &str) {
@@ -387,7 +382,7 @@ mod tests {
                 .open(self.dir.path().join(SERVER))
                 .unwrap();
             file.write_all(content.as_bytes()).unwrap();
-            self.changes.send(()).unwrap();
+            self.changes.notify_one();
         }
 
         async fn finish(self, millis: u64) -> Vec<(u64, String)> {
