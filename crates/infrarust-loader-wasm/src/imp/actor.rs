@@ -588,6 +588,10 @@ impl PluginActor {
         &self.info.plugin_id
     }
 
+    pub(crate) fn proxy_stopping(&self) -> bool {
+        self.halt.proxy_stopping()
+    }
+
     pub(crate) fn runtime_status(&self) -> PluginRuntimeStatus {
         let depth = lock(&self.jobs).as_ref().map_or(0, |jobs| {
             jobs.max_capacity().saturating_sub(jobs.capacity())
