@@ -51,7 +51,6 @@ pub struct ClientBridge {
 impl ClientBridge {
     /// `buffered_data` contains bytes already read by the pipeline middlewares
     /// (handshake, login start). These are fed to the decoder first.
-    #[allow(clippy::needless_pass_by_value)] // BytesMut is logically consumed here
     pub fn new(
         stream: TcpStream,
         buffered_data: BytesMut,

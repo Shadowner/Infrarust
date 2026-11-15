@@ -250,7 +250,6 @@ fn write_damage_type_registry(buf: &mut Vec<u8>) {
 /// tag names, field values, and TAG_STRING list elements all share this shape.
 fn write_nbt_string(buf: &mut Vec<u8>, s: &str) {
     let bytes = s.as_bytes();
-    #[allow(clippy::cast_possible_truncation)]
     buf.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
     buf.extend_from_slice(bytes);
 }

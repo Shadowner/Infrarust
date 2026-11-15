@@ -45,7 +45,6 @@ use crate::status::relay_gate::RelayGate;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 impl ProxyServer {
-    #[allow(clippy::too_many_lines)]
     pub async fn new(
         config: ProxyConfig,
         config_path: std::path::PathBuf,
