@@ -136,14 +136,9 @@ impl LimboHandler for WasmLimboHandler {
                         .call_limbo_on_player_enter(&mut *store, handler, lent)
                         .await?;
                     let plugin = store.data().plugin_id().to_owned();
-                    let result = convert::handler_result_with(&outcome, &mut |text| {
-                        Ok(component::from_wit_or_fallback(
-                            text,
-                            &plugin,
-                            "limbo handler result",
-                        ))
-                    })
-                    .unwrap_or_else(|_| deny_unavailable());
+                    let result = convert::handler_result_with(&outcome, |text| {
+                        component::from_wit_or_fallback(text, &plugin, "limbo handler result")
+                    });
                     if matches!(
                         result,
                         HandlerResult::Hold | HandlerResult::HoldWithTimeout { .. }

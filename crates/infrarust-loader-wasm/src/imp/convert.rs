@@ -425,36 +425,33 @@ pub(crate) fn title_data_from_wit(t: &wt::TitleData) -> Result<TitleData, ArenaE
     })
 }
 
-pub(crate) type TextConverter<'a> =
-    &'a mut dyn FnMut(&wt::Component) -> Result<Component, ArenaError>;
-
 pub(crate) fn handler_result_with(
     r: &wl::HandlerResult,
-    text: TextConverter<'_>,
-) -> Result<HandlerResult, ArenaError> {
-    Ok(match r {
+    mut text: impl FnMut(&wt::Component) -> Component,
+) -> HandlerResult {
+    match r {
         wl::HandlerResult::Accept => HandlerResult::Accept,
-        wl::HandlerResult::Deny(c) => HandlerResult::Deny(text(c)?),
+        wl::HandlerResult::Deny(c) => HandlerResult::Deny(text(c)),
         wl::HandlerResult::Hold => HandlerResult::Hold,
         wl::HandlerResult::HoldWithTimeout(t) => HandlerResult::HoldWithTimeout {
             after: Duration::from_millis(t.after_ms),
-            on_timeout: timeout_outcome_with(&t.on_timeout, text)?,
+            on_timeout: timeout_outcome_with(&t.on_timeout, text),
         },
         wl::HandlerResult::Redirect(s) => HandlerResult::Redirect(ServerId::from(s.as_str())),
         wl::HandlerResult::SendToLimbo(v) => HandlerResult::SendToLimbo(v.clone()),
-    })
+    }
 }
 
-pub(crate) fn timeout_outcome_with(
+fn timeout_outcome_with(
     t: &wl::TimeoutOutcome,
-    text: TextConverter<'_>,
-) -> Result<LimboOutcome, ArenaError> {
-    Ok(match t {
+    mut text: impl FnMut(&wt::Component) -> Component,
+) -> LimboOutcome {
+    match t {
         wl::TimeoutOutcome::Accept => LimboOutcome::Accept,
-        wl::TimeoutOutcome::Deny(c) => LimboOutcome::Deny(text(c)?),
+        wl::TimeoutOutcome::Deny(c) => LimboOutcome::Deny(text(c)),
         wl::TimeoutOutcome::Redirect(s) => LimboOutcome::Redirect(ServerId::from(s.as_str())),
         wl::TimeoutOutcome::SendToLimbo(v) => LimboOutcome::SendToLimbo(v.clone()),
-    })
+    }
 }
 
 const HOLD_NOT_A_COMPLETION: &str = "complete ends a hold and cannot start another: pass accept, deny, redirect or send-to-limbo; the current hold and its deadline stay in place";
@@ -498,12 +495,16 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-    fn timeout_outcome_from_wit(t: &wl::TimeoutOutcome) -> Result<LimboOutcome, ArenaError> {
-        timeout_outcome_with(t, &mut component::from_wit)
+    fn valid(text: &wt::Component) -> Component {
+        component::from_wit(text).unwrap()
     }
 
-    fn handler_result_from_wit(r: &wl::HandlerResult) -> Result<HandlerResult, ArenaError> {
-        handler_result_with(r, &mut component::from_wit)
+    fn timeout_outcome_from_wit(t: &wl::TimeoutOutcome) -> LimboOutcome {
+        timeout_outcome_with(t, valid)
+    }
+
+    fn handler_result_from_wit(r: &wl::HandlerResult) -> HandlerResult {
+        handler_result_with(r, valid)
     }
 
     fn text(message: &str) -> wt::Component {
@@ -685,7 +686,7 @@ mod tests {
             after_ms: 1500,
             on_timeout: wl::TimeoutOutcome::Deny(text("bye")),
         });
-        match handler_result_from_wit(&wit).unwrap() {
+        match handler_result_from_wit(&wit) {
             HandlerResult::HoldWithTimeout { after, on_timeout } => {
                 assert_eq!(after, Duration::from_millis(1500));
                 assert!(matches!(on_timeout, LimboOutcome::Deny(_)));
@@ -698,11 +699,11 @@ mod tests {
     fn timeout_outcome_maps_to_the_native_outcome() {
         assert!(matches!(
             timeout_outcome_from_wit(&wl::TimeoutOutcome::Accept),
-            Ok(LimboOutcome::Accept)
+            LimboOutcome::Accept
         ));
         assert!(matches!(
             timeout_outcome_from_wit(&wl::TimeoutOutcome::SendToLimbo(vec!["a".to_owned()])),
-            Ok(LimboOutcome::SendToLimbo(_))
+            LimboOutcome::SendToLimbo(_)
         ));
     }
 
@@ -740,12 +741,13 @@ mod tests {
     }
 
     #[test]
-    fn a_limbo_deny_with_an_invalid_component_is_refused() {
+    fn a_limbo_deny_carries_the_text_its_converter_returns() {
         let invalid = wl::HandlerResult::Deny(wt::Component { nodes: Vec::new() });
-        assert!(matches!(
-            handler_result_from_wit(&invalid),
-            Err(ArenaError::Empty)
-        ));
+        let HandlerResult::Deny(reason) = handler_result_with(&invalid, |_| component::fallback())
+        else {
+            panic!("expected a deny");
+        };
+        assert_eq!(reason, component::fallback());
     }
 
     #[test]
