@@ -268,7 +268,7 @@ const RESOURCE_EXHAUSTION: [i32; 4] = {
     ]
 };
 
-#[cfg(target_os = "macos")]
+#[cfg(all(unix, not(target_os = "linux")))]
 const RESOURCE_EXHAUSTION: [i32; 4] = {
     const EMFILE: i32 = 24;
     const ENFILE: i32 = 23;
@@ -284,7 +284,7 @@ const RESOURCE_EXHAUSTION: [i32; 2] = {
     [WSAEMFILE, WSAENOBUFS]
 };
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+#[cfg(not(any(unix, windows)))]
 const RESOURCE_EXHAUSTION: [i32; 0] = [];
 
 #[cfg(test)]
