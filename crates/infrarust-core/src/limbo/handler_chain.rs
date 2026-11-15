@@ -169,7 +169,7 @@ fn process_outcome(outcome: LimboOutcome) -> ControlFlow<LimboChainResult> {
     }
 }
 
-async fn guarded<F: Future>(
+pub(super) async fn guarded<F: Future>(
     handler: &dyn LimboHandler,
     call: &'static str,
     start: impl FnOnce() -> F,

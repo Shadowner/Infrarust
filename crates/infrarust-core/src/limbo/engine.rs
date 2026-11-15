@@ -11,7 +11,7 @@ use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::handler_chain::{Limbo, LimboChainResult, run_handler_chain};
+use super::handler_chain::{Limbo, LimboChainResult, guarded, run_handler_chain};
 use super::keepalive::KeepAliveState;
 use super::session::LimboSessionImpl;
 use super::virtual_session::VirtualSessionCore;
@@ -140,7 +140,10 @@ async fn send_disconnect(
 
 async fn fire_on_disconnect(handlers: &[Arc<dyn LimboHandler>], player_id: PlayerId) {
     for handler in handlers {
-        handler.on_disconnect(player_id).await;
+        guarded(handler.as_ref(), "on_disconnect", || {
+            handler.on_disconnect(player_id)
+        })
+        .await;
     }
 }
 
@@ -150,7 +153,10 @@ async fn fire_on_session_end(
     reason: SessionEndReason,
 ) {
     for handler in handlers {
-        handler.on_session_end(player_id, reason).await;
+        guarded(handler.as_ref(), "on_session_end", || {
+            handler.on_session_end(player_id, reason)
+        })
+        .await;
     }
 }
 
@@ -160,7 +166,9 @@ mod tests {
 
     use std::sync::{Arc, Mutex};
 
+    use infrarust_api::event::BoxFuture;
     use infrarust_api::limbo::handler::{HandlerResult, SessionEndReason};
+    use infrarust_api::limbo::session::LimboSession;
     use infrarust_api::types::{Component, PlayerId, ServerId};
     use infrarust_protocol::version::ProtocolVersion;
 
@@ -345,6 +353,88 @@ mod tests {
         assert_eq!(
             end_reasons_for(LimboChainResult::Timeout).await,
             vec![SessionEndReason::TimedOut]
+        );
+    }
+
+    enum Teardown {
+        Panics,
+        Hangs,
+    }
+
+    struct BrokenTeardown(Teardown);
+
+    impl BrokenTeardown {
+        fn call(&self) -> BoxFuture<'_, ()> {
+            match self.0 {
+                Teardown::Panics => panic!("teardown panicked"),
+                Teardown::Hangs => Box::pin(std::future::pending()),
+            }
+        }
+    }
+
+    impl LimboHandler for BrokenTeardown {
+        fn name(&self) -> &str {
+            "broken"
+        }
+
+        fn on_player_enter<'a>(
+            &'a self,
+            _session: &'a dyn LimboSession,
+        ) -> BoxFuture<'a, HandlerResult> {
+            Box::pin(async { HandlerResult::Accept })
+        }
+
+        fn on_disconnect(&self, _player_id: PlayerId) -> BoxFuture<'_, ()> {
+            self.call()
+        }
+
+        fn on_session_end(
+            &self,
+            _player_id: PlayerId,
+            _reason: SessionEndReason,
+        ) -> BoxFuture<'_, ()> {
+            self.call()
+        }
+    }
+
+    async fn end_reasons_after(broken: Teardown) -> Vec<SessionEndReason> {
+        let (mut client, _raw) = test_client_bridge(ProtocolVersion::V1_21).await;
+        let registry = Arc::new(test_registry());
+        let ended = Arc::new(Mutex::new(Vec::new()));
+        let handlers: Vec<Arc<dyn LimboHandler>> = vec![
+            Arc::new(BrokenTeardown(broken)),
+            Arc::new(SessionEndRecorder {
+                name: "rec",
+                result: HandlerResult::Accept,
+                ended: Arc::clone(&ended),
+            }),
+        ];
+        let result = map_chain_result(
+            LimboChainResult::ClientDisconnected,
+            &mut client,
+            ProtocolVersion::V1_21,
+            &registry,
+            &handlers,
+            PlayerId::new(1),
+        )
+        .await;
+        assert!(matches!(result, LimboExitResult::ClientDisconnected));
+        ended.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn a_teardown_callback_that_panics_does_not_unwind_the_session() {
+        assert_eq!(
+            end_reasons_after(Teardown::Panics).await,
+            vec![SessionEndReason::Disconnected]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_teardown_callback_that_hangs_does_not_block_the_session() {
+        assert_eq!(
+            end_reasons_after(Teardown::Hangs).await,
+            vec![SessionEndReason::Disconnected]
         );
     }
 
