@@ -1,11 +1,12 @@
 use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use infrarust_api::player::Player;
-use infrarust_api::types::PlayerId;
+use infrarust_api::types::{PlayerId, ServerId};
 use uuid::Uuid;
 
 use crate::player::PlayerSession;
@@ -15,6 +16,61 @@ pub struct ConnectionRegistry {
     uuid_index: SessionIndex<Uuid>,
     name_index: SessionIndex<String>,
     ip_index: SessionIndex<IpAddr>,
+    roster: Arc<ServerRoster>,
+}
+
+#[derive(Default)]
+pub(crate) struct ServerRoster {
+    players: DashMap<String, HashSet<PlayerId>>,
+}
+
+impl ServerRoster {
+    pub(crate) fn seat(self: &Arc<Self>, server: &ServerId, player: PlayerId) -> Seat {
+        let server = server.as_str().to_owned();
+        self.players
+            .entry(server.clone())
+            .or_default()
+            .insert(player);
+        Seat {
+            roster: Arc::clone(self),
+            server,
+            player,
+        }
+    }
+
+    fn count(&self, server_id: &str) -> usize {
+        self.players.get(server_id).map_or(0, |players| players.len())
+    }
+
+    fn players(&self, server_id: &str) -> Vec<PlayerId> {
+        self.players
+            .get(server_id)
+            .map(|players| players.iter().copied().collect())
+            .unwrap_or_default()
+    }
+}
+
+pub(crate) struct Seat {
+    roster: Arc<ServerRoster>,
+    server: String,
+    player: PlayerId,
+}
+
+impl Seat {
+    pub(crate) fn server(&self) -> &str {
+        &self.server
+    }
+}
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        self.roster
+            .players
+            .remove_if_mut(&self.server, |_, players| {
+                players.remove(&self.player);
+                players.is_empty()
+            });
+    }
 }
 
 struct SessionIndex<K> {
@@ -54,10 +110,12 @@ impl ConnectionRegistry {
             uuid_index: SessionIndex::new(),
             name_index: SessionIndex::new(),
             ip_index: SessionIndex::new(),
+            roster: Arc::default(),
         }
     }
 
     fn unindex(&self, session: &PlayerSession) {
+        session.enroll(None);
         self.uuid_index
             .remove(&session.profile().uuid, session.id());
         self.name_index
@@ -69,7 +127,10 @@ impl ConnectionRegistry {
     pub fn register(self: &Arc<Self>, session: Arc<PlayerSession>) -> SessionGuard {
         let uuid = session.profile().uuid;
         let player_id = session.id();
-        self.sessions.insert(player_id, Arc::clone(&session));
+        if let Some(replaced) = self.sessions.insert(player_id, Arc::clone(&session)) {
+            self.unindex(&replaced);
+        }
+        session.enroll(Some(Arc::clone(&self.roster)));
         self.name_index
             .insert(name_key(&session.profile().username), &session);
         self.ip_index
@@ -149,10 +210,10 @@ impl ConnectionRegistry {
     }
 
     pub fn find_by_server(&self, server_id: &str) -> Vec<Arc<PlayerSession>> {
-        self.sessions
-            .iter()
-            .filter(|r| r.counted_server().is_some_and(|s| s.as_str() == server_id))
-            .map(|r| Arc::clone(&r))
+        self.roster
+            .players(server_id)
+            .into_iter()
+            .filter_map(|id| self.find_by_id(id))
             .collect()
     }
 
@@ -161,10 +222,7 @@ impl ConnectionRegistry {
     }
 
     pub fn count_by_server(&self, server_id: &str) -> usize {
-        self.sessions
-            .iter()
-            .filter(|r| r.counted_server().is_some_and(|s| s.as_str() == server_id))
-            .count()
+        self.roster.count(server_id)
     }
 
     pub fn all(&self) -> Vec<Arc<PlayerSession>> {
@@ -419,6 +477,28 @@ mod tests {
         assert_eq!(registry.count_by_server("lobby"), 0);
         assert_eq!(registry.count_by_server("survival"), 1);
         assert!(registry.find_by_server("lobby").is_empty());
+    }
+
+    #[test]
+    fn a_server_stops_counting_a_session_that_left_the_registry() {
+        let registry = Arc::new(ConnectionRegistry::new());
+        let uuid = Uuid::new_v4();
+        let load = Arc::new(BackendLoad::new());
+        let displaced = session(1, uuid, "alice", "lobby", &load);
+        let displaced_guard = registry.register(Arc::clone(&displaced));
+        let _alice = registry.register(session(2, uuid, "alice", "lobby", &load));
+        assert_eq!(registry.count_by_server("lobby"), 1);
+
+        displaced.set_current_server(ServerId::new("survival"));
+        drop(displaced_guard);
+        assert_eq!(registry.count_by_server("survival"), 0);
+        assert_eq!(ids(&registry.find_by_server("lobby")), vec![2]);
+
+        let bob = registry.register(make_session("bob", "lobby"));
+        assert_eq!(registry.count_by_server("lobby"), 2);
+        drop(bob);
+        assert_eq!(registry.count_by_server("lobby"), 1);
+        assert_eq!(registry.roster.players.len(), 1);
     }
 
     #[test]
