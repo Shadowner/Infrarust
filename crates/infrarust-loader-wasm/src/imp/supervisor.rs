@@ -9,8 +9,10 @@ use std::time::Duration;
 use futures_util::FutureExt;
 use infrarust_api::event::ListenerHandle;
 use tokio::time::Instant;
+use wasmtime::Store;
 
 use crate::actor::{CallFailure, CallKind, GuestCall, Halt, InstanceRef, Job, JobKind};
+use crate::bindings::Plugin as PluginBindings;
 use crate::bindings::exports::infrarust::plugin::guest::{EnableReason, RecoveryInfo};
 use crate::chain::CallChain;
 use crate::consts::{FAR_FUTURE, GUEST_WARNING_BURST, GUEST_WARNING_INTERVAL};
@@ -21,6 +23,7 @@ use crate::instance::{InstanceFactory, LiveInstance};
 use crate::rate_limit::RateLimit;
 use crate::recovery::{RestartBudget, Verdict};
 use crate::status::Phase;
+use crate::store_state::PluginStoreState;
 
 const FIRST_GENERATION: u64 = 1;
 
@@ -32,6 +35,19 @@ enum Health {
     Quarantined { until: Instant },
     Failed,
     Halted,
+}
+
+impl Health {
+    const fn serving(&mut self) -> Result<&mut LiveInstance, CallFailure> {
+        match self {
+            Self::Starting(live) | Self::Healthy(live) => Ok(live),
+            Self::Recovering | Self::Paused { .. } | Self::Quarantined { .. } => {
+                Err(CallFailure::Quarantined)
+            }
+            Self::Failed => Err(CallFailure::Failed),
+            Self::Halted => Err(CallFailure::Stopped),
+        }
+    }
 }
 
 enum Restarted {
@@ -224,18 +240,10 @@ impl Supervisor {
         }
         let plugin_id = self.factory.plugin_id();
         let limit = self.factory.sandbox().max_call_duration;
-        let live = match &mut self.health {
-            Health::Starting(live) | Health::Healthy(live) => live,
-            Health::Recovering | Health::Paused { .. } | Health::Quarantined { .. } => {
-                call.refuse(CallFailure::Quarantined);
-                return ControlFlow::Continue(());
-            }
-            Health::Failed => {
-                call.refuse(CallFailure::Failed);
-                return ControlFlow::Continue(());
-            }
-            Health::Halted => {
-                call.refuse(CallFailure::Stopped);
+        let live = match self.health.serving() {
+            Ok(live) => live,
+            Err(failure) => {
+                call.refuse(failure);
                 return ControlFlow::Continue(());
             }
         };
@@ -330,18 +338,10 @@ impl Supervisor {
 
     async fn disable(&mut self, op: &'static str, mut call: Box<dyn GuestCall>, chain: CallChain) {
         let limit = self.factory.sandbox().max_call_duration;
-        let live = match &mut self.health {
-            Health::Starting(live) | Health::Healthy(live) => live,
-            Health::Recovering | Health::Paused { .. } | Health::Quarantined { .. } => {
-                call.refuse(CallFailure::Quarantined);
-                return;
-            }
-            Health::Failed => {
-                call.refuse(CallFailure::Failed);
-                return;
-            }
-            Health::Halted => {
-                call.refuse(CallFailure::Stopped);
+        let live = match self.health.serving() {
+            Ok(live) => live,
+            Err(failure) => {
+                call.refuse(failure);
                 return;
             }
         };
@@ -608,14 +608,12 @@ async fn run_guest(
     chain: CallChain,
     halt: &Halt,
 ) -> Result<(), Fault> {
-    live.begin_call(deadline);
-    let running = call.run(&mut live.store, &live.bindings);
-    let outcome = chain
-        .scope(contain(bound, halt, running))
+    let running = async |store: &mut Store<PluginStoreState>, bindings: &PluginBindings| {
+        call.run(store, bindings).await
+    };
+    chain
+        .scope(guarded(live, deadline, bound, halt, running))
         .await
-        .map_err(|fault| fault.explained(live.store.data_mut().take_guest_panic()));
-    live.end_call();
-    outcome
 }
 
 async fn enable(
@@ -624,16 +622,30 @@ async fn enable(
     reason: &EnableReason,
     halt: &Halt,
 ) -> Result<(), Fault> {
-    live.begin_call(None);
-    let enabling = live
-        .bindings
-        .infrarust_plugin_guest()
-        .call_on_enable(&mut live.store, reason);
-    let outcome = contain(Bound::new(limit, None), halt, enabling)
+    let enabling = async |store: &mut Store<PluginStoreState>, bindings: &PluginBindings| {
+        bindings
+            .infrarust_plugin_guest()
+            .call_on_enable(store, reason)
+            .await
+    };
+    guarded(live, None, Bound::new(limit, None), halt, enabling)
+        .await?
+        .map_err(Fault::Refused)
+}
+
+async fn guarded<T>(
+    live: &mut LiveInstance,
+    deadline: Option<Deadline>,
+    bound: Bound,
+    halt: &Halt,
+    run: impl AsyncFnOnce(&mut Store<PluginStoreState>, &PluginBindings) -> wasmtime::Result<T>,
+) -> Result<T, Fault> {
+    live.begin_call(deadline);
+    let outcome = contain(bound, halt, run(&mut live.store, &live.bindings))
         .await
         .map_err(|fault| fault.explained(live.store.data_mut().take_guest_panic()));
     live.end_call();
-    outcome?.map_err(Fault::Refused)
+    outcome
 }
 
 async fn contain<T>(
