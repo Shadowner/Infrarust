@@ -106,9 +106,9 @@ static EMPTY_CHUNK_1_7: LazyLock<Option<Vec<u8>>> =
     LazyLock::new(|| zlib_compress(&[0u8; 256]).ok());
 
 fn zlib_compress(data: &[u8]) -> ProtocolResult<Vec<u8>> {
-    use crate::io::compression::new_compressor;
+    use crate::io::compression::Compressor;
 
-    let mut compressor = new_compressor(6)?;
+    let mut compressor = Compressor::new(6)?;
     let mut out = Vec::new();
     compressor.compress(data, &mut out)?;
     Ok(out)
