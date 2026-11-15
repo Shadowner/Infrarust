@@ -6,7 +6,6 @@ use std::time::{Duration, SystemTime};
 
 use infrarust_api::services::ban_service::{BanQuery, LoginAttempt};
 use infrarust_core::ban::file_storage::FileBanStorage;
-use infrarust_core::ban::storage::BanStorage;
 use infrarust_core::ban::types::{BanEntry, BanSource, BanTarget};
 use uuid::Uuid;
 

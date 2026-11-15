@@ -19,7 +19,6 @@ use infrarust_config::{BanConfig, BanProviderSelection};
 
 use crate::ban::builtin::BuiltinBanProvider;
 use crate::ban::file_storage::FileBanStorage;
-use crate::ban::storage::BanStorage;
 use crate::ban::types::{BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
@@ -42,9 +41,24 @@ pub struct IssuedBan {
     pub kicked: usize,
 }
 
+enum Backend {
+    Builtin(Arc<BuiltinBanProvider>),
+    Plugin(String),
+    Disabled,
+}
+
+impl Backend {
+    fn selection(&self) -> BanProviderSelection {
+        match self {
+            Self::Builtin(_) => BanProviderSelection::Builtin,
+            Self::Plugin(id) => BanProviderSelection::Plugin(id.clone()),
+            Self::Disabled => BanProviderSelection::Disabled,
+        }
+    }
+}
+
 pub struct BanManager {
-    selection: BanProviderSelection,
-    builtin: Option<Arc<BuiltinBanProvider>>,
+    backend: Backend,
     registered: PluginProviderSlot<dyn BanProvider>,
     connection_registry: Arc<ConnectionRegistry>,
     event_bus: Arc<EventBusImpl>,
@@ -52,20 +66,19 @@ pub struct BanManager {
 }
 
 impl BanManager {
-    fn with_selection(
-        selection: BanProviderSelection,
-        builtin: Option<Arc<BuiltinBanProvider>>,
+    fn with_backend(
+        backend: Backend,
         connection_registry: Arc<ConnectionRegistry>,
         event_bus: Arc<EventBusImpl>,
     ) -> Self {
+        let selection = backend.selection();
         Self {
             registered: PluginProviderSlot::new(
                 ProviderKind::Ban,
                 selection.plugin_id(),
                 &selection,
             ),
-            selection,
-            builtin,
+            backend,
             connection_registry,
             event_bus,
             check_timeout: infrarust_config::defaults::ban_check_timeout(),
@@ -73,13 +86,12 @@ impl BanManager {
     }
 
     pub fn builtin(
-        storage: Arc<dyn BanStorage>,
+        storage: Arc<FileBanStorage>,
         connection_registry: Arc<ConnectionRegistry>,
         event_bus: Arc<EventBusImpl>,
     ) -> Self {
-        Self::with_selection(
-            BanProviderSelection::Builtin,
-            Some(Arc::new(BuiltinBanProvider::new(storage))),
+        Self::with_backend(
+            Backend::Builtin(Arc::new(BuiltinBanProvider::new(storage))),
             connection_registry,
             event_bus,
         )
@@ -90,9 +102,8 @@ impl BanManager {
         connection_registry: Arc<ConnectionRegistry>,
         event_bus: Arc<EventBusImpl>,
     ) -> Self {
-        Self::with_selection(
-            BanProviderSelection::Plugin(plugin_id.into()),
-            None,
+        Self::with_backend(
+            Backend::Plugin(plugin_id.into()),
             connection_registry,
             event_bus,
         )
@@ -102,12 +113,7 @@ impl BanManager {
         connection_registry: Arc<ConnectionRegistry>,
         event_bus: Arc<EventBusImpl>,
     ) -> Self {
-        Self::with_selection(
-            BanProviderSelection::Disabled,
-            None,
-            connection_registry,
-            event_bus,
-        )
+        Self::with_backend(Backend::Disabled, connection_registry, event_bus)
     }
 
     pub async fn from_config(
@@ -131,28 +137,28 @@ impl BanManager {
             }
         };
         manager.check_timeout = config.check_timeout;
-        if let Some(builtin) = &manager.builtin {
+        if let Backend::Builtin(builtin) = &manager.backend {
             builtin.load().await?;
         }
         Ok(manager)
     }
 
-    pub const fn selection(&self) -> &BanProviderSelection {
-        &self.selection
+    pub fn selection(&self) -> BanProviderSelection {
+        self.backend.selection()
     }
 
-    pub fn builtin_provider(&self) -> Option<&Arc<BuiltinBanProvider>> {
-        self.builtin.as_ref()
+    pub const fn builtin_provider(&self) -> Option<&Arc<BuiltinBanProvider>> {
+        match &self.backend {
+            Backend::Builtin(builtin) => Some(builtin),
+            Backend::Plugin(_) | Backend::Disabled => None,
+        }
     }
 
     fn active(&self) -> Result<Option<Arc<dyn BanProvider>>, ServiceError> {
-        match &self.selection {
-            BanProviderSelection::Builtin => Ok(self
-                .builtin
-                .as_ref()
-                .map(|builtin| Arc::clone(builtin) as Arc<dyn BanProvider>)),
-            BanProviderSelection::Disabled => Ok(None),
-            BanProviderSelection::Plugin(id) => self.registered.get().map(Some).ok_or_else(|| {
+        match &self.backend {
+            Backend::Builtin(builtin) => Ok(Some(Arc::clone(builtin) as Arc<dyn BanProvider>)),
+            Backend::Disabled => Ok(None),
+            Backend::Plugin(id) => self.registered.get().map(Some).ok_or_else(|| {
                 ServiceError::Unavailable(format!(
                     "ban provider plugin `{id}` has not registered a provider"
                 ))
@@ -344,8 +350,7 @@ impl BanManager {
         interval: Duration,
         shutdown: CancellationToken,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.builtin
-            .as_ref()
+        self.builtin_provider()
             .map(|builtin| builtin.start_purge_task(interval, shutdown))
     }
 }

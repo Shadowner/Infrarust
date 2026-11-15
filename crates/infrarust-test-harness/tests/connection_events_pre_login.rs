@@ -9,7 +9,6 @@ use infrarust_api::events::handshake::ConnectionHandshakeEvent;
 use infrarust_api::services::ban_service::{BanEntry, BanSource, BanTarget};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_core::ban::FileBanStorage;
-use infrarust_core::ban::storage::BanStorage;
 use infrarust_test_harness::legacy::LEGACY_PROTOCOL;
 use infrarust_test_harness::versions::CURRENT;
 use infrarust_test_harness::{

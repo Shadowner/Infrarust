@@ -14,7 +14,6 @@ use infrarust_api::services::ban_service::{
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
-use infrarust_core::ban::storage::BanStorage;
 use infrarust_core::ban::{BAN_CHECK_UNAVAILABLE, FileBanStorage};
 use infrarust_core::console::ConsoleServices;
 use infrarust_core::console::commands::register_all;

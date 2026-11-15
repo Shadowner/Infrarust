@@ -12,7 +12,6 @@ use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::services::ban_service::BanRequest;
 use infrarust_core::ban::FileBanStorage;
 use infrarust_core::ban::manager::{BAN_CHECK_UNAVAILABLE, BanManager};
-use infrarust_core::ban::storage::BanStorage;
 use infrarust_core::ban::types::{BanEntry, BanSource, BanTarget};
 use infrarust_core::error::CoreError;
 use infrarust_core::event_bus::EventBusImpl;
@@ -26,7 +25,7 @@ use infrarust_core::pipeline::types::{
 use infrarust_core::registry::ConnectionRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-fn builtin(storage: Arc<dyn BanStorage>) -> Arc<BanManager> {
+fn builtin(storage: Arc<FileBanStorage>) -> Arc<BanManager> {
     Arc::new(BanManager::builtin(
         storage,
         Arc::new(ConnectionRegistry::new()),
