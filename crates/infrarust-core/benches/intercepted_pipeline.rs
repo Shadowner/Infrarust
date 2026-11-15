@@ -100,11 +100,22 @@ fn realistic_uncompressed(bencher: Bencher, size: usize) {
 }
 
 fn run_forward(bencher: Bencher, size: usize, compression: Option<i32>) {
-    let bytes = frame_bytes(size, compression);
+    run_forward_between(bencher, size, compression, compression);
+}
+
+fn run_forward_between(
+    bencher: Bencher,
+    size: usize,
+    capture: Option<i32>,
+    destination: Option<i32>,
+) {
+    let bytes = frame_bytes(size, capture);
     let mut decoder = PacketDecoder::new();
     let mut encoder = PacketEncoder::new();
-    if let Some(t) = compression {
+    if let Some(t) = capture {
         decoder.set_compression(t);
+    }
+    if let Some(t) = destination {
         encoder.set_compression(t);
     }
     bencher.counter(BytesCount::new(size)).bench_local(|| {
@@ -123,6 +134,29 @@ fn forward_uncompressed(bencher: Bencher, size: usize) {
 #[divan::bench(args = SIZES)]
 fn forward_compressed(bencher: Bencher, size: usize) {
     run_forward(bencher, size, Some(THRESHOLD));
+}
+
+const LOWER_THRESHOLD: i32 = 64;
+const HIGHER_THRESHOLD: i32 = 1024;
+
+#[divan::bench(args = SIZES)]
+fn forward_compressed_to_lower_threshold(bencher: Bencher, size: usize) {
+    run_forward_between(bencher, size, Some(THRESHOLD), Some(LOWER_THRESHOLD));
+}
+
+#[divan::bench(args = SIZES)]
+fn forward_compressed_to_higher_threshold(bencher: Bencher, size: usize) {
+    run_forward_between(bencher, size, Some(THRESHOLD), Some(HIGHER_THRESHOLD));
+}
+
+#[divan::bench(args = SIZES)]
+fn forward_compressed_to_uncompressed(bencher: Bencher, size: usize) {
+    run_forward_between(bencher, size, Some(THRESHOLD), None);
+}
+
+#[divan::bench(args = SIZES)]
+fn forward_uncompressed_to_compressed(bencher: Bencher, size: usize) {
+    run_forward_between(bencher, size, None, Some(THRESHOLD));
 }
 
 fn hot_ids(registry: &infrarust_protocol::PacketRegistry) -> [Option<i32>; 4] {

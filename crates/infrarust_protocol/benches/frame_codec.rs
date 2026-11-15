@@ -23,6 +23,29 @@ fn payload(size: usize) -> Vec<u8> {
         .collect()
 }
 
+fn compressible_payload(size: usize) -> Vec<u8> {
+    const ENTRIES: &[&[u8]] = &[
+        b"minecraft:stone",
+        b"minecraft:deepslate",
+        b"minecraft:dirt",
+        b"minecraft:grass_block",
+        b"minecraft:water",
+        b"minecraft:oak_log",
+        b"minecraft:air",
+    ];
+    let mut state: u32 = 0x9E37_79B9 ^ (size as u32);
+    let mut out = Vec::with_capacity(size + 32);
+    while out.len() < size {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let entry = ENTRIES[(state >> 24) as usize % ENTRIES.len()];
+        out.push(entry.len() as u8);
+        out.extend_from_slice(entry);
+        out.extend_from_slice(&[0, 0, (state >> 16) as u8 & 0x0F, 0]);
+    }
+    out.truncate(size);
+    out
+}
+
 fn encoded_frame(id: i32, payload: &[u8], compression: Option<i32>) -> Vec<u8> {
     let mut enc = PacketEncoder::new();
     if let Some(t) = compression {
@@ -142,4 +165,61 @@ fn decode_compressed(bencher: Bencher, size: usize) {
             d
         })
         .bench_local_values(|mut d| black_box(d.try_next_frame().unwrap()));
+}
+
+#[divan::bench(args = SIZES)]
+fn decode_compressed_realistic(bencher: Bencher, size: usize) {
+    let frame = encoded_frame(0x10, &compressible_payload(size), Some(THRESHOLD));
+    let mut decoder = PacketDecoder::new();
+    decoder.set_compression(THRESHOLD);
+    bencher.counter(BytesCount::new(size)).bench_local(|| {
+        decoder.queue_bytes(black_box(&frame));
+        black_box(decoder.try_next_frame().unwrap())
+    });
+}
+
+#[divan::bench]
+fn encoder_new() -> PacketEncoder {
+    PacketEncoder::new()
+}
+
+#[divan::bench]
+fn decoder_new() -> PacketDecoder {
+    PacketDecoder::new()
+}
+
+#[divan::bench]
+fn encoder_new_with_compression() -> PacketEncoder {
+    let mut encoder = PacketEncoder::new();
+    encoder.set_compression(THRESHOLD);
+    encoder
+}
+
+#[divan::bench]
+fn decoder_new_with_compression() -> PacketDecoder {
+    let mut decoder = PacketDecoder::new();
+    decoder.set_compression(THRESHOLD);
+    decoder
+}
+
+#[divan::bench]
+fn encoder_new_first_compressed_packet(bencher: Bencher) {
+    let data = compressible_payload(512);
+    bencher.bench_local(|| {
+        let mut encoder = PacketEncoder::new();
+        encoder.set_compression(THRESHOLD);
+        encoder.append_raw(0x10, black_box(&data)).unwrap();
+        black_box(encoder.take())
+    });
+}
+
+#[divan::bench]
+fn decoder_new_first_compressed_packet(bencher: Bencher) {
+    let frame = encoded_frame(0x10, &compressible_payload(512), Some(THRESHOLD));
+    bencher.bench_local(|| {
+        let mut decoder = PacketDecoder::new();
+        decoder.set_compression(THRESHOLD);
+        decoder.queue_bytes(black_box(&frame));
+        black_box(decoder.try_next_frame().unwrap())
+    });
 }
