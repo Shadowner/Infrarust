@@ -4,7 +4,7 @@ use std::time::Duration;
 use infrarust_api::provider::PluginProviderSender;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::store::{DirChange, ServerDir};
@@ -57,14 +57,15 @@ pub async fn watch(
     sender: Arc<ProviderSenderSlot>,
     shutdown: CancellationToken,
 ) {
-    let (notify_tx, mut notify_rx) = mpsc::unbounded_channel::<()>();
+    let changed = Arc::new(Notify::new());
+    let signal = Arc::clone(&changed);
 
     let watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
         if let Ok(event) = res {
             use notify::EventKind;
             match event.kind {
                 EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                    let _ = notify_tx.send(());
+                    signal.notify_one();
                 }
                 _ => {}
             }
@@ -91,12 +92,9 @@ pub async fn watch(
         tokio::select! {
             biased;
             () = shutdown.cancelled() => break,
-            recv = notify_rx.recv() => {
-                if recv.is_none() {
-                    break;
-                }
+            () = changed.notified() => {
                 tokio::time::sleep(DEBOUNCE).await;
-                while notify_rx.try_recv().is_ok() {}
+                std::pin::pin!(changed.notified()).enable();
 
                 if let Some(summary) = reload(&dir, &sender).await
                     && summary.added + summary.updated + summary.removed > 0

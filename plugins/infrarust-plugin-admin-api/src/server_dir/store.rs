@@ -268,7 +268,7 @@ impl ServerDir {
         let path = self.path_of(id);
 
         let guard = self.write_lock.lock().await;
-        if path.try_exists().unwrap_or(true) {
+        if tokio::fs::try_exists(&path).await.unwrap_or(true) {
             return Err(StoreError::Occupied(id.to_string()));
         }
         self.store(path, text, config).await?;
@@ -306,7 +306,12 @@ impl ServerDir {
     pub async fn diff(&self) -> Vec<DirChange> {
         let _guard = self.write_lock.lock().await;
 
-        let current = match scan(&self.dir) {
+        let dir = self.dir.clone();
+        let scanned = tokio::task::spawn_blocking(move || scan(&dir))
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(std::convert::identity);
+        let current = match scanned {
             Ok(current) => current,
             Err(e) => {
                 tracing::error!(
