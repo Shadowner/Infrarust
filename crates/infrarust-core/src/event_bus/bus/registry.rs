@@ -51,6 +51,32 @@ fn remove<K: Copy + Eq + Hash>(
     true
 }
 
+fn remove_owner<K: Eq + Hash>(map: &mut HandlerMap<K>, owner: &str) -> usize {
+    let mut removed = 0;
+    map.retain(|_, entries| {
+        if !entries.iter().any(|h| *h.owner == *owner) {
+            return true;
+        }
+        Arc::make_mut(entries).retain(|h| {
+            let owned = *h.owner == *owner;
+            if owned {
+                h.alive.store(false, Ordering::Release);
+                removed += 1;
+            }
+            !owned
+        });
+        !entries.is_empty()
+    });
+    removed
+}
+
+fn count_owner<K>(map: &HandlerMap<K>, owner: &str) -> usize {
+    map.values()
+        .flat_map(|entries| entries.iter())
+        .filter(|h| *h.owner == *owner)
+        .count()
+}
+
 pub(super) struct LockedRegistry<K> {
     map: RwLock<HandlerMap<K>>,
 }
@@ -76,6 +102,14 @@ impl<K: Copy + Eq + Hash> LockedRegistry<K> {
 
     pub(super) fn remove(&self, owner: &str, handle: ListenerHandle) -> bool {
         remove(&mut write(&self.map), owner, handle)
+    }
+
+    pub(super) fn remove_owner(&self, owner: &str) -> usize {
+        remove_owner(&mut write(&self.map), owner)
+    }
+
+    pub(super) fn count_owner(&self, owner: &str) -> usize {
+        count_owner(&read(&self.map), owner)
     }
 
     #[cfg(test)]

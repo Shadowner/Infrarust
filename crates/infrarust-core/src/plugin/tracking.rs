@@ -1,8 +1,7 @@
 //! Tracking wrappers that record registered resources for automatic cleanup.
 
 use std::any::TypeId;
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::command::{
@@ -27,13 +26,11 @@ use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
-use crate::util::sync::lock;
 
 /// Wraps an [`EventBus`] and records all [`ListenerHandle`]s for later cleanup.
 pub struct TrackingEventBus {
     inner: Arc<EventBusImpl>,
     owner: Arc<str>,
-    handles: Mutex<HashSet<ListenerHandle>>,
 }
 
 impl TrackingEventBus {
@@ -41,24 +38,15 @@ impl TrackingEventBus {
         Self {
             inner,
             owner: Arc::from(plugin_id),
-            handles: Mutex::new(HashSet::new()),
         }
     }
 
     pub fn tracked_count(&self) -> usize {
-        lock(&self.handles).len()
+        self.inner.listener_count(&self.owner)
     }
 
     pub fn unsubscribe_all(&self) {
-        let handles = std::mem::take(&mut *lock(&self.handles));
-        for handle in handles {
-            self.inner.unsubscribe_owned(&self.owner, handle);
-        }
-    }
-
-    fn track(&self, handle: ListenerHandle) -> ListenerHandle {
-        lock(&self.handles).insert(handle);
-        handle
+        self.inner.unsubscribe_owner(&self.owner);
     }
 }
 
@@ -77,7 +65,7 @@ impl EventBus for TrackingEventBus {
             priority,
             HandlerKind::from_sync(handler),
         );
-        self.track(handle)
+        handle
     }
 
     fn subscribe_async_erased(
@@ -92,7 +80,7 @@ impl EventBus for TrackingEventBus {
             priority,
             HandlerKind::from_async(handler),
         );
-        self.track(handle)
+        handle
     }
 
     fn subscribe_packet(
@@ -107,7 +95,7 @@ impl EventBus for TrackingEventBus {
             priority,
             HandlerKind::from_sync(handler),
         );
-        self.track(handle)
+        handle
     }
 
     fn subscribe_packet_async(
@@ -122,7 +110,7 @@ impl EventBus for TrackingEventBus {
             priority,
             HandlerKind::from_async(handler),
         );
-        self.track(handle)
+        handle
     }
 
     fn has_packet_listeners(
@@ -135,16 +123,15 @@ impl EventBus for TrackingEventBus {
     }
 
     fn unsubscribe(&self, handle: ListenerHandle) -> bool {
-        let tracked = lock(&self.handles).remove(&handle);
-        if !tracked {
+        let removed = self.inner.unsubscribe_owned(&self.owner, handle);
+        if !removed {
             tracing::warn!(
                 plugin = %self.owner,
                 listener = handle.as_u64(),
                 "refused to unsubscribe a listener this plugin did not register"
             );
-            return false;
         }
-        self.inner.unsubscribe_owned(&self.owner, handle)
+        removed
     }
 
     fn fire_erased<'a>(
@@ -160,30 +147,20 @@ impl EventBus for TrackingEventBus {
 
 pub struct TrackingCommandManager {
     inner: Arc<CommandManagerImpl>,
-    commands: Mutex<Vec<String>>,
     plugin_id: String,
 }
 
 impl TrackingCommandManager {
     pub fn new(inner: Arc<CommandManagerImpl>, plugin_id: String) -> Self {
-        Self {
-            inner,
-            commands: Mutex::new(Vec::new()),
-            plugin_id,
-        }
+        Self { inner, plugin_id }
     }
 
     pub fn tracked(&self) -> Vec<String> {
-        lock(&self.commands).clone()
+        self.inner.keys_owned_by(&self.plugin_id)
     }
 
     pub fn unregister_all(&self) {
-        let commands = std::mem::take(&mut *lock(&self.commands));
-        for key in commands {
-            if let Err(e) = self.inner.unregister_owned(&self.plugin_id, &key) {
-                tracing::debug!(plugin = %self.plugin_id, "command already gone at cleanup: {e}");
-            }
-        }
+        self.inner.unregister_owner(&self.plugin_id);
     }
 }
 
@@ -195,18 +172,11 @@ impl CommandManager for TrackingCommandManager {
         spec: CommandSpec,
         handler: Box<dyn CommandHandler>,
     ) -> Result<CommandRegistration, CommandError> {
-        let registration = self.inner.register_owned(&self.plugin_id, spec, handler)?;
-        let mut commands = lock(&self.commands);
-        if !commands.contains(&registration.namespaced) {
-            commands.push(registration.namespaced.clone());
-        }
-        Ok(registration)
+        self.inner.register_owned(&self.plugin_id, spec, handler)
     }
 
     fn unregister(&self, name: &str) -> Result<(), CommandError> {
-        let key = self.inner.unregister_owned(&self.plugin_id, name)?;
-        lock(&self.commands).retain(|tracked| *tracked != key);
-        Ok(())
+        self.inner.unregister_owned(&self.plugin_id, name).map(drop)
     }
 
     fn get(&self, label: &str) -> Option<CommandInfo> {

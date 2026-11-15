@@ -420,6 +420,17 @@ impl EventBusImpl {
         removed
     }
 
+    pub(crate) fn unsubscribe_owner(&self, owner: &str) -> usize {
+        let packets = self.packet_handlers.remove_owner(owner);
+        self.packet_listener_count
+            .fetch_sub(packets as u64, Ordering::Relaxed);
+        self.handlers.remove_owner(owner) + packets
+    }
+
+    pub(crate) fn listener_count(&self, owner: &str) -> usize {
+        self.handlers.count_owner(owner) + self.packet_handlers.count_owner(owner)
+    }
+
     fn new_entry(
         &self,
         owner: Arc<str>,
