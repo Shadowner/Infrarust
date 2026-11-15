@@ -10,7 +10,7 @@ use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::filter::{FilterVerdict, TransportContext, TransportFilter};
 
 use super::registry_base::FilterOwner;
-use crate::event_bus::diagnostic::panic_message;
+use crate::util::guard::panic_message;
 
 #[derive(Clone)]
 pub struct ChainedFilter {

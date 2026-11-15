@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,16 +18,6 @@ pub enum DiagnosticKind {
     QueueFull,
 }
 
-pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_string()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "non-string panic payload".to_string()
-    }
-}
-
 pub(crate) fn short_type_name(full: &'static str) -> &'static str {
     let generics = full.find('<').unwrap_or(full.len());
     let start = full[..generics].rfind("::").map_or(0, |i| i + 2);
@@ -44,15 +33,5 @@ mod tests {
         assert_eq!(short_type_name("a::b::PreLoginEvent"), "PreLoginEvent");
         assert_eq!(short_type_name("Plain"), "Plain");
         assert_eq!(short_type_name("a::Wrapper<b::Inner>"), "Wrapper<b::Inner>");
-    }
-
-    #[test]
-    fn panic_message_reads_string_payloads() {
-        let from_str: Box<dyn Any + Send> = Box::new("boom");
-        let from_string: Box<dyn Any + Send> = Box::new(String::from("bang"));
-        let other: Box<dyn Any + Send> = Box::new(7_u8);
-        assert_eq!(panic_message(from_str.as_ref()), "boom");
-        assert_eq!(panic_message(from_string.as_ref()), "bang");
-        assert_eq!(panic_message(other.as_ref()), "non-string panic payload");
     }
 }

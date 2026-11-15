@@ -10,7 +10,7 @@ use infrarust_api::filter::{
 use infrarust_api::types::{ProtocolVersion, RawPacket};
 
 use super::codec_registry::CodecFilterRegistryImpl;
-use crate::event_bus::diagnostic::panic_message;
+use crate::util::guard::panic_message;
 
 pub const CODEC_FILTER_FAILED: &str = "Disconnected: a required packet filter failed.";
 

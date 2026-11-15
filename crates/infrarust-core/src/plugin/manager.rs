@@ -22,11 +22,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::diagnostic::panic_message;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::services::scheduler::SchedulerImpl;
+use crate::util::guard::panic_message;
 
 use super::PluginRegistryImpl;
 use super::PluginState;

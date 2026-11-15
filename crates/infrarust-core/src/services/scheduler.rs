@@ -12,7 +12,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::services::scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
 
 use crate::event_bus::CORE_OWNER;
-use crate::event_bus::diagnostic::panic_message;
+use crate::util::guard::panic_message;
 
 pub const MIN_PERIOD: Duration = Duration::from_millis(1);
 

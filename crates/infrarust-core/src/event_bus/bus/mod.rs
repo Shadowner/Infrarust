@@ -28,8 +28,9 @@ use queue::Queued;
 use registry::{Handlers, LockedRegistry};
 
 use super::builtin::is_builtin_event;
-use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, panic_message, short_type_name};
+use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, short_type_name};
 use super::handler::{HandlerEntry, HandlerKind};
+use crate::util::guard::panic_message;
 
 mod queue;
 mod registry;

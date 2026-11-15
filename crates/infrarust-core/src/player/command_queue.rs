@@ -13,10 +13,10 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::player::Player;
 
 use super::PlayerSession;
-use crate::event_bus::diagnostic::panic_message;
 use crate::services::command_manager::{
     CommandManagerImpl, Completion, DispatchOutcome, Invocation, Prepared,
 };
+use crate::util::guard::panic_message;
 use crate::util::sync::lock;
 
 const QUEUE_CAPACITY: usize = 16;
