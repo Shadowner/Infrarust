@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use infrarust_config::{HostPattern, NetworkRule, PortRange, WasmNetworkConfig};
@@ -98,7 +98,6 @@ pub(crate) struct NetworkPolicy {
     lookup_timeout: Duration,
     denials: SharedRateLimit,
     inbound_denials: SharedRateLimit,
-    pub(super) tls: OnceLock<Result<Arc<rustls::ClientConfig>, String>>,
 }
 
 impl NetworkPolicy {
@@ -161,7 +160,6 @@ impl NetworkPolicy {
             lookup_timeout,
             denials: SharedRateLimit::new(DENIED_CALL_LOG_INTERVAL, DENIAL_LOG_BURST),
             inbound_denials: SharedRateLimit::new(DENIED_CALL_LOG_INTERVAL, DENIAL_LOG_BURST),
-            tls: OnceLock::new(),
         }
     }
 

@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -168,7 +168,8 @@ impl Exchange {
     }
 
     fn tls_config(&self) -> Result<Arc<ClientConfig>, Error> {
-        let built = self.policy.tls.get_or_init(|| {
+        static CONFIG: OnceLock<Result<Arc<ClientConfig>, String>> = OnceLock::new();
+        let built = CONFIG.get_or_init(|| {
             let built = build_tls_config();
             if let Err(error) = &built {
                 tracing::warn!(
