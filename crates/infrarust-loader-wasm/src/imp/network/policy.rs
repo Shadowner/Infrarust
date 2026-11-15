@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use infrarust_config::{HostPattern, NetworkRule, PortRange, WasmNetworkConfig};
@@ -15,6 +15,7 @@ use super::resolver::Resolver;
 use super::{DENIAL_LOG_BURST, HOSTNAME_REFRESH_INTERVAL};
 use crate::consts::DENIED_CALL_LOG_INTERVAL;
 use crate::rate_limit::SharedRateLimit;
+use crate::sync::{read, write};
 
 pub(crate) type SocketCheckFuture = Pin<Box<dyn Future<Output = bool> + Send + Sync>>;
 
@@ -71,26 +72,22 @@ enum Mode {
 struct HostnameSlot {
     name: String,
     ports: Vec<PortRange>,
-    state: Mutex<Resolution>,
-}
-
-#[derive(Default)]
-struct Resolution {
-    ips: Vec<IpAddr>,
-    attempted: Option<Instant>,
-}
-
-impl Resolution {
-    fn stale(&self) -> bool {
-        self.attempted
-            .is_none_or(|at| at.elapsed() >= HOSTNAME_REFRESH_INTERVAL)
-    }
+    ips: RwLock<Vec<IpAddr>>,
+    attempted: Mutex<Option<Instant>>,
 }
 
 impl HostnameSlot {
     fn covers(&self, port: u16) -> bool {
         self.ports.iter().any(|ports| ports.contains(port))
     }
+
+    fn resolves_to(&self, ip: IpAddr) -> bool {
+        read(&self.ips).contains(&ip)
+    }
+}
+
+fn stale(attempted: Option<Instant>) -> bool {
+    attempted.is_none_or(|at| at.elapsed() >= HOSTNAME_REFRESH_INTERVAL)
 }
 
 pub(crate) struct NetworkPolicy {
@@ -150,7 +147,8 @@ impl NetworkPolicy {
                     None => hostnames.push(HostnameSlot {
                         name: name.to_owned(),
                         ports: vec![rule.ports()],
-                        state: Mutex::default(),
+                        ips: RwLock::default(),
+                        attempted: Mutex::default(),
                     }),
                 }
             }
@@ -203,8 +201,8 @@ impl NetworkPolicy {
                     ))
                 }
                 Decision::Cached => {
-                    let policy = Arc::clone(&policy);
-                    Box::pin(async move { policy.finish_cached_check(addr, usage).await })
+                    let allowed = policy.finish_cached_check(addr, usage);
+                    Box::pin(async move { allowed })
                 }
             }
         }
@@ -218,8 +216,8 @@ impl NetworkPolicy {
         allowed
     }
 
-    async fn finish_cached_check(&self, addr: SocketAddr, usage: SocketAddrUse) -> bool {
-        let allowed = self.cached_contains(addr).await;
+    fn finish_cached_check(&self, addr: SocketAddr, usage: SocketAddrUse) -> bool {
+        let allowed = self.cached_contains(addr);
         if !allowed {
             self.report_socket_denied(usage, addr, Refusal::AllowList);
         }
@@ -273,26 +271,18 @@ impl NetworkPolicy {
             Decision::Allow => true,
             Decision::Deny(_) => false,
             Decision::Lookup => self.resolved_contains(addr).await,
-            Decision::Cached => self.cached_contains(addr).await,
+            Decision::Cached => self.cached_contains(addr),
         }
     }
 
-    async fn cached_contains(&self, addr: SocketAddr) -> bool {
-        let ip = addr.ip();
-        for slot in self
-            .hostnames
+    fn cached_contains(&self, addr: SocketAddr) -> bool {
+        self.hostnames
             .iter()
-            .filter(|slot| slot.covers(addr.port()))
-        {
-            if slot.state.lock().await.ips.contains(&ip) {
-                return true;
-            }
-        }
-        false
+            .any(|slot| slot.covers(addr.port()) && slot.resolves_to(addr.ip()))
     }
 
     async fn resolved_contains(&self, addr: SocketAddr) -> bool {
-        if self.cached_contains(addr).await {
+        if self.cached_contains(addr) {
             return true;
         }
         let ip = addr.ip();
@@ -301,13 +291,13 @@ impl NetworkPolicy {
             .iter()
             .filter(|slot| slot.covers(addr.port()));
         for slot in candidates {
-            let mut state = slot.state.lock().await;
-            if state.ips.contains(&ip) {
+            let mut attempted = slot.attempted.lock().await;
+            if slot.resolves_to(ip) {
                 return true;
             }
-            if state.stale() {
-                self.refresh(slot, &mut state).await;
-                if state.ips.contains(&ip) {
+            if stale(*attempted) {
+                self.refresh(slot, &mut attempted).await;
+                if slot.resolves_to(ip) {
                     return true;
                 }
             }
@@ -315,10 +305,10 @@ impl NetworkPolicy {
         false
     }
 
-    async fn refresh(&self, slot: &HostnameSlot, state: &mut Resolution) {
-        state.attempted = Some(Instant::now());
+    async fn refresh(&self, slot: &HostnameSlot, attempted: &mut Option<Instant>) {
+        *attempted = Some(Instant::now());
         match self.lookup(&slot.name).await {
-            Some(ips) if !ips.is_empty() => state.ips = ips,
+            Some(ips) if !ips.is_empty() => *write(&slot.ips) = ips,
             _ => tracing::debug!(
                 plugin = %self.plugin_id,
                 host = %slot.name,
@@ -343,9 +333,9 @@ impl NetworkPolicy {
 
     pub(crate) async fn warm(&self) {
         for slot in &self.hostnames {
-            let mut state = slot.state.lock().await;
-            if state.stale() {
-                self.refresh(slot, &mut state).await;
+            let mut attempted = slot.attempted.lock().await;
+            if stale(*attempted) {
+                self.refresh(slot, &mut attempted).await;
             }
         }
     }
@@ -535,6 +525,7 @@ mod tests {
     struct FakeResolver {
         answers: StdMutex<HashMap<String, Vec<IpAddr>>>,
         calls: StdMutex<Vec<String>>,
+        held: StdMutex<Option<Arc<tokio::sync::Notify>>>,
     }
 
     impl FakeResolver {
@@ -548,13 +539,25 @@ mod tests {
         fn calls(&self) -> usize {
             self.calls.lock().unwrap().len()
         }
+
+        fn hold(&self) -> Arc<tokio::sync::Notify> {
+            let gate = Arc::new(tokio::sync::Notify::new());
+            *self.held.lock().unwrap() = Some(Arc::clone(&gate));
+            gate
+        }
     }
 
     impl Resolver for FakeResolver {
         fn resolve(&self, name: &str) -> ResolveFuture {
             self.calls.lock().unwrap().push(name.to_owned());
             let answer = self.answers.lock().unwrap().get(name).cloned();
-            Box::pin(async move { answer.ok_or_else(|| std::io::Error::other("no such host")) })
+            let held = self.held.lock().unwrap().clone();
+            Box::pin(async move {
+                if let Some(gate) = held {
+                    gate.notified().await;
+                }
+                answer.ok_or_else(|| std::io::Error::other("no such host"))
+            })
         }
     }
 
@@ -722,6 +725,46 @@ mod tests {
         assert_eq!(resolver.calls(), 2, "the send miss refreshed the rule");
         assert!(check(&policy, addr("10.9.9.8:5432"), SocketAddrUse::UdpReceive).await);
         assert!(!check(&policy, addr("10.9.9.9:5432"), SocketAddrUse::UdpReceive).await);
+        assert_eq!(resolver.calls(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lookup_in_flight_delays_neither_inbound_checks_nor_a_second_lookup() {
+        let resolver = Arc::new(FakeResolver::default());
+        resolver.answer("db.internal", &["10.9.9.9"]);
+        let policy = policy_with(&["db.internal:5432"], &resolver);
+        policy.warm().await;
+        tokio::time::advance(HOSTNAME_REFRESH_INTERVAL).await;
+
+        resolver.answer("db.internal", &["10.9.9.8"]);
+        let gate = resolver.hold();
+        let connect = |policy: &Arc<NetworkPolicy>| {
+            let policy = Arc::clone(policy);
+            tokio::spawn(async move { check(&policy, addr("10.9.9.8:5432"), CONNECT).await })
+        };
+        let first = connect(&policy);
+        while resolver.calls() < 2 {
+            tokio::task::yield_now().await;
+        }
+
+        for usage in [SocketAddrUse::UdpReceive, SocketAddrUse::TcpAccept] {
+            let cached = tokio::time::timeout(
+                Duration::from_secs(1),
+                check(&policy, addr("10.9.9.9:5432"), usage),
+            )
+            .await;
+            assert_eq!(cached, Ok(true), "{usage:?} while the name is resolved");
+        }
+
+        let second = connect(&policy);
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(resolver.calls(), 2, "the second miss joins the lookup");
+
+        gate.notify_one();
+        assert!(first.await.unwrap());
+        assert!(second.await.unwrap());
         assert_eq!(resolver.calls(), 2);
     }
 
