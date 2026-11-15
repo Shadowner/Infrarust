@@ -8,7 +8,7 @@ use infrarust_protocol::Packet;
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::{
     CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
-    SLoginPluginResponse, SLoginStart,
+    SLoginStart,
 };
 use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
@@ -16,6 +16,9 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
+use crate::forwarding::velocity::{
+    VelocityForwarding, answer_velocity_request, is_velocity_request,
+};
 use crate::pipeline::types::HandshakeData;
 use crate::session::framed_stream::FramedStream;
 use crate::session::kick::BackendKick;
@@ -108,7 +111,7 @@ impl BackendBridge {
         &mut self,
         registry: &PacketRegistry,
         version: ProtocolVersion,
-        velocity_ctx: Option<(&crate::forwarding::ForwardingData, &[u8])>,
+        velocity: Option<VelocityForwarding<'_>>,
         messages: &LoginMessages<'_>,
     ) -> Result<(), CoreError> {
         let encryption_request = registry.get_packet_id::<CEncryptionRequest>(version);
@@ -159,30 +162,10 @@ impl BackendBridge {
 
                         if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>()
                         {
-                            if crate::forwarding::velocity::is_velocity_request(request) {
-                                if let Some((fwd_data, secret)) = velocity_ctx {
-                                    let response =
-                                        crate::forwarding::velocity::build_velocity_response(
-                                            request, fwd_data, secret,
-                                        )?;
-                                    self.send_packet(&response, registry).await?;
-                                    tracing::info!("velocity forwarding applied (auto-detected)");
-                                    continue;
-                                }
-                                tracing::debug!(
-                                    "backend requested velocity forwarding but no secret is \
-                                     configured — responding 'not understood'"
-                                );
+                            let response = if is_velocity_request(request) {
+                                answer_velocity_request(request, velocity)?
                             } else {
-                                let response = messages.answer(&frame, request).await;
-                                self.send_packet(&response, registry).await?;
-                                continue;
-                            }
-
-                            let response = SLoginPluginResponse {
-                                message_id: request.message_id,
-                                successful: false,
-                                data: Vec::new(),
+                                messages.answer(&frame, request).await
                             };
                             self.send_packet(&response, registry).await?;
                             continue;

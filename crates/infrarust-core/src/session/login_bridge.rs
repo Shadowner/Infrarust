@@ -17,8 +17,9 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::forwarding::ForwardingData;
-use crate::forwarding::velocity::{build_velocity_response, is_velocity_request};
+use crate::forwarding::velocity::{
+    VelocityForwarding, answer_velocity_request, is_velocity_request,
+};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::acknowledge_login;
 use crate::session::client_bridge::ClientBridge;
@@ -85,7 +86,7 @@ pub(crate) async fn bridge_login(
     backend: &mut BackendBridge,
     server: &str,
     config: &ServerConfig,
-    velocity: Option<(&ForwardingData, &[u8])>,
+    velocity: Option<VelocityForwarding<'_>>,
 ) -> Result<(), CoreError> {
     let idle = read_timeout(config);
     let mut relay = Relay {
@@ -156,7 +157,7 @@ enum Progress {
 struct Relay<'a> {
     registry: &'a PacketRegistry,
     version: ProtocolVersion,
-    velocity: Option<(&'a ForwardingData, &'a [u8])>,
+    velocity: Option<VelocityForwarding<'a>>,
     ids: LoginIds,
     plugin_requests: HashSet<i32>,
     cookie_requests: usize,
@@ -245,7 +246,8 @@ impl Relay<'_> {
         } else if id == self.ids.plugin_request {
             let request = CLoginPluginRequest::decode(&mut frame.payload.as_ref(), self.version)?;
             if is_velocity_request(&request) {
-                self.answer_velocity(&request, backend).await?;
+                let response = answer_velocity_request(&request, self.velocity)?;
+                backend.send_packet(&response, self.registry).await?;
                 return Ok(Progress::Continue);
             }
             match self.messages.relay(&frame, &request).await {
@@ -271,32 +273,6 @@ impl Relay<'_> {
             tracing::debug!(id = frame.id, "ignoring a backend packet during the login");
         }
         Ok(Progress::Continue)
-    }
-
-    async fn answer_velocity(
-        &self,
-        request: &CLoginPluginRequest,
-        backend: &mut BackendBridge,
-    ) -> Result<(), CoreError> {
-        let response = match self.velocity {
-            Some((data, secret)) => {
-                let response = build_velocity_response(request, data, secret)?;
-                tracing::info!("velocity forwarding applied (auto-detected)");
-                response
-            }
-            None => {
-                tracing::debug!(
-                    "backend requested velocity forwarding but no secret is configured, \
-                     responding 'not understood'"
-                );
-                SLoginPluginResponse {
-                    message_id: request.message_id,
-                    successful: false,
-                    data: Vec::new(),
-                }
-            }
-        };
-        backend.send_packet(&response, self.registry).await
     }
 
     async fn on_client(

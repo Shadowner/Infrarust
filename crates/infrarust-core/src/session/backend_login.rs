@@ -5,6 +5,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
+use crate::forwarding::velocity::VelocityForwarding;
 use crate::forwarding::{ForwardingHandler, build_handshake_for_backend};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::context::{SessionContext, SessionIo};
@@ -47,7 +48,10 @@ pub(crate) async fn connect_backend(
         Login::Proxied => {
             let handler = start_login(ctx, config, &mut backend).await?;
             let data = ctx.forwarding_data();
-            let velocity = velocity_secret(ctx, &handler).map(|secret| (&data, secret));
+            let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {
+                data: &data,
+                secret,
+            });
             let messages = LoginMessages::new(ctx, ServerId::new(server));
             backend
                 .consume_backend_login(ctx.registry(), version, velocity, &messages)
@@ -57,7 +61,10 @@ pub(crate) async fn connect_backend(
         Login::Bridged(io) => {
             let handler = start_login(ctx, config, &mut backend).await?;
             let data = ctx.forwarding_data();
-            let velocity = velocity_secret(ctx, &handler).map(|secret| (&data, secret));
+            let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {
+                data: &data,
+                secret,
+            });
             bridge_login(ctx, io, &mut backend, server, config, velocity).await?;
         }
     }
