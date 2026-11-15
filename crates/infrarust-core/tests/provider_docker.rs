@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use infrarust_config::{DockerProviderConfig, ForwardingMode, validate_server_forwarding};
 use infrarust_core::provider::ConfigProvider;
 use infrarust_core::provider::docker::{
-    DockerProvider, DomainsNotAllowed, container_server_config, labels_to_server_config,
+    ContainerRefused, DockerProvider, container_server_config, labels_to_server_config,
     resolve_container_address, withheld_forwarding_warning,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -21,7 +21,7 @@ fn make_labels(pairs: &[(&str, &str)]) -> HashMap<String, String> {
 #[test]
 fn test_labels_to_config_minimal() {
     let labels = make_labels(&[("infrarust.enable", "true")]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565").unwrap();
 
     assert_eq!(config.domains, vec!["mc-test.docker.local"]);
 }
@@ -29,7 +29,7 @@ fn test_labels_to_config_minimal() {
 #[test]
 fn test_labels_to_config_auto_domain() {
     let labels = make_labels(&[("infrarust.enable", "true")]);
-    let config = labels_to_server_config("my-server", &labels, "172.17.0.5:25565");
+    let config = labels_to_server_config("my-server", &labels, "172.17.0.5:25565").unwrap();
 
     assert_eq!(config.domains, vec!["my-server.docker.local"]);
 }
@@ -40,7 +40,7 @@ fn test_labels_to_config_multi_domains() {
         ("infrarust.enable", "true"),
         ("infrarust.domains", "a.com, b.com, c.com"),
     ]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565").unwrap();
 
     assert_eq!(config.domains, vec!["a.com", "b.com", "c.com"]);
 }
@@ -51,7 +51,7 @@ fn test_labels_to_config_custom_port() {
         ("infrarust.enable", "true"),
         ("infrarust.domains", "test.mc.local"),
     ]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25566");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25566").unwrap();
 
     assert_eq!(config.addresses[0].address.port, 25566);
 }
@@ -62,7 +62,7 @@ fn test_labels_to_config_proxy_protocol() {
         ("infrarust.enable", "true"),
         ("infrarust.send_proxy_protocol", "true"),
     ]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565").unwrap();
 
     assert!(config.send_proxy_protocol);
 }
@@ -73,7 +73,7 @@ fn test_labels_to_config_motd_preserved() {
         ("infrarust.enable", "true"),
         ("infrarust.motd.text", "Welcome!"),
     ]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565").unwrap();
 
     assert_eq!(config.id.as_deref(), Some("mc-test"));
     assert_eq!(config.motd.online.unwrap().text, "Welcome!");
@@ -83,7 +83,7 @@ fn test_labels_to_config_motd_preserved() {
 fn test_labels_to_config_special_chars_round_trip() {
     let motd = "He said \"hi\"\nC:\\path [section]";
     let labels = make_labels(&[("infrarust.enable", "true"), ("infrarust.motd.text", motd)]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565").unwrap();
 
     assert_eq!(config.motd.online.unwrap().text, motd);
 }
@@ -94,7 +94,7 @@ fn test_labels_to_config_proxy_mode() {
         ("infrarust.enable", "true"),
         ("infrarust.proxy_mode", "client_only"),
     ]);
-    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565");
+    let config = labels_to_server_config("mc-test", &labels, "172.17.0.2:25565").unwrap();
 
     assert_eq!(config.proxy_mode, infrarust_config::ProxyMode::ClientOnly);
 }
@@ -223,7 +223,7 @@ fn test_policy_refuses_label_domains_by_default() {
 
     assert_eq!(
         refusal,
-        DomainsNotAllowed {
+        ContainerRefused::DomainsNotAllowed {
             allowing_line: r#"allowed_domains = ["play.mc.com"]"#.to_string()
         }
     );
@@ -240,8 +240,10 @@ fn test_policy_allowing_line_keeps_the_existing_entries() {
     .unwrap_err();
 
     assert_eq!(
-        refusal.allowing_line,
-        r#"allowed_domains = ["*.lan.mc.com", "play.mc.com"]"#
+        refusal,
+        ContainerRefused::DomainsNotAllowed {
+            allowing_line: r#"allowed_domains = ["*.lan.mc.com", "play.mc.com"]"#.to_string()
+        }
     );
 }
 

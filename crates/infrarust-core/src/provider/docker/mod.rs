@@ -8,7 +8,7 @@
 pub mod labels;
 
 pub use labels::{
-    DomainsNotAllowed, container_server_config, labels_to_server_config, resolve_container_address,
+    ContainerRefused, container_server_config, labels_to_server_config, resolve_container_address,
     withheld_forwarding_warning,
 };
 
@@ -166,7 +166,15 @@ impl DockerProvider {
 
         let config = match container_server_config(&self.config, container_name, labels, &address) {
             Ok(config) => config,
-            Err(DomainsNotAllowed { allowing_line }) => {
+            Err(ContainerRefused::InvalidLabels(error)) => {
+                tracing::warn!(
+                    container = %container_name,
+                    error = %error,
+                    "skipping container: its labels do not make a server config"
+                );
+                return Ok(None);
+            }
+            Err(ContainerRefused::DomainsNotAllowed { allowing_line }) => {
                 self.log_refusal(
                     container_name,
                     format!(
@@ -490,7 +498,7 @@ mod tests {
     use super::*;
 
     fn config(name: &str, address: &str) -> ServerConfig {
-        labels_to_server_config(name, &HashMap::new(), address)
+        labels_to_server_config(name, &HashMap::new(), address).unwrap()
     }
 
     fn provider_config(name: &str, address: &str) -> ProviderConfig {

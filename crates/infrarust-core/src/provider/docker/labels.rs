@@ -6,19 +6,18 @@
 use std::collections::HashMap;
 
 use bollard::models::ContainerInspectResponse;
+use toml::{Table, Value};
 use wildmatch::WildMatch;
 
 use infrarust_config::{
     DockerProviderConfig, ForwardingMode, ProxyMode, ServerAddress, ServerConfig,
 };
 
-/// Default Minecraft port.
-/// Converts Docker container labels to a `ServerConfig`.
 pub fn labels_to_server_config(
     container_name: &str,
     labels: &HashMap<String, String>,
     address: &str,
-) -> ServerConfig {
+) -> Result<ServerConfig, toml::de::Error> {
     let domains = labels
         .get("infrarust.domains")
         .map(|d| d.split(',').map(|s| s.trim().to_string()).collect())
@@ -36,9 +35,6 @@ pub fn labels_to_server_config(
         })
         .unwrap_or(ProxyMode::Passthrough);
 
-    let name = labels.get("infrarust.name").cloned();
-    let network = labels.get("infrarust.network").cloned();
-
     let send_proxy_protocol = labels
         .get("infrarust.send_proxy_protocol")
         .map(|v| v == "true" || v == "1")
@@ -49,81 +45,44 @@ pub fn labels_to_server_config(
         port: infrarust_config::DEFAULT_MC_PORT,
     });
 
-    // Deserializing through a toml::Table (instead of a struct literal) keeps
-    // serde defaults for all unset fields and escapes label values correctly.
-    let built = (|| -> Result<ServerConfig, Box<dyn std::error::Error>> {
-        use toml::{Table, Value};
+    let mut table = Table::new();
+    table.insert("id".into(), Value::String(container_name.to_string()));
+    table.insert(
+        "domains".into(),
+        Value::Array(domains.into_iter().map(Value::String).collect()),
+    );
+    table.insert(
+        "addresses".into(),
+        Value::Array(vec![Value::String(server_address.to_string())]),
+    );
+    table.insert(
+        "proxy_mode".into(),
+        Value::try_from(proxy_mode).map_err(serde::de::Error::custom)?,
+    );
+    table.insert(
+        "send_proxy_protocol".into(),
+        Value::Boolean(send_proxy_protocol),
+    );
+    for key in ["name", "network"] {
+        if let Some(value) = labels.get(&format!("infrarust.{key}")) {
+            table.insert(key.into(), Value::String(value.clone()));
+        }
+    }
+    if let Some(text) = labels.get("infrarust.motd.text") {
+        let mut online = Table::new();
+        online.insert("text".into(), Value::String(text.clone()));
+        let mut motd = Table::new();
+        motd.insert("online".into(), Value::Table(online));
+        table.insert("motd".into(), Value::Table(motd));
+    }
 
-        let mut table = Table::new();
-        table.insert("id".into(), Value::String(container_name.to_string()));
-        table.insert(
-            "domains".into(),
-            Value::Array(domains.iter().cloned().map(Value::String).collect()),
-        );
-        table.insert(
-            "addresses".into(),
-            Value::Array(vec![Value::String(server_address.to_string())]),
-        );
-        table.insert("proxy_mode".into(), Value::try_from(proxy_mode)?);
-        table.insert(
-            "send_proxy_protocol".into(),
-            Value::Boolean(send_proxy_protocol),
-        );
-        if let Some(name) = &name {
-            table.insert("name".into(), Value::String(name.clone()));
-        }
-        if let Some(network) = &network {
-            table.insert("network".into(), Value::String(network.clone()));
-        }
-        if let Some(text) = labels.get("infrarust.motd.text") {
-            let mut online = Table::new();
-            online.insert("text".into(), Value::String(text.clone()));
-            let mut motd = Table::new();
-            motd.insert("online".into(), Value::Table(online));
-            table.insert("motd".into(), Value::Table(motd));
-        }
-
-        Ok(table.try_into()?)
-    })();
-
-    built.unwrap_or_else(|e| {
-        tracing::warn!(
-            container = %container_name,
-            error = %e,
-            "generated docker server config failed to parse, using minimal fallback"
-        );
-        // Manual fallback — less complete but functional
-        ServerConfig {
-            id: Some(container_name.to_string()),
-            name,
-            network,
-            domains,
-            addresses: vec![server_address.into()],
-            balance: Default::default(),
-            slow_start: None,
-            slow_start_aggression: 1.0,
-            active_health: None,
-            proxy_mode,
-            forwarding_mode: None,
-            send_proxy_protocol,
-            domain_rewrite: Default::default(),
-            motd: Default::default(),
-            server_manager: None,
-            timeouts: None,
-            max_players: 0,
-            ip_filter: None,
-            disconnect_message: None,
-            limbo_handlers: Vec::new(),
-            bungeecord_channel: false,
-        }
-    })
+    table.try_into()
 }
 
-/// A container whose labels claim domains the `[docker]` section does not allow.
 #[derive(Debug, PartialEq, Eq)]
-pub struct DomainsNotAllowed {
-    /// The complete `allowed_domains` line that would admit this container.
-    pub allowing_line: String,
+pub enum ContainerRefused {
+    DomainsNotAllowed { allowing_line: String },
+    InvalidLabels(toml::de::Error),
 }
 
 /// Builds the config of a container under the `[docker]` policy.
@@ -132,8 +91,9 @@ pub fn container_server_config(
     container_name: &str,
     labels: &HashMap<String, String>,
     address: &str,
-) -> Result<ServerConfig, DomainsNotAllowed> {
-    let mut config = labels_to_server_config(container_name, labels, address);
+) -> Result<ServerConfig, ContainerRefused> {
+    let mut config = labels_to_server_config(container_name, labels, address)
+        .map_err(ContainerRefused::InvalidLabels)?;
 
     let own_domain = format!("{container_name}.docker.local").to_lowercase();
     let allowed: Vec<String> = policy
@@ -149,7 +109,7 @@ pub fn container_server_config(
         .collect();
     if !refused.is_empty() {
         refused.dedup();
-        return Err(DomainsNotAllowed {
+        return Err(ContainerRefused::DomainsNotAllowed {
             allowing_line: format!("allowed_domains = {:?}", [allowed, refused].concat()),
         });
     }
