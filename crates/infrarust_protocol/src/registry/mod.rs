@@ -118,6 +118,17 @@ impl PacketRegistry {
         })
     }
 
+    pub fn decode_as<P: Packet>(
+        &self,
+        frame: &PacketFrame,
+        version: ProtocolVersion,
+    ) -> ProtocolResult<Option<P>> {
+        if P::ENCODE_ONLY || self.get_packet_id::<P>(version) != Some(frame.id) {
+            return Ok(None);
+        }
+        P::decode(&mut frame.payload.as_ref(), version).map(Some)
+    }
+
     pub fn register<P: Packet>(&mut self) {
         debug_assert!(
             P::IDS.windows(2).all(|w| w[0].from < w[1].from),
@@ -280,6 +291,65 @@ mod tests {
             }
             DecodedPacket::Opaque { .. } => panic!("expected Typed"),
         }
+    }
+
+    #[test]
+    fn decode_as_returns_the_packet_whose_id_the_frame_carries() {
+        let registry = build_default_registry();
+        let payload = make_handshake_payload(767, "mc.example.com", 25565, 2);
+        let frame = PacketFrame::new(0x00, Bytes::from(payload));
+
+        let handshake = registry
+            .decode_as::<SHandshake>(&frame, ProtocolVersion::V1_21)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(handshake.server_address, "mc.example.com");
+        assert_eq!(handshake.next_state, ConnectionState::Login);
+    }
+
+    #[test]
+    fn decode_as_skips_a_frame_carrying_another_id() {
+        let registry = build_default_registry();
+        let frame = PacketFrame::new(0x01, Bytes::from_static(&[0xFF]));
+
+        let decoded = registry
+            .decode_as::<SHandshake>(&frame, ProtocolVersion::V1_21)
+            .unwrap();
+
+        assert!(decoded.is_none());
+    }
+
+    #[test]
+    fn decode_as_reports_a_malformed_payload() {
+        let registry = build_default_registry();
+        let frame = PacketFrame::new(0x00, Bytes::from_static(&[0xFF]));
+
+        assert!(
+            registry
+                .decode_as::<SHandshake>(&frame, ProtocolVersion::V1_21)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn decode_as_ignores_unregistered_and_encode_only_packets() {
+        let mut registry = PacketRegistry::new();
+        let frame = PacketFrame::new(0x10, Bytes::new());
+        assert!(
+            registry
+                .decode_as::<EncodeOnlyIds>(&frame, ProtocolVersion::V1_21)
+                .unwrap()
+                .is_none()
+        );
+
+        registry.register::<EncodeOnlyIds>();
+        assert!(
+            registry
+                .decode_as::<EncodeOnlyIds>(&frame, ProtocolVersion::V1_21)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
