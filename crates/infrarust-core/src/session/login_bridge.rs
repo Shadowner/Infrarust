@@ -344,7 +344,7 @@ mod tests {
     use super::*;
     use crate::limbo::test_helpers::test_proxy_services;
     use crate::player::PlayerSession;
-    use crate::services::ProxyServices;
+    use crate::server::ProxyServices;
     use crate::session::backend_login::{Login, connect_backend};
     use crate::session::context::test_helpers::{test_connector, test_context, test_io};
     use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};

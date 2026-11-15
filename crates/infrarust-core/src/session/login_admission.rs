@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::pipeline::context::ConnectionContext;
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession, SessionKind};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 
 pub(crate) struct Arrival {
     pub(crate) profile: GameProfile,

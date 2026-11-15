@@ -14,7 +14,7 @@ use crate::event_bus::CORE_OWNER;
 use crate::handoff::ClaimMatch;
 use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 
 pub const PARTIAL_MATCH_TIMEOUT: Duration = Duration::from_secs(5);
 pub const NEED_MORE_TIMEOUT: Duration = Duration::from_secs(5);

@@ -1,6 +1,7 @@
 mod accept;
 mod health_observer;
 mod health_prober;
+mod proxy_services;
 mod status_refresh;
 mod wiring;
 
@@ -24,8 +25,9 @@ use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::pipeline::Pipeline;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
-use crate::services::ProxyServices;
 use crate::status::StatusHandler;
+
+pub use proxy_services::ProxyServices;
 
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 

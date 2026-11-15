@@ -16,7 +16,7 @@ use crate::forwarding::domain_rewrite::handoff_handshake;
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::RoutingData;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

@@ -15,7 +15,7 @@ use crate::pipeline::types::HandshakeData;
 use crate::player::PlayerSession;
 use crate::player::commands::CommandInbox;
 use crate::plugin_messaging::router::Scope;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 
 pub(crate) struct SessionContext<'a> {

@@ -9,7 +9,7 @@ use super::forwarded::{Applicant, ForwardedLogin, Opening, Route, Wire};
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::BackendTargets;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 
 pub struct PassthroughHandler {
     backend_connector: Arc<BackendConnector>,

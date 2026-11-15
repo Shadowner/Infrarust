@@ -650,7 +650,7 @@ mod tests {
     }
 
     fn origin(
-        services: &crate::services::ProxyServices,
+        services: &crate::server::ProxyServices,
         backend: &TcpListener,
         extra: &str,
     ) -> RoutingData {

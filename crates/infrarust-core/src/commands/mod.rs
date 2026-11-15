@@ -18,7 +18,7 @@ use infrarust_api::services::plugin_registry::PluginRegistry;
 
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::config_service::ConfigServiceImpl;
 use infrarust_server_manager::ServerManagerService;

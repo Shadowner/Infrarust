@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
 
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::status::StatusCache;
 use crate::status::relay_gate::RelayGate;
 

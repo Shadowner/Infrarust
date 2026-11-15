@@ -470,7 +470,7 @@ mod tests {
     use super::super::virtual_session::VirtualSessionCore;
     use super::*;
     use crate::player::PlayerSession;
-    use crate::services::ProxyServices;
+    use crate::server::ProxyServices;
     use crate::session::context::test_helpers::{test_connector, test_context, test_io};
 
     #[test]

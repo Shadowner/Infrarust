@@ -28,7 +28,7 @@ use infrarust_protocol::{MAX_PACKET_SIZE, VarInt};
 
 use crate::forwarding::ForwardingMode;
 use crate::limbo::test_helpers::{build_frame, test_proxy_services};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::SessionContext;
 

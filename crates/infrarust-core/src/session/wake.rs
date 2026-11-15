@@ -7,7 +7,7 @@ use tokio::io::Interest;
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::kick::Kick;
 
 const STOPPING_MESSAGE: &str = "Server is shutting down, please try again later.";

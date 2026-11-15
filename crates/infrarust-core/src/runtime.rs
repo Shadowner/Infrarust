@@ -27,8 +27,8 @@ use crate::plugin::{
     PluginPermissions, PluginRegistryImpl,
 };
 use crate::provider::plugin_adapter::PluginProviderActivator;
+use crate::server::ProxyServices;
 use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
-use crate::services::ProxyServices;
 use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};

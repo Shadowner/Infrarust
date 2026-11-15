@@ -13,7 +13,7 @@ use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::{PluginLoader, PluginState, StaticPluginLoader};
 use infrarust_core::runtime::{ProxyRuntime, RunningProxy};
 use infrarust_core::server::ProxyServer;
-use infrarust_core::services::ProxyServices;
+use infrarust_core::server::ProxyServices;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_server_manager::ServerProvider;
 use tempfile::TempDir;

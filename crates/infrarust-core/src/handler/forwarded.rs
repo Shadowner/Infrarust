@@ -32,7 +32,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::backend_login::ConnectError;
 use crate::session::kick::Kick;
 use crate::session::kick::MAX_KICK_REDIRECTS;

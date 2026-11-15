@@ -19,7 +19,7 @@ use infrarust_protocol::version::ProtocolVersion;
 
 use crate::forwarding::velocity::is_velocity_request;
 use crate::player::PlayerSession;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::context::SessionContext;
 
 pub(crate) enum Routed {

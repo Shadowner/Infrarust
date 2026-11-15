@@ -46,7 +46,7 @@ use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterRe
 use crate::player::commands::CommandOutcome;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::services::command_manager::Prepared;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;

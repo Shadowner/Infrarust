@@ -31,7 +31,7 @@ use crate::limbo::registry::LimboHandlerRegistry;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::session::client_bridge::ClientBridge;
 

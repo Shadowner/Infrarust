@@ -21,7 +21,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::commands::CommandInbox;
 use crate::player::{SHUTDOWN_REASON, SessionKind};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
 use crate::session::proxy_loop::ProxyLoopOutcome;

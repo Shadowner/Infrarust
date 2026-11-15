@@ -24,7 +24,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, RoutingData};
 use crate::provider::ProviderId;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::test_peer::raw_handshake;
 
 const WAIT: Duration = Duration::from_secs(10);
