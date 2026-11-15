@@ -4,7 +4,6 @@ use crate::error::ServerManagerError;
 use crate::http::{HTTP_TIMEOUT, check_response};
 use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
-/// Provider for Pterodactyl panel servers via REST API.
 pub struct PterodactylProvider {
     http_client: reqwest::Client,
     api_url: String,
@@ -22,7 +21,6 @@ impl PterodactylProvider {
         }
     }
 
-    /// Sends a power signal to the server.
     async fn send_power_signal(&self, signal: &str) -> Result<(), ServerManagerError> {
         let url = format!(
             "{}/api/client/servers/{}/power",

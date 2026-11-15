@@ -22,7 +22,6 @@ pub trait ServerProvider: Send + Sync {
     /// internal monitoring (e.g., `ready_pattern` for Local).
     fn start(&self) -> ProviderFuture<'_, ()>;
 
-    /// Stops the server gracefully.
     fn stop(&self) -> ProviderFuture<'_, ()>;
 
     /// Checks the current server status.
@@ -31,11 +30,9 @@ pub trait ServerProvider: Send + Sync {
     /// (Starting → Online, Online → Crashed, etc.).
     fn check_status(&self) -> ProviderFuture<'_, ProviderStatus>;
 
-    /// Name of the provider type (for logging).
     fn provider_type(&self) -> &'static str;
 }
 
-/// Status returned by a provider during a check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProviderStatus {

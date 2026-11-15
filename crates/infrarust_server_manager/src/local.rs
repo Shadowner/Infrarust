@@ -9,21 +9,16 @@ use tokio::task::JoinHandle;
 use crate::error::ServerManagerError;
 use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
-/// Provider that manages a local Java/Minecraft process.
 pub struct LocalProvider {
     config: LocalManagerConfig,
-    /// Handle to the running process. None if not started.
     process: tokio::sync::Mutex<Option<LocalProcess>>,
 }
 
 struct LocalProcess {
     child: Child,
     stdin: ChildStdin,
-    /// True when the `ready_pattern` has been detected in stdout.
     ready: Arc<AtomicBool>,
-    /// Task reading stdout lines.
     stdout_task: JoinHandle<()>,
-    /// Task reading stderr lines.
     stderr_task: JoinHandle<()>,
 }
 
@@ -35,7 +30,6 @@ impl LocalProvider {
         }
     }
 
-    /// Returns a descriptive string for logging.
     fn server_label(&self) -> String {
         format!(
             "{}:{}",
@@ -78,7 +72,6 @@ impl ServerProvider for LocalProvider {
             let pattern = self.config.ready_pattern.clone();
             let label = self.server_label();
 
-            // Task that reads stdout line by line and detects the ready_pattern
             let stdout_task = tokio::spawn(async move {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
@@ -91,7 +84,6 @@ impl ServerProvider for LocalProvider {
                 }
             });
 
-            // Separate task for stderr (logging only)
             let label2 = self.server_label();
             let stderr_task = tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
@@ -122,13 +114,11 @@ impl ServerProvider for LocalProvider {
                 ServerManagerError::from(std::io::Error::other("process is not running"))
             })?;
 
-            // 1. Send "stop\n" on stdin (graceful Minecraft stop)
             if let Err(e) = process.stdin.write_all(b"stop\n").await {
                 tracing::warn!(server = %self.server_label(), "failed to write stop command: {e}");
             }
             let _ = process.stdin.flush().await;
 
-            // 2. Wait for the process to exit with a timeout
             let shutdown_timeout = self.config.shutdown_timeout;
             match tokio::time::timeout(shutdown_timeout, process.child.wait()).await {
                 Ok(Ok(status)) => {
@@ -143,7 +133,6 @@ impl ServerProvider for LocalProvider {
                 }
             }
 
-            // 3. Cleanup
             process.stdout_task.abort();
             process.stderr_task.abort();
             *process_lock = None;

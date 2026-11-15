@@ -42,8 +42,6 @@ pub async fn monitor_server(
             () = tokio::time::sleep(interval) => {}
         }
 
-        // 1. Poll provider status, capturing the generation first so a
-        //    transition during the poll invalidates the result
         let Some(generation) = service.generation(&server_id) else {
             continue;
         };
@@ -55,7 +53,6 @@ pub async fn monitor_server(
             }
         };
 
-        // 2. Update state and detect transitions (drops the result if stale)
         if let Some((_old, new_state)) = service.update_state(&server_id, new_status, generation) {
             match new_state {
                 ServerState::Online => {
@@ -88,8 +85,6 @@ pub async fn monitor_server(
             }
         }
 
-        // 3. Check auto-shutdown (only when confirmed Online; a stale Running
-        //    poll must not stop a server a manual op is transitioning)
         if new_status == ProviderStatus::Running
             && service.get_state(&server_id) == Some(ServerState::Online)
         {
@@ -99,7 +94,6 @@ pub async fn monitor_server(
     }
 }
 
-/// Checks if a server should be auto-shutdown due to inactivity.
 async fn check_auto_shutdown(service: &ServerManagerService, server_id: &str, player_count: usize) {
     let should_stop = {
         let Some(mut entry) = service.entries.get_mut(server_id) else {

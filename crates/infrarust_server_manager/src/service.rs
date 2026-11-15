@@ -97,11 +97,9 @@ impl StartThrottle {
 /// Implemented by the connection registry in `infrarust-core` to avoid
 /// a circular dependency.
 pub trait PlayerCounter: Send + Sync {
-    /// Returns the number of players connected to the given server.
     fn count_by_server(&self, server_id: &str) -> usize;
 }
 
-/// Callback type for server state change notifications.
 pub type StateChangeCallback = Arc<dyn Fn(&str, ServerState, ServerState) + Send + Sync>;
 
 /// Central orchestrator for server management.
@@ -115,22 +113,15 @@ pub struct ServerManagerService {
 }
 
 pub(crate) struct ServerEntry {
-    /// Current state.
     pub(crate) state: ServerState,
     /// Transition counter: bumped on every state write so an in-flight monitor
     /// poll can detect that a transition intervened and drop its stale result.
     pub(crate) generation: u64,
-    /// The provider controlling this server.
     pub(crate) provider: Arc<dyn ServerProvider>,
-    /// Duration of inactivity before auto-shutdown (None = disabled).
     pub(crate) shutdown_after: Option<Duration>,
-    /// Maximum time to wait for the server to become Online.
     pub(crate) start_timeout: Duration,
-    /// Base polling interval.
     pub(crate) poll_interval: Duration,
-    /// Timestamp of the last player seen connected (for auto-shutdown).
     pub(crate) last_player_seen: Option<Instant>,
-    /// Waiters: connections waiting for the server to become Online.
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
     /// Set by a start request until the provider reports it starting or running:
     /// before this deadline a `Stopped` poll means the panel has not caught up yet.
@@ -184,10 +175,6 @@ fn not_found(server_id: &str) -> ServerManagerError {
 }
 
 impl ServerManagerService {
-    /// Creates the service from server configs.
-    ///
-    /// For each `(server_id, ServerManagerConfig)`, creates the appropriate provider
-    /// and registers it with default state `Sleeping`.
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         server_configs: &[(String, ServerManagerConfig)],
@@ -221,7 +208,6 @@ impl ServerManagerService {
         }
     }
 
-    /// Registers a server with a custom provider.
     pub fn register_server(
         &self,
         server_id: String,
@@ -243,12 +229,10 @@ impl ServerManagerService {
         );
     }
 
-    /// Returns the current state of a server.
     pub fn get_state(&self, server_id: &str) -> Option<ServerState> {
         self.entries.get(server_id).map(|e| e.state)
     }
 
-    /// Lists all managed servers and their states.
     pub fn get_all_managed(&self) -> Vec<(String, ServerState)> {
         self.entries
             .iter()
@@ -396,16 +380,12 @@ impl ServerManagerService {
             }
         };
 
-        // Wait for the server to become Online (or timeout)
         match tokio::time::timeout(start_timeout, rx).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => {
-                // Channel closed without a message — monitoring task died
-                Err(ServerManagerError::Provider {
-                    server_id: server_id.to_string(),
-                    message: "waiter channel closed unexpectedly".to_string(),
-                })
-            }
+            Ok(Err(_)) => Err(ServerManagerError::Provider {
+                server_id: server_id.to_string(),
+                message: "waiter channel closed unexpectedly".to_string(),
+            }),
             Err(_) => Err(ServerManagerError::StartTimeout {
                 server_id: server_id.to_string(),
                 timeout: start_timeout,
@@ -566,9 +546,6 @@ impl ServerManagerService {
         Ok(())
     }
 
-    /// Starts monitoring tasks for all managed servers.
-    ///
-    /// Returns join handles for the spawned tasks.
     #[allow(clippy::needless_pass_by_value)]
     pub fn start_monitoring(
         self: &Arc<Self>,
@@ -593,7 +570,6 @@ impl ServerManagerService {
         handles
     }
 
-    /// Checks provider status for a server (used by monitoring task).
     pub(crate) async fn check_provider_status(
         &self,
         server_id: &str,
@@ -667,13 +643,11 @@ impl ServerManagerService {
             (old_state, new_state)
         };
 
-        // Fire callback outside DashMap lock
         self.fire_state_change(server_id, old_state, new_state);
 
         Some((old_state, new_state))
     }
 
-    /// Notifies all waiters for a server with the given result.
     pub(crate) fn notify_waiters(&self, server_id: &str, result: &Result<(), ServerManagerError>) {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             let waiters = std::mem::take(&mut entry.waiters);
@@ -689,12 +663,10 @@ impl ServerManagerService {
         }
     }
 
-    /// Returns the current transition generation for a server.
     pub(crate) fn generation(&self, server_id: &str) -> Option<u64> {
         self.entries.get(server_id).map(|e| e.generation)
     }
 
-    /// Returns the poll interval for a server.
     pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)

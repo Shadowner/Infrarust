@@ -4,7 +4,6 @@ use crate::error::ServerManagerError;
 use crate::http::{HTTP_TIMEOUT, check_response};
 use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
-/// Provider for Crafty Controller servers via REST API.
 pub struct CraftyProvider {
     http_client: reqwest::Client,
     api_url: String,
