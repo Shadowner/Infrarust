@@ -32,7 +32,7 @@ pub async fn list(
 ) -> Result<Json<ApiResponse<ServerBackendsResponse>>, ApiError> {
     server_backends(&state, &id)
         .map(ok)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))
+        .ok_or_else(|| ApiError::server_not_found(&id))
 }
 
 /// Proxy-wide view, keyed by server id.

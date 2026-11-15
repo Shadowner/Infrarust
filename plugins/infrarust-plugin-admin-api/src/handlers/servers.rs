@@ -63,7 +63,7 @@ fn not_ours(id: &str, providers: Option<&Vec<String>>) -> ApiError {
             "Server '{id}' comes from the '{}' provider and is read-only here",
             source_label(Some(providers))
         )),
-        None => ApiError::NotFound(format!("Server '{id}' not found")),
+        None => ApiError::server_not_found(id),
     }
 }
 
@@ -146,7 +146,7 @@ pub async fn get(
     let config = state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let server_state = state.server_manager.get_state(&server_id);
     let players = state.player_registry.get_players_on_server(&server_id);
@@ -185,7 +185,7 @@ pub async fn start(
     state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     tracing::info!(
         target: "audit",
@@ -213,7 +213,7 @@ pub async fn stop(
     state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     tracing::info!(
         target: "audit",
@@ -358,7 +358,7 @@ fn document_of(state: &ApiState, id: &str) -> Result<String, ApiError> {
         .config_service
         .get_server_document(&ServerId::new(id))
         .or_else(|| state.server_dir.document_text(id))
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(id))?;
 
     let mut document = text
         .parse::<DocumentMut>()
@@ -492,7 +492,7 @@ pub async fn delete(
     let removed = lock
         .remove(&document)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let event = PluginProviderEvent::Removed(ServerId::new(removed.id().as_str()));
     announce(&state, removed, event).await;
@@ -518,7 +518,7 @@ pub async fn health_check(
     let config = state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let result = state.health_checker.check(&config).await;
     state.health_cache.set(&id, result.clone());
@@ -536,7 +536,7 @@ pub async fn health_cached(
     state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let cached = state
         .health_cache
