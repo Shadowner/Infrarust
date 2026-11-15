@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 /// Stands in for a secret in a document that leaves the proxy. Never a
-/// credential: [`WebConfig::resolve_api_key`](crate::WebConfig::resolve_api_key)
-/// refuses it, and a write that cannot put the real value back is rejected.
+/// credential: the admin API refuses to start with it
+/// ([`ApiKeyError::Redacted`](crate::ApiKeyError::Redacted)), and a write that cannot put the real value back is rejected.
 pub const REDACTED: &str = "<redacted>";
 
 /// Secret fields of the global proxy config (`infrarust.toml`).

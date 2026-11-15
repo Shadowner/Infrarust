@@ -51,7 +51,7 @@ pub use wasm::{
 pub use wasm_network::{
     HostPattern, NetworkRule, NetworkRuleError, PortRange, WasmMount, WasmNetworkConfig,
 };
-pub use web::WebConfig;
+pub use web::{ApiKeyError, ApiKeyState, WebConfig};
 
 /// Default Minecraft port.
 pub const DEFAULT_MC_PORT: u16 = 25565;

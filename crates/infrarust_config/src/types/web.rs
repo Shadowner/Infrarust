@@ -53,17 +53,34 @@ impl Default for WebRateLimitConfig {
 
 const MIN_API_KEY_LENGTH: usize = 16;
 
-/// What the configured `api_key` amounts to at startup.
-enum ApiKey {
-    /// Usable as it stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApiKeyState {
     Usable(String),
-    /// Nothing usable is configured; a loopback bind may mint an ephemeral key.
-    Missing,
-    /// The redaction placeholder, standing in for a key this config does not
-    /// carry.
+    MissingOnLoopback,
     Redacted,
-    /// Configured but unusable, with the reason.
-    Invalid(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ApiKeyError {
+    #[error(
+        "API key is too short ({len} chars). Minimum length is {MIN_API_KEY_LENGTH} characters."
+    )]
+    TooShort { len: usize },
+
+    #[error(
+        "the web admin API is bound to a non-loopback address ({bind}) but no `api_key` is set. \
+         Set a strong `api_key` (>= {MIN_API_KEY_LENGTH} characters) in the [web] section, \
+         or bind to 127.0.0.1. Refusing to start an externally-reachable admin API without authentication."
+    )]
+    MissingOnPublicBind { bind: String },
+
+    #[error(
+        "`api_key` in the [web] section is the redaction placeholder '{}'. \
+         It is not a key: put the real one back.",
+        crate::secrets::REDACTED
+    )]
+    Redacted,
 }
 
 impl WebConfig {
@@ -87,42 +104,36 @@ impl WebConfig {
         self.enable_webui.unwrap_or(self.enable_api)
     }
 
-    fn classify_api_key(&self) -> ApiKey {
+    pub fn api_key_state(&self) -> Result<ApiKeyState, ApiKeyError> {
         match self.api_key.as_deref() {
-            Some(key) if key == crate::secrets::REDACTED => ApiKey::Redacted,
+            Some(key) if key == crate::secrets::REDACTED => Ok(ApiKeyState::Redacted),
             Some(key) if key != "CHANGE-ME" && !key.is_empty() => {
                 if key.len() < MIN_API_KEY_LENGTH {
-                    return ApiKey::Invalid(format!(
-                        "API key is too short ({} chars). Minimum length is {MIN_API_KEY_LENGTH} characters.",
-                        key.len()
-                    ));
+                    return Err(ApiKeyError::TooShort { len: key.len() });
                 }
-                ApiKey::Usable(key.to_string())
+                Ok(ApiKeyState::Usable(key.to_string()))
             }
-            _ if !self.bind_is_loopback() => ApiKey::Invalid(format!(
-                "the web admin API is bound to a non-loopback address ({}) but no `api_key` is set. \
-                 Set a strong `api_key` (>= {MIN_API_KEY_LENGTH} characters) in the [web] section, \
-                 or bind to 127.0.0.1. Refusing to start an externally-reachable admin API without authentication.",
-                self.bind
-            )),
-            _ => ApiKey::Missing,
+            _ if !self.bind_is_loopback() => Err(ApiKeyError::MissingOnPublicBind {
+                bind: self.bind.clone(),
+            }),
+            _ => Ok(ApiKeyState::MissingOnLoopback),
         }
     }
 
-    /// Whether [`resolve_api_key`](Self::resolve_api_key) would succeed, so a
-    /// configuration that cannot boot is refused before it is written.
+    /// Whether the admin API can start with this key, so a configuration that
+    /// cannot boot is refused before it is written.
     ///
     /// A redacted key passes: it stands for a stored key this config does not
     /// carry, and a write puts the real one back.
     ///
     /// # Errors
     ///
-    /// Returns the message `resolve_api_key` would fail with.
+    /// Returns the message of the [`ApiKeyError`] that
+    /// [`api_key_state`](Self::api_key_state) fails with.
     pub fn check_api_key(&self) -> Result<(), String> {
-        match self.classify_api_key() {
-            ApiKey::Usable(_) | ApiKey::Missing | ApiKey::Redacted => Ok(()),
-            ApiKey::Invalid(reason) => Err(reason),
-        }
+        self.api_key_state()
+            .map(drop)
+            .map_err(|error| error.to_string())
     }
 
     /// The key the admin API authenticates with, minting an ephemeral one for
@@ -131,16 +142,16 @@ impl WebConfig {
     /// # Errors
     ///
     /// Returns a human-readable message when the configured key cannot be used.
+    #[deprecated(
+        note = "match on `api_key_state` and generate the ephemeral key in the caller; \
+                this function prints to stdout and mutates the config"
+    )]
     pub fn resolve_api_key(&mut self) -> Result<String, String> {
-        match self.classify_api_key() {
-            ApiKey::Usable(key) => Ok(key),
-            ApiKey::Invalid(reason) => Err(reason),
-            ApiKey::Redacted => Err(format!(
-                "`api_key` in the [web] section is the redaction placeholder '{}'. \
-                 It is not a key: put the real one back.",
-                crate::secrets::REDACTED
-            )),
-            ApiKey::Missing => {
+        match self.api_key_state() {
+            Ok(ApiKeyState::Usable(key)) => Ok(key),
+            Ok(ApiKeyState::Redacted) => Err(ApiKeyError::Redacted.to_string()),
+            Err(error) => Err(error.to_string()),
+            Ok(ApiKeyState::MissingOnLoopback) => {
                 let generated = uuid::Uuid::new_v4().to_string();
                 tracing::warn!(
                     "No API key configured for loopback bind ({}) — generated an ephemeral key, \
@@ -186,78 +197,86 @@ mod tests {
     }
 
     #[test]
-    fn loopback_without_key_autogenerates() {
-        let mut cfg = config("127.0.0.1:8080", None);
-        let key = cfg.resolve_api_key().expect("loopback may auto-generate");
-        assert!(!key.is_empty());
-        assert_eq!(cfg.api_key.as_deref(), Some(key.as_str()));
-    }
-
-    #[test]
-    fn localhost_without_key_autogenerates() {
-        let mut cfg = config("localhost:8080", None);
-        assert!(cfg.resolve_api_key().is_ok());
-    }
-
-    #[test]
-    fn non_loopback_without_key_is_hard_error() {
-        for bind in ["0.0.0.0:8080", "192.168.1.10:8080", "[::]:8080"] {
-            let mut cfg = config(bind, None);
-            assert!(
-                cfg.resolve_api_key().is_err(),
-                "{bind} with no api_key must refuse to start"
+    fn loopback_without_key_is_missing() {
+        for bind in ["127.0.0.1:8080", "localhost:8080", "[::1]:8080"] {
+            assert_eq!(
+                config(bind, None).api_key_state(),
+                Ok(ApiKeyState::MissingOnLoopback),
+                "{bind}"
             );
         }
     }
 
     #[test]
-    fn non_loopback_with_placeholder_key_is_hard_error() {
-        let mut cfg = config("0.0.0.0:8080", Some("CHANGE-ME"));
-        assert!(cfg.resolve_api_key().is_err());
-    }
-
-    #[test]
-    fn non_loopback_with_strong_key_is_accepted() {
-        let mut cfg = config("0.0.0.0:8080", Some("a-sufficiently-long-api-key-value"));
-        let key = cfg
-            .resolve_api_key()
-            .expect("strong key on any bind is fine");
-        assert_eq!(key, "a-sufficiently-long-api-key-value");
-    }
-
-    /// Every startup failure must be visible to a write, or the API can store
-    /// a config the proxy then refuses to boot with.
-    #[test]
-    fn check_agrees_with_resolve_on_every_key() {
-        let keys = [
-            None,
-            Some(""),
-            Some("CHANGE-ME"),
-            Some("hunter2"),
-            Some(crate::secrets::REDACTED),
-            Some("a-sufficiently-long-api-key-value"),
-        ];
-        for bind in ["127.0.0.1:8080", "0.0.0.0:8080"] {
-            for key in keys {
-                let cfg = config(bind, key);
-                let refused = cfg.clone().resolve_api_key().is_err();
-                let rejected = cfg.check_api_key().is_err();
-                if key == Some(crate::secrets::REDACTED) {
-                    assert!(refused && !rejected, "{bind} / {key:?}: redacted");
-                } else {
-                    assert_eq!(refused, rejected, "{bind} / {key:?}");
-                }
+    fn non_loopback_without_key_is_hard_error() {
+        for bind in ["0.0.0.0:8080", "192.168.1.10:8080", "[::]:8080"] {
+            for key in [None, Some(""), Some("CHANGE-ME")] {
+                assert_eq!(
+                    config(bind, key).api_key_state(),
+                    Err(ApiKeyError::MissingOnPublicBind {
+                        bind: bind.to_string()
+                    }),
+                    "{bind} with {key:?} must refuse to start"
+                );
             }
         }
     }
 
     #[test]
-    fn the_redaction_placeholder_is_never_a_key() {
-        let mut cfg = config("127.0.0.1:8080", Some(crate::secrets::REDACTED));
-        let error = cfg
+    fn short_key_is_refused_on_any_bind() {
+        for bind in ["127.0.0.1:8080", "0.0.0.0:8080"] {
+            assert_eq!(
+                config(bind, Some("hunter2")).api_key_state(),
+                Err(ApiKeyError::TooShort { len: 7 })
+            );
+        }
+    }
+
+    #[test]
+    fn non_loopback_with_strong_key_is_accepted() {
+        let cfg = config("0.0.0.0:8080", Some("a-sufficiently-long-api-key-value"));
+        assert_eq!(
+            cfg.api_key_state(),
+            Ok(ApiKeyState::Usable(
+                "a-sufficiently-long-api-key-value".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_redacted_key_is_reported_and_passes_the_write_check() {
+        let cfg = config("0.0.0.0:8080", Some(crate::secrets::REDACTED));
+        assert_eq!(cfg.api_key_state(), Ok(ApiKeyState::Redacted));
+        assert!(cfg.check_api_key().is_ok());
+        assert!(
+            ApiKeyError::Redacted
+                .to_string()
+                .contains(crate::secrets::REDACTED)
+        );
+    }
+
+    #[test]
+    fn check_reports_the_typed_error_message() {
+        let cfg = config("0.0.0.0:8080", None);
+        assert_eq!(
+            cfg.check_api_key().unwrap_err(),
+            cfg.api_key_state().unwrap_err().to_string()
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_resolve_still_mints_and_refuses() {
+        let mut cfg = config("127.0.0.1:8080", None);
+        let key = cfg.resolve_api_key().expect("loopback may auto-generate");
+        assert_eq!(cfg.api_key.as_deref(), Some(key.as_str()));
+
+        let error = config("127.0.0.1:8080", Some(crate::secrets::REDACTED))
             .resolve_api_key()
             .expect_err("the placeholder must not authenticate anyone");
         assert!(error.contains(crate::secrets::REDACTED));
+
+        assert!(config("0.0.0.0:8080", None).resolve_api_key().is_err());
     }
 
     #[test]

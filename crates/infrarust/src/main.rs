@@ -283,14 +283,14 @@ async fn run(
         },
     ));
 
-    let mut web_config = config.web.clone();
+    let web_config = config.web.clone();
 
     #[cfg(feature = "wasm")]
     let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
     #[cfg(feature = "wasm")]
     let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
 
-    let static_loader = plugins::build_static_loader(web_config.as_mut(), log_broadcast)?;
+    let static_loader = plugins::build_static_loader(web_config.as_ref(), log_broadcast)?;
     let static_ids = static_loader.registered_ids();
     let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
 
