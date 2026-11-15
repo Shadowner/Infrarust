@@ -13,6 +13,7 @@ use infrarust_core::ban::FileBanStorage;
 use infrarust_core::ban::manager::{BAN_CHECK_UNAVAILABLE, BanManager};
 use infrarust_core::ban::storage::BanStorage;
 use infrarust_core::ban::types::{BanEntry, BanSource, BanTarget};
+use infrarust_core::error::CoreError;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::middleware::ban_check::BanCheckMiddleware;
 use infrarust_core::middleware::ban_ip_check::BanIpCheckMiddleware;
@@ -164,13 +165,16 @@ async fn test_reject_message_contains_reason() {
 }
 
 #[tokio::test]
-async fn test_no_login_data_continues() {
+async fn a_login_without_login_data_is_refused() {
     let (middleware, _manager, _dir) = setup_with_manager().await;
     let ip: IpAddr = "10.0.0.1".parse().unwrap();
 
     let mut ctx = loopback(ip).await;
-    let result = middleware.process(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::Continue));
+    let result = middleware.process(&mut ctx).await;
+    assert!(matches!(
+        result,
+        Err(CoreError::MissingExtension("LoginData"))
+    ));
 }
 
 #[tokio::test]

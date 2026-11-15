@@ -31,10 +31,7 @@ impl Middleware for BanCheckMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let Some(login) = ctx.extensions.get::<LoginData>() else {
-                tracing::warn!("ban_check: LoginData not found in extensions, skipping check");
-                return Ok(MiddlewareResult::Continue);
-            };
+            let login = ctx.require_extension::<LoginData>("LoginData")?;
 
             let mut attempt = LoginAttempt::pre_auth(ctx.client_ip, login.username.clone())
                 .claimed_uuid(login.player_uuid);
