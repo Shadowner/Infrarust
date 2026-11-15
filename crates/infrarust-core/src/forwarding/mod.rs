@@ -5,6 +5,7 @@ pub mod domain_rewrite;
 pub mod error;
 pub mod legacy;
 pub mod secret;
+pub(crate) mod server_override;
 pub mod velocity;
 
 pub use error::ForwardingError;
