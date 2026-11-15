@@ -24,6 +24,9 @@ pub(super) struct PostedEvent {
 
 impl EventBusImpl {
     pub fn post<E: Event>(&self, event: E) {
+        if !self.has_listeners::<E>() {
+            return;
+        }
         let posted = PostedEvent {
             type_id: TypeId::of::<E>(),
             event_type: type_name::<E>(),
