@@ -6,7 +6,7 @@ use infrarust_api::events::handshake::RejectReason;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain};
+use crate::pipeline::types::{HandshakeData, LegacyHello, RoutingData};
 use crate::routing::DomainRouter;
 
 /// Middleware that resolves the target server from the handshake domain.
@@ -50,10 +50,10 @@ impl Middleware for DomainRouterMiddleware {
 
             let Some((_provider_id, server_config, load_balancer)) = route else {
                 tracing::debug!(domain, "no server found for domain");
-                let reason = format!("Unknown server: {domain}");
-                ctx.extensions.insert(UnknownDomain);
-                ctx.extensions.insert(Refused(RejectReason::UnknownDomain));
-                return Ok(MiddlewareResult::Reject(reason));
+                return Ok(MiddlewareResult::Reject {
+                    reason: RejectReason::UnknownDomain,
+                    message: format!("Unknown server: {domain}"),
+                });
             };
             let config_id = server_config.effective_id();
 
@@ -66,11 +66,10 @@ impl Middleware for DomainRouterMiddleware {
                     server = %config_id,
                     "ip blocked by server filter"
                 );
-                ctx.extensions.insert(Refused(RejectReason::IpFilter));
-                return Ok(MiddlewareResult::Reject(format!(
-                    "IP {} is not allowed on this server",
-                    ctx.client_ip()
-                )));
+                return Ok(MiddlewareResult::Reject {
+                    reason: RejectReason::IpFilter,
+                    message: format!("IP {} is not allowed on this server", ctx.client_ip()),
+                });
             }
 
             tracing::debug!(domain, config_id, "domain routed");

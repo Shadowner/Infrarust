@@ -16,7 +16,7 @@ use infrarust_transport::IpKey;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData};
 
 type KeyedLimiter = RateLimiter<IpKey, DashMapStateStore<IpKey>, DefaultClock>;
 
@@ -130,8 +130,10 @@ impl Middleware for RateLimiterMiddleware {
                          is logged once"
                     );
                 }
-                ctx.extensions.insert(Refused(RejectReason::RateLimit));
-                Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
+                Ok(MiddlewareResult::Reject {
+                    reason: RejectReason::RateLimit,
+                    message: "Rate limit exceeded".into(),
+                })
             }
         })
     }

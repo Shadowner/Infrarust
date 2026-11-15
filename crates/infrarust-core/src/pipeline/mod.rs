@@ -33,16 +33,20 @@ impl Pipeline {
                 MiddlewareResult::Continue => {
                     tracing::trace!(middleware = mw.name(), "middleware passed");
                 }
-                MiddlewareResult::ShortCircuit => {
+                MiddlewareResult::Drop(_) | MiddlewareResult::Claimed(_) => {
                     tracing::debug!(middleware = mw.name(), "pipeline short-circuited");
-                    return Ok(MiddlewareResult::ShortCircuit);
-                }
-                MiddlewareResult::Reject(ref reason) => {
-                    tracing::debug!(middleware = mw.name(), reason, "pipeline rejected");
                     return Ok(result);
                 }
-                MiddlewareResult::Kick(ref reason) => {
-                    tracing::debug!(middleware = mw.name(), reason = %reason, "pipeline kicked");
+                MiddlewareResult::Reject { ref message, .. } => {
+                    tracing::debug!(
+                        middleware = mw.name(),
+                        reason = message,
+                        "pipeline rejected"
+                    );
+                    return Ok(result);
+                }
+                MiddlewareResult::Kick { ref message, .. } => {
+                    tracing::debug!(middleware = mw.name(), reason = %message, "pipeline kicked");
                     return Ok(result);
                 }
             }

@@ -2,6 +2,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use infrarust_api::event::BoxFuture;
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_core::error::CoreError;
 use infrarust_core::pipeline::Pipeline;
 use infrarust_core::pipeline::context::ConnectionContext;
@@ -55,7 +56,12 @@ impl Middleware for RejectMiddleware {
         &'a self,
         _ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
-        Box::pin(async move { Ok(MiddlewareResult::Reject("blocked".into())) })
+        Box::pin(async move {
+            Ok(MiddlewareResult::Reject {
+                reason: RejectReason::IpFilter,
+                message: "blocked".into(),
+            })
+        })
     }
 }
 
@@ -71,7 +77,7 @@ impl Middleware for ShortCircuitMiddleware {
         &'a self,
         _ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
-        Box::pin(async move { Ok(MiddlewareResult::ShortCircuit) })
+        Box::pin(async move { Ok(MiddlewareResult::Drop(RejectReason::IpBanned)) })
     }
 }
 
@@ -118,7 +124,7 @@ async fn test_middleware_reject_stops() {
 
     let mut ctx = make_test_ctx().await;
     let result = pipeline.execute(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::Reject(_)));
+    assert!(matches!(result, MiddlewareResult::Reject { .. }));
     // ContinueMiddleware should NOT have run
     assert!(ctx.extensions.get::<u32>().is_none());
 }
@@ -131,7 +137,7 @@ async fn test_middleware_shortcircuit_stops() {
 
     let mut ctx = make_test_ctx().await;
     let result = pipeline.execute(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::ShortCircuit));
+    assert!(matches!(result, MiddlewareResult::Drop(_)));
     assert!(ctx.extensions.get::<u32>().is_none());
 }
 

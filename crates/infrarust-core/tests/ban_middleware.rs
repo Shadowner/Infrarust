@@ -8,6 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::services::ban_service::BanRequest;
 use infrarust_core::ban::FileBanStorage;
 use infrarust_core::ban::manager::{BAN_CHECK_UNAVAILABLE, BanManager};
@@ -86,7 +87,7 @@ async fn ban(manager: &BanManager, target: BanTarget, reason: &str) {
 
 fn kick_text(result: MiddlewareResult) -> String {
     match result {
-        MiddlewareResult::Kick(reason) => reason.to_plain(),
+        MiddlewareResult::Kick { message, .. } => message.to_plain(),
         other => panic!("expected a kick, got {other:?}"),
     }
 }
@@ -110,7 +111,7 @@ async fn test_banned_username_rejected() {
 
     let mut ctx = make_context_with_login(ip, "Cheater").await;
     let result = middleware.process(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::Kick(_)));
+    assert!(matches!(result, MiddlewareResult::Kick { .. }));
 }
 
 #[tokio::test]
@@ -219,7 +220,7 @@ async fn a_banned_address_gets_no_status_answer_but_may_try_to_log_in() {
     let mut status = make_context_with_intent(ip, ConnectionIntent::Status).await;
     assert!(matches!(
         gate.process(&mut status).await.unwrap(),
-        MiddlewareResult::ShortCircuit
+        MiddlewareResult::Drop(RejectReason::IpBanned)
     ));
 
     let mut login = make_context_with_intent(ip, ConnectionIntent::Login).await;

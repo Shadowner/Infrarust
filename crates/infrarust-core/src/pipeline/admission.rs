@@ -14,7 +14,7 @@ use crate::ban::manager::Refusal;
 use crate::event_bus::{CORE_OWNER, EventBusImpl};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{
-    ConnectionIntent, HandshakeData, LegacyHello, LoginData, Refused, RoutingData,
+    ConnectionIntent, HandshakeData, LegacyHello, LoginData, RoutingData,
 };
 
 pub const DENIED_MESSAGE: &str = "You are not allowed to connect to this server";
@@ -55,10 +55,8 @@ pub fn virtual_host(ctx: &ConnectionContext) -> Option<String> {
         .map(|h| h.domain.clone())
 }
 
-pub fn reject_refused(bus: &EventBusImpl, ctx: &ConnectionContext) {
-    if let Some(Refused(reason)) = ctx.extensions.get::<Refused>() {
-        reject(bus, ctx.client_addr(), virtual_host(ctx), reason.clone());
-    }
+pub fn reject_connection(bus: &EventBusImpl, ctx: &ConnectionContext, reason: RejectReason) {
+    reject(bus, ctx.client_addr(), virtual_host(ctx), reason);
 }
 
 pub fn handoff_attempt(ctx: &ConnectionContext) -> LoginAttempt {

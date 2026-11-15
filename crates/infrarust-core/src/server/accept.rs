@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::filter::TransportContext;
 use infrarust_api::handoff::Handoff;
 use infrarust_api::types::{Component, Extensions};
@@ -20,9 +21,7 @@ use crate::middleware::telemetry::ConnectionSpan;
 use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
-use crate::pipeline::types::{
-    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain,
-};
+use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyHello, RoutingData};
 use crate::player::SHUTDOWN_REASON;
 
 enum ConnectionError {
@@ -233,30 +232,37 @@ impl ProxyServer {
 
         match common {
             MiddlewareResult::Continue => Ok(true),
-            MiddlewareResult::ShortCircuit => {
-                admission::reject_refused(&self.services.event_bus, ctx);
+            MiddlewareResult::Drop(reason) => {
+                admission::reject_connection(&self.services.event_bus, ctx, reason);
                 Ok(false)
             }
-            MiddlewareResult::Reject(msg) => {
+            MiddlewareResult::Claimed(handoff) => {
+                tracing::error!(
+                    target = %handoff.target,
+                    "a login claim reached the common pipeline, closing the connection"
+                );
+                Ok(false)
+            }
+            MiddlewareResult::Reject { reason, message } => {
                 let intent = ctx.extensions.get::<HandshakeData>().map(|h| h.intent);
-                let unknown_domain = ctx.extensions.contains::<UnknownDomain>();
+                let unknown_domain = reason == RejectReason::UnknownDomain;
                 let dropped =
                     unknown_domain && self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
                 if !dropped && unknown_domain && intent == Some(ConnectionIntent::Status) {
                     return Ok(true);
                 }
-                admission::reject_refused(&self.services.event_bus, ctx);
+                admission::reject_connection(&self.services.event_bus, ctx, reason);
                 match intent {
                     Some(ConnectionIntent::Login | ConnectionIntent::Transfer) if !dropped => {
-                        self.send_kick(ctx, &Component::text(msg)).await.ok();
+                        self.send_kick(ctx, &Component::text(message)).await.ok();
                     }
-                    _ => tracing::debug!("closing rejected connection: {msg}"),
+                    _ => tracing::debug!("closing rejected connection: {message}"),
                 }
                 Ok(false)
             }
-            MiddlewareResult::Kick(reason) => {
-                admission::reject_refused(&self.services.event_bus, ctx);
-                self.send_kick(ctx, &reason).await.ok();
+            MiddlewareResult::Kick { reason, message } => {
+                admission::reject_connection(&self.services.event_bus, ctx, reason);
+                self.send_kick(ctx, &message).await.ok();
                 Ok(false)
             }
         }
@@ -293,8 +299,7 @@ impl ProxyServer {
                     refused = admission::refuse_handoff(&self.services.ban_manager, &ctx) => refused,
                 };
                 if let Some(refusal) = refused {
-                    ctx.extensions.insert(Refused(refusal.reason));
-                    admission::reject_refused(&self.services.event_bus, &ctx);
+                    admission::reject_connection(&self.services.event_bus, &ctx, refusal.reason);
                     if intent != ConnectionIntent::Status {
                         self.send_kick(&mut ctx, &refusal.message).await.ok();
                     }
@@ -326,19 +331,22 @@ impl ProxyServer {
 
         match login {
             MiddlewareResult::Continue => return Ok(Some(ctx)),
-            MiddlewareResult::ShortCircuit => {
-                if let Some(ClaimedLogin(handoff)) = ctx.extensions.remove::<ClaimedLogin>() {
-                    self.hand_off(ctx, handoff, HandoffLevel::Login, shutdown)
-                        .await;
-                }
+            MiddlewareResult::Claimed(handoff) => {
+                self.hand_off(ctx, handoff, HandoffLevel::Login, shutdown)
+                    .await;
             }
-            MiddlewareResult::Reject(msg) => {
-                admission::reject_refused(&self.services.event_bus, &ctx);
-                self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+            MiddlewareResult::Drop(reason) => {
+                admission::reject_connection(&self.services.event_bus, &ctx, reason);
             }
-            MiddlewareResult::Kick(reason) => {
-                admission::reject_refused(&self.services.event_bus, &ctx);
-                self.send_kick(&mut ctx, &reason).await.ok();
+            MiddlewareResult::Reject { reason, message } => {
+                admission::reject_connection(&self.services.event_bus, &ctx, reason);
+                self.send_kick(&mut ctx, &Component::text(message))
+                    .await
+                    .ok();
+            }
+            MiddlewareResult::Kick { reason, message } => {
+                admission::reject_connection(&self.services.event_bus, &ctx, reason);
+                self.send_kick(&mut ctx, &message).await.ok();
             }
         }
         Ok(None)

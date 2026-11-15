@@ -37,7 +37,7 @@ async fn admits(limiter: &RateLimiterMiddleware, ip: &str) -> bool {
     });
     match limiter.process(&mut ctx).await.unwrap() {
         MiddlewareResult::Continue => true,
-        MiddlewareResult::Reject(_) => false,
+        MiddlewareResult::Reject { .. } => false,
         _ => panic!("the rate limiter only continues or rejects"),
     }
 }
