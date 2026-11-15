@@ -10,13 +10,11 @@ mod switch_packets;
 pub(crate) mod validation;
 
 use std::future::Future;
-use std::sync::Arc;
 use std::time::Duration;
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{ConnectCause, ServerPreConnectResult};
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
@@ -29,6 +27,7 @@ use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
 use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
+use crate::session::session_loop::LimboEntry;
 use crate::session::wake::{WakeFailure, wake};
 
 use config_phase::PhaseError;
@@ -37,7 +36,7 @@ const SWITCH_PHASE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) enum SwitchResult {
     Backend(BackendBridge, ServerId),
-    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
+    Limbo(LimboEntry),
     Denied(Component),
     Unchanged,
     Failed(Kick),
@@ -146,10 +145,12 @@ pub(crate) async fn perform_switch(
                     let handlers = services
                         .limbo_handler_registry
                         .resolve_handlers(&handler_names)?;
-                    let ctx = LimboEntryContext::PluginRedirect {
-                        from_server: Some(current_server.clone()),
-                    };
-                    return Ok(SwitchResult::Limbo(handlers, ctx));
+                    return Ok(SwitchResult::Limbo(LimboEntry {
+                        handlers,
+                        context: LimboEntryContext::PluginRedirect {
+                            from_server: Some(current_server.clone()),
+                        },
+                    }));
                 }
                 _ => server,
             };

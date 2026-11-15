@@ -10,7 +10,7 @@ use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, LimboHandler};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::session_loop::{ConnectionMode, Initial, Pending};
+use super::session_loop::{ConnectionMode, Initial, LimboEntry, Pending};
 use crate::error::CoreError;
 use crate::forwarding::ForwardingHandler;
 use crate::limbo::registry::LimboHandlerRegistry;
@@ -115,12 +115,12 @@ pub(crate) async fn resolve_initial_mode(
                 Ok(handlers) => handlers,
                 Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
             };
-            initial_mode = Some(ConnectionMode::Limbo(
+            initial_mode = Some(ConnectionMode::Limbo(LimboEntry {
                 handlers,
-                LimboEntryContext::InitialConnection {
+                context: LimboEntryContext::InitialConnection {
                     target_server: initial_server.clone(),
                 },
-            ));
+            }));
             initial_server.clone()
         }
         infrarust_api::events::connection::PlayerChooseInitialServerResult::Denied { reason } => {
@@ -159,12 +159,12 @@ pub(crate) async fn resolve_initial_mode(
                     Ok(handlers) => handlers,
                     Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
                 };
-                initial_mode = Some(ConnectionMode::Limbo(
+                initial_mode = Some(ConnectionMode::Limbo(LimboEntry {
                     handlers,
-                    LimboEntryContext::InitialConnection {
+                    context: LimboEntryContext::InitialConnection {
                         target_server: target_server_id.clone(),
                     },
-                ));
+                }));
             }
             infrarust_api::events::connection::ServerPreConnectResult::Redirect(id) => {
                 target_server_id = id.clone();
@@ -224,12 +224,12 @@ pub(crate) async fn resolve_initial_mode(
             Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
         };
         prepare_client_for_limbo(ctx, io, progress, &target_server_id).await?;
-        initial_mode = Some(ConnectionMode::Limbo(
+        initial_mode = Some(ConnectionMode::Limbo(LimboEntry {
             handlers,
-            LimboEntryContext::InitialConnection {
+            context: LimboEntryContext::InitialConnection {
                 target_server: target_server_id.clone(),
             },
-        ));
+        }));
     }
 
     let mut pending = if approved {
