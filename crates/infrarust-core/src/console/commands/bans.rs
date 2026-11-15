@@ -1,7 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::ban_service::{
     BanEntry, BanRequest, BanService, BanSource, BanTarget, IpNet, UnbanRequest,
 };
@@ -38,7 +37,7 @@ impl ConsoleCommand for BanCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(name) = args.first() else {
                 return usage(self);
@@ -77,7 +76,7 @@ impl ConsoleCommand for BanIpCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(ip_str) = args.first() else {
                 return usage(self);
@@ -125,7 +124,7 @@ impl ConsoleCommand for UnbanCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(name) = args.first() else {
                 return usage(self);
@@ -171,7 +170,7 @@ impl ConsoleCommand for UnbanIpCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(ip_str) = args.first() else {
                 return usage(self);
@@ -221,7 +220,7 @@ impl ConsoleCommand for BanListCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let bans = match BanService::list_all(services.ban_manager.as_ref()).await {
                 Ok(bans) => bans,
@@ -256,7 +255,7 @@ impl ConsoleCommand for BanInfoCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(arg) = args.first() else {
                 return usage(self);

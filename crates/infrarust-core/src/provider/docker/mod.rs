@@ -13,7 +13,6 @@ pub use labels::{
 };
 
 use std::collections::{HashMap, HashSet};
-use std::pin::Pin;
 use std::sync::Once;
 use std::time::Duration;
 
@@ -25,6 +24,7 @@ use futures_util::StreamExt;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::{DockerProviderConfig, ForwardingMode, ServerConfig};
 
 use crate::error::CoreError;
@@ -452,9 +452,7 @@ impl ConfigProvider for DockerProvider {
         "docker"
     }
 
-    fn load_initial(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>> {
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>> {
         Box::pin(async move {
             let docker = self.connect()?;
             let ContainerScan { configs, .. } = self.scan_containers(&docker).await?;
@@ -477,7 +475,7 @@ impl ConfigProvider for DockerProvider {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(async move { self.watch_with_reconnect(&sender, &shutdown).await })
     }
 }

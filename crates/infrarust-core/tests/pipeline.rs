@@ -1,8 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::pin::Pin;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_core::error::CoreError;
 use infrarust_core::pipeline::Pipeline;
 use infrarust_core::pipeline::context::ConnectionContext;
@@ -36,7 +35,7 @@ impl Middleware for ContinueMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             ctx.extensions.insert(42u32);
             Ok(MiddlewareResult::Continue)
@@ -55,7 +54,7 @@ impl Middleware for RejectMiddleware {
     fn process<'a>(
         &'a self,
         _ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move { Ok(MiddlewareResult::Reject("blocked".into())) })
     }
 }
@@ -71,7 +70,7 @@ impl Middleware for ShortCircuitMiddleware {
     fn process<'a>(
         &'a self,
         _ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move { Ok(MiddlewareResult::ShortCircuit) })
     }
 }
@@ -87,7 +86,7 @@ impl Middleware for MarkerMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         let name = self.0;
         Box::pin(async move {
             let existing = ctx

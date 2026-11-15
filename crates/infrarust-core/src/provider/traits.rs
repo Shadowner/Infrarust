@@ -1,11 +1,9 @@
 //! Core provider abstractions: trait, events, and configuration wrapper.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::ServerConfig;
 
 use crate::error::CoreError;
@@ -71,9 +69,7 @@ pub trait ConfigProvider: Send + Sync {
     /// Called once at startup. Returns all currently known configs.
     /// Individual failures (e.g. an unparseable file) should be logged
     /// and skipped, not propagated as errors.
-    fn load_initial(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>>;
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>>;
 
     /// Watches for configuration changes and sends events.
     ///
@@ -84,5 +80,5 @@ pub trait ConfigProvider: Send + Sync {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>>;
+    ) -> BoxFuture<'_, Result<(), CoreError>>;
 }

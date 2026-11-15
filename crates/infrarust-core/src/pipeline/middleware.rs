@@ -1,8 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
+use infrarust_api::event::BoxFuture;
 
 /// Result of a middleware execution.
 #[derive(Debug)]
@@ -30,5 +28,5 @@ pub trait Middleware: Send + Sync {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>>;
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>>;
 }

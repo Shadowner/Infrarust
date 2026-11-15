@@ -1,6 +1,4 @@
-use std::future::Future;
 use std::num::NonZeroU32;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -10,6 +8,7 @@ use governor::state::keyed::DashMapStateStore;
 use governor::{Quota, RateLimiter};
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::events::handshake::RejectReason;
 use infrarust_config::RateLimitConfig;
 use infrarust_transport::IpKey;
@@ -98,7 +97,7 @@ impl Middleware for RateLimiterMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             if !self.enabled {
                 return Ok(MiddlewareResult::Continue);

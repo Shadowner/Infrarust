@@ -8,11 +8,12 @@ use std::time::SystemTime;
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::ban_service::{
     BanPage, BanQuery, IpNet, LoginAttempt, LoginStage, epoch_serde, option_epoch_serde,
 };
 
-use crate::ban::storage::{BanStorage, StorageFuture};
+use crate::ban::storage::BanStorage;
 use crate::ban::types::{BanAction, BanAuditLogEntry, BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
 use crate::util::atomic_file::write_atomic;
@@ -310,7 +311,7 @@ fn audit(action: BanAction, entry: &BanEntry, source: &BanSource) -> BanAuditLog
 }
 
 impl BanStorage for FileBanStorage {
-    fn load(&self) -> StorageFuture<'_, ()> {
+    fn load(&self) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(async move {
             match tokio::fs::read_to_string(&self.file_path).await {
                 Ok(contents) if contents.trim().is_empty() => {
@@ -344,11 +345,11 @@ impl BanStorage for FileBanStorage {
         })
     }
 
-    fn save(&self) -> StorageFuture<'_, ()> {
+    fn save(&self) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(async move { self.persist().await })
     }
 
-    fn add_ban(&self, entry: BanEntry) -> StorageFuture<'_, BanEntry> {
+    fn add_ban(&self, entry: BanEntry) -> BoxFuture<'_, Result<BanEntry, CoreError>> {
         Box::pin(async move {
             let Some(key) = key_of(&entry.target) else {
                 return Err(CoreError::Ban(format!(
@@ -378,7 +379,7 @@ impl BanStorage for FileBanStorage {
         &'a self,
         target: &'a BanTarget,
         source: &'a BanSource,
-    ) -> StorageFuture<'a, Option<BanEntry>> {
+    ) -> BoxFuture<'a, Result<Option<BanEntry>, CoreError>> {
         Box::pin(async move {
             let Some(key) = key_of(target) else {
                 return Ok(None);
@@ -396,17 +397,23 @@ impl BanStorage for FileBanStorage {
         })
     }
 
-    fn get_ban<'a>(&'a self, target: &'a BanTarget) -> StorageFuture<'a, Option<BanEntry>> {
+    fn get_ban<'a>(
+        &'a self,
+        target: &'a BanTarget,
+    ) -> BoxFuture<'a, Result<Option<BanEntry>, CoreError>> {
         Box::pin(
             async move { Ok(key_of(target).and_then(|key| self.read().active(&key).cloned())) },
         )
     }
 
-    fn check<'a>(&'a self, attempt: &'a LoginAttempt) -> StorageFuture<'a, Option<BanEntry>> {
+    fn check<'a>(
+        &'a self,
+        attempt: &'a LoginAttempt,
+    ) -> BoxFuture<'a, Result<Option<BanEntry>, CoreError>> {
         Box::pin(async move { Ok(self.read().check(attempt)) })
     }
 
-    fn list(&self, query: BanQuery) -> StorageFuture<'_, BanPage> {
+    fn list(&self, query: BanQuery) -> BoxFuture<'_, Result<BanPage, CoreError>> {
         Box::pin(async move {
             let after =
                 match query.cursor.as_deref() {
@@ -419,7 +426,7 @@ impl BanStorage for FileBanStorage {
         })
     }
 
-    fn get_all_active(&self) -> StorageFuture<'_, Vec<BanEntry>> {
+    fn get_all_active(&self) -> BoxFuture<'_, Result<Vec<BanEntry>, CoreError>> {
         Box::pin(async move {
             Ok(self
                 .read()
@@ -431,7 +438,7 @@ impl BanStorage for FileBanStorage {
         })
     }
 
-    fn purge_expired(&self) -> StorageFuture<'_, usize> {
+    fn purge_expired(&self) -> BoxFuture<'_, Result<usize, CoreError>> {
         Box::pin(async move {
             let purged = self.write().remove_expired();
             if purged.is_empty() {

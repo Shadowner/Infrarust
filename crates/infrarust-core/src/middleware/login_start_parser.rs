@@ -1,8 +1,7 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::events::claim::LoginClaimEvent;
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::packets::Packet;
@@ -60,7 +59,7 @@ impl Middleware for LoginStartParserMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             let protocol_version = ctx
                 .require_extension::<HandshakeData>("HandshakeData")?

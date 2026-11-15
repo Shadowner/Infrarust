@@ -1,6 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use infrarust_api::event::BoxFuture;
 use infrarust_api::events::handshake::RejectReason;
 use infrarust_config::IpFilterConfig;
 
@@ -29,7 +27,7 @@ impl Middleware for IpFilterMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             if let Some(ref filter) = self.global_filter
                 && !filter.is_allowed(&ctx.client_ip())

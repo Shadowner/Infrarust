@@ -1,7 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::{PluginHealth, PluginMetadata, PluginRuntimeStatus};
 
 use crate::console::ConsoleServices;
@@ -235,7 +234,7 @@ impl ConsoleCommand for PluginsCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let manager = services.plugin_manager.read().await;
             let plugins: Vec<_> = manager
@@ -277,7 +276,7 @@ impl ConsoleCommand for PluginCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(id) = args.first() else {
                 return usage(self);

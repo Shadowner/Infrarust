@@ -1,11 +1,10 @@
 //! Middleware that orders a server's backend addresses for the proxy handler.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use smallvec::SmallVec;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::{ServerAddress, ServerConfig};
 
 use crate::error::CoreError;
@@ -64,7 +63,7 @@ impl Middleware for BackendSelectionMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             let Some(routing) = ctx.extensions.get::<RoutingData>() else {
                 return Ok(MiddlewareResult::Continue); // status ping, etc.

@@ -1,6 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use infrarust_api::event::BoxFuture;
 use infrarust_api::player::Player;
 use uuid::Uuid;
 
@@ -34,7 +32,7 @@ impl ConsoleCommand for OpCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(username) = args.first() else {
                 return usage(self);
@@ -94,7 +92,7 @@ impl ConsoleCommand for DeopCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(username) = args.first() else {
                 return usage(self);
@@ -147,7 +145,7 @@ impl ConsoleCommand for OpListCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             if let Some(refused) = delegated(services) {
                 return refused;

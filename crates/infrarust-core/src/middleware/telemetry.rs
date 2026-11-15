@@ -3,10 +3,9 @@
 //! NOT feature-gated. Uses only `tracing` — no `opentelemetry::*` imports.
 //! When no `OTel` subscriber is installed, the span is a no-op (~2ns overhead).
 
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::pin::Pin;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::{TraceClientIp, TracesConfig};
 
 use crate::error::CoreError;
@@ -70,7 +69,7 @@ impl Middleware for TelemetryMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             let client_ip = traced_ip(self.client_ip, ctx.client_ip());
 

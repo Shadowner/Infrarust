@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::{ConfigError, ServerConfig};
 
 use crate::error::CoreError;
@@ -50,10 +51,7 @@ impl ConfigProvider for FileProvider {
         "file"
     }
 
-    fn load_initial(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>>
-    {
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>> {
         Box::pin(async move { self.do_load_initial() })
     }
 
@@ -61,7 +59,7 @@ impl ConfigProvider for FileProvider {
         &self,
         sender: mpsc::Sender<ProviderEvent>,
         shutdown: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(self.do_watch(sender, shutdown))
     }
 }

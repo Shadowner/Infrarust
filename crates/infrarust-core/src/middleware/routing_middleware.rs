@@ -1,7 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::events::handshake::RejectReason;
 
 use crate::error::CoreError;
@@ -35,7 +34,7 @@ impl Middleware for DomainRouterMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             let handshake = ctx.require_extension::<HandshakeData>("HandshakeData")?;
 

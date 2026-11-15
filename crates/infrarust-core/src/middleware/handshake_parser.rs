@@ -1,9 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::legacy;
 use infrarust_protocol::packets::Packet;
@@ -49,7 +48,7 @@ impl Middleware for HandshakeParserMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             tokio::time::timeout(Duration::from_secs(10), async {
                 if ctx.buffered_data.is_empty() {

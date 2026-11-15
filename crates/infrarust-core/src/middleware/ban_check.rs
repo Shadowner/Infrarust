@@ -1,7 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::ban_service::LoginAttempt;
 use infrarust_api::types::ServerId;
 
@@ -29,7 +28,7 @@ impl Middleware for BanCheckMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             let login = ctx.require_extension::<LoginData>("LoginData")?;
 

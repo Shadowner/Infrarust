@@ -1,7 +1,5 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use infrarust_api::command::CommandSource;
+use infrarust_api::event::BoxFuture;
 
 use super::ConsoleServices;
 use super::output::{CommandCategory, CommandOutput, Failure, Hint};
@@ -25,7 +23,7 @@ pub trait ConsoleCommand: Send + Sync {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>>;
+    ) -> BoxFuture<'a, CommandOutput>;
 }
 
 pub struct CommandInfo {
@@ -182,7 +180,7 @@ mod tests {
             &'a self,
             args: &'a [&'a str],
             _services: &'a ConsoleServices,
-        ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+        ) -> BoxFuture<'a, CommandOutput> {
             Box::pin(async move {
                 CommandOutput::Success(format!("mock called with {} args", args.len()))
             })

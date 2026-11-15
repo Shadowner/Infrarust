@@ -1,7 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::claim::{LoginClaimEvent, LoginClaimResult};
 use infrarust_api::types::{ProtocolVersion, ServerId};
@@ -35,7 +34,7 @@ impl Middleware for LoginClaimMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             let refusal = ctx.extensions.remove::<LayoutRefusal>();
             if self.bus.has_listeners::<LoginClaimEvent>()

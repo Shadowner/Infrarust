@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::{ConfigService, ServerConfig};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{ServerAddress, ServerId};
@@ -189,7 +188,7 @@ impl ConsoleCommand for ServersCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let servers: Vec<ServerView> = services
                 .config_service
@@ -232,7 +231,7 @@ impl ConsoleCommand for ServerCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(id) = args.first() else {
                 return usage(self);
@@ -279,7 +278,7 @@ impl ConsoleCommand for StartServerCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(manager) = services.server_manager.as_ref() else {
                 return CommandOutput::error("Server management is not configured");
@@ -326,7 +325,7 @@ impl ConsoleCommand for StopServerCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(manager) = services.server_manager.as_ref() else {
                 return CommandOutput::error("Server management is not configured");

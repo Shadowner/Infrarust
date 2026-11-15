@@ -1,8 +1,7 @@
 use std::collections::HashSet;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{Component, ProtocolVersion, ServerId};
@@ -42,7 +41,7 @@ impl ConsoleCommand for ListPlayersCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let filter = args.first().copied();
             let players = match filter {
@@ -79,7 +78,7 @@ impl ConsoleCommand for FindPlayerCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(name) = args.first() else {
                 return usage(self);
@@ -116,7 +115,7 @@ impl ConsoleCommand for KickCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some((name, reason)) = args.split_first() else {
                 return usage(self);
@@ -160,7 +159,7 @@ impl ConsoleCommand for KickIpCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(ip_str) = args.first() else {
                 return usage(self);
@@ -216,7 +215,7 @@ impl ConsoleCommand for SendCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let [name, server, ..] = args else {
                 return usage(self);
@@ -266,7 +265,7 @@ impl ConsoleCommand for SendAllCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(server) = args.first() else {
                 return usage(self);
@@ -335,7 +334,7 @@ impl ConsoleCommand for MsgCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             if args.len() < 2 {
                 return usage(self);
@@ -391,7 +390,7 @@ impl ConsoleCommand for BroadcastCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             if args.is_empty() {
                 return usage(self);

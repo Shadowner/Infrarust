@@ -1,9 +1,8 @@
-use std::future::Future;
 use std::io::IsTerminal;
-use std::pin::Pin;
 
 use console::measure_text_width;
 use infrarust_api::command::CommandInfo as PluginCommandInfo;
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_protocol::version::ProtocolVersion;
@@ -232,7 +231,7 @@ impl ConsoleCommand for HelpCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(name) = args.first() else {
                 return help_block(&self.commands, &services.command_manager.list()).into();
@@ -276,7 +275,7 @@ impl ConsoleCommand for VersionCommand {
         &'a self,
         _args: &'a [&'a str],
         _services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move { version_block().into() })
     }
 }
@@ -308,7 +307,7 @@ impl ConsoleCommand for StatusCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let report = StatusReport {
                 uptime: format_duration_short(services.start_time.elapsed()),
@@ -352,7 +351,7 @@ impl ConsoleCommand for StopCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             tracing::info!(target: "console", "Proxy shutdown initiated from console");
             services.shutdown.cancel();
@@ -388,7 +387,7 @@ impl ConsoleCommand for ClearCommand {
         &'a self,
         _args: &'a [&'a str],
         _services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             if std::io::stdout().is_terminal() {
                 print!("\x1B[2J\x1B[H");
@@ -421,7 +420,7 @@ impl ConsoleCommand for GcCommand {
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(builtin) = services.ban_manager.builtin_provider() else {
                 return CommandOutput::Success("Garbage collected".to_string());

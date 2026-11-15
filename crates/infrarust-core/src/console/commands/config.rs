@@ -1,6 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::{ConfigService, ServerConfig};
 
 use crate::console::ConsoleServices;
@@ -54,7 +52,7 @@ impl ConsoleCommand for ReloadCommand {
         &'a self,
         _args: &'a [&'a str],
         _services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             CommandOutput::Note(
                 "Configuration reloads on its own when the files change".to_string(),
@@ -86,7 +84,7 @@ impl ConsoleCommand for ConfigCommand {
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             match args.first() {
                 Some(key) => match services.config_service.get_value(key) {
