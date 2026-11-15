@@ -10,14 +10,13 @@ use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, LimboHandler};
 use infrarust_api::types::{Component, ServerId};
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::session_loop::Pending;
+use super::session_loop::{ConnectionMode, Initial, Pending};
 use crate::error::CoreError;
 use crate::forwarding::ForwardingHandler;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::RoutingData;
-use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::{Login, connect_backend};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login;
@@ -27,18 +26,6 @@ use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::server_switch::validation;
 use crate::session::wake::{WakeFailure, wake};
-
-pub(crate) enum ConnectionMode {
-    Backend(BackendBridge),
-    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
-    Kicked(Kick),
-}
-
-pub(crate) struct Initial {
-    pub(crate) mode: ConnectionMode,
-    pub(crate) server: ServerId,
-    pub(crate) pending: Pending,
-}
 
 pub(crate) enum InitialMode {
     Connected(Box<Initial>),

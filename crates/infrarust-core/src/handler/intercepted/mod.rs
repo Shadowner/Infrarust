@@ -27,10 +27,8 @@ use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
 use crate::session::context::{SessionContext, SessionIo};
-use crate::session::initial_connect::{
-    ConnectionMode, InitialMode, LoginProgress, resolve_initial_mode,
-};
-use crate::session::session_loop::run_session_loop;
+use crate::session::initial_connect::{InitialMode, LoginProgress, resolve_initial_mode};
+use crate::session::session_loop::{ConnectionMode, run_session_loop};
 use auth::{AuthStrategy, Authenticated};
 
 pub struct InterceptedHandler {

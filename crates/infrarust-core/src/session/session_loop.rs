@@ -26,8 +26,6 @@ use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
 use crate::session::server_join::ServerJoin;
 use crate::session::server_switch::{SwitchResult, SwitchTarget};
 
-use super::initial_connect::{ConnectionMode, Initial};
-
 const UNREACHABLE_MESSAGE: &str = "Server is currently unreachable. Please try again later.";
 
 /// Alternates between Backend (`proxy_loop`) and Limbo (`enter_limbo`),
@@ -371,6 +369,18 @@ fn limbo_exit(
         LimboExitResult::Timeout => (LimboExitReason::TimedOut, None),
         LimboExitResult::Shutdown => (LimboExitReason::Shutdown, None),
     }
+}
+
+pub(crate) enum ConnectionMode {
+    Backend(BackendBridge),
+    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
+    Kicked(Kick),
+}
+
+pub(crate) struct Initial {
+    pub(crate) mode: ConnectionMode,
+    pub(crate) server: ServerId,
+    pub(crate) pending: Pending,
 }
 
 pub(crate) struct Pending {
