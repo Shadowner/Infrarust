@@ -15,7 +15,8 @@ use infrarust_protocol::version::ConnectionState;
 
 use crate::error::CoreError;
 use crate::limbo::LIMBO_SWITCH_TARGET;
-use crate::limbo::engine::{LimboExitResult, enter_limbo};
+use crate::limbo::engine::enter_limbo;
+use crate::limbo::handler_chain::LimboExit;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login;
@@ -251,23 +252,23 @@ impl SessionLoop<'_, '_> {
             .await;
 
         Transition::End(match exit {
-            LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) if shutting_down => {
+            LimboExit::Completed | LimboExit::Switch(_) if shutting_down => {
                 ProxyLoopOutcome::Shutdown
             }
-            LimboExitResult::Completed => {
+            LimboExit::Completed => {
                 return self.leave_limbo(self.server.clone(), entry).await;
             }
-            LimboExitResult::SwitchedTo(target) => return self.leave_limbo(target, entry).await,
-            LimboExitResult::SendToLimbo(handler_names) => {
+            LimboExit::Switch(target) => return self.leave_limbo(target, entry).await,
+            LimboExit::SendToLimbo(handler_names) => {
                 return self.move_to_limbo(&handler_names);
             }
-            LimboExitResult::Kicked(reason) => ProxyLoopOutcome::Kicked { reason },
-            LimboExitResult::ClientDisconnected => ProxyLoopOutcome::ClientDisconnected,
-            LimboExitResult::Timeout => ProxyLoopOutcome::Error(CoreError::Timeout(
+            LimboExit::Kick(reason) => ProxyLoopOutcome::Kicked { reason },
+            LimboExit::ClientDisconnected => ProxyLoopOutcome::ClientDisconnected,
+            LimboExit::Timeout => ProxyLoopOutcome::Error(CoreError::Timeout(
                 "the client stopped answering limbo keepalives".into(),
             )),
-            LimboExitResult::Error(e) => ProxyLoopOutcome::Error(e),
-            LimboExitResult::Shutdown => ProxyLoopOutcome::Shutdown,
+            LimboExit::Error(e) => ProxyLoopOutcome::Error(e),
+            LimboExit::Shutdown => ProxyLoopOutcome::Shutdown,
         })
     }
 
@@ -352,33 +353,33 @@ impl SessionLoop<'_, '_> {
 }
 
 fn limbo_exit(
-    exit: &LimboExitResult,
+    exit: &LimboExit,
     shutting_down: bool,
     held_for: &ServerId,
 ) -> (LimboExitReason, Option<ServerId>) {
     match exit {
-        LimboExitResult::Completed | LimboExitResult::SwitchedTo(_) if shutting_down => {
+        LimboExit::Completed | LimboExit::Switch(_) if shutting_down => {
             (LimboExitReason::Shutdown, None)
         }
-        LimboExitResult::Completed => (LimboExitReason::Released, Some(held_for.clone())),
-        LimboExitResult::SwitchedTo(server) => (LimboExitReason::Redirected, Some(server.clone())),
-        LimboExitResult::SendToLimbo(handlers) => (
+        LimboExit::Completed => (LimboExitReason::Released, Some(held_for.clone())),
+        LimboExit::Switch(server) => (LimboExitReason::Redirected, Some(server.clone())),
+        LimboExit::SendToLimbo(handlers) => (
             LimboExitReason::SentToLimbo {
                 handlers: handlers.clone(),
             },
             None,
         ),
-        LimboExitResult::Kicked(reason) => (
+        LimboExit::Kick(reason) => (
             LimboExitReason::Kicked {
                 reason: reason.clone(),
             },
             None,
         ),
-        LimboExitResult::ClientDisconnected | LimboExitResult::Error(_) => {
+        LimboExit::ClientDisconnected | LimboExit::Error(_) => {
             (LimboExitReason::Disconnected, None)
         }
-        LimboExitResult::Timeout => (LimboExitReason::TimedOut, None),
-        LimboExitResult::Shutdown => (LimboExitReason::Shutdown, None),
+        LimboExit::Timeout => (LimboExitReason::TimedOut, None),
+        LimboExit::Shutdown => (LimboExitReason::Shutdown, None),
     }
 }
 
