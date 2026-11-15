@@ -470,7 +470,8 @@ mod tests {
         let connector = test_connector();
         let (player, _commands) = PlayerSession::new_test(true);
         let ctx = test_context(&services, &connector, player);
-        let (client, _client_stream) = test_client_bridge(ctx.version()).await;
+        let (mut client, _client_stream) = test_client_bridge(ctx.version()).await;
+        client.set_state(ConnectionState::Login);
         let mut io = test_io(&ctx, client);
         let (origin_config, load_balancer) = services
             .domain_router
