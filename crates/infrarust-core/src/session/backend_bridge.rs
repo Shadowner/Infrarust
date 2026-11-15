@@ -2,9 +2,10 @@
 //!
 //! Wraps the backend TCP stream with packet codec and optional compression.
 
+use std::io::ErrorKind;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
@@ -88,11 +89,14 @@ impl BackendBridge {
                 return Ok(Some(frame));
             }
 
+            self.stream.readable().await?;
             let buf = self.decoder.read_buf_mut();
             buf.reserve(READ_CHUNK);
-            let n = self.stream.read_buf(buf).await?;
-            if n == 0 {
-                return Ok(None);
+            match self.stream.try_read_buf(buf) {
+                Ok(0) => return Ok(None),
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e.into()),
             }
         }
     }

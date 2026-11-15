@@ -16,6 +16,7 @@ use infrarust_api::events::connection::ConnectCause;
 use infrarust_api::messaging::ChannelId;
 use infrarust_api::player::Player;
 use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, ServerId};
+use tokio::sync::watch;
 use tokio::time::Instant;
 
 use infrarust_protocol::codec::McBufReadExt;
@@ -339,6 +340,13 @@ enum LoopEvent {
     Backend(Result<Option<PacketFrame>, CoreError>),
 }
 
+async fn next_change<T>(mut updates: watch::Receiver<T>) -> watch::Receiver<T> {
+    if updates.changed().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+    updates
+}
+
 async fn next_frame(client: &mut ClientBridge, backend: &mut BackendBridge) -> LoopEvent {
     tokio::select! {
         frame = client.read_frame() => LoopEvent::Client(frame),
@@ -366,8 +374,11 @@ struct Loop<'a> {
 impl Loop<'_> {
     async fn run(mut self) -> ProxyLoopOutcome {
         let registry = self.ctx.registry();
-        let mut tree_updates = self.ctx.services.command_manager.subscribe();
-        let mut permission_updates = self.ctx.session.subscribe_permissions();
+        let ctx = self.ctx;
+        let cancelled = ctx.token.cancelled();
+        let tree_changed = next_change(ctx.services.command_manager.subscribe());
+        let permissions_changed = next_change(ctx.session.subscribe_permissions());
+        tokio::pin!(cancelled, tree_changed, permissions_changed);
         let login_timer = tokio::time::sleep_until(
             self.login_clock
                 .as_ref()
@@ -400,10 +411,16 @@ impl Loop<'_> {
             let event = tokio::select! {
                 biased;
                 Some(command) = self.io.commands.recv() => LoopEvent::Command(command),
-                () = self.ctx.token.cancelled() => LoopEvent::Shutdown,
+                () = &mut cancelled => LoopEvent::Shutdown,
                 () = &mut login_timer, if login_deadline.is_some() => LoopEvent::LoginExpired,
-                Ok(()) = tree_updates.changed() => LoopEvent::CommandsChanged,
-                Ok(()) = permission_updates.changed() => LoopEvent::CommandsChanged,
+                updates = &mut tree_changed => {
+                    tree_changed.set(next_change(updates));
+                    LoopEvent::CommandsChanged
+                }
+                updates = &mut permissions_changed => {
+                    permissions_changed.set(next_change(updates));
+                    LoopEvent::CommandsChanged
+                }
                 event = next_frame(&mut self.io.client, &mut *self.backend) => event,
             };
             match event {
