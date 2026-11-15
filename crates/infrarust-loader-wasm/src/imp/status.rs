@@ -1,5 +1,4 @@
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use infrarust_api::plugin::{
     PluginFault, PluginHealth, PluginQueueStats, PluginRestarts, PluginRuntimeStatus,
@@ -8,7 +7,7 @@ use infrarust_config::WasmRecoveryConfig;
 use tokio::time::Instant;
 
 use crate::sync::lock;
-use crate::wait_window::WaitWindow;
+use crate::wait_window::{WaitRecorder, WaitWindow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Phase {
@@ -50,12 +49,13 @@ pub(crate) struct StatusBoard {
     capacity: usize,
     recovery: WasmRecoveryConfig,
     reported: Mutex<Reported>,
-    waits: WaitWindow,
+    waits: Arc<WaitWindow>,
 }
 
 impl StatusBoard {
-    pub(crate) fn new(capacity: usize, recovery: WasmRecoveryConfig) -> Self {
-        Self {
+    pub(crate) fn new(capacity: usize, recovery: WasmRecoveryConfig) -> (Self, WaitRecorder) {
+        let (recorder, waits) = WaitWindow::new();
+        let board = Self {
             capacity,
             recovery,
             reported: Mutex::new(Reported {
@@ -64,8 +64,9 @@ impl StatusBoard {
                 restarts: Vec::new(),
                 last_fault: None,
             }),
-            waits: WaitWindow::new(),
-        }
+            waits,
+        };
+        (board, recorder)
     }
 
     fn reported(&self) -> std::sync::MutexGuard<'_, Reported> {
@@ -91,10 +92,6 @@ impl StatusBoard {
             at: Instant::now(),
             generation,
         });
-    }
-
-    pub(crate) fn taken(&self, waited: Duration, depth: usize) {
-        self.waits.record(waited, depth);
     }
 
     pub(crate) fn snapshot(&self, depth: usize) -> PluginRuntimeStatus {
@@ -128,6 +125,8 @@ impl StatusBoard {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::time::Duration;
+
     use super::*;
 
     fn recovery() -> WasmRecoveryConfig {
@@ -141,7 +140,7 @@ mod tests {
 
     #[test]
     fn the_board_reports_the_phase_with_the_time_left_before_the_next_attempt() {
-        let board = StatusBoard::new(1024, recovery());
+        let (board, _) = StatusBoard::new(1024, recovery());
         let fresh = board.snapshot(0);
         assert_eq!(fresh.health, PluginHealth::Healthy);
         assert_eq!(fresh.generation, 1);
@@ -171,7 +170,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn restarts_leave_the_count_once_they_are_older_than_the_window() {
-        let board = StatusBoard::new(16, recovery());
+        let (board, _) = StatusBoard::new(16, recovery());
         let t0 = Instant::now();
         board.report(Phase::Healthy, 3, [t0, t0 + Duration::from_secs(100)]);
         board.faulted("the guest trapped: boom", 2);

@@ -24,6 +24,7 @@ use crate::rate_limit::RateLimit;
 use crate::recovery::{RestartBudget, Verdict};
 use crate::status::Phase;
 use crate::store_state::PluginStoreState;
+use crate::wait_window::WaitRecorder;
 
 const FIRST_GENERATION: u64 = 1;
 
@@ -183,6 +184,7 @@ pub(crate) struct Supervisor {
     halt: Arc<Halt>,
     expired_warnings: RateLimit,
     guards: Vec<ListenerHandle>,
+    waits: WaitRecorder,
 }
 
 impl Supervisor {
@@ -190,6 +192,7 @@ impl Supervisor {
         factory: InstanceFactory,
         instance: InstanceRef,
         halt: Arc<Halt>,
+        waits: WaitRecorder,
     ) -> Result<Self, WasmLoaderError> {
         let live = factory
             .instantiate(FIRST_GENERATION, instance.stamped(FIRST_GENERATION))
@@ -205,6 +208,7 @@ impl Supervisor {
             halt,
             expired_warnings: RateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
             guards: Vec::new(),
+            waits,
         })
     }
 
@@ -514,10 +518,9 @@ impl Supervisor {
         }
     }
 
-    pub(crate) fn taken(&self, job: &Job, waiting: usize) {
-        self.instance
-            .board()
-            .taken(job.queued.elapsed(), waiting.saturating_add(1));
+    pub(crate) fn taken(&mut self, job: &Job, waiting: usize) {
+        self.waits
+            .record(job.queued.elapsed(), waiting.saturating_add(1));
     }
 
     fn set_health(&mut self, health: Health) {

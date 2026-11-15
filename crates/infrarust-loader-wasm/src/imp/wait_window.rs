@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -46,12 +47,26 @@ pub(crate) struct WaitWindow {
     slices: [Slice; SLICES],
 }
 
+pub(crate) struct WaitRecorder {
+    window: Arc<WaitWindow>,
+}
+
+impl WaitRecorder {
+    pub(crate) fn record(&mut self, waited: Duration, depth: usize) {
+        self.window.record_at(Instant::now(), waited, depth);
+    }
+}
+
 impl WaitWindow {
-    pub(crate) fn new() -> Self {
-        Self {
+    pub(crate) fn new() -> (WaitRecorder, Arc<Self>) {
+        let window = Arc::new(Self {
             origin: Instant::now(),
             slices: [const { Slice::new() }; SLICES],
-        }
+        });
+        let recorder = WaitRecorder {
+            window: Arc::clone(&window),
+        };
+        (recorder, window)
     }
 
     fn epoch(&self, now: Instant) -> u64 {
@@ -62,10 +77,6 @@ impl WaitWindow {
 
     fn slice(&self, epoch: u64) -> &Slice {
         &self.slices[usize::try_from(epoch % SLICES as u64).unwrap_or(0)]
-    }
-
-    pub(crate) fn record(&self, waited: Duration, depth: usize) {
-        self.record_at(Instant::now(), waited, depth);
     }
 
     fn record_at(&self, now: Instant, waited: Duration, depth: usize) {
@@ -210,7 +221,7 @@ mod tests {
 
     #[test]
     fn percentiles_come_from_the_waits_of_the_window() {
-        let window = WaitWindow::new();
+        let (_, window) = WaitWindow::new();
         let origin = window.origin;
         for _ in 0..98 {
             window.record_at(origin, Duration::from_micros(20), 1);
@@ -232,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_largest_wait_caps_every_percentile() {
-        let window = WaitWindow::new();
+        let (_, window) = WaitWindow::new();
         let origin = window.origin;
         window.record_at(origin, Duration::from_micros(1_100), 1);
         let summary = window.summary_at(origin);
@@ -242,7 +253,7 @@ mod tests {
 
     #[test]
     fn waits_older_than_the_window_are_forgotten() {
-        let window = WaitWindow::new();
+        let (_, window) = WaitWindow::new();
         let origin = window.origin;
         window.record_at(origin, ms(900), 40);
         window.record_at(origin + ms(30_000), ms(2), 2);
@@ -264,7 +275,7 @@ mod tests {
 
     #[test]
     fn an_idle_window_reports_no_waits() {
-        let window = WaitWindow::new();
+        let (_, window) = WaitWindow::new();
         let summary = window.summary_at(window.origin + ms(90_000));
         assert_eq!(summary.taken, 0);
         assert_eq!(summary.peak_depth, 0);

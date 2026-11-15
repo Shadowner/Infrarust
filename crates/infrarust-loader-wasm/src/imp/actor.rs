@@ -33,6 +33,7 @@ use crate::store_state::PluginStoreState;
 use crate::supervisor::Fault;
 use crate::supervisor::Supervisor;
 use crate::sync::lock;
+use crate::wait_window::WaitRecorder;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CallFailure {
@@ -300,8 +301,9 @@ impl ActorInfo {
         capabilities: CapabilitySet,
         network: Arc<NetworkPolicy>,
         servers: Arc<dyn ConfigService>,
-    ) -> Self {
-        Self {
+    ) -> (Self, WaitRecorder) {
+        let (board, waits) = StatusBoard::new(sandbox.queue_capacity, sandbox.recovery);
+        let info = Self {
             plugin_id,
             capacity: sandbox.queue_capacity,
             event_budget: inside(sandbox.event_budget),
@@ -313,11 +315,12 @@ impl ActorInfo {
             loop_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
             snapshots,
             access: Arc::default(),
-            board: StatusBoard::new(sandbox.queue_capacity, sandbox.recovery),
+            board,
             capabilities,
             network,
             servers,
-        }
+        };
+        (info, waits)
     }
 
     fn budget(&self, kind: CallKind) -> Duration {
@@ -390,14 +393,17 @@ impl InstanceRef {
         let (jobs, _) = mpsc::channel(1);
         Self {
             jobs: jobs.downgrade(),
-            info: Arc::new(ActorInfo::new(
-                String::new(),
-                &SandboxLimits::default(),
-                Arc::default(),
-                capabilities,
-                network,
-                servers,
-            )),
+            info: Arc::new(
+                ActorInfo::new(
+                    String::new(),
+                    &SandboxLimits::default(),
+                    Arc::default(),
+                    capabilities,
+                    network,
+                    servers,
+                )
+                .0,
+            ),
             kind: CallKind::Callback,
             generation: None,
         }
@@ -558,14 +564,15 @@ impl PluginActor {
     pub(crate) async fn start(factory: InstanceFactory) -> Result<Arc<Self>, WasmLoaderError> {
         let sandbox = *factory.sandbox();
         let (jobs, queue) = mpsc::channel(sandbox.queue_capacity);
-        let info = Arc::new(ActorInfo::new(
+        let (info, waits) = ActorInfo::new(
             factory.plugin_id().to_owned(),
             &sandbox,
             Arc::clone(factory.registrations().snapshots()),
             factory.capabilities().clone(),
             Arc::clone(factory.network()),
             factory.ctx().config_service(),
-        ));
+        );
+        let info = Arc::new(info);
         let instance = InstanceRef {
             jobs: jobs.downgrade(),
             info: Arc::clone(&info),
@@ -573,7 +580,7 @@ impl PluginActor {
             generation: None,
         };
         let halt = Arc::new(Halt::new(factory.ctx().proxy_shutdown()));
-        let supervisor = Supervisor::start(factory, instance, Arc::clone(&halt)).await?;
+        let supervisor = Supervisor::start(factory, instance, Arc::clone(&halt), waits).await?;
         let task =
             tokio::spawn(run(supervisor, queue, Arc::clone(&halt)).with_current_subscriber());
         Ok(Arc::new(Self {
