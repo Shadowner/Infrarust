@@ -700,7 +700,6 @@ async fn enter_play(
             client,
             ctx.version(),
             ctx.registry(),
-            &ctx.services.registry_codec_cache,
             Some(&observer),
         )
         .await?;

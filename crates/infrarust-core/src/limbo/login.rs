@@ -6,7 +6,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::limbo::registry_cache::RegistryCodecCache;
+use crate::registry_data::embedded;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::frame_chain::FrameChain;
 use crate::util::packets::encode_packet;
@@ -17,7 +17,6 @@ pub(crate) async fn complete_config_for_limbo(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
-    codec_cache: &RegistryCodecCache,
     observer: Option<&FrameChain<'_>>,
 ) -> Result<(), CoreError> {
     if client.awaits_config_ack() {
@@ -31,8 +30,9 @@ pub(crate) async fn complete_config_for_limbo(
         client.reconfiguration_acknowledged();
     }
 
-    if let Ok(Some(kp_frame)) = codec_cache.get_known_packs_frame(version) {
-        client.write_frame(&kp_frame).await?;
+    let embedded = embedded::frames(version);
+    if let Ok(Some(kp_frame)) = embedded.as_ref().map(|frames| &frames.known_packs) {
+        client.write_frame(kp_frame).await?;
 
         let skp_id = registry.get_packet_id::<SKnownPacks>(version);
 
@@ -45,8 +45,7 @@ pub(crate) async fn complete_config_for_limbo(
         .await?;
     }
 
-    let frames = codec_cache.get_registry_frames(version)?;
-    for frame in &frames {
+    for frame in &embedded?.registry {
         client.write_frame(frame).await?;
     }
 

@@ -12,7 +12,6 @@ use crate::forwarding::server_override::resolve_forwarding_handler;
 use crate::forwarding::{ForwardingError, ForwardingHandler, ForwardingMode};
 use crate::handoff::ConnectionClaims;
 use crate::limbo::registry::LimboHandlerRegistry;
-use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
@@ -42,7 +41,6 @@ pub struct ProxyServices {
     pub transport_filter_registry: Arc<TransportFilterRegistryImpl>,
     pub connection_claims: Arc<ConnectionClaims>,
     pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
-    pub registry_codec_cache: Arc<RegistryCodecCache>,
     pub plugin_routes: PluginRoutes,
     pub forwarding_mode: Arc<ForwardingMode>,
     pub forwarding_secret: Option<Arc<[u8]>>,

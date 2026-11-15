@@ -28,7 +28,6 @@ use crate::event_bus::bus::EventBusImpl;
 use crate::filter::codec_registry::CodecFilterRegistryImpl;
 use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::limbo::registry::LimboHandlerRegistry;
-use crate::limbo::registry_cache::RegistryCodecCache;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
@@ -78,8 +77,6 @@ pub fn test_proxy_services() -> ProxyServices {
     let backend_health = Arc::new(crate::loadbalancer::PassiveBackendHealth::new());
     let domain_router = Arc::new(DomainRouter::new());
     let packet_registry = Arc::new(test_registry());
-    let provider: Arc<dyn crate::registry_data::RegistryDataProvider> =
-        Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider);
 
     let pending_backends = Arc::new(crate::loadbalancer::PendingRegistry::new(
         Arc::clone(&backend_load) as _,
@@ -114,7 +111,6 @@ pub fn test_proxy_services() -> ProxyServices {
         transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
         connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
         limbo_handler_registry: Arc::new(LimboHandlerRegistry::new()),
-        registry_codec_cache: Arc::new(RegistryCodecCache::new(provider)),
         plugin_routes: crate::provider::registry::PluginRoutes::channel().0,
         forwarding_mode: Arc::new(crate::forwarding::ForwardingMode::None),
         forwarding_secret: None,

@@ -164,9 +164,6 @@ impl ProxyServer {
             ),
             connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
             limbo_handler_registry: Arc::new(crate::limbo::registry::LimboHandlerRegistry::new()),
-            registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
-                Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
-            )),
             plugin_routes,
             forwarding_mode,
             forwarding_secret,

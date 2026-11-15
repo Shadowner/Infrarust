@@ -377,7 +377,6 @@ async fn prepare_client_for_limbo(
             client,
             version,
             ctx.registry(),
-            &ctx.services.registry_codec_cache,
             Some(&FrameChain::new(ctx, server)),
         )
         .await
