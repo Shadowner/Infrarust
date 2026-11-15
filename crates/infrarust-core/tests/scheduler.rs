@@ -270,7 +270,7 @@ async fn a_plugin_cannot_cancel_another_plugins_task() {
 }
 
 fn factory() -> PluginContextFactoryImpl {
-    PluginContextFactoryImpl::new(PluginServices::for_tests(), HashMap::new())
+    PluginContextFactoryImpl::for_tests(PluginServices::for_tests(), HashMap::new())
 }
 
 #[tokio::test(start_paused = true)]

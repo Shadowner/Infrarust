@@ -10,4 +10,5 @@ mod registry_base;
 pub mod transport_chain;
 pub mod transport_registry;
 
+#[cfg(feature = "test-support")]
 pub use registry_base::FilterOwner;

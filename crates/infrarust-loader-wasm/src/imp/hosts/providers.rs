@@ -5,11 +5,11 @@ use infrarust_api::services::ban_service::{BanFeatures, BanProvider};
 use infrarust_api::services::providers::ProviderRejected;
 
 use crate::actor::CallKind;
+use crate::adapters::{WasmBanProvider, WasmPermissionProvider};
 use crate::bindings::infrarust::plugin::ban_service as wb;
 use crate::bindings::infrarust::plugin::providers as wpr;
 use crate::bindings::infrarust::plugin::types::ErrorKind;
 use crate::host_error::{HostResult, host_error, missing_capability};
-use crate::providers::{WasmBanProvider, WasmPermissionProvider};
 use crate::store_state::PluginStoreState;
 
 impl wpr::Host for PluginStoreState {

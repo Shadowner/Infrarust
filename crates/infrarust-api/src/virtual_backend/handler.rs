@@ -1,6 +1,6 @@
 //! Virtual backend handler trait.
 
-use crate::event::BoxFuture;
+use crate::BoxFuture;
 use crate::types::{PlayerId, RawPacket};
 
 use super::session::VirtualBackendSession;

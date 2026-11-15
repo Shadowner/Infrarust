@@ -1,13 +1,9 @@
-//! Transport error types.
-
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-/// Errors that can occur in the transport layer.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TransportError {
-    /// Failed to bind listener socket.
     #[error("failed to bind to {addr}: {source}")]
     Bind {
         addr: SocketAddr,
@@ -17,62 +13,56 @@ pub enum TransportError {
     #[error("socket activation error: {0}")]
     SocketActivation(std::io::Error),
 
-    /// Failed to accept incoming connection.
     #[error("accept error: {0}")]
     Accept(std::io::Error),
 
-    /// Failed to connect to backend server.
-    ///
-    /// `addr` is the configured `host:port` (before DNS resolution) so
-    /// hostname backends stay diagnosable.
     #[error("failed to connect to backend {addr}: {source}")]
     BackendConnect {
         addr: String,
         source: std::io::Error,
     },
 
-    /// All backend addresses failed.
     #[error("all backends failed for server {server_id}")]
     AllBackendsFailed { server_id: String },
 
-    /// Connection to backend timed out.
-    ///
-    /// `addr` is the configured `host:port` (before DNS resolution).
     #[error("connection to {addr} timed out after {timeout:?}")]
     ConnectTimeout { addr: String, timeout: Duration },
 
-    /// Invalid proxy protocol header.
     #[error("invalid proxy protocol: {0}")]
     InvalidProxyProtocol(String),
 
-    /// Failed to decode proxy protocol header.
     #[error("proxy protocol decode error: {0}")]
     ProxyProtocolDecode(String),
 
-    /// A peer outside `trusted_proxies` connected to a proxy protocol listener.
+    #[error("proxy protocol encode error: {0}")]
+    ProxyProtocolEncode(String),
+
+    #[error("timed out waiting for the proxy protocol header")]
+    ProxyProtocolTimeout,
+
+    #[error("proxy protocol I/O error: {0}")]
+    ProxyProtocolIo(#[source] std::io::Error),
+
+    #[error("I/O error: {0}")]
+    Io(#[source] std::io::Error),
+
     #[error("peer {peer} is not in trusted_proxies")]
     UntrustedProxyPeer { peer: IpAddr },
 
-    /// The client's address is at `max_connections_per_ip`.
     #[error("{ip} is at the per-IP connection limit")]
     IpLimitReached { ip: IpAddr },
 
-    /// Socket configuration error.
     #[error("socket configuration error: {0}")]
     SocketConfig(std::io::Error),
 
-    /// Forwarding I/O error.
     #[error("forward error: {0}")]
     Forward(std::io::Error),
 
-    /// Splice syscall error (Linux only).
     #[error("splice error: {0}")]
     Splice(std::io::Error),
 
-    /// Shutdown signal received.
     #[error("shutdown")]
     Shutdown,
 }
 
-/// Convenience type alias for transport results.
 pub type TransportResult<T> = Result<T, TransportError>;

@@ -2,7 +2,7 @@
 
 use infrarust_api::player::Player;
 use infrarust_api::types::{Component, ServerId};
-use infrarust_core::player::{PlayerCommand, PlayerSession};
+use infrarust_core::player::{ClientPacket, PlayerCommand, PlayerSession};
 
 #[test]
 fn test_send_message_active_player() {
@@ -13,7 +13,10 @@ fn test_send_message_active_player() {
         .expect("should succeed");
 
     let cmd = rx.try_recv().expect("should have a command");
-    assert!(matches!(cmd, PlayerCommand::SendMessage(_)));
+    assert!(matches!(
+        cmd,
+        PlayerCommand::Packet(ClientPacket::Message(_))
+    ));
 }
 
 #[test]

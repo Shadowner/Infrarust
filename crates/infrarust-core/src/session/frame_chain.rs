@@ -4,8 +4,8 @@ use infrarust_api::types::{RawPacket, ServerId};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::version::{ConnectionState, Direction};
 
+use crate::api_convert::{protocol_direction_to_api, protocol_state_to_api};
 use crate::error::CoreError;
-use crate::event_bus::conversion::{protocol_direction_to_api, protocol_state_to_api};
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::plugin_messaging::router;
 use crate::session::backend_bridge::BackendBridge;

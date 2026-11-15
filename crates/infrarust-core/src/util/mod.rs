@@ -1,6 +1,6 @@
 pub(crate) mod atomic_file;
-pub mod domain_rewrite;
 pub(crate) mod guard;
+pub(crate) mod packets;
 pub mod provider_slot;
 pub mod sync;
 pub mod text;

@@ -17,9 +17,8 @@ async fn admits(limiter: &RateLimiterMiddleware, ip: &str) -> bool {
     let addr = listener.local_addr().unwrap();
     let stream = TcpStream::connect(addr).await.unwrap();
     let client_ip: IpAddr = ip.parse().unwrap();
-    let mut ctx =
-        ConnectionContext::new_for_test(stream, SocketAddr::new(client_ip, 50001), client_ip, addr);
-    ctx.extensions.insert(HandshakeData {
+    let mut ctx = ConnectionContext::new_for_test(stream, SocketAddr::new(client_ip, 50001), addr);
+    ctx.handshake = Some(HandshakeData {
         domain: "lobby.test".into(),
         raw_host: "lobby.test".into(),
         port: 25565,
@@ -29,7 +28,7 @@ async fn admits(limiter: &RateLimiterMiddleware, ip: &str) -> bool {
     });
     match limiter.process(&mut ctx).await.unwrap() {
         MiddlewareResult::Continue => true,
-        MiddlewareResult::Reject(_) => false,
+        MiddlewareResult::Reject { .. } => false,
         _ => panic!("the rate limiter only continues or rejects"),
     }
 }

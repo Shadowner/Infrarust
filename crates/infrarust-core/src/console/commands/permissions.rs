@@ -1,12 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use infrarust_api::event::BoxFuture;
 use infrarust_api::player::Player;
 use uuid::Uuid;
 
 use crate::console::ConsoleServices;
 use crate::console::commands::usage;
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{
     Block, CommandCategory, CommandOutput, Failure, Hint, Line, Span, Table,
 };
@@ -14,27 +12,21 @@ use crate::console::output::{
 pub struct OpCommand;
 
 impl ConsoleCommand for OpCommand {
-    fn name(&self) -> &str {
-        "op"
-    }
-
-    fn description(&self) -> &str {
-        "Grant admin to a player"
-    }
-
-    fn usage(&self) -> &str {
-        "op <username>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "op",
+            aliases: &[],
+            description: "Grant admin to a player",
+            usage: "op <username>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(username) = args.first() else {
                 return usage(self);
@@ -74,27 +66,21 @@ impl ConsoleCommand for OpCommand {
 pub struct DeopCommand;
 
 impl ConsoleCommand for DeopCommand {
-    fn name(&self) -> &str {
-        "deop"
-    }
-
-    fn description(&self) -> &str {
-        "Revoke admin from a player"
-    }
-
-    fn usage(&self) -> &str {
-        "deop <username>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "deop",
+            aliases: &[],
+            description: "Revoke admin from a player",
+            usage: "deop <username>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(username) = args.first() else {
                 return usage(self);
@@ -123,31 +109,21 @@ impl ConsoleCommand for DeopCommand {
 pub struct OpListCommand;
 
 impl ConsoleCommand for OpListCommand {
-    fn name(&self) -> &str {
-        "ops"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["oplist"]
-    }
-
-    fn description(&self) -> &str {
-        "List current admins"
-    }
-
-    fn usage(&self) -> &str {
-        "ops"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "ops",
+            aliases: &["oplist"],
+            description: "List current admins",
+            usage: "ops",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             if let Some(refused) = delegated(services) {
                 return refused;

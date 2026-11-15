@@ -13,8 +13,8 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
-use crate::player::packets::respawn_frame;
 use crate::session::client_bridge::ClientBridge;
+use crate::util::packets::respawn_frame;
 
 /// Sends the server switch packets to the client.
 ///

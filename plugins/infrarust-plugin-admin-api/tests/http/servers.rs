@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Method, StatusCode, header};
+use infrarust_api::test_util::MockConfigService;
+use infrarust_api::types::ServerAddress;
 use infrarust_plugin_admin_api::server_dir::test_support::{
     DocumentDuringSend, RecordingSender, SlowSender,
 };
@@ -33,6 +35,24 @@ async fn test_servers_list_reports_source_and_editable() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"][0]["source"], "file");
     assert_eq!(body["data"][0]["editable"], false);
+}
+
+#[tokio::test]
+async fn test_servers_render_ipv6_addresses_bracketed() {
+    let address = ServerAddress {
+        host: "::1".to_owned(),
+        port: 25565,
+    };
+    let config = MockConfigService::new().with_server(MockConfigService::server_at("v6", address));
+    let api = TestApi::with_config(Arc::new(config));
+
+    let (status, list) = api.get("/api/v1/servers").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["data"][0]["addresses"][0], "[::1]:25565");
+
+    let (status, detail) = api.get("/api/v1/servers/v6").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(detail["data"]["addresses"][0], "[::1]:25565");
 }
 
 #[tokio::test]

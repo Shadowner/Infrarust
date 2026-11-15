@@ -3,7 +3,7 @@ use bytes::{BufMut, BytesMut};
 use crate::MAX_PACKET_SIZE;
 use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
-use crate::io::compression::{self, ZlibCompressor};
+use crate::io::compression::Compressor;
 use crate::io::frame::{PacketFrame, should_compress};
 use crate::io::{BUFFER_RETENTION_LIMIT, release_oversized};
 
@@ -16,7 +16,7 @@ pub struct PacketEncoder {
     compression_threshold: Option<i32>,
     compress_buf: Vec<u8>,
     scratch_buf: Vec<u8>,
-    compressor: Option<Box<dyn ZlibCompressor + Send + Sync>>,
+    compressor: Option<Compressor>,
 }
 
 impl PacketEncoder {
@@ -57,7 +57,7 @@ impl PacketEncoder {
                     self.scratch_buf.extend_from_slice(payload);
 
                     self.compressor
-                        .get_or_insert_with(compression::default_compressor)
+                        .get_or_insert_with(Compressor::with_default_level)
                         .compress(&self.scratch_buf, &mut self.compress_buf)?;
 
                     let compressed_size = self.compress_buf.len();

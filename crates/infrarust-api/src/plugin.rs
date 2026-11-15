@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
+use crate::BoxFuture;
 use crate::command::CommandManager;
 use crate::error::PluginError;
-use crate::event::BoxFuture;
 use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::handoff::ConnectionClaimRegistry;
@@ -342,16 +342,16 @@ impl PluginMetadata {
     }
 }
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`PluginContext`](super::PluginContext).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// Context provided to plugins during [`Plugin::on_enable`].
 ///
 /// Gives access to all proxy services and registration methods.
 /// The proxy is the sole implementor.
-pub trait PluginContext: Send + Sync + private::Sealed {
+pub trait PluginContext: Send + Sync + crate::__sealed::Sealed {
     fn event_bus(&self) -> Arc<dyn EventBus>;
 
     fn player_registry(&self) -> Arc<dyn PlayerRegistry>;

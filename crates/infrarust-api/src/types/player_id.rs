@@ -65,11 +65,4 @@ mod tests {
         assert!(set.contains(&b));
         assert!(!set.contains(&c));
     }
-
-    #[test]
-    fn copy_semantics() {
-        let a = PlayerId::new(5);
-        let b = a;
-        assert_eq!(a, b); // a is still valid — Copy
-    }
 }

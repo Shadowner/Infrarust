@@ -1,14 +1,20 @@
 //! V1 → V2 server config conversion logic.
 
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::proxy::ProxyConfig;
 use crate::server::ServerConfig;
 use crate::types::{
-    BalanceStrategy, DomainRewrite, IpFilterConfig, LocalManagerConfig, MotdConfig, MotdEntry,
-    ProxyMode, ServerAddress, ServerManagerConfig, WeightedAddress,
+    ActiveHealthConfig, BalanceStrategy, BanConfig, CraftyManagerConfig, DockerProviderConfig,
+    DomainRewrite, IpFilterConfig, KeepaliveConfig, LocalManagerConfig, MetricsConfig, MotdConfig,
+    MotdEntry, OtlpProtocol, ProxyMode, PterodactylManagerConfig, RateLimitConfig, ResourceConfig,
+    ServerAddress, ServerManagerConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
+    WeightedAddress,
 };
 
-use super::v1_types::{V1MotdEntry, V1ServerConfig};
+use super::v1_types::{V1InfrarustConfig, V1MotdEntry, V1ServerConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationSeverity {
@@ -24,69 +30,65 @@ pub struct MigrationWarning {
     pub message: String,
 }
 
+pub(super) struct Warnings {
+    file: String,
+    items: Vec<MigrationWarning>,
+}
+
+impl Warnings {
+    pub(super) fn new(file: &str) -> Self {
+        Self {
+            file: file.to_string(),
+            items: Vec::new(),
+        }
+    }
+
+    pub(super) fn info(&mut self, message: impl Into<String>) {
+        self.push(MigrationSeverity::Info, message);
+    }
+
+    pub(super) fn warn(&mut self, message: impl Into<String>) {
+        self.push(MigrationSeverity::Warning, message);
+    }
+
+    pub(super) fn error(&mut self, message: impl Into<String>) {
+        self.push(MigrationSeverity::Error, message);
+    }
+
+    pub(super) fn into_vec(self) -> Vec<MigrationWarning> {
+        self.items
+    }
+
+    fn push(&mut self, severity: MigrationSeverity, message: impl Into<String>) {
+        self.items.push(MigrationWarning {
+            severity,
+            file: self.file.clone(),
+            message: message.into(),
+        });
+    }
+}
+
 pub struct MigrationResult {
     pub config: ServerConfig,
     pub warnings: Vec<MigrationWarning>,
 }
 
 pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult {
-    let mut warnings = Vec::new();
-    let warn = |warnings: &mut Vec<MigrationWarning>, severity: MigrationSeverity, msg: &str| {
-        warnings.push(MigrationWarning {
-            severity,
-            file: filename.to_string(),
-            message: msg.to_string(),
-        });
-    };
+    let mut warnings = Warnings::new(filename);
+    let config = convert_server(v1, filename, &mut warnings);
+    MigrationResult {
+        config,
+        warnings: warnings.into_vec(),
+    }
+}
 
-    let raw_name = v1
-        .config_id
-        .as_deref()
-        .map(|id| id.split('@').next().unwrap_or(id))
-        .unwrap_or_else(|| {
-            filename
-                .strip_suffix(".yaml")
-                .or_else(|| filename.strip_suffix(".yml"))
-                .unwrap_or(filename)
-        });
-    let sanitized = sanitize_id(raw_name);
-    let name = if sanitized.is_empty() {
-        warn(
-            &mut warnings,
-            MigrationSeverity::Warning,
-            &format!(
-                "config id '{raw_name}' has no usable characters; the V2 id will derive from the output filename"
-            ),
-        );
-        None
-    } else {
-        if sanitized != raw_name {
-            warn(
-                &mut warnings,
-                MigrationSeverity::Warning,
-                &format!(
-                    "config id '{raw_name}' sanitized to '{sanitized}'; check for collisions with other migrated configs"
-                ),
-            );
-        }
-        Some(sanitized)
-    };
-
-    let proxy_mode = match v1.proxy_mode.as_deref() {
-        Some("passthrough") | None => ProxyMode::Passthrough,
-        Some("zerocopy_passthrough") => ProxyMode::ZeroCopy,
-        Some("offline") => ProxyMode::Offline,
-        Some("client_only") => ProxyMode::ClientOnly,
-        Some("server_only") => ProxyMode::ServerOnly,
-        Some(unknown) => {
-            warn(
-                &mut warnings,
-                MigrationSeverity::Warning,
-                &format!("Unknown proxy mode '{unknown}', defaulting to passthrough"),
-            );
-            ProxyMode::Passthrough
-        }
-    };
+pub(super) fn convert_server(
+    v1: &V1ServerConfig,
+    filename: &str,
+    warnings: &mut Warnings,
+) -> ServerConfig {
+    let name = convert_name(v1, filename, warnings);
+    let proxy_mode = convert_proxy_mode(v1, warnings);
 
     let domain_rewrite = if let Some(ref domain) = v1.backend_domain {
         DomainRewrite::Explicit(domain.clone())
@@ -97,74 +99,14 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
     };
 
     if v1.proxy_protocol_version.is_some() {
-        warn(
-            &mut warnings,
-            MigrationSeverity::Info,
-            "proxy_protocol_version is no longer supported in V2 (auto-detected)",
-        );
+        warnings.info("proxy_protocol_version is no longer supported in V2 (auto-detected)");
     }
 
-    let mut addresses: Vec<WeightedAddress> = Vec::new();
-    for addr in &v1.addresses {
-        match addr.parse::<ServerAddress>() {
-            Ok(parsed) => addresses.push(parsed.into()),
-            Err(e) => warn(
-                &mut warnings,
-                MigrationSeverity::Error,
-                &format!("Cannot parse address '{addr}': {e}"),
-            ),
-        }
-    }
-    if addresses.is_empty() && !v1.addresses.is_empty() {
-        warn(
-            &mut warnings,
-            MigrationSeverity::Error,
-            "ALL addresses failed to parse — this server will have no backends!",
-        );
-    }
-
-    let motd = convert_motds(v1, filename, &mut warnings);
-    let server_manager = convert_server_manager(v1, filename, &mut warnings);
-    let ip_filter = convert_ip_filter(v1, filename, &mut warnings);
-
-    if let Some(ref filters) = v1.filters {
-        if filters.rate_limiter.as_ref().is_some_and(|f| f.enabled) {
-            warn(
-                &mut warnings,
-                MigrationSeverity::Info,
-                "Per-server rate limiter is now global in V2 (see infrarust.toml [rate_limit])",
-            );
-        }
-        if filters.id_filter.as_ref().is_some_and(|f| f.enabled) {
-            warn(
-                &mut warnings,
-                MigrationSeverity::Warning,
-                "ID filter is not available in V2 server config",
-            );
-        }
-        if filters.name_filter.as_ref().is_some_and(|f| f.enabled) {
-            warn(
-                &mut warnings,
-                MigrationSeverity::Warning,
-                "Name filter is not available in V2 server config",
-            );
-        }
-        if filters.ban.as_ref().is_some_and(|f| f.enabled) {
-            warn(
-                &mut warnings,
-                MigrationSeverity::Info,
-                "Per-server ban config is now global in V2 (see infrarust.toml [ban])",
-            );
-        }
-    }
-
-    if v1.caches.is_some() {
-        warn(
-            &mut warnings,
-            MigrationSeverity::Info,
-            "Per-server cache config is now global in V2 (see infrarust.toml [status_cache])",
-        );
-    }
+    let addresses = convert_addresses(v1, warnings);
+    let motd = convert_motds(v1, warnings);
+    let server_manager = convert_server_manager(v1, warnings);
+    let ip_filter = convert_ip_filter(v1, warnings);
+    warn_moved_server_settings(v1, warnings);
 
     let max_players = v1
         .motds
@@ -173,7 +115,7 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         .and_then(|e| e.max_players)
         .unwrap_or(0);
 
-    let config = ServerConfig {
+    ServerConfig {
         id: None,
         name,
         network: None,
@@ -195,13 +137,90 @@ pub fn convert_v1_to_v2(v1: &V1ServerConfig, filename: &str) -> MigrationResult 
         disconnect_message: None,
         limbo_handlers: Vec::new(),
         bungeecord_channel: false,
-    };
-
-    MigrationResult { config, warnings }
+    }
 }
 
-/// Lowercases, maps disallowed characters to '-', collapses '-' runs
-/// and trims leading/trailing '-'.
+fn convert_name(v1: &V1ServerConfig, filename: &str, warnings: &mut Warnings) -> Option<String> {
+    let raw_name = v1
+        .config_id
+        .as_deref()
+        .map(|id| id.split('@').next().unwrap_or(id))
+        .unwrap_or_else(|| {
+            filename
+                .strip_suffix(".yaml")
+                .or_else(|| filename.strip_suffix(".yml"))
+                .unwrap_or(filename)
+        });
+    let sanitized = sanitize_id(raw_name);
+    if sanitized.is_empty() {
+        warnings.warn(format!(
+            "config id '{raw_name}' has no usable characters; the V2 id will derive from the output filename"
+        ));
+        return None;
+    }
+    if sanitized != raw_name {
+        warnings.warn(format!(
+            "config id '{raw_name}' sanitized to '{sanitized}'; check for collisions with other migrated configs"
+        ));
+    }
+    Some(sanitized)
+}
+
+fn convert_proxy_mode(v1: &V1ServerConfig, warnings: &mut Warnings) -> ProxyMode {
+    match v1.proxy_mode.as_deref() {
+        Some("passthrough") | None => ProxyMode::Passthrough,
+        Some("zerocopy_passthrough") => ProxyMode::ZeroCopy,
+        Some("offline") => ProxyMode::Offline,
+        Some("client_only") => ProxyMode::ClientOnly,
+        Some("server_only") => ProxyMode::ServerOnly,
+        Some(unknown) => {
+            warnings.warn(format!(
+                "Unknown proxy mode '{unknown}', defaulting to passthrough"
+            ));
+            ProxyMode::Passthrough
+        }
+    }
+}
+
+fn convert_addresses(v1: &V1ServerConfig, warnings: &mut Warnings) -> Vec<WeightedAddress> {
+    let mut addresses = Vec::new();
+    for addr in &v1.addresses {
+        match addr.parse::<ServerAddress>() {
+            Ok(parsed) => addresses.push(parsed.into()),
+            Err(e) => warnings.error(format!("Cannot parse address '{addr}': {e}")),
+        }
+    }
+    if addresses.is_empty() && !v1.addresses.is_empty() {
+        warnings.error("ALL addresses failed to parse — this server will have no backends!");
+    }
+    addresses
+}
+
+fn warn_moved_server_settings(v1: &V1ServerConfig, warnings: &mut Warnings) {
+    if let Some(ref filters) = v1.filters {
+        if filters.rate_limiter.as_ref().is_some_and(|f| f.enabled) {
+            warnings.info(
+                "Per-server rate limiter is now global in V2 (see infrarust.toml [rate_limit])",
+            );
+        }
+        if filters.id_filter.as_ref().is_some_and(|f| f.enabled) {
+            warnings.warn("ID filter is not available in V2 server config");
+        }
+        if filters.name_filter.as_ref().is_some_and(|f| f.enabled) {
+            warnings.warn("Name filter is not available in V2 server config");
+        }
+        if filters.ban.as_ref().is_some_and(|f| f.enabled) {
+            warnings.info("Per-server ban config is now global in V2 (see infrarust.toml [ban])");
+        }
+    }
+
+    if v1.caches.is_some() {
+        warnings.info(
+            "Per-server cache config is now global in V2 (see infrarust.toml [status_cache])",
+        );
+    }
+}
+
 fn sanitize_id(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     for c in raw.to_lowercase().chars() {
@@ -218,9 +237,12 @@ fn convert_v1_motd_entry(entry: &V1MotdEntry) -> Option<MotdEntry> {
     if !entry.enabled {
         return None;
     }
-    let text = entry.text.clone()?;
+    motd_entry(entry)
+}
+
+fn motd_entry(entry: &V1MotdEntry) -> Option<MotdEntry> {
     Some(MotdEntry {
-        text,
+        text: entry.text.clone()?,
         favicon: entry.favicon.clone(),
         version_name: entry.version_name.clone(),
         version_protocol: entry.protocol_version,
@@ -228,11 +250,7 @@ fn convert_v1_motd_entry(entry: &V1MotdEntry) -> Option<MotdEntry> {
     })
 }
 
-fn convert_motds(
-    v1: &V1ServerConfig,
-    filename: &str,
-    warnings: &mut Vec<MigrationWarning>,
-) -> MotdConfig {
+fn convert_motds(v1: &V1ServerConfig, warnings: &mut Warnings) -> MotdConfig {
     let motds = match &v1.motds {
         Some(m) => m,
         None => return MotdConfig::default(),
@@ -246,20 +264,10 @@ fn convert_motds(
 
     let v1_stopping = motds.stopping.as_ref().and_then(convert_v1_motd_entry);
     let v1_shutting_down = motds.shutting_down.as_ref().and_then(convert_v1_motd_entry);
-    let stopping = match (&v1_stopping, &v1_shutting_down) {
-        (Some(_), Some(_)) => {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Info,
-                file: filename.to_string(),
-                message: "Both 'stopping' and 'shutting_down' MOTDs exist; using 'shutting_down'"
-                    .to_string(),
-            });
-            v1_shutting_down
-        }
-        (_, Some(_)) => v1_shutting_down,
-        (Some(_), None) => v1_stopping,
-        (None, None) => None,
-    };
+    if v1_stopping.is_some() && v1_shutting_down.is_some() {
+        warnings.info("Both 'stopping' and 'shutting_down' MOTDs exist; using 'shutting_down'");
+    }
+    let stopping = v1_shutting_down.or(v1_stopping);
 
     let v1_unreachable = motds.unreachable.as_ref().and_then(convert_v1_motd_entry);
     let has_unknown = motds.unknown.as_ref().is_some_and(|e| e.enabled);
@@ -270,15 +278,10 @@ fn convert_motds(
 
     if has_unknown || has_unable {
         let has_unreachable = motds.unreachable.as_ref().is_some_and(|e| e.enabled);
-        let msg = if has_unreachable {
+        warnings.info(if has_unreachable {
             "'unknown'/'unable_status' MOTDs merged into 'unreachable' (using 'unreachable')"
         } else {
             "'unknown'/'unable_status' MOTDs renamed to 'unreachable' in V2"
-        };
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Info,
-            file: filename.to_string(),
-            message: msg.to_string(),
         });
     }
 
@@ -301,13 +304,9 @@ fn convert_motds(
     ];
 
     if all_entries.iter().any(|e| has_dropped_fields(e)) {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Info,
-            file: filename.to_string(),
-            message:
-                "MOTD fields 'online_players', 'samples' are not supported in V2 and were dropped"
-                    .to_string(),
-        });
+        warnings.info(
+            "MOTD fields 'online_players', 'samples' are not supported in V2 and were dropped",
+        );
     }
 
     MotdConfig {
@@ -323,45 +322,29 @@ fn convert_motds(
 
 fn convert_server_manager(
     v1: &V1ServerConfig,
-    filename: &str,
-    warnings: &mut Vec<MigrationWarning>,
+    warnings: &mut Warnings,
 ) -> Option<ServerManagerConfig> {
     let sm = v1.server_manager.as_ref()?;
-    let provider = match sm.provider_name.as_deref() {
-        Some(p) => p,
-        None => {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: filename.to_string(),
-                message: "server_manager has no provider_name, skipping".to_string(),
-            });
-            return None;
-        }
+    let Some(provider) = sm.provider_name.as_deref() else {
+        warnings.warn("server_manager has no provider_name, skipping");
+        return None;
     };
 
     let shutdown_after = sm.empty_shutdown_time.map(Duration::from_secs);
 
     match provider.to_lowercase().as_str() {
         "local" => {
-            let lp = match sm.local_provider.as_ref() {
-                Some(lp) => lp,
-                None => {
-                    warnings.push(MigrationWarning {
-                        severity: MigrationSeverity::Error,
-                        file: filename.to_string(),
-                        message: "Local server manager has no local_provider config, skipping"
-                            .to_string(),
-                    });
-                    return None;
-                }
+            let Some(lp) = sm.local_provider.as_ref() else {
+                warnings.error("Local server manager has no local_provider config, skipping");
+                return None;
             };
             Some(ServerManagerConfig::Local(LocalManagerConfig {
                 command: lp.executable.clone().unwrap_or_else(|| "java".to_string()),
                 working_dir: lp
                     .working_dir
                     .as_ref()
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| std::path::PathBuf::from(".")),
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(".")),
                 args: lp.args.clone(),
                 ready_pattern: lp
                     .startup_string
@@ -374,76 +357,49 @@ fn convert_server_manager(
             }))
         }
         "pterodactyl" => {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: filename.to_string(),
-                message: "Pterodactyl api_url and api_key must be filled in manually (stored globally in V1)".to_string(),
-            });
+            warnings.warn(
+                "Pterodactyl api_url and api_key must be filled in manually (stored globally in V1)",
+            );
             let server_id = sm.server_id.clone().unwrap_or_else(|| {
-                warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Error,
-                    file: filename.to_string(),
-                    message: "Pterodactyl server_id is missing, must be filled in manually"
-                        .to_string(),
-                });
+                warnings.error("Pterodactyl server_id is missing, must be filled in manually");
                 "TODO: fill in your server ID".to_string()
             });
-            Some(ServerManagerConfig::Pterodactyl(
-                crate::types::PterodactylManagerConfig {
-                    api_url: "TODO: fill in your Pterodactyl panel URL".to_string(),
-                    api_key: "TODO: fill in your API key".to_string(),
-                    server_id,
-                    shutdown_after,
-                    start_timeout: crate::defaults::start_timeout(),
-                    poll_interval: crate::defaults::poll_interval(),
-                },
-            ))
+            Some(ServerManagerConfig::Pterodactyl(PterodactylManagerConfig {
+                api_url: "TODO: fill in your Pterodactyl panel URL".to_string(),
+                api_key: "TODO: fill in your API key".to_string(),
+                server_id,
+                shutdown_after,
+                start_timeout: crate::defaults::start_timeout(),
+                poll_interval: crate::defaults::poll_interval(),
+            }))
         }
         "crafty" => {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: filename.to_string(),
-                message:
-                    "Crafty api_url and api_key must be filled in manually (stored globally in V1)"
-                        .to_string(),
-            });
+            warnings.warn(
+                "Crafty api_url and api_key must be filled in manually (stored globally in V1)",
+            );
             let server_id = sm.server_id.clone().unwrap_or_else(|| {
-                warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Error,
-                    file: filename.to_string(),
-                    message: "Crafty server_id is missing, must be filled in manually".to_string(),
-                });
+                warnings.error("Crafty server_id is missing, must be filled in manually");
                 "TODO: fill in your server ID".to_string()
             });
-            Some(ServerManagerConfig::Crafty(
-                crate::types::CraftyManagerConfig {
-                    api_url: "TODO: fill in your Crafty Controller URL".to_string(),
-                    api_key: "TODO: fill in your API key".to_string(),
-                    server_id,
-                    shutdown_after,
-                    start_timeout: crate::defaults::start_timeout(),
-                    poll_interval: crate::defaults::poll_interval(),
-                },
-            ))
+            Some(ServerManagerConfig::Crafty(CraftyManagerConfig {
+                api_url: "TODO: fill in your Crafty Controller URL".to_string(),
+                api_key: "TODO: fill in your API key".to_string(),
+                server_id,
+                shutdown_after,
+                start_timeout: crate::defaults::start_timeout(),
+                poll_interval: crate::defaults::poll_interval(),
+            }))
         }
         other => {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: filename.to_string(),
-                message: format!(
-                    "Server manager provider '{other}' is not supported in V2, skipping"
-                ),
-            });
+            warnings.warn(format!(
+                "Server manager provider '{other}' is not supported in V2, skipping"
+            ));
             None
         }
     }
 }
 
-fn convert_ip_filter(
-    v1: &V1ServerConfig,
-    filename: &str,
-    warnings: &mut Vec<MigrationWarning>,
-) -> Option<IpFilterConfig> {
+fn convert_ip_filter(v1: &V1ServerConfig, warnings: &mut Warnings) -> Option<IpFilterConfig> {
     let filters = v1.filters.as_ref()?;
     let ip = filters.ip_filter.as_ref()?;
 
@@ -460,11 +416,7 @@ fn convert_ip_filter(
                 if let Ok(ip) = s.parse::<std::net::IpAddr>() {
                     return Some(ipnet::IpNet::from(ip));
                 }
-                warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Warning,
-                    file: filename.to_string(),
-                    message: format!("Cannot parse IP filter entry '{s}', skipping"),
-                });
+                warnings.warn(format!("Cannot parse IP filter entry '{s}', skipping"));
                 None
             })
             .collect()
@@ -475,12 +427,7 @@ fn convert_ip_filter(
 
     if whitelist.is_empty() && blacklist.is_empty() {
         if !ip.whitelist.is_empty() || !ip.blacklist.is_empty() {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: filename.to_string(),
-                message: "All IP filter entries failed to parse; IP filter removed entirely"
-                    .to_string(),
-            });
+            warnings.warn("All IP filter entries failed to parse; IP filter removed entirely");
         }
         return None;
     }
@@ -491,262 +438,33 @@ fn convert_ip_filter(
     })
 }
 
-use super::v1_types::V1InfrarustConfig;
-use crate::proxy::ProxyConfig;
-use crate::types::{
-    ActiveHealthConfig, BanConfig, DockerProviderConfig, KeepaliveConfig, MetricsConfig,
-    RateLimitConfig, ResourceConfig, StatusCacheConfig, TelemetryConfig, TracesConfig,
-};
-
 pub struct ProxyMigrationResult {
     pub config: ProxyConfig,
     pub warnings: Vec<MigrationWarning>,
 }
 
 pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
-    let mut warnings = Vec::new();
-    let file = "config.yaml".to_string();
+    let mut warnings = Warnings::new("config.yaml");
 
-    // V1 accepted Infrared-style ":25565" binds (host defaulting to 0.0.0.0).
-    let parse_bind = |raw: &str| {
-        raw.parse().ok().or_else(|| {
-            raw.starts_with(':')
-                .then(|| format!("0.0.0.0{raw}").parse().ok())?
-        })
-    };
-    let bind = match v1.bind.as_deref() {
-        Some(raw) => parse_bind(raw).unwrap_or_else(|| {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: file.clone(),
-                message: format!(
-                    "Cannot parse bind '{raw}', falling back to {}",
-                    crate::defaults::bind()
-                ),
-            });
-            crate::defaults::bind()
-        }),
-        None => crate::defaults::bind(),
-    };
-
-    let keepalive = v1
-        .keep_alive_timeout
-        .as_ref()
-        .and_then(|s| humantime::parse_duration(s).ok())
-        .map(|time| KeepaliveConfig {
-            time,
-            ..KeepaliveConfig::default()
-        })
-        .unwrap_or_default();
-
-    let servers_dir = v1
-        .file_provider
-        .as_ref()
-        .and_then(|fp| fp.proxies_path.first())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(crate::defaults::servers_dir);
-
-    if let Some(fp) = &v1.file_provider
-        && fp.proxies_path.len() > 1
-    {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Warning,
-            file: file.clone(),
-            message: format!(
-                "V2 supports only one servers_dir; using '{}', ignoring {} other path(s)",
-                servers_dir.display(),
-                fp.proxies_path.len() - 1
-            ),
-        });
-    }
+    let bind = convert_bind(v1, &mut warnings);
+    let servers_dir = convert_servers_dir(v1, &mut warnings);
 
     if v1.handshake_timeout_secs.is_some() || v1.status_request_timeout_secs.is_some() {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Info,
-            file: file.clone(),
-            message: "handshake_timeout_secs and status_request_timeout_secs are not in V2"
-                .to_string(),
-        });
+        warnings.info("handshake_timeout_secs and status_request_timeout_secs are not in V2");
     }
 
-    let rate_limit = v1
-        .filters
-        .as_ref()
-        .and_then(|f| f.rate_limiter.as_ref())
-        .map(|rl| {
-            let window = rl
-                .window_length
-                .as_ref()
-                .and_then(|s| humantime::parse_duration(s).ok())
-                .unwrap_or_else(crate::defaults::rate_limit_window);
-            RateLimitConfig {
-                max_connections: rl
-                    .request_limit
-                    .unwrap_or_else(crate::defaults::rate_limit_max),
-                window,
-                ..RateLimitConfig::default()
-            }
-        })
-        .unwrap_or_default();
-
-    if let Some(ref filters) = v1.filters {
-        if filters.ip_filter.as_ref().is_some_and(|f| f.enabled) {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: file.clone(),
-                message:
-                    "Global IP filter is per-server in V2, must be configured in each server .toml"
-                        .to_string(),
-            });
-        }
-        if filters.id_filter.as_ref().is_some_and(|f| f.enabled) {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: file.clone(),
-                message: "ID filter is not available in V2".to_string(),
-            });
-        }
-        if filters.name_filter.as_ref().is_some_and(|f| f.enabled) {
-            warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: file.clone(),
-                message: "Name filter is not available in V2".to_string(),
-            });
-        }
-    }
-
-    let ban = v1
-        .filters
-        .as_ref()
-        .and_then(|f| f.ban.as_ref())
-        .map(|b| BanConfig {
-            provider: crate::BanProviderSelection::Builtin,
-            file: b
-                .file_path
-                .as_ref()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(crate::defaults::ban_file),
-            purge_interval: b
-                .auto_cleanup_interval
-                .map(Duration::from_secs)
-                .unwrap_or_else(crate::defaults::ban_purge_interval),
-            enable_audit_log: b.enable_audit_log.unwrap_or_else(crate::defaults::true_val),
-            check_timeout: crate::defaults::ban_check_timeout(),
-        })
-        .unwrap_or_default();
-
-    let status_cache = v1
-        .cache
-        .as_ref()
-        .map(|c| StatusCacheConfig {
-            ttl: c
-                .status_ttl_seconds
-                .map(Duration::from_secs)
-                .unwrap_or_else(crate::defaults::status_cache_ttl),
-            max_entries: c
-                .max_status_entries
-                .unwrap_or_else(crate::defaults::status_cache_max_entries),
-        })
-        .unwrap_or_default();
-
-    let telemetry = v1.telemetry.as_ref().map(|t| TelemetryConfig {
-        enabled: t.enabled,
-        endpoint: t.export_url.clone(),
-        protocol: crate::types::OtlpProtocol::default(),
-        metrics: MetricsConfig {
-            enabled: t.enable_metrics.unwrap_or(true),
-            export_interval: t
-                .export_interval_seconds
-                .map(Duration::from_secs)
-                .unwrap_or_else(crate::defaults::metrics_export_interval),
-        },
-        traces: TracesConfig {
-            enabled: t.enable_tracing.unwrap_or(true),
-            ..TracesConfig::default()
-        },
-        resource: ResourceConfig::default(),
-    });
-
-    let receive_proxy_protocol = v1
-        .proxy_protocol
-        .as_ref()
-        .and_then(|pp| pp.receive_enabled)
-        .unwrap_or(false);
-
-    if receive_proxy_protocol {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Warning,
-            file: file.clone(),
-            message: "receive_proxy_protocol now requires trusted_proxies: add the addresses \
-                      of your load balancers to the generated file or the proxy will not start"
-                .to_string(),
-        });
-    }
-
-    if let Some(pp) = &v1.proxy_protocol
-        && (pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some())
-    {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Info,
-            file: file.clone(),
-            message:
-                "proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2"
-                    .to_string(),
-        });
-    }
-
-    let default_motd = v1.motds.as_ref().and_then(|motds| {
-        let entry = motds
-            .unreachable
-            .as_ref()
-            .or(motds.unknown.as_ref())
-            .or(motds.unable_status.as_ref());
-        entry.and_then(|e| {
-            let text = e.text.clone()?;
-            Some(MotdConfig {
-                online: Some(MotdEntry {
-                    text,
-                    favicon: e.favicon.clone(),
-                    version_name: e.version_name.clone(),
-                    version_protocol: e.protocol_version,
-                    max_players: e.max_players,
-                }),
-                ..MotdConfig::default()
-            })
-        })
-    });
+    warn_dropped_global_filters(v1, &mut warnings);
+    let receive_proxy_protocol = convert_receive_proxy_protocol(v1, &mut warnings);
 
     if v1.logging.is_some() {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Info,
-            file: file.clone(),
-            message: "Logging config is not in V2; use RUST_LOG env var or --log-level CLI flag"
-                .to_string(),
-        });
+        warnings.info("Logging config is not in V2; use RUST_LOG env var or --log-level CLI flag");
     }
 
     if v1.managers_config.is_some() {
-        warnings.push(MigrationWarning {
-            severity: MigrationSeverity::Warning,
-            file: file.clone(),
-            message: "managers_config (Pterodactyl/Crafty credentials) is now per-server in V2 [server_manager] sections".to_string(),
-        });
+        warnings.warn(
+            "managers_config (Pterodactyl/Crafty credentials) is now per-server in V2 [server_manager] sections",
+        );
     }
-
-    let docker = v1.docker_provider.as_ref().map(|dp| DockerProviderConfig {
-        endpoint: dp
-            .docker_host
-            .clone()
-            .unwrap_or_else(crate::defaults::docker_endpoint),
-        network: None,
-        poll_interval: dp
-            .polling_interval
-            .map(Duration::from_secs)
-            .unwrap_or_else(crate::defaults::docker_poll_interval),
-        reconnect_delay: crate::defaults::docker_reconnect_delay(),
-        allowed_domains: Vec::new(),
-        inherit_forwarding: false,
-    });
 
     let config = ProxyConfig {
         bind,
@@ -763,14 +481,14 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         servers_dir,
         plugins_dir: crate::defaults::plugins_dir(),
         worker_threads: 0,
-        rate_limit,
-        status_cache,
-        default_motd,
-        telemetry,
-        keepalive,
+        rate_limit: convert_rate_limit(v1),
+        status_cache: convert_status_cache(v1),
+        default_motd: convert_default_motd(v1),
+        telemetry: convert_telemetry(v1),
+        keepalive: convert_keepalive(v1),
         so_reuseport: false,
-        ban,
-        docker,
+        ban: convert_ban(v1),
+        docker: convert_docker(v1),
         unknown_domain_behavior: Default::default(),
         announce_proxy_commands: crate::defaults::true_val(),
         compression_threshold: crate::defaults::compression_threshold(),
@@ -782,7 +500,202 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         plugins: std::collections::HashMap::new(),
     };
 
-    ProxyMigrationResult { config, warnings }
+    ProxyMigrationResult {
+        config,
+        warnings: warnings.into_vec(),
+    }
+}
+
+fn convert_bind(v1: &V1InfrarustConfig, warnings: &mut Warnings) -> SocketAddr {
+    let Some(raw) = v1.bind.as_deref() else {
+        return crate::defaults::bind();
+    };
+    let infrared_style = || {
+        raw.starts_with(':')
+            .then(|| format!("0.0.0.0{raw}").parse().ok())?
+    };
+    raw.parse().ok().or_else(infrared_style).unwrap_or_else(|| {
+        warnings.warn(format!(
+            "Cannot parse bind '{raw}', falling back to {}",
+            crate::defaults::bind()
+        ));
+        crate::defaults::bind()
+    })
+}
+
+fn convert_servers_dir(v1: &V1InfrarustConfig, warnings: &mut Warnings) -> PathBuf {
+    let paths = v1
+        .file_provider
+        .as_ref()
+        .map(|fp| fp.proxies_path.as_slice())
+        .unwrap_or_default();
+    let servers_dir = paths
+        .first()
+        .map(PathBuf::from)
+        .unwrap_or_else(crate::defaults::servers_dir);
+
+    if paths.len() > 1 {
+        warnings.warn(format!(
+            "V2 supports only one servers_dir; using '{}', ignoring {} other path(s)",
+            servers_dir.display(),
+            paths.len() - 1
+        ));
+    }
+    servers_dir
+}
+
+fn convert_keepalive(v1: &V1InfrarustConfig) -> KeepaliveConfig {
+    v1.keep_alive_timeout
+        .as_ref()
+        .and_then(|s| humantime::parse_duration(s).ok())
+        .map(|time| KeepaliveConfig {
+            time,
+            ..KeepaliveConfig::default()
+        })
+        .unwrap_or_default()
+}
+
+fn convert_rate_limit(v1: &V1InfrarustConfig) -> RateLimitConfig {
+    v1.filters
+        .as_ref()
+        .and_then(|f| f.rate_limiter.as_ref())
+        .map(|rl| RateLimitConfig {
+            max_connections: rl
+                .request_limit
+                .unwrap_or_else(crate::defaults::rate_limit_max),
+            window: rl
+                .window_length
+                .as_ref()
+                .and_then(|s| humantime::parse_duration(s).ok())
+                .unwrap_or_else(crate::defaults::rate_limit_window),
+            ..RateLimitConfig::default()
+        })
+        .unwrap_or_default()
+}
+
+fn warn_dropped_global_filters(v1: &V1InfrarustConfig, warnings: &mut Warnings) {
+    let Some(ref filters) = v1.filters else {
+        return;
+    };
+    if filters.ip_filter.as_ref().is_some_and(|f| f.enabled) {
+        warnings
+            .warn("Global IP filter is per-server in V2, must be configured in each server .toml");
+    }
+    if filters.id_filter.as_ref().is_some_and(|f| f.enabled) {
+        warnings.warn("ID filter is not available in V2");
+    }
+    if filters.name_filter.as_ref().is_some_and(|f| f.enabled) {
+        warnings.warn("Name filter is not available in V2");
+    }
+}
+
+fn convert_ban(v1: &V1InfrarustConfig) -> BanConfig {
+    v1.filters
+        .as_ref()
+        .and_then(|f| f.ban.as_ref())
+        .map(|b| BanConfig {
+            provider: crate::BanProviderSelection::Builtin,
+            file: b
+                .file_path
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(crate::defaults::ban_file),
+            purge_interval: b
+                .auto_cleanup_interval
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::ban_purge_interval),
+            enable_audit_log: b.enable_audit_log.unwrap_or_else(crate::defaults::true_val),
+            check_timeout: crate::defaults::ban_check_timeout(),
+        })
+        .unwrap_or_default()
+}
+
+fn convert_status_cache(v1: &V1InfrarustConfig) -> StatusCacheConfig {
+    v1.cache
+        .as_ref()
+        .map(|c| StatusCacheConfig {
+            ttl: c
+                .status_ttl_seconds
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::status_cache_ttl),
+            max_entries: c
+                .max_status_entries
+                .unwrap_or_else(crate::defaults::status_cache_max_entries),
+        })
+        .unwrap_or_default()
+}
+
+fn convert_telemetry(v1: &V1InfrarustConfig) -> Option<TelemetryConfig> {
+    v1.telemetry.as_ref().map(|t| TelemetryConfig {
+        enabled: t.enabled,
+        endpoint: t.export_url.clone(),
+        protocol: OtlpProtocol::default(),
+        metrics: MetricsConfig {
+            enabled: t.enable_metrics.unwrap_or(true),
+            export_interval: t
+                .export_interval_seconds
+                .map(Duration::from_secs)
+                .unwrap_or_else(crate::defaults::metrics_export_interval),
+        },
+        traces: TracesConfig {
+            enabled: t.enable_tracing.unwrap_or(true),
+            ..TracesConfig::default()
+        },
+        resource: ResourceConfig::default(),
+    })
+}
+
+fn convert_receive_proxy_protocol(v1: &V1InfrarustConfig, warnings: &mut Warnings) -> bool {
+    let receive = v1
+        .proxy_protocol
+        .as_ref()
+        .and_then(|pp| pp.receive_enabled)
+        .unwrap_or(false);
+
+    if receive {
+        warnings.warn(
+            "receive_proxy_protocol now requires trusted_proxies: add the addresses \
+             of your load balancers to the generated file or the proxy will not start",
+        );
+    }
+
+    if let Some(pp) = &v1.proxy_protocol
+        && (pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some())
+    {
+        warnings
+            .info("proxy_protocol.receive_timeout_secs and receive_allowed_versions are not in V2");
+    }
+    receive
+}
+
+fn convert_default_motd(v1: &V1InfrarustConfig) -> Option<MotdConfig> {
+    let motds = v1.motds.as_ref()?;
+    let entry = motds
+        .unreachable
+        .as_ref()
+        .or(motds.unknown.as_ref())
+        .or(motds.unable_status.as_ref())?;
+    Some(MotdConfig {
+        online: Some(motd_entry(entry)?),
+        ..MotdConfig::default()
+    })
+}
+
+fn convert_docker(v1: &V1InfrarustConfig) -> Option<DockerProviderConfig> {
+    v1.docker_provider.as_ref().map(|dp| DockerProviderConfig {
+        endpoint: dp
+            .docker_host
+            .clone()
+            .unwrap_or_else(crate::defaults::docker_endpoint),
+        network: None,
+        poll_interval: dp
+            .polling_interval
+            .map(Duration::from_secs)
+            .unwrap_or_else(crate::defaults::docker_poll_interval),
+        reconnect_delay: crate::defaults::docker_reconnect_delay(),
+        allowed_domains: Vec::new(),
+        inherit_forwarding: false,
+    })
 }
 
 #[cfg(test)]

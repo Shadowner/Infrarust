@@ -74,6 +74,10 @@ pub mod __private {
     pub mod caller_deadline;
     pub mod session_task;
 }
+#[doc(hidden)]
+pub mod __sealed {
+    pub trait Sealed {}
+}
 pub mod branding;
 pub mod command;
 pub mod error;
@@ -95,3 +99,10 @@ pub mod test_util;
 pub mod types;
 #[cfg(feature = "unstable")]
 pub mod virtual_backend;
+
+/// A boxed, pinned, `Send` future — the standard return type for
+/// async methods on dyn-compatible (sealed) traits.
+///
+/// Plugins never need to construct this directly; it is the return type
+/// of proxy-provided async methods like [`Player::disconnect`](crate::player::Player::disconnect).
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;

@@ -1,14 +1,13 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::events::handshake::RejectReason;
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain};
-use crate::routing::DomainRouter;
+use crate::pipeline::types::{LegacyHello, RoutingData};
+use crate::routing::{DomainRouter, Route};
 
 /// Middleware that resolves the target server from the handshake domain.
 ///
@@ -35,48 +34,52 @@ impl Middleware for DomainRouterMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let handshake = ctx.require_extension::<HandshakeData>("HandshakeData")?;
+            let handshake = ctx.require_handshake()?;
 
             let domain = &handshake.domain;
 
             let hostless = ctx
-                .extensions
-                .get::<LegacyHello>()
+                .legacy_hello
+                .as_ref()
                 .is_some_and(LegacyHello::is_hostless);
             let route = (!hostless)
                 .then(|| self.domain_router.resolve_route(domain))
                 .flatten();
 
-            let Some((_provider_id, server_config, load_balancer)) = route else {
+            let Some(Route {
+                config: server_config,
+                load_balancer,
+                ..
+            }) = route
+            else {
                 tracing::debug!(domain, "no server found for domain");
-                let reason = format!("Unknown server: {domain}");
-                ctx.extensions.insert(UnknownDomain);
-                ctx.extensions.insert(Refused(RejectReason::UnknownDomain));
-                return Ok(MiddlewareResult::Reject(reason));
+                return Ok(MiddlewareResult::Reject {
+                    reason: RejectReason::UnknownDomain,
+                    message: format!("Unknown server: {domain}"),
+                });
             };
             let config_id = server_config.effective_id();
 
             // Check per-server IP filter
             if let Some(ref ip_filter) = server_config.ip_filter
-                && !ip_filter.is_allowed(&ctx.client_ip)
+                && !ip_filter.is_allowed(&ctx.client_ip())
             {
                 tracing::debug!(
-                    ip = %ctx.client_ip,
+                    ip = %ctx.client_ip(),
                     server = %config_id,
                     "ip blocked by server filter"
                 );
-                ctx.extensions.insert(Refused(RejectReason::IpFilter));
-                return Ok(MiddlewareResult::Reject(format!(
-                    "IP {} is not allowed on this server",
-                    ctx.client_ip
-                )));
+                return Ok(MiddlewareResult::Reject {
+                    reason: RejectReason::IpFilter,
+                    message: format!("IP {} is not allowed on this server", ctx.client_ip()),
+                });
             }
 
             tracing::debug!(domain, config_id, "domain routed");
 
-            ctx.extensions.insert(RoutingData {
+            ctx.routing = Some(RoutingData {
                 server_config,
                 config_id,
                 load_balancer,

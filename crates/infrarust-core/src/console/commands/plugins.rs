@@ -1,12 +1,11 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::{PluginHealth, PluginMetadata, PluginRuntimeStatus};
 
 use crate::console::ConsoleServices;
 use crate::console::commands::usage;
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{Block, CommandCategory, CommandOutput, Fields, Line, Span, Table};
 use crate::console::parser::format_duration_short;
 use crate::plugin::PluginState;
@@ -211,45 +210,34 @@ pub(crate) fn plugin_block(
 pub struct PluginsCommand;
 
 impl ConsoleCommand for PluginsCommand {
-    fn name(&self) -> &str {
-        "plugins"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["pl"]
-    }
-
-    fn description(&self) -> &str {
-        "List loaded plugins"
-    }
-
-    fn usage(&self) -> &str {
-        "plugins"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Plugins
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "plugins",
+            aliases: &["pl"],
+            description: "List loaded plugins",
+            usage: "plugins",
+            category: CommandCategory::Plugins,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
-            let manager = services.plugin_manager.read().await;
-            let plugins: Vec<_> = manager
-                .list_plugins()
-                .into_iter()
-                .map(|meta| {
+            let plugins = services.plugins.plugins().await;
+            let rows: Vec<PluginRow<'_>> = plugins
+                .iter()
+                .map(|plugin| {
                     (
-                        meta,
-                        manager.plugin_state(&meta.id),
-                        manager.plugin_runtime(&meta.id),
+                        &plugin.metadata,
+                        plugin.state.as_ref(),
+                        plugin.runtime.clone(),
                     )
                 })
                 .collect();
-            plugins_output(&plugins)
+            plugins_output(&rows)
         })
     }
 }
@@ -257,39 +245,37 @@ impl ConsoleCommand for PluginsCommand {
 pub struct PluginCommand;
 
 impl ConsoleCommand for PluginCommand {
-    fn name(&self) -> &str {
-        "plugin"
-    }
-
-    fn description(&self) -> &str {
-        "Show plugin details"
-    }
-
-    fn usage(&self) -> &str {
-        "plugin <id>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Plugins
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "plugin",
+            aliases: &[],
+            description: "Show plugin details",
+            usage: "plugin <id>",
+            category: CommandCategory::Plugins,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(id) = args.first() else {
                 return usage(self);
             };
 
-            let manager = services.plugin_manager.read().await;
-            let Some(meta) = manager.list_plugins().into_iter().find(|p| p.id == *id) else {
+            let plugins = services.plugins.plugins().await;
+            let Some(plugin) = plugins.iter().find(|plugin| plugin.metadata.id == *id) else {
                 return CommandOutput::error(format!("Plugin '{id}' not found"));
             };
 
-            let runtime = manager.plugin_runtime(id);
-            plugin_block(meta, manager.plugin_state(id), runtime.as_ref()).into()
+            plugin_block(
+                &plugin.metadata,
+                plugin.state.as_ref(),
+                plugin.runtime.as_ref(),
+            )
+            .into()
         })
     }
 }

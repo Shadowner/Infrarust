@@ -56,6 +56,28 @@ impl JsonFileStorage {
     fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Relaxed);
     }
+
+    async fn write_to_disk(&self) -> Result<(), AuthStorageError> {
+        let accounts: Vec<AuthAccount> = self
+            .accounts
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+
+        let json = serde_json::to_string_pretty(&accounts)
+            .map_err(|e| AuthStorageError::Serialization(e.to_string()))?;
+
+        let tmp_path = self.file_path.with_extension("json.tmp");
+        tokio::fs::write(&tmp_path, json.as_bytes()).await?;
+        tokio::fs::rename(&tmp_path, &self.file_path).await?;
+
+        tracing::debug!(
+            count = accounts.len(),
+            path = %self.file_path.display(),
+            "Flushed auth accounts to disk"
+        );
+        Ok(())
+    }
 }
 
 impl AuthStorage for JsonFileStorage {
@@ -77,73 +99,76 @@ impl AuthStorage for JsonFileStorage {
             .unwrap_or(false)
     }
 
-    fn create_account<'a>(
-        &'a self,
-        account: &'a AuthAccount,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>> {
-        Box::pin(async move {
-            use dashmap::mapref::entry::Entry;
+    fn create_account(&self, account: &AuthAccount) -> Result<(), AuthStorageError> {
+        use dashmap::mapref::entry::Entry;
 
-            match self.accounts.entry(account.username.clone()) {
-                Entry::Occupied(_) => Err(AuthStorageError::AccountAlreadyExists {
-                    username: account.username.to_string(),
-                }),
-                Entry::Vacant(entry) => {
-                    entry.insert(account.clone());
-                    self.mark_dirty();
-                    Ok(())
-                }
-            }
-        })
-    }
-
-    fn update_password_hash<'a>(
-        &'a self,
-        username: &'a Username,
-        new_hash: PasswordHash,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>> {
-        Box::pin(async move {
-            match self.accounts.get_mut(username) {
-                Some(mut entry) => {
-                    entry.password_hash = Some(new_hash);
-                    self.mark_dirty();
-                    Ok(())
-                }
-                None => Err(AuthStorageError::AccountNotFound {
-                    username: username.to_string(),
-                }),
-            }
-        })
-    }
-
-    fn delete_account<'a>(
-        &'a self,
-        username: &'a Username,
-    ) -> BoxFuture<'a, Result<bool, AuthStorageError>> {
-        Box::pin(async move {
-            let existed = self.accounts.remove(username).is_some();
-            if existed {
+        match self.accounts.entry(account.username.clone()) {
+            Entry::Occupied(_) => Err(AuthStorageError::AccountAlreadyExists {
+                username: account.username.to_string(),
+            }),
+            Entry::Vacant(entry) => {
+                entry.insert(account.clone());
                 self.mark_dirty();
+                Ok(())
             }
-            Ok(existed)
-        })
+        }
     }
 
-    fn update_last_login<'a>(
-        &'a self,
-        username: &'a Username,
+    fn update_password_hash(
+        &self,
+        username: &Username,
+        new_hash: PasswordHash,
+    ) -> Result<(), AuthStorageError> {
+        match self.accounts.get_mut(username) {
+            Some(mut entry) => {
+                entry.password_hash = Some(new_hash);
+                self.mark_dirty();
+                Ok(())
+            }
+            None => Err(AuthStorageError::AccountNotFound {
+                username: username.to_string(),
+            }),
+        }
+    }
+
+    fn delete_account(&self, username: &Username) -> Result<bool, AuthStorageError> {
+        let existed = self.accounts.remove(username).is_some();
+        if existed {
+            self.mark_dirty();
+        }
+        Ok(existed)
+    }
+
+    fn update_last_login(
+        &self,
+        username: &Username,
         ip: IpAddr,
         now: DateTime<Utc>,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>> {
-        Box::pin(async move {
-            if let Some(mut entry) = self.accounts.get_mut(username) {
-                entry.last_login = Some(now);
-                entry.last_ip = Some(ip);
-                entry.login_count += 1;
+    ) -> Result<(), AuthStorageError> {
+        if let Some(mut entry) = self.accounts.get_mut(username) {
+            entry.last_login = Some(now);
+            entry.last_ip = Some(ip);
+            entry.login_count += 1;
+            self.mark_dirty();
+        }
+        Ok(())
+    }
+
+    fn update_premium_info(
+        &self,
+        username: &Username,
+        premium_info: Option<PremiumInfo>,
+    ) -> Result<(), AuthStorageError> {
+        match self.accounts.get_mut(username) {
+            Some(mut entry) => {
+                entry.premium_info = premium_info;
                 self.mark_dirty();
+                Ok(())
             }
-            Ok(())
-        })
+            None => Err(AuthStorageError::AccountNotFound {
+                username: username.to_string(),
+            }),
+        }
     }
 
     fn flush(&self) -> BoxFuture<'_, Result<(), AuthStorageError>> {
@@ -151,45 +176,9 @@ impl AuthStorage for JsonFileStorage {
             if !self.dirty.swap(false, Ordering::Relaxed) {
                 return Ok(());
             }
-
-            let accounts: Vec<AuthAccount> = self
-                .accounts
-                .iter()
-                .map(|entry| entry.value().clone())
-                .collect();
-
-            let json = serde_json::to_string_pretty(&accounts)
-                .map_err(|e| AuthStorageError::Serialization(e.to_string()))?;
-
-            let tmp_path = self.file_path.with_extension("json.tmp");
-            tokio::fs::write(&tmp_path, json.as_bytes()).await?;
-            tokio::fs::rename(&tmp_path, &self.file_path).await?;
-
-            tracing::debug!(
-                count = accounts.len(),
-                path = %self.file_path.display(),
-                "Flushed auth accounts to disk"
-            );
-            Ok(())
-        })
-    }
-
-    fn update_premium_info<'a>(
-        &'a self,
-        username: &'a Username,
-        premium_info: Option<PremiumInfo>,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>> {
-        Box::pin(async move {
-            match self.accounts.get_mut(username) {
-                Some(mut entry) => {
-                    entry.premium_info = premium_info;
-                    self.mark_dirty();
-                    Ok(())
-                }
-                None => Err(AuthStorageError::AccountNotFound {
-                    username: username.to_string(),
-                }),
-            }
+            self.write_to_disk()
+                .await
+                .inspect_err(|_| self.mark_dirty())
         })
     }
 }
@@ -222,7 +211,7 @@ mod tests {
             .unwrap();
 
         let account = test_account("TestPlayer");
-        storage.create_account(&account).await.unwrap();
+        storage.create_account(&account).unwrap();
 
         let fetched = storage.get_account(&Username::new("testplayer")).unwrap();
         assert!(fetched.is_some());
@@ -237,9 +226,9 @@ mod tests {
             .unwrap();
 
         let account = test_account("DuplicateUser");
-        storage.create_account(&account).await.unwrap();
+        storage.create_account(&account).unwrap();
 
-        let result = storage.create_account(&account).await;
+        let result = storage.create_account(&account);
         assert!(matches!(
             result,
             Err(AuthStorageError::AccountAlreadyExists { .. })
@@ -254,20 +243,10 @@ mod tests {
             .unwrap();
 
         let account = test_account("DeleteMe");
-        storage.create_account(&account).await.unwrap();
+        storage.create_account(&account).unwrap();
 
-        assert!(
-            storage
-                .delete_account(&Username::new("deleteme"))
-                .await
-                .unwrap()
-        );
-        assert!(
-            !storage
-                .delete_account(&Username::new("deleteme"))
-                .await
-                .unwrap()
-        );
+        assert!(storage.delete_account(&Username::new("deleteme")).unwrap());
+        assert!(!storage.delete_account(&Username::new("deleteme")).unwrap());
     }
 
     #[tokio::test]
@@ -279,10 +258,7 @@ mod tests {
             let storage = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
                 .await
                 .unwrap();
-            storage
-                .create_account(&test_account("Persistent"))
-                .await
-                .unwrap();
+            storage.create_account(&test_account("Persistent")).unwrap();
             storage.flush().await.unwrap();
         }
 
@@ -296,6 +272,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_flush_is_retried_by_the_next_one() {
+        let dir = TempDir::new().unwrap();
+        let storage = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
+            .await
+            .unwrap();
+        storage.create_account(&test_account("Persistent")).unwrap();
+
+        let blocker = dir.path().join("accounts.json.tmp");
+        std::fs::create_dir(&blocker).unwrap();
+        assert!(storage.flush().await.is_err());
+
+        std::fs::remove_dir(&blocker).unwrap();
+        storage.flush().await.unwrap();
+
+        let reloaded = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
+            .await
+            .unwrap();
+        assert!(reloaded.has_account(&Username::new("persistent")));
+    }
+
+    #[tokio::test]
     async fn sync_accessors_work() {
         let dir = TempDir::new().unwrap();
         let storage = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
@@ -303,7 +300,7 @@ mod tests {
             .unwrap();
 
         let account = test_account("SyncTest");
-        storage.create_account(&account).await.unwrap();
+        storage.create_account(&account).unwrap();
 
         assert!(storage.has_account(&Username::new("synctest")));
         let fetched = storage.get_account(&Username::new("synctest")).unwrap();
@@ -317,15 +314,11 @@ mod tests {
             .await
             .unwrap();
 
-        storage
-            .create_account(&test_account("HashUpdate"))
-            .await
-            .unwrap();
+        storage.create_account(&test_account("HashUpdate")).unwrap();
 
         let new_hash = PasswordHash::new("$argon2id$new-hash");
         storage
             .update_password_hash(&Username::new("hashupdate"), new_hash)
-            .await
             .unwrap();
 
         let account = storage

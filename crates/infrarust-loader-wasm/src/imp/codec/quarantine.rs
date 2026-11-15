@@ -1,10 +1,12 @@
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use infrarust_config::WasmCodecQuarantineConfig;
+
+use crate::sync::lock;
 
 const FIRST_PRUNE: usize = 1024;
 
@@ -171,10 +173,6 @@ impl Quarantine {
     fn tracked(&self) -> usize {
         lock(&self.keys).entries.len()
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]

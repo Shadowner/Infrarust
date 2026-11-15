@@ -440,19 +440,4 @@ mod tests {
             PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } if limbo_handlers == &["queue".to_string()]
         ));
     }
-
-    #[test]
-    fn non_exhaustive_kicked_result() {
-        let result = KickedFromServerResult::SendToLimbo {
-            limbo_handlers: vec![],
-        };
-        #[allow(unreachable_patterns)]
-        match result {
-            KickedFromServerResult::DisconnectPlayer { .. }
-            | KickedFromServerResult::Redirect(_)
-            | KickedFromServerResult::SendToLimbo { .. }
-            | KickedFromServerResult::Notify { .. }
-            | _ => {}
-        }
-    }
 }

@@ -1,9 +1,3 @@
-//! Client connection types.
-//!
-//! `ClientConnection` wraps a TCP stream with metadata about the
-//! connected client. `ConnectionInfo` is a lightweight clone of
-//! the metadata without the stream.
-
 use std::net::{IpAddr, SocketAddr};
 
 use bytes::{BufMut, BytesMut};
@@ -14,15 +8,10 @@ use tokio::time::Instant;
 use crate::error::TransportError;
 use crate::proxy_protocol::ProxyProtocolInfo;
 
-/// An accepted client connection with metadata.
 #[derive(Debug)]
 pub struct ClientConnection {
     stream: TcpStream,
-    peer_addr: SocketAddr,
-    real_ip: Option<IpAddr>,
-    real_port: Option<u16>,
-    local_addr: SocketAddr,
-    connected_at: Instant,
+    info: ConnectionInfo,
     buffered_data: BytesMut,
 }
 
@@ -30,62 +19,34 @@ impl ClientConnection {
     pub fn new(stream: TcpStream, peer_addr: SocketAddr, local_addr: SocketAddr) -> Self {
         Self {
             stream,
-            peer_addr,
-            real_ip: None,
-            real_port: None,
-            local_addr,
-            connected_at: Instant::now(),
+            info: ConnectionInfo {
+                peer_addr,
+                real_addr: None,
+                local_addr,
+                connected_at: Instant::now(),
+            },
             buffered_data: BytesMut::new(),
         }
     }
 
-    /// Sets the real client address from proxy protocol info.
     #[must_use]
     pub const fn with_proxy_protocol(mut self, info: &ProxyProtocolInfo) -> Self {
-        self.real_ip = Some(info.source_addr.ip());
-        self.real_port = Some(info.source_addr.port());
+        self.info.real_addr = Some(info.source_addr);
         self
     }
 
-    /// This is used when the proxy protocol decode over-reads (TCP coalescing
-    /// causes the first Minecraft packet to be read together with the PP header).
-    /// The leftover bytes are injected here so they are consumed before reading
-    /// from the stream.
     pub fn inject_buffered_data(&mut self, data: &[u8]) {
         self.buffered_data.extend_from_slice(data);
     }
 
-    /// Returns the effective client IP address.
-    ///
-    /// If proxy protocol provided a real IP, returns that.
-    /// Otherwise returns the TCP peer address. IPv4-mapped IPv6 addresses are
-    /// canonicalized to IPv4 so downstream bans and CIDR filters match.
     pub fn client_addr(&self) -> IpAddr {
-        canonicalize_ip(self.real_ip.unwrap_or_else(|| self.peer_addr.ip()))
+        self.info.client_addr().ip()
     }
 
-    /// Consumes the connection, returning the stream, buffered data, and metadata.
     pub fn into_parts(self) -> (TcpStream, BytesMut, ConnectionInfo) {
-        let info = ConnectionInfo {
-            peer_addr: self.peer_addr,
-            real_ip: self.real_ip,
-            real_port: self.real_port,
-            local_addr: self.local_addr,
-            connected_at: self.connected_at,
-        };
-        (self.stream, self.buffered_data, info)
+        (self.stream, self.buffered_data, self.info)
     }
 
-    /// Reads up to `n` bytes from the stream into the internal buffer
-    /// without consuming them from the connection.
-    ///
-    /// Returns a slice of the buffered data. Performs at most one read from
-    /// the socket, so the slice may be shorter than `n` after a short read
-    /// or EOF — callers needing exactly `n` bytes must call again.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportError::Forward`] if reading from the stream fails.
     pub async fn peek(&mut self, n: usize) -> Result<&[u8], TransportError> {
         if self.buffered_data.len() < n {
             let needed = n - self.buffered_data.len();
@@ -93,46 +54,36 @@ impl ClientConnection {
             self.stream
                 .read_buf(&mut (&mut self.buffered_data).limit(needed))
                 .await
-                .map_err(TransportError::Forward)?;
+                .map_err(TransportError::Io)?;
         }
         Ok(&self.buffered_data[..self.buffered_data.len().min(n)])
     }
 
-    /// Returns the TCP peer address.
     pub const fn peer_addr(&self) -> SocketAddr {
-        self.peer_addr
+        self.info.peer_addr
     }
 
-    /// Returns the real client IP from proxy protocol, if available.
-    pub const fn real_ip(&self) -> Option<IpAddr> {
-        self.real_ip
+    pub fn real_ip(&self) -> Option<IpAddr> {
+        self.info.real_addr.map(|addr| addr.ip())
     }
 
-    /// Returns the local listener address.
     pub const fn local_addr(&self) -> SocketAddr {
-        self.local_addr
+        self.info.local_addr
     }
 
-    /// Returns the time when the connection was accepted.
     pub const fn connected_at(&self) -> Instant {
-        self.connected_at
+        self.info.connected_at
     }
 
-    /// Returns a reference to the underlying TCP stream.
     pub const fn stream(&self) -> &TcpStream {
         &self.stream
     }
 
-    /// Returns a mutable reference to the underlying TCP stream.
     pub const fn stream_mut(&mut self) -> &mut TcpStream {
         &mut self.stream
     }
 }
 
-/// Canonicalizes an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) to its IPv4
-/// form. Clients reaching a dual-stack listener over IPv6 appear as mapped
-/// addresses; without this, an IPv4 ban or CIDR filter would silently fail to
-/// match them. Native IPv6 and plain IPv4 addresses pass through unchanged.
 pub(crate) fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
@@ -143,19 +94,19 @@ pub(crate) fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     }
 }
 
-/// Lightweight metadata about a client connection (without the stream).
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
-    /// TCP peer address (may be a load balancer).
     pub peer_addr: SocketAddr,
-    /// Real client IP from proxy protocol.
-    pub real_ip: Option<IpAddr>,
-    /// Real client port from proxy protocol.
-    pub real_port: Option<u16>,
-    /// Local listener address.
+    pub real_addr: Option<SocketAddr>,
     pub local_addr: SocketAddr,
-    /// Time when the connection was accepted.
     pub connected_at: Instant,
+}
+
+impl ConnectionInfo {
+    pub fn client_addr(&self) -> SocketAddr {
+        let addr = self.real_addr.unwrap_or(self.peer_addr);
+        SocketAddr::new(canonicalize_ip(addr.ip()), addr.port())
+    }
 }
 
 #[cfg(test)]

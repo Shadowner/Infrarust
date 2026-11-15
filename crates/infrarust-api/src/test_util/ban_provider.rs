@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
+use crate::BoxFuture;
 use crate::error::ServiceError;
-use crate::event::BoxFuture;
 use crate::services::ban_service::{
     BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanSource, BanTarget,
     BanVerdict, LoginAttempt, UnbanRequest,

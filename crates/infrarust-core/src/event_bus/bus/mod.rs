@@ -28,8 +28,9 @@ use queue::Queued;
 use registry::{Handlers, LockedRegistry};
 
 use super::builtin::is_builtin_event;
-use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, panic_message, short_type_name};
+use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, short_type_name};
 use super::handler::{HandlerEntry, HandlerKind};
+use crate::util::guard::panic_message;
 
 mod queue;
 mod registry;
@@ -62,7 +63,6 @@ impl From<&EventsConfig> for EventBusConfig {
     }
 }
 
-/// Internal key for packet-specific handler lookup.
 #[derive(Hash, Eq, PartialEq, Clone, Copy)]
 struct PacketKey {
     packet_id: i32,
@@ -70,33 +70,11 @@ struct PacketKey {
     direction: PacketDirection,
 }
 
-/// The proxy's event bus implementation.
-///
-/// Provides sequential handler dispatch with priority ordering,
-/// supporting both synchronous and asynchronous handlers. The bus uses
-/// a snapshot pattern (`Arc<Vec>`) to avoid holding locks during dispatch.
-///
-/// # Dispatch semantics
-///
-/// - Handlers are invoked in priority order: `FIRST` (0) runs first,
-///   `LAST` (255) runs last.
-/// - Each handler sees the modifications made by previous handlers.
-/// - Sync handlers run inline; async handlers are `.await`ed sequentially.
-///
-/// # Thread safety
-///
-/// `subscribe` and `unsubscribe` take a short write lock (~200 ns).
-/// `fire` takes a short read lock (~50 ns) then dispatches without any lock.
-/// A `subscribe` during an in-progress `fire` uses copy-on-write via
-/// `Arc::make_mut` — the running dispatch continues on the old snapshot.
 pub struct EventBusImpl {
-    /// Handlers grouped by event `TypeId`.
     handlers: LockedRegistry<TypeId>,
 
-    /// Handlers for specific packet (id, state, direction) combinations.
     packet_handlers: LockedRegistry<PacketKey>,
 
-    /// Monotonic counter for generating unique `ListenerHandle` values.
     next_handle: AtomicU64,
     packet_listener_count: AtomicU64,
     config: EventBusConfig,
@@ -442,6 +420,17 @@ impl EventBusImpl {
         removed
     }
 
+    pub(crate) fn unsubscribe_owner(&self, owner: &str) -> usize {
+        let packets = self.packet_handlers.remove_owner(owner);
+        self.packet_listener_count
+            .fetch_sub(packets as u64, Ordering::Relaxed);
+        self.handlers.remove_owner(owner) + packets
+    }
+
+    pub(crate) fn listener_count(&self, owner: &str) -> usize {
+        self.handlers.count_owner(owner) + self.packet_handlers.count_owner(owner)
+    }
+
     fn new_entry(
         &self,
         owner: Arc<str>,
@@ -470,7 +459,7 @@ impl Default for EventBusImpl {
 }
 
 // Allow `infrarust-core` to implement the sealed `EventBus` trait.
-impl infrarust_api::event::bus::private::Sealed for EventBusImpl {}
+impl infrarust_api::__sealed::Sealed for EventBusImpl {}
 
 impl EventBus for EventBusImpl {
     fn subscribe_erased(

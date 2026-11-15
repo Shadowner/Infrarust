@@ -14,7 +14,7 @@ use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{
-    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, select_forwarder,
+    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, Forwarder,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -22,21 +22,23 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::helpers::{MAX_KICK_REDIRECTS, cancelled_cause};
+use super::helpers::cancelled_cause;
 use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
-use crate::loadbalancer::{PendingTicket, select_backend_addresses};
+use crate::loadbalancer::select_backend_addresses;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
-use crate::services::ProxyServices;
-use crate::session::admission::{self, Admission, Admitted, PreLogin, pre_login};
+use crate::server::ProxyServices;
+use crate::session::backend_login::ConnectError;
 use crate::session::kick::Kick;
+use crate::session::kick::MAX_KICK_REDIRECTS;
+use crate::session::login_admission::{self, Admitted, LoginAdmission, PreLogin, pre_login};
 use crate::session::server_join::pre_connect;
 use crate::session::wake::{WakeFailure, wake};
-use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
 pub(crate) const UNKNOWN_SERVER: &str = "Unknown server";
@@ -53,7 +55,7 @@ pub(crate) enum Opening<'a> {
     Legacy(&'a [u8]),
 }
 
-pub(crate) struct Arrival {
+pub(crate) struct Applicant {
     pub(crate) username: String,
     pub(crate) claimed_uuid: Option<Uuid>,
     pub(crate) protocol_version: infrarust_api::types::ProtocolVersion,
@@ -100,8 +102,7 @@ pub(crate) struct Ready {
 
 impl Ready {
     pub(crate) async fn forward(mut self, client: TcpStream) -> ForwardResult {
-        let forwarder = select_forwarder(self.mode);
-        let result = forwarder
+        let result = Forwarder::for_mode(self.mode)
             .forward(
                 client,
                 self.backend.into_stream(),
@@ -125,7 +126,7 @@ impl ForwardedLogin<'_> {
     pub(crate) async fn open(
         &self,
         ctx: &mut ConnectionContext,
-        arrival: Arrival,
+        applicant: Applicant,
         origin: Route,
         opening: Opening<'_>,
     ) -> Result<Option<Ready>, CoreError> {
@@ -133,15 +134,15 @@ impl ForwardedLogin<'_> {
         let remote_addr = ctx.client_addr();
         let profile = offline_profile(
             services.config.auth.offline_uuid,
-            &arrival.username,
-            arrival.claimed_uuid,
+            &applicant.username,
+            applicant.claimed_uuid,
         )?;
         match pre_login(
             services,
             profile.clone(),
             remote_addr,
-            arrival.protocol_version,
-            &arrival.domain,
+            applicant.protocol_version,
+            &applicant.domain,
         )
         .await
         {
@@ -161,13 +162,13 @@ impl ForwardedLogin<'_> {
             }
             PreLogin::Proceed(_) => {}
         }
-        let arrival = admission::Arrival {
+        let arrival = login_admission::Arrival {
             profile,
-            protocol_version: arrival.protocol_version,
-            domain: arrival.domain,
+            protocol_version: applicant.protocol_version,
+            domain: applicant.domain,
             origin: ServerId::new(origin.routing.config_id.clone()),
         };
-        let mut admitted = match admission::admit(
+        let mut admitted = match login_admission::admit(
             services,
             ctx,
             self.shutdown,
@@ -176,8 +177,8 @@ impl ForwardedLogin<'_> {
         )
         .await
         {
-            Admission::Admitted(admitted) => admitted,
-            Admission::Refused(reason) => {
+            LoginAdmission::Admitted(admitted) => admitted,
+            LoginAdmission::Refused(reason) => {
                 self.kick(ctx, &reason).await;
                 return Ok(None);
             }
@@ -203,14 +204,7 @@ impl ForwardedLogin<'_> {
                 return Ok(None);
             }
             PlayerChooseInitialServerResult::Denied { reason } => {
-                let reason = reason.clone();
-                self.kick(ctx, &reason).await;
-                admitted
-                    .lifecycle
-                    .end(DisconnectCause::Kicked {
-                        reason: Some(reason),
-                    })
-                    .await;
+                self.refuse(ctx, admitted, reason.clone()).await;
                 return Ok(None);
             }
             _ => choose.initial_server.clone(),
@@ -234,14 +228,7 @@ impl ForwardedLogin<'_> {
             let server = match pre.result() {
                 ServerPreConnectResult::Redirect(server) => server.clone(),
                 ServerPreConnectResult::Denied { reason } => {
-                    let reason = reason.clone();
-                    self.kick(ctx, &reason).await;
-                    admitted
-                        .lifecycle
-                        .end(DisconnectCause::Kicked {
-                            reason: Some(reason),
-                        })
-                        .await;
+                    self.refuse(ctx, admitted, reason.clone()).await;
                     return Ok(None);
                 }
                 ServerPreConnectResult::SendToLimbo { .. } => {
@@ -260,14 +247,7 @@ impl ForwardedLogin<'_> {
             let mut route = match self.resolve(ctx, &server, origin) {
                 Ok(route) => route,
                 Err(reason) => {
-                    let reason = Component::text(reason);
-                    self.kick(ctx, &reason).await;
-                    admitted
-                        .lifecycle
-                        .end(DisconnectCause::Kicked {
-                            reason: Some(reason),
-                        })
-                        .await;
+                    self.refuse(ctx, admitted, Component::text(reason)).await;
                     return Ok(None);
                 }
             };
@@ -299,7 +279,7 @@ impl ForwardedLogin<'_> {
                                 ))
                                 .await;
                             admitted.session.set_current_server(server.clone());
-                            ctx.extensions.remove::<PendingTicket>();
+                            ctx.pending_ticket.take();
                             return Ok(Some(Ready {
                                 player: admitted.session,
                                 server,
@@ -421,8 +401,7 @@ impl ForwardedLogin<'_> {
         )
         .to_vec();
         if let Some(first) = addresses.first() {
-            ctx.extensions
-                .insert(services.pending_backends.reserve(first));
+            ctx.pending_ticket = Some(services.pending_backends.reserve(first));
         }
         addresses
     }
@@ -433,7 +412,7 @@ impl ForwardedLogin<'_> {
         admitted: &Admitted,
         route: &Route,
         opening: &Opening<'_>,
-    ) -> Result<BackendConnection, CoreError> {
+    ) -> Result<BackendConnection, ConnectError> {
         let config = &route.routing.server_config;
         let mut backend = self
             .connector
@@ -442,7 +421,7 @@ impl ForwardedLogin<'_> {
                 &route.addresses,
                 config.timeouts.as_ref().map(|t| t.connect),
                 config.send_proxy_protocol,
-                &ctx.connection_info(),
+                ctx.connection_info(),
             )
             .await?;
         admitted
@@ -452,7 +431,7 @@ impl ForwardedLogin<'_> {
             Opening::Modern(handshake) => {
                 let profile = admitted.session.profile();
                 let data = ForwardingData {
-                    real_ip: ctx.client_ip,
+                    real_ip: ctx.client_ip(),
                     uuid: profile.uuid,
                     username: profile.username.clone(),
                     properties: profile.properties.clone(),
@@ -473,7 +452,7 @@ impl ForwardedLogin<'_> {
         };
         if let Err(e) = sent {
             admitted.session.set_connected_address(None);
-            return Err(e);
+            return Err(e.into());
         }
         Ok(backend)
     }
@@ -516,7 +495,11 @@ impl ForwardedLogin<'_> {
             event,
             "a plugin sent a forwarded connection to limbo, which needs the offline or client_only proxy mode; disconnecting the player"
         );
-        let reason = Component::text(LIMBO_UNAVAILABLE);
+        self.refuse(ctx, admitted, Component::text(LIMBO_UNAVAILABLE))
+            .await;
+    }
+
+    async fn refuse(&self, ctx: &mut ConnectionContext, admitted: Admitted, reason: Component) {
         self.kick(ctx, &reason).await;
         admitted
             .lifecycle

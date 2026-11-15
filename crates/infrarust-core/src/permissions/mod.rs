@@ -22,7 +22,7 @@ use crate::util::guard::guarded;
 use crate::util::provider_slot::PluginProviderSlot;
 use crate::util::sync::{read, write};
 
-pub use builtin::{ConfigPermissionChecker, ConfigPermissionProvider, resolve_username_to_uuid};
+pub use builtin::{ConfigPermissionProvider, resolve_username_to_uuid};
 pub use nodes::command_node;
 
 use nodes::NodeRegistry;
@@ -278,10 +278,6 @@ fn subject_name(subject: &PermissionSubject) -> &str {
     subject
         .profile()
         .map_or("console", |profile| profile.username.as_str())
-}
-
-pub fn default_checker() -> Arc<dyn PermissionChecker> {
-    Arc::new(DefaultPermissionChecker)
 }
 
 #[cfg(test)]

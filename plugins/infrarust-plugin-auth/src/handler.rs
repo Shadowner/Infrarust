@@ -226,6 +226,228 @@ impl AuthHandler {
 
         None
     }
+
+    fn pending_session(&self, player_id: PlayerId) -> Option<(bool, Username)> {
+        self.sessions
+            .get(&player_id)
+            .map(|entry| (entry.needs_register, entry.username.clone()))
+    }
+
+    fn send_internal_error(session: &dyn LimboSession) {
+        let _ = session.send_message(Component::error(
+            "An internal error occurred. Please try again.",
+        ));
+    }
+
+    fn premium_login(&self, session: &dyn LimboSession) {
+        let player_id = session.player_id();
+        let profile = session.profile();
+        let username = Username::new(&profile.username);
+        let display_name = profile.username.clone();
+        let mojang_uuid = profile.uuid;
+        let now = chrono::Utc::now();
+
+        match self.storage.get_account(&username) {
+            Ok(Some(existing)) => {
+                let first = existing
+                    .premium_info
+                    .as_ref()
+                    .map(|pi| pi.first_premium_login)
+                    .unwrap_or(now);
+
+                let premium_info = PremiumInfo {
+                    mojang_uuid,
+                    force_cracked: false,
+                    first_premium_login: first,
+                    last_premium_login: Some(now),
+                };
+
+                if let Err(e) = self
+                    .storage
+                    .update_premium_info(&username, Some(premium_info))
+                {
+                    tracing::error!("Premium info update failed: {e}");
+                }
+            }
+            Ok(None) => {
+                let ip = self
+                    .player_registry
+                    .get_player_by_id(player_id)
+                    .map(|p| p.remote_addr().ip());
+
+                let premium_info = PremiumInfo {
+                    mojang_uuid,
+                    force_cracked: false,
+                    first_premium_login: now,
+                    last_premium_login: Some(now),
+                };
+
+                let account = AuthAccount {
+                    username,
+                    display_name: DisplayName::new(display_name.clone()),
+                    password_hash: None,
+                    registered_at: now,
+                    last_login: Some(now),
+                    last_ip: ip,
+                    login_count: 1,
+                    premium_info: Some(premium_info),
+                };
+                if let Err(e) = self.storage.create_account(&account) {
+                    tracing::error!("Premium account creation failed: {e}");
+                }
+            }
+            Err(e) => tracing::error!("Premium account lookup failed: {e}"),
+        }
+
+        let msg = self
+            .config
+            .premium
+            .messages
+            .premium_login
+            .replace("{username}", &display_name);
+        let _ = session.send_message(parse_colored(&msg));
+        tracing::info!(%display_name, "Premium auto-login");
+        self.mark_authenticated(player_id);
+    }
+
+    async fn login(&self, session: &dyn LimboSession, args: &[&str]) {
+        let player_id = session.player_id();
+        let Some((needs_register, username)) = self.pending_session(player_id) else {
+            return;
+        };
+        if needs_register {
+            let _ = session.send_message(self.msg(&self.config.messages.register_usage, &[]));
+            return;
+        }
+        let Some(password) = args.first() else {
+            let _ = session.send_message(self.msg(&self.config.messages.login_usage, &[]));
+            return;
+        };
+
+        // Passwordless (premium) accounts verify against the dummy hash so
+        // messaging and timing match unknown accounts (no account-type oracle).
+        let hash = match self.storage.get_account(&username) {
+            Ok(Some(AuthAccount {
+                password_hash: Some(h),
+                ..
+            })) => h,
+            Ok(_) => self.dummy_hash.clone(),
+            Err(e) => {
+                tracing::error!("Account lookup failed: {e}");
+                Self::send_internal_error(session);
+                return;
+            }
+        };
+
+        match password::verify_and_migrate(password, &hash, &self.config.hashing).await {
+            Ok((true, migrated_hash)) => {
+                if let Some(new_hash) = migrated_hash
+                    && let Err(e) = self.storage.update_password_hash(&username, new_hash)
+                {
+                    tracing::error!("Hash migration failed: {e}");
+                }
+
+                if let Some(player) = self.player_registry.get_player_by_id(player_id)
+                    && let Err(e) = self.storage.update_last_login(
+                        &username,
+                        player.remote_addr().ip(),
+                        chrono::Utc::now(),
+                    )
+                {
+                    tracing::error!("Last login update failed: {e}");
+                }
+
+                self.accept(session, self.msg(&self.config.messages.login_success, &[]));
+            }
+            Ok((false, _)) => match self.record_failed_attempt(player_id) {
+                Attempt::Exhausted => {
+                    let msg = self.msg(&self.config.messages.login_max_attempts, &[]);
+                    self.cleanup_session(player_id);
+                    session.complete(LimboOutcome::Deny(msg));
+                }
+                Attempt::Retry { attempts_left } => {
+                    let _ = session.send_message(self.msg(
+                        &self.config.messages.login_fail,
+                        &[
+                            ("{attempts_left}", &attempts_left.to_string()),
+                            (
+                                "{max_attempts}",
+                                &self.config.security.max_login_attempts.to_string(),
+                            ),
+                        ],
+                    ));
+                }
+            },
+            Err(e) => {
+                tracing::error!("Password verification error: {e}");
+                Self::send_internal_error(session);
+            }
+        }
+    }
+
+    async fn register(&self, session: &dyn LimboSession, args: &[&str]) {
+        let player_id = session.player_id();
+        let Some((needs_register, username)) = self.pending_session(player_id) else {
+            return;
+        };
+        if !needs_register {
+            let _ = session.send_message(self.msg(&self.config.messages.login_usage, &[]));
+            return;
+        }
+        let &[password, confirm, ..] = args else {
+            let _ = session.send_message(self.msg(&self.config.messages.register_usage, &[]));
+            return;
+        };
+        if password != confirm {
+            let _ = session
+                .send_message(self.msg(&self.config.messages.register_password_mismatch, &[]));
+            return;
+        }
+        if let Some(error_msg) = self.validate_password(password, &username) {
+            let _ = session.send_message(parse_colored(&error_msg));
+            return;
+        }
+
+        let hash = match password::hash_password(password, &self.config.hashing).await {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Password hashing error: {e}");
+                Self::send_internal_error(session);
+                return;
+            }
+        };
+
+        let account = AuthAccount {
+            username,
+            display_name: DisplayName::new(session.profile().username.clone()),
+            password_hash: Some(hash),
+            registered_at: chrono::Utc::now(),
+            last_login: None,
+            last_ip: self
+                .player_registry
+                .get_player_by_id(player_id)
+                .map(|p| p.remote_addr().ip()),
+            login_count: 0,
+            premium_info: None,
+        };
+
+        match self.storage.create_account(&account) {
+            Ok(()) => {
+                self.accept(
+                    session,
+                    self.msg(&self.config.messages.register_success, &[]),
+                );
+            }
+            Err(crate::error::AuthStorageError::AccountAlreadyExists { .. }) => {
+                let _ = session
+                    .send_message(self.msg(&self.config.messages.register_account_exists, &[]));
+            }
+            Err(e) => {
+                tracing::error!("Account creation error: {e}");
+                Self::send_internal_error(session);
+            }
+        }
+    }
 }
 
 impl LimboHandler for AuthHandler {
@@ -241,75 +463,7 @@ impl LimboHandler for AuthHandler {
         let profile = session.profile();
 
         if self.config.premium.enabled && profile.is_mojang_authenticated() {
-            let username = Username::new(&profile.username);
-            let display_name = profile.username.clone();
-            let mojang_uuid = profile.uuid;
-            let now = chrono::Utc::now();
-
-            match self.storage.get_account(&username) {
-                Ok(Some(existing)) => {
-                    let first = existing
-                        .premium_info
-                        .as_ref()
-                        .map(|pi| pi.first_premium_login)
-                        .unwrap_or(now);
-
-                    let premium_info = PremiumInfo {
-                        mojang_uuid,
-                        force_cracked: false,
-                        first_premium_login: first,
-                        last_premium_login: Some(now),
-                    };
-
-                    let storage = Arc::clone(&self.storage);
-                    let u = username.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = storage.update_premium_info(&u, Some(premium_info)).await {
-                            tracing::error!("Premium info update failed: {e}");
-                        }
-                    });
-                }
-                _ => {
-                    let ip = self
-                        .player_registry
-                        .get_player_by_id(player_id)
-                        .map(|p| p.remote_addr().ip());
-
-                    let premium_info = PremiumInfo {
-                        mojang_uuid,
-                        force_cracked: false,
-                        first_premium_login: now,
-                        last_premium_login: Some(now),
-                    };
-
-                    let account = AuthAccount {
-                        username: username.clone(),
-                        display_name: DisplayName::new(display_name.clone()),
-                        password_hash: None,
-                        registered_at: now,
-                        last_login: Some(now),
-                        last_ip: ip,
-                        login_count: 1,
-                        premium_info: Some(premium_info),
-                    };
-                    let storage = Arc::clone(&self.storage);
-                    tokio::spawn(async move {
-                        if let Err(e) = storage.create_account(&account).await {
-                            tracing::error!("Premium account creation failed: {e}");
-                        }
-                    });
-                }
-            }
-
-            let msg = self
-                .config
-                .premium
-                .messages
-                .premium_login
-                .replace("{username}", &display_name);
-            let _ = session.send_message(parse_colored(&msg));
-            tracing::info!(%display_name, "Premium auto-login");
-            self.mark_authenticated(player_id);
+            self.premium_login(session);
             return Box::pin(async { HandlerResult::Accept });
         }
 
@@ -376,204 +530,26 @@ impl LimboHandler for AuthHandler {
         command: &'a str,
         args: &'a [&'a str],
     ) -> BoxFuture<'a, ()> {
-        let player_id = session.player_id();
+        Box::pin(async move {
+            if self
+                .sessions
+                .get(&session.player_id())
+                .is_some_and(|e| e.force_completed)
+            {
+                self.accept(session, self.msg(&self.config.messages.login_success, &[]));
+                return;
+            }
 
-        if self
-            .sessions
-            .get(&player_id)
-            .is_some_and(|e| e.force_completed)
-        {
-            self.accept(session, self.msg(&self.config.messages.login_success, &[]));
-            return Box::pin(async {});
-        }
-
-        // SECURITY: Never log `args` they contain passwords
-        match command {
-            "login" | "l" => {
-                let Some(entry) = self.sessions.get(&player_id) else {
-                    return Box::pin(async {});
-                };
-                if entry.needs_register {
-                    drop(entry);
+            // SECURITY: Never log `args` they contain passwords
+            match command {
+                "login" | "l" => self.login(session, args).await,
+                "register" | "reg" => self.register(session, args).await,
+                _ => {
                     let _ =
-                        session.send_message(self.msg(&self.config.messages.register_usage, &[]));
-                    return Box::pin(async {});
+                        session.send_message(self.msg(&self.config.messages.unknown_command, &[]));
                 }
-                let username = entry.username.clone();
-                drop(entry);
-
-                let Some(password) = args.first() else {
-                    let _ = session.send_message(self.msg(&self.config.messages.login_usage, &[]));
-                    return Box::pin(async {});
-                };
-                let password = password.to_string();
-
-                // Passwordless (premium) accounts verify against the dummy hash so
-                // messaging and timing match unknown accounts (no account-type oracle).
-                let hash = match self.storage.get_account(&username) {
-                    Ok(Some(AuthAccount {
-                        password_hash: Some(h),
-                        ..
-                    })) => h,
-                    _ => self.dummy_hash.clone(),
-                };
-
-                let storage = Arc::clone(&self.storage);
-                let player_registry = Arc::clone(&self.player_registry);
-
-                Box::pin(async move {
-                    let result =
-                        password::verify_and_migrate(&password, &hash, &self.config.hashing).await;
-
-                    match result {
-                        Ok((true, migrated_hash)) => {
-                            if let Some(new_hash) = migrated_hash {
-                                let s = Arc::clone(&storage);
-                                let u = username.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = s.update_password_hash(&u, new_hash).await {
-                                        tracing::error!("Hash migration failed: {e}");
-                                    }
-                                });
-                            }
-
-                            if let Some(player) = player_registry.get_player_by_id(player_id) {
-                                let ip = player.remote_addr().ip();
-                                let s = Arc::clone(&storage);
-                                let u = username.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) =
-                                        s.update_last_login(&u, ip, chrono::Utc::now()).await
-                                    {
-                                        tracing::error!("Last login update failed: {e}");
-                                    }
-                                });
-                            }
-
-                            self.accept(
-                                session,
-                                self.msg(&self.config.messages.login_success, &[]),
-                            );
-                        }
-                        Ok((false, _)) => match self.record_failed_attempt(player_id) {
-                            Attempt::Exhausted => {
-                                let msg = self.msg(&self.config.messages.login_max_attempts, &[]);
-                                self.cleanup_session(player_id);
-                                session.complete(LimboOutcome::Deny(msg));
-                            }
-                            Attempt::Retry { attempts_left } => {
-                                let _ = session.send_message(self.msg(
-                                    &self.config.messages.login_fail,
-                                    &[
-                                        ("{attempts_left}", &attempts_left.to_string()),
-                                        (
-                                            "{max_attempts}",
-                                            &self.config.security.max_login_attempts.to_string(),
-                                        ),
-                                    ],
-                                ));
-                            }
-                        },
-                        Err(e) => {
-                            tracing::error!("Password verification error: {e}");
-                            let _ = session.send_message(Component::error(
-                                "An internal error occurred. Please try again.",
-                            ));
-                        }
-                    }
-                })
             }
-
-            "register" | "reg" => {
-                let Some(entry) = self.sessions.get(&player_id) else {
-                    return Box::pin(async {});
-                };
-                if !entry.needs_register {
-                    drop(entry);
-                    let _ = session.send_message(self.msg(&self.config.messages.login_usage, &[]));
-                    return Box::pin(async {});
-                }
-                let username = entry.username.clone();
-                let display_name = session.profile().username.clone();
-                drop(entry);
-
-                if args.len() < 2 {
-                    let _ =
-                        session.send_message(self.msg(&self.config.messages.register_usage, &[]));
-                    return Box::pin(async {});
-                }
-
-                let password = args[0].to_string();
-                let confirm = args[1].to_string();
-
-                if password != confirm {
-                    let _ = session.send_message(
-                        self.msg(&self.config.messages.register_password_mismatch, &[]),
-                    );
-                    return Box::pin(async {});
-                }
-
-                if let Some(error_msg) = self.validate_password(&password, &username) {
-                    let _ = session.send_message(parse_colored(&error_msg));
-                    return Box::pin(async {});
-                }
-
-                let storage = Arc::clone(&self.storage);
-                let player_registry = Arc::clone(&self.player_registry);
-
-                Box::pin(async move {
-                    let hash = match password::hash_password(&password, &self.config.hashing).await
-                    {
-                        Ok(h) => h,
-                        Err(e) => {
-                            tracing::error!("Password hashing error: {e}");
-                            let _ = session.send_message(Component::error(
-                                "An internal error occurred. Please try again.",
-                            ));
-                            return;
-                        }
-                    };
-
-                    let account = AuthAccount {
-                        username: username.clone(),
-                        display_name: DisplayName::new(display_name),
-                        password_hash: Some(hash),
-                        registered_at: chrono::Utc::now(),
-                        last_login: None,
-                        last_ip: player_registry
-                            .get_player_by_id(player_id)
-                            .map(|p| p.remote_addr().ip()),
-                        login_count: 0,
-                        premium_info: None,
-                    };
-
-                    match storage.create_account(&account).await {
-                        Ok(()) => {
-                            self.accept(
-                                session,
-                                self.msg(&self.config.messages.register_success, &[]),
-                            );
-                        }
-                        Err(crate::error::AuthStorageError::AccountAlreadyExists { .. }) => {
-                            let _ = session.send_message(
-                                self.msg(&self.config.messages.register_account_exists, &[]),
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!("Account creation error: {e}");
-                            let _ = session.send_message(Component::error(
-                                "An internal error occurred. Please try again.",
-                            ));
-                        }
-                    }
-                })
-            }
-
-            _ => {
-                let _ = session.send_message(self.msg(&self.config.messages.unknown_command, &[]));
-                Box::pin(async {})
-            }
-        }
+        })
     }
 
     fn on_chat<'a>(
@@ -611,7 +587,12 @@ impl LimboHandler for AuthHandler {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use infrarust_api::test_util::MockPlayerRegistry;
+
     use crate::account::Username;
+    use crate::error::AuthStorageError;
     use crate::test_support::{
         TestEnv, fast_config, limbo_session, limbo_session_with, premium_profile, session_text,
     };
@@ -708,20 +689,129 @@ mod tests {
         let result = env.handler.on_player_enter(&*session).await;
         assert!(matches!(result, HandlerResult::Accept));
 
-        let username = Username::new("Notch");
-        for _ in 0..200 {
-            if env.storage.has_account(&username) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
         let account = env
             .storage
-            .get_account(&username)
+            .get_account(&Username::new("Notch"))
             .unwrap()
-            .expect("premium account created in background");
+            .expect("the account exists as soon as the handler returns");
         assert!(account.premium_info.is_some());
         assert!(account.password_hash.is_none());
+    }
+
+    struct UnreadableStorage {
+        writes: AtomicUsize,
+    }
+
+    impl UnreadableStorage {
+        fn unreadable() -> AuthStorageError {
+            AuthStorageError::Io(std::io::Error::other("backend unreachable"))
+        }
+
+        fn written(&self) -> Result<(), AuthStorageError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    impl AuthStorage for UnreadableStorage {
+        fn has_account(&self, _: &Username) -> bool {
+            true
+        }
+
+        fn get_account(&self, _: &Username) -> Result<Option<AuthAccount>, AuthStorageError> {
+            Err(Self::unreadable())
+        }
+
+        fn is_force_cracked(&self, _: &Username) -> bool {
+            false
+        }
+
+        fn create_account(&self, _: &AuthAccount) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn update_password_hash(
+            &self,
+            _: &Username,
+            _: crate::account::PasswordHash,
+        ) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn delete_account(&self, _: &Username) -> Result<bool, AuthStorageError> {
+            self.written().map(|()| true)
+        }
+
+        fn update_last_login(
+            &self,
+            _: &Username,
+            _: std::net::IpAddr,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn update_premium_info(
+            &self,
+            _: &Username,
+            _: Option<PremiumInfo>,
+        ) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn flush(&self) -> BoxFuture<'_, Result<(), AuthStorageError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    async fn handler_over_unreadable_storage(
+        config: AuthConfig,
+    ) -> (AuthHandler, Arc<UnreadableStorage>) {
+        let storage = Arc::new(UnreadableStorage {
+            writes: AtomicUsize::new(0),
+        });
+        let dummy_hash = password::generate_dummy_hash(&config.hashing)
+            .await
+            .unwrap();
+        let handler = AuthHandler::new(
+            Arc::clone(&storage) as Arc<dyn AuthStorage>,
+            Arc::new(config),
+            Arc::new(MockPlayerRegistry::new()),
+            dummy_hash,
+            HashSet::new(),
+            None,
+        );
+        (handler, storage)
+    }
+
+    #[tokio::test]
+    async fn premium_login_does_not_create_an_account_when_the_lookup_fails() {
+        let mut config = fast_config();
+        config.premium.enabled = true;
+        let (handler, storage) = handler_over_unreadable_storage(config).await;
+        let session = limbo_session_with(1, premium_profile(1, "Notch"));
+
+        let result = handler.on_player_enter(&*session).await;
+        tokio::task::yield_now().await;
+
+        assert!(matches!(result, HandlerResult::Accept));
+        assert_eq!(storage.writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn login_reports_a_storage_error_instead_of_a_wrong_password() {
+        let (handler, _storage) = handler_over_unreadable_storage(fast_config()).await;
+        let session = limbo_session(1, "Steve");
+        handler.on_player_enter(&*session).await;
+
+        handler
+            .on_command(&*session, "login", &["hunter2hunter2"])
+            .await;
+
+        let text = session_text(&session);
+        assert!(text.contains("internal error"), "got: {text}");
+        assert!(!text.contains("Wrong password"), "got: {text}");
+        assert!(session.completions().is_empty());
     }
 
     #[tokio::test]

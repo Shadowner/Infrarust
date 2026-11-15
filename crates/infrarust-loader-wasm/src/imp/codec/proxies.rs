@@ -41,7 +41,7 @@ impl Shared {
     }
 
     fn report_fault(&self, op: &str, ip: IpAddr, cause: &str) {
-        let Some(suppressed) = self.faults.admit(Instant::now()) else {
+        let Some(suppressed) = self.faults.admit() else {
             return;
         };
         tracing::warn!(
@@ -58,7 +58,7 @@ impl Shared {
     }
 
     fn report_create_failure(&self, ip: IpAddr, error: &WasmLoaderError) {
-        let Some(suppressed) = self.create_failures.admit(Instant::now()) else {
+        let Some(suppressed) = self.create_failures.admit() else {
             return;
         };
         tracing::error!(
@@ -74,7 +74,7 @@ impl Shared {
     }
 
     fn report_trip(&self, ip: IpAddr, trip: Trip, cause: &str) {
-        let Some(suppressed) = self.quarantines.admit(Instant::now()) else {
+        let Some(suppressed) = self.quarantines.admit() else {
             return;
         };
         let consequence = if self.required {
@@ -103,20 +103,16 @@ impl Shared {
         }
     }
 
-    fn unavailable(&self, reason: String) -> Box<dyn CodecFilterInstance> {
+    fn unavailable(&self, what: &str) -> State {
         if self.required {
-            Box::new(ClosedInstance { reason })
+            State::Closed(format!(
+                "required codec filter `{}` of plugin `{}` {what}",
+                self.filter_id,
+                self.plugin_id()
+            ))
         } else {
-            Box::new(PassthroughInstance)
+            State::Bypassed
         }
-    }
-
-    fn closing(&self, what: &str) -> String {
-        format!(
-            "required codec filter `{}` of plugin `{}` {what}",
-            self.filter_id,
-            self.plugin_id()
-        )
     }
 }
 
@@ -158,77 +154,93 @@ impl CodecFilterFactory for WasmCodecFilterFactory {
     fn create(&self, init: &CodecSessionInit) -> Box<dyn CodecFilterInstance> {
         let shared = &self.shared;
         let ip = init.real_ip.unwrap_or_else(|| init.remote_addr.ip());
+        let unavailable = |what: &str| WasmCodecFilterInstance {
+            state: shared.unavailable(what),
+            shared: Arc::clone(shared),
+            ticket: None,
+            ip,
+        };
         let ticket = match &shared.quarantine {
             Some(quarantine) => match quarantine.admit(ip, Instant::now()) {
                 Admission::Open(ticket) => Some(ticket),
                 Admission::Quarantined { retry_in } => {
-                    return shared.unavailable(shared.closing(&format!(
+                    return Box::new(unavailable(&format!(
                         "is quarantined for this client address (retry in {retry_in:?})"
                     )));
                 }
             },
             None => None,
         };
-        match shared.instantiator.create_live(self.factory_id, init) {
-            Ok(live) => Box::new(WasmCodecFilterInstance {
-                live: Some(live),
-                shared: Arc::clone(shared),
-                ticket,
-                ip,
-                closing: None,
-            }),
-            Err(CreateFailure::Host(error)) => {
-                shared.report_create_failure(ip, &error);
-                shared.unavailable(shared.closing("could not be created"))
-            }
-            Err(CreateFailure::Guest(cause)) => {
-                shared.report_fault("create", ip, &cause);
-                shared.fault(ticket.as_ref(), ip, &cause);
-                shared.unavailable(shared.closing(&cause))
-            }
-        }
+        Box::new(
+            match shared.instantiator.create_live(self.factory_id, init) {
+                Ok(live) => WasmCodecFilterInstance {
+                    state: State::Live(live),
+                    shared: Arc::clone(shared),
+                    ticket,
+                    ip,
+                },
+                Err(CreateFailure::Host(error)) => {
+                    shared.report_create_failure(ip, &error);
+                    unavailable("could not be created")
+                }
+                Err(CreateFailure::Guest(cause)) => {
+                    shared.report_fault("create", ip, &cause);
+                    shared.fault(ticket.as_ref(), ip, &cause);
+                    unavailable(&cause)
+                }
+            },
+        )
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "nearly every instance is live and the per-packet path reads it in place"
+)]
+enum State {
+    Live(Live),
+    Bypassed,
+    Closed(String),
+}
+
 pub(crate) struct WasmCodecFilterInstance {
-    live: Option<Live>,
+    state: State,
     shared: Arc<Shared>,
     ticket: Option<Ticket>,
     ip: IpAddr,
-    closing: Option<String>,
 }
 
 impl WasmCodecFilterInstance {
     fn usable(&mut self) -> Option<&mut Live> {
-        if self.live.is_some() && self.ticket.as_ref().is_some_and(Ticket::is_cut) {
-            self.live = None;
-            if self.shared.required {
-                self.closing = Some(
-                    self.shared
-                        .closing("is quarantined for this client address"),
-                );
-            }
+        if matches!(self.state, State::Live(_)) && self.ticket.as_ref().is_some_and(Ticket::is_cut)
+        {
+            self.state = self
+                .shared
+                .unavailable("is quarantined for this client address");
         }
-        self.live.as_mut()
+        match &mut self.state {
+            State::Live(live) => Some(live),
+            State::Bypassed | State::Closed(_) => None,
+        }
     }
 
     fn fail(&mut self, op: &str, error: &wasmtime::Error) {
-        let panic = self
-            .live
-            .take()
-            .and_then(|mut live| live.take_guest_panic());
+        let panic = match std::mem::replace(&mut self.state, State::Bypassed) {
+            State::Live(mut live) => live.take_guest_panic(),
+            State::Bypassed | State::Closed(_) => None,
+        };
         let cause = cause(error, self.shared.instantiator.budget(), panic);
         self.shared.report_fault(op, self.ip, &cause);
-        if self.shared.required {
-            self.closing = Some(self.shared.closing(&cause));
-        }
+        self.state = self.shared.unavailable(&cause);
         self.shared.fault(self.ticket.as_ref(), self.ip, &cause);
     }
 
     fn unfiltered(&self) -> CodecVerdict {
-        match &self.closing {
-            Some(reason) => CodecVerdict::Error(CodecFilterError::Internal(reason.clone())),
-            None => CodecVerdict::Pass,
+        match &self.state {
+            State::Closed(reason) => {
+                CodecVerdict::Error(CodecFilterError::Internal(reason.clone()))
+            }
+            State::Live(_) | State::Bypassed => CodecVerdict::Pass,
         }
     }
 
@@ -259,7 +271,10 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
     }
 
     fn close_reason(&self) -> Option<&str> {
-        self.closing.as_deref()
+        match &self.state {
+            State::Closed(reason) => Some(reason),
+            State::Live(_) | State::Bypassed => None,
+        }
     }
 
     fn on_state_change(&mut self, new_state: ConnectionState) {
@@ -279,30 +294,9 @@ impl CodecFilterInstance for WasmCodecFilterInstance {
 
     fn on_close(&mut self) {
         self.notify("on-close", Live::on_close);
-        if let Some(live) = self.live.take() {
-            live.release();
+        match std::mem::replace(&mut self.state, State::Bypassed) {
+            State::Live(live) => live.release(),
+            ended @ (State::Bypassed | State::Closed(_)) => self.state = ended,
         }
-    }
-}
-
-struct PassthroughInstance;
-
-impl CodecFilterInstance for PassthroughInstance {
-    fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
-        CodecVerdict::Pass
-    }
-}
-
-struct ClosedInstance {
-    reason: String,
-}
-
-impl CodecFilterInstance for ClosedInstance {
-    fn filter(&mut self, _packet: &mut RawPacket, _output: &mut FrameOutput) -> CodecVerdict {
-        CodecVerdict::Error(CodecFilterError::Internal(self.reason.clone()))
-    }
-
-    fn close_reason(&self) -> Option<&str> {
-        Some(&self.reason)
     }
 }

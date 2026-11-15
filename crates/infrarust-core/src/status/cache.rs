@@ -171,7 +171,7 @@ impl StatusCache {
         );
     }
 
-    /// Removes a single server's cache entries.
+    #[cfg(feature = "test-support")]
     pub fn invalidate(&self, server_id: &str) {
         self.entries.remove(server_id);
         self.legacy_entries.retain(|(id, _), _| id != server_id);
@@ -304,7 +304,10 @@ mod tests {
     }
 
     fn server_config() -> Arc<ServerConfig> {
-        Arc::new(toml::from_str("domains = [\"srv.test\"]\naddresses = [\"127.0.0.1:25566\"]\n").unwrap())
+        Arc::new(
+            toml::from_str("domains = [\"srv.test\"]\naddresses = [\"127.0.0.1:25566\"]\n")
+                .unwrap(),
+        )
     }
 
     fn source(config: &Arc<ServerConfig>, favicon: Option<&Arc<str>>) -> FrameSource {
@@ -336,25 +339,69 @@ mod tests {
         let favicon: Arc<str> = Arc::from("data:image/png;base64,abc");
         let response = cache.put("srv", sample_response(), Duration::ZERO, None);
 
-        assert!(frame_built(&cache, &response, source(&config, Some(&favicon))));
-        assert!(!frame_built(&cache, &response, source(&config, Some(&favicon))));
+        assert!(frame_built(
+            &cache,
+            &response,
+            source(&config, Some(&favicon))
+        ));
+        assert!(!frame_built(
+            &cache,
+            &response,
+            source(&config, Some(&favicon))
+        ));
 
         let reloaded_favicon: Arc<str> = Arc::from("data:image/png;base64,abc");
-        assert!(frame_built(&cache, &response, source(&config, Some(&reloaded_favicon))));
+        assert!(frame_built(
+            &cache,
+            &response,
+            source(&config, Some(&reloaded_favicon))
+        ));
         assert!(frame_built(&cache, &response, source(&config, None)));
         let reloaded_config = server_config();
-        assert!(frame_built(&cache, &response, source(&reloaded_config, None)));
-        assert!(!frame_built(&cache, &response, source(&reloaded_config, None)));
+        assert!(frame_built(
+            &cache,
+            &response,
+            source(&reloaded_config, None)
+        ));
+        assert!(!frame_built(
+            &cache,
+            &response,
+            source(&reloaded_config, None)
+        ));
 
         let refreshed = cache.put("srv", sample_response(), Duration::ZERO, None);
-        assert!(frame_built(&cache, &response, source(&reloaded_config, None)));
-        assert!(frame_built(&cache, &response, source(&reloaded_config, None)));
-        assert!(frame_built(&cache, &refreshed, source(&reloaded_config, None)));
-        assert!(!frame_built(&cache, &refreshed, source(&reloaded_config, None)));
+        assert!(frame_built(
+            &cache,
+            &response,
+            source(&reloaded_config, None)
+        ));
+        assert!(frame_built(
+            &cache,
+            &response,
+            source(&reloaded_config, None)
+        ));
+        assert!(frame_built(
+            &cache,
+            &refreshed,
+            source(&reloaded_config, None)
+        ));
+        assert!(!frame_built(
+            &cache,
+            &refreshed,
+            source(&reloaded_config, None)
+        ));
 
         cache.invalidate_all();
-        assert!(frame_built(&cache, &refreshed, source(&reloaded_config, None)));
-        assert!(frame_built(&cache, &refreshed, source(&reloaded_config, None)));
+        assert!(frame_built(
+            &cache,
+            &refreshed,
+            source(&reloaded_config, None)
+        ));
+        assert!(frame_built(
+            &cache,
+            &refreshed,
+            source(&reloaded_config, None)
+        ));
     }
 
     #[test]

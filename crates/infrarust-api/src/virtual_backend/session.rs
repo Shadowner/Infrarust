@@ -1,19 +1,19 @@
 //! Virtual backend session trait.
 
+use crate::BoxFuture;
 use crate::error::PlayerError;
-use crate::event::BoxFuture;
 use crate::types::{Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId};
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`VirtualBackendSession`](super::VirtualBackendSession).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// A session handle for a player connected to a virtual backend.
 ///
 /// Provides full packet-level control over the client connection.
 /// Obtained in [`VirtualBackendHandler`](super::handler::VirtualBackendHandler) callbacks.
-pub trait VirtualBackendSession: Send + Sync + private::Sealed {
+pub trait VirtualBackendSession: Send + Sync + crate::__sealed::Sealed {
     fn player_id(&self) -> PlayerId;
 
     fn profile(&self) -> &GameProfile;

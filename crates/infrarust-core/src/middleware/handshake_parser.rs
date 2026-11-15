@@ -1,9 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::legacy;
 use infrarust_protocol::packets::Packet;
@@ -11,7 +10,7 @@ use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::handler::legacy::hello;
+use crate::middleware::legacy_hello;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::preauth_frame::{MAX_HANDSHAKE_FRAME, read_preauth_frame};
@@ -49,7 +48,7 @@ impl Middleware for HandshakeParserMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             tokio::time::timeout(Duration::from_secs(10), async {
                 if ctx.buffered_data.is_empty() {
@@ -64,11 +63,11 @@ impl Middleware for HandshakeParserMiddleware {
 
                 match legacy::detect(first_byte) {
                     legacy::LegacyDetection::LegacyPing => {
-                        hello::read_ping_hello(ctx).await?;
+                        legacy_hello::read_ping_hello(ctx).await?;
                         return Ok(MiddlewareResult::Continue);
                     }
                     legacy::LegacyDetection::LegacyLogin => {
-                        hello::read_login_hello(ctx).await?;
+                        legacy_hello::read_login_hello(ctx).await?;
                         return Ok(MiddlewareResult::Continue);
                     }
                     legacy::LegacyDetection::Modern => {}
@@ -128,7 +127,7 @@ impl Middleware for HandshakeParserMiddleware {
                     );
                 }
 
-                ctx.extensions.insert(HandshakeData {
+                ctx.handshake = Some(HandshakeData {
                     domain,
                     raw_host: handshake.server_address,
                     port,
@@ -148,8 +147,6 @@ impl Middleware for HandshakeParserMiddleware {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use std::net::{IpAddr, Ipv4Addr};
-
     use infrarust_protocol::ProtocolError;
     use infrarust_protocol::codec::VarInt;
     use infrarust_protocol::io::PacketEncoder;
@@ -162,8 +159,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let client = TcpStream::connect(addr).await.unwrap();
         let (server, peer) = listener.accept().await.unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(server, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), addr);
+        let mut ctx = ConnectionContext::new_for_test(server, peer, addr);
         ctx.buffered_data.extend_from_slice(wire);
         (ctx, client)
     }
@@ -213,7 +209,7 @@ mod tests {
         let result = HandshakeParserMiddleware::new().process(&mut ctx).await;
 
         assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-        let handshake = ctx.extensions.get::<HandshakeData>().unwrap();
+        let handshake = ctx.handshake.as_ref().unwrap();
         assert_eq!(handshake.domain, "mc.example.com");
         assert_eq!(handshake.raw_packets[0].as_ref(), frame.as_slice());
         assert_eq!(ctx.buffered_data.len(), 8192);

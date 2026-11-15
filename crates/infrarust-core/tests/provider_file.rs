@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_core::provider::file::FileProvider;
-use infrarust_core::provider::{ConfigProvider, ProviderChange, ProviderEvent};
+use infrarust_core::provider::{ConfigProvider, ProviderChange, ProviderSource};
 
 const MINIMAL_CONFIG: &str = r#"
 domains = ["test.example.com"]
@@ -90,22 +90,17 @@ async fn test_provider_id_format() {
     let provider = FileProvider::new(dir.path().to_path_buf());
     let configs = provider.load_initial().await.unwrap();
     assert_eq!(configs.len(), 1);
-    assert_eq!(configs[0].id.provider_type, "file");
+    assert_eq!(configs[0].id.source, ProviderSource::File);
     assert_eq!(configs[0].id.unique_id, "survival.toml");
     assert_eq!(configs[0].id.to_string(), "file@survival.toml");
 }
 
-fn summary(event: &ProviderEvent) -> String {
-    match event {
-        ProviderEvent::Added(pc) => format!("added {}", pc.id),
-        ProviderEvent::Updated(pc) => format!("updated {}", pc.id),
-        ProviderEvent::Removed(id) => format!("removed {id}"),
-        ProviderEvent::Batch(changes) => changes
-            .iter()
-            .map(change_summary)
-            .collect::<Vec<_>>()
-            .join(", "),
-    }
+fn summary(changes: &[ProviderChange]) -> String {
+    changes
+        .iter()
+        .map(change_summary)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn change_summary(change: &ProviderChange) -> String {
@@ -116,19 +111,15 @@ fn change_summary(change: &ProviderChange) -> String {
     }
 }
 
-async fn next_event(rx: &mut mpsc::Receiver<ProviderEvent>) -> ProviderEvent {
-    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+async fn next_event(rx: &mut mpsc::Receiver<Vec<ProviderChange>>) -> Vec<ProviderChange> {
+    tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timeout waiting for event")
-        .expect("channel closed");
-    match event {
-        ProviderEvent::Batch(mut events) if events.len() == 1 => events.remove(0).into(),
-        event => event,
-    }
+        .expect("channel closed")
 }
 
 struct Watching {
-    rx: mpsc::Receiver<ProviderEvent>,
+    rx: mpsc::Receiver<Vec<ProviderChange>>,
     shutdown: CancellationToken,
     handle: JoinHandle<()>,
 }
@@ -154,7 +145,7 @@ impl Watching {
         }
     }
 
-    async fn next(&mut self) -> ProviderEvent {
+    async fn next(&mut self) -> Vec<ProviderChange> {
         next_event(&mut self.rx).await
     }
 
@@ -205,9 +196,10 @@ async fn test_watch_detects_modified_file() {
 
     let event = watching.next().await;
     assert_eq!(summary(&event), "updated file@server.toml");
-    if let ProviderEvent::Updated(pc) = event {
-        assert!(pc.config.domains.contains(&"survival.mc.com".to_string()));
-    }
+    let [ProviderChange::Updated(pc)] = event.as_slice() else {
+        panic!("expected one update, got {}", summary(&event));
+    };
+    assert!(pc.config.domains.contains(&"survival.mc.com".to_string()));
     watching.stop().await;
 }
 
@@ -285,13 +277,10 @@ async fn test_watch_emits_changes_made_between_load_and_watch() {
         provider.watch(tx, shutdown_clone).await.unwrap();
     });
 
-    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+    let changes = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("a change made before the watch was lost")
         .expect("channel closed");
-    let ProviderEvent::Batch(changes) = event else {
-        panic!("expected one batch for one scan, got {}", summary(&event));
-    };
     let mut seen = Vec::new();
     for change in &changes {
         if let ProviderChange::Updated(pc) = change {

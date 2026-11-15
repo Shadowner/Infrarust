@@ -6,12 +6,11 @@ use infrarust_protocol::legacy::LegacyHandshakeRequest;
 use super::LegacyHandler;
 use crate::error::CoreError;
 use crate::handler::forwarded::{
-    Arrival, ForwardedLogin, Opening, PROXY_LOGIN_SERVER, Route, Wire,
+    Applicant, ForwardedLogin, Opening, PROXY_LOGIN_SERVER, Route, Wire,
 };
 use crate::handler::helpers::send_legacy_kick;
 use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, RoutingData};
 
 impl LegacyHandler {
     pub(crate) async fn handle_login(
@@ -20,13 +19,10 @@ impl LegacyHandler {
         request: &LegacyHandshakeRequest,
         raw: &[u8],
     ) -> Result<(), CoreError> {
-        let domain = ctx
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .domain
-            .clone();
-        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
+        let domain = ctx.require_handshake()?.domain.clone();
+        let routing = ctx.require_routing()?.clone();
 
-        let attempt = LoginAttempt::pre_auth(ctx.client_ip, request.username.clone())
+        let attempt = LoginAttempt::pre_auth(ctx.client_ip(), request.username.clone())
             .virtual_host(domain.clone())
             .server(ServerId::new(routing.config_id.clone()));
         if let Some(refusal) = self.services.ban_manager.refuse(&attempt).await {
@@ -61,7 +57,7 @@ impl LegacyHandler {
                 .ok();
             return Ok(());
         };
-        let arrival = Arrival {
+        let applicant = Applicant {
             username: request.username.clone(),
             claimed_uuid: None,
             protocol_version: infrarust_api::types::ProtocolVersion::new(i32::from(
@@ -70,7 +66,7 @@ impl LegacyHandler {
             domain,
         };
         let Some(ready) = login
-            .open(ctx, arrival, origin, Opening::Legacy(raw))
+            .open(ctx, applicant, origin, Opening::Legacy(raw))
             .await?
         else {
             return Ok(());
@@ -101,7 +97,6 @@ impl LegacyHandler {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
 
     use infrarust_config::ServerAddress;
@@ -112,10 +107,11 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::handler::legacy::hello;
     use crate::limbo::test_helpers::test_proxy_services;
     use crate::loadbalancer::AddressConnectionCount;
+    use crate::middleware::legacy_hello;
     use crate::pipeline::types::LegacyHello;
+    use crate::pipeline::types::RoutingData;
     use crate::provider::ProviderId;
     use crate::status::StatusCache;
 
@@ -139,8 +135,7 @@ mod tests {
     async fn test_ctx(stream: TcpStream) -> ConnectionContext {
         let peer = stream.local_addr().unwrap();
         let local = stream.peer_addr().unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(stream, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+        let mut ctx = ConnectionContext::new_for_test(stream, peer, local);
         ctx.buffered_data.extend_from_slice(&[0x02]);
         ctx
     }
@@ -170,20 +165,18 @@ mod tests {
         handler: &LegacyHandler,
         ctx: &mut ConnectionContext,
     ) -> Result<(), CoreError> {
-        hello::read_login_hello(ctx).await?;
-        let (_, server_config, load_balancer) = handler
+        legacy_hello::read_login_hello(ctx).await?;
+        let route = handler
             .services
             .domain_router
             .resolve_route("lobby.test")
             .unwrap();
-        ctx.extensions.insert(RoutingData {
-            config_id: server_config.effective_id(),
-            server_config,
-            load_balancer,
+        ctx.routing = Some(RoutingData {
+            config_id: route.config.effective_id(),
+            server_config: route.config,
+            load_balancer: route.load_balancer,
         });
-        let Some(LegacyHello::Login { request, raw }) =
-            ctx.extensions.get::<LegacyHello>().cloned()
-        else {
+        let Some(LegacyHello::Login { request, raw }) = ctx.legacy_hello.clone() else {
             panic!("a legacy login must leave its hello");
         };
         handler.handle_login(ctx, &request, &raw).await

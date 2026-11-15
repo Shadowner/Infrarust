@@ -7,24 +7,18 @@ use tokio::process::{Child, ChildStdin};
 use tokio::task::JoinHandle;
 
 use crate::error::ServerManagerError;
-use crate::provider::{ProviderStatus, ServerProvider};
-use crate::state::ServerState;
+use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
-/// Provider that manages a local Java/Minecraft process.
 pub struct LocalProvider {
     config: LocalManagerConfig,
-    /// Handle to the running process. None if not started.
     process: tokio::sync::Mutex<Option<LocalProcess>>,
 }
 
 struct LocalProcess {
     child: Child,
     stdin: ChildStdin,
-    /// True when the `ready_pattern` has been detected in stdout.
     ready: Arc<AtomicBool>,
-    /// Task reading stdout lines.
     stdout_task: JoinHandle<()>,
-    /// Task reading stderr lines.
     stderr_task: JoinHandle<()>,
 }
 
@@ -36,7 +30,6 @@ impl LocalProvider {
         }
     }
 
-    /// Returns a descriptive string for logging.
     fn server_label(&self) -> String {
         format!(
             "{}:{}",
@@ -47,17 +40,11 @@ impl LocalProvider {
 }
 
 impl ServerProvider for LocalProvider {
-    fn start(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             if process_lock.is_some() {
-                return Err(ServerManagerError::InvalidState {
-                    server_id: self.server_label(),
-                    state: ServerState::Starting,
-                    action: "start".to_string(),
-                });
+                return Err(std::io::Error::other("process is already running").into());
             }
 
             let mut cmd = tokio::process::Command::new(&self.config.command);
@@ -85,7 +72,6 @@ impl ServerProvider for LocalProvider {
             let pattern = self.config.ready_pattern.clone();
             let label = self.server_label();
 
-            // Task that reads stdout line by line and detects the ready_pattern
             let stdout_task = tokio::spawn(async move {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
@@ -98,7 +84,6 @@ impl ServerProvider for LocalProvider {
                 }
             });
 
-            // Separate task for stderr (logging only)
             let label2 = self.server_label();
             let stderr_task = tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
@@ -122,27 +107,18 @@ impl ServerProvider for LocalProvider {
         })
     }
 
-    fn stop(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
-            let process =
-                process_lock
-                    .as_mut()
-                    .ok_or_else(|| ServerManagerError::InvalidState {
-                        server_id: self.server_label(),
-                        state: ServerState::Sleeping,
-                        action: "stop".to_string(),
-                    })?;
+            let process = process_lock.as_mut().ok_or_else(|| {
+                ServerManagerError::from(std::io::Error::other("process is not running"))
+            })?;
 
-            // 1. Send "stop\n" on stdin (graceful Minecraft stop)
             if let Err(e) = process.stdin.write_all(b"stop\n").await {
                 tracing::warn!(server = %self.server_label(), "failed to write stop command: {e}");
             }
             let _ = process.stdin.flush().await;
 
-            // 2. Wait for the process to exit with a timeout
             let shutdown_timeout = self.config.shutdown_timeout;
             match tokio::time::timeout(shutdown_timeout, process.child.wait()).await {
                 Ok(Ok(status)) => {
@@ -157,7 +133,6 @@ impl ServerProvider for LocalProvider {
                 }
             }
 
-            // 3. Cleanup
             process.stdout_task.abort();
             process.stderr_task.abort();
             *process_lock = None;
@@ -167,47 +142,30 @@ impl ServerProvider for LocalProvider {
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
-    > {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             let result = match process_lock.as_mut() {
                 None => Ok(ProviderStatus::Stopped),
-                Some(process) => {
-                    // Check if the process has exited by trying try_wait
-                    match process.child.try_wait() {
-                        Ok(Some(status)) => {
-                            // Process has exited — clean up
-                            process.stdout_task.abort();
-                            process.stderr_task.abort();
-                            *process_lock = None;
-                            if status.success() {
-                                Ok(ProviderStatus::Stopped)
-                            } else {
-                                Ok(ProviderStatus::Crashed)
-                            }
-                        }
-                        Ok(None) => {
-                            // Process still running
-                            if process.ready.load(Ordering::Acquire) {
-                                Ok(ProviderStatus::Running)
-                            } else {
-                                Ok(ProviderStatus::Starting)
-                            }
-                        }
-                        Err(_) => {
-                            // Can't determine — assume still running based on ready flag
-                            if process.ready.load(Ordering::Acquire) {
-                                Ok(ProviderStatus::Running)
-                            } else {
-                                Ok(ProviderStatus::Starting)
-                            }
+                Some(process) => match process.child.try_wait() {
+                    Ok(Some(status)) => {
+                        process.stdout_task.abort();
+                        process.stderr_task.abort();
+                        *process_lock = None;
+                        if status.success() {
+                            Ok(ProviderStatus::Stopped)
+                        } else {
+                            Ok(ProviderStatus::Crashed)
                         }
                     }
-                }
+                    Ok(None) | Err(_) => {
+                        if process.ready.load(Ordering::Acquire) {
+                            Ok(ProviderStatus::Running)
+                        } else {
+                            Ok(ProviderStatus::Starting)
+                        }
+                    }
+                },
             };
             drop(process_lock);
             result

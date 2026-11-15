@@ -1,16 +1,15 @@
-use std::future::Future;
 use std::io::IsTerminal;
-use std::pin::Pin;
 
 use console::measure_text_width;
 use infrarust_api::command::CommandInfo as PluginCommandInfo;
+use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::console::ConsoleServices;
 use crate::console::commands::servers::StateCounts;
-use crate::console::dispatcher::{CommandInfo, ConsoleCommand};
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{
     Block, CommandCategory, CommandOutput, Failure, Fields, Hint, Line, Node, Span, Table,
 };
@@ -23,7 +22,10 @@ fn product_title() -> String {
     format!("Infrarust {VERSION}")
 }
 
-pub(crate) fn help_block(commands: &[CommandInfo], plugin_commands: &[PluginCommandInfo]) -> Block {
+pub(crate) fn help_block(
+    commands: &[&ConsoleCommandSpec],
+    plugin_commands: &[PluginCommandInfo],
+) -> Block {
     let plugin_rows: Vec<(String, &PluginCommandInfo)> = plugin_commands
         .iter()
         .filter_map(|info| info.namespaced().map(|namespaced| (namespaced, info)))
@@ -40,10 +42,7 @@ pub(crate) fn help_block(commands: &[CommandInfo], plugin_commands: &[PluginComm
     for category in CommandCategory::ALL {
         let mut table = Table::bare();
         for info in commands.iter().filter(|info| info.category == category) {
-            table.row([
-                usage_line(&info.usage),
-                Span::muted(info.description.as_str()).into(),
-            ]);
+            table.row([usage_line(info.usage), Span::muted(info.description).into()]);
         }
         if table.is_empty() {
             continue;
@@ -114,15 +113,13 @@ fn align_first_column(block: &mut Block) {
     }
 }
 
-pub(crate) fn command_block(info: &CommandInfo) -> Block {
-    let mut fields = Fields::new().field("usage", usage_line(&info.usage));
+pub(crate) fn command_block(info: &ConsoleCommandSpec) -> Block {
+    let mut fields = Fields::new().field("usage", usage_line(info.usage));
     if !info.aliases.is_empty() {
         fields.push("aliases", info.aliases.join(", "));
     }
     fields.push("category", info.category.display_name());
-    Block::new(info.name.as_str())
-        .meta(info.description.as_str())
-        .fields(fields)
+    Block::new(info.name).meta(info.description).fields(fields)
 }
 
 pub(crate) fn unknown_command(name: &str) -> Failure {
@@ -187,52 +184,35 @@ pub(crate) fn status_block(report: &StatusReport) -> Block {
         )
 }
 
+const HELP: ConsoleCommandSpec = ConsoleCommandSpec {
+    name: "help",
+    aliases: &["?"],
+    description: "Show this help",
+    usage: "help [command]",
+    category: CommandCategory::System,
+};
+
 pub struct HelpCommand {
-    commands: Vec<CommandInfo>,
+    commands: Vec<&'static ConsoleCommandSpec>,
 }
 
 impl HelpCommand {
-    pub fn from_commands(mut commands: Vec<CommandInfo>) -> Self {
-        let help = Self {
-            commands: Vec::new(),
-        };
-        commands.push(CommandInfo {
-            name: help.name().to_string(),
-            aliases: help.aliases().iter().map(ToString::to_string).collect(),
-            description: help.description().to_string(),
-            usage: help.usage().to_string(),
-            category: help.category(),
-        });
+    pub fn from_commands(mut commands: Vec<&'static ConsoleCommandSpec>) -> Self {
+        commands.push(&HELP);
         Self { commands }
     }
 }
 
 impl ConsoleCommand for HelpCommand {
-    fn name(&self) -> &str {
-        "help"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["?"]
-    }
-
-    fn description(&self) -> &str {
-        "Show this help"
-    }
-
-    fn usage(&self) -> &str {
-        "help [command]"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::System
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &HELP
     }
 
     fn execute<'a>(
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(name) = args.first() else {
                 return help_block(&self.commands, &services.command_manager.list()).into();
@@ -240,7 +220,7 @@ impl ConsoleCommand for HelpCommand {
             let lower = name.to_lowercase();
             self.commands
                 .iter()
-                .find(|info| info.name == lower || info.aliases.iter().any(|a| a == &lower))
+                .find(|info| info.answers_to(&lower))
                 .map_or_else(
                     || unknown_command(&lower).into(),
                     |info| command_block(info).into(),
@@ -252,31 +232,21 @@ impl ConsoleCommand for HelpCommand {
 pub struct VersionCommand;
 
 impl ConsoleCommand for VersionCommand {
-    fn name(&self) -> &str {
-        "version"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["ver"]
-    }
-
-    fn description(&self) -> &str {
-        "Show version info"
-    }
-
-    fn usage(&self) -> &str {
-        "version"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::System
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "version",
+            aliases: &["ver"],
+            description: "Show version info",
+            usage: "version",
+            category: CommandCategory::System,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         _services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move { version_block().into() })
     }
 }
@@ -284,31 +254,21 @@ impl ConsoleCommand for VersionCommand {
 pub struct StatusCommand;
 
 impl ConsoleCommand for StatusCommand {
-    fn name(&self) -> &str {
-        "status"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["info"]
-    }
-
-    fn description(&self) -> &str {
-        "Proxy overview"
-    }
-
-    fn usage(&self) -> &str {
-        "status"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::System
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "status",
+            aliases: &["info"],
+            description: "Proxy overview",
+            usage: "status",
+            category: CommandCategory::System,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let report = StatusReport {
                 uptime: format_duration_short(services.start_time.elapsed()),
@@ -318,7 +278,7 @@ impl ConsoleCommand for StatusCommand {
                 managed: services.server_manager.as_ref().map(|manager| {
                     StateCounts::tally(manager.get_all_managed().iter().map(|(_, state)| state))
                 }),
-                plugins: services.plugin_manager.read().await.list_plugins().len(),
+                plugins: services.plugins.plugin_count().await,
             };
             status_block(&report).into()
         })
@@ -328,31 +288,21 @@ impl ConsoleCommand for StatusCommand {
 pub struct StopCommand;
 
 impl ConsoleCommand for StopCommand {
-    fn name(&self) -> &str {
-        "stop"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["shutdown", "exit", "quit"]
-    }
-
-    fn description(&self) -> &str {
-        "Shutdown the proxy"
-    }
-
-    fn usage(&self) -> &str {
-        "stop"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::System
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "stop",
+            aliases: &["shutdown", "exit", "quit"],
+            description: "Shutdown the proxy",
+            usage: "stop",
+            category: CommandCategory::System,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             tracing::info!(target: "console", "Proxy shutdown initiated from console");
             services.shutdown.cancel();
@@ -364,31 +314,21 @@ impl ConsoleCommand for StopCommand {
 pub struct ClearCommand;
 
 impl ConsoleCommand for ClearCommand {
-    fn name(&self) -> &str {
-        "clear"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["cls"]
-    }
-
-    fn description(&self) -> &str {
-        "Clear the screen"
-    }
-
-    fn usage(&self) -> &str {
-        "clear"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::System
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "clear",
+            aliases: &["cls"],
+            description: "Clear the screen",
+            usage: "clear",
+            category: CommandCategory::System,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         _services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             if std::io::stdout().is_terminal() {
                 print!("\x1B[2J\x1B[H");
@@ -401,27 +341,21 @@ impl ConsoleCommand for ClearCommand {
 pub struct GcCommand;
 
 impl ConsoleCommand for GcCommand {
-    fn name(&self) -> &str {
-        "gc"
-    }
-
-    fn description(&self) -> &str {
-        "Run garbage collection"
-    }
-
-    fn usage(&self) -> &str {
-        "gc"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::System
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "gc",
+            aliases: &[],
+            description: "Run garbage collection",
+            usage: "gc",
+            category: CommandCategory::System,
+        }
     }
 
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+    ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
             let Some(builtin) = services.ban_manager.builtin_provider() else {
                 return CommandOutput::Success("Garbage collected".to_string());
@@ -452,22 +386,22 @@ mod tests {
     }
 
     fn info(
-        name: &str,
-        aliases: &[&str],
-        description: &str,
-        usage: &str,
+        name: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        usage: &'static str,
         category: CommandCategory,
-    ) -> CommandInfo {
-        CommandInfo {
-            name: name.to_string(),
-            aliases: aliases.iter().map(ToString::to_string).collect(),
-            description: description.to_string(),
-            usage: usage.to_string(),
+    ) -> &'static ConsoleCommandSpec {
+        Box::leak(Box::new(ConsoleCommandSpec {
+            name,
+            aliases,
+            description,
+            usage,
             category,
-        }
+        }))
     }
 
-    fn builtins() -> Vec<CommandInfo> {
+    fn builtins() -> Vec<&'static ConsoleCommandSpec> {
         vec![
             info(
                 "list",
@@ -541,13 +475,13 @@ mod tests {
     #[test]
     fn help_for_one_command_shows_its_usage_and_aliases() {
         assert_eq!(
-            render(command_block(&builtins()[2])),
+            render(command_block(builtins()[2])),
             "# ban - Ban a player\n\
              | usage     ban <player> [duration] [reason...]\n\
              | category  Bans"
         );
         assert_eq!(
-            render(command_block(&builtins()[0])),
+            render(command_block(builtins()[0])),
             "# list - List online players\n\
              | usage     list [server]\n\
              | aliases   ls\n\

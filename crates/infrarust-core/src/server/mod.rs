@@ -1,4 +1,8 @@
 mod accept;
+mod health_observer;
+mod health_prober;
+mod proxy_services;
+mod status_refresh;
 mod wiring;
 
 use std::sync::Arc;
@@ -19,10 +23,11 @@ use crate::handler::passthrough::PassthroughHandler;
 use crate::handoff::HandoffRelay;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::pipeline::Pipeline;
+use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
-use crate::services::ProxyServices;
-use crate::session::connection_registry::ConnectionRegistry;
 use crate::status::StatusHandler;
+
+pub use proxy_services::ProxyServices;
 
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -62,6 +67,13 @@ impl ProxyServer {
     }
 
     pub async fn bind(&self) -> Result<Listener, CoreError> {
+        self.bind_or_adopt(None).await
+    }
+
+    pub(crate) async fn bind_or_adopt(
+        &self,
+        inherited: Option<std::net::TcpListener>,
+    ) -> Result<Listener, CoreError> {
         let config = &self.services.config;
         let listener_config = ListenerConfig {
             bind: config.bind,
@@ -73,9 +85,12 @@ impl ProxyServer {
             trusted_proxies: config.trusted_proxies.clone(),
         };
 
-        let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
+        let listener = match inherited {
+            Some(inherited) => Listener::adopt(inherited, listener_config, self.shutdown.clone())?,
+            None => Listener::bind(listener_config, self.shutdown.clone())?,
+        };
 
-        tracing::info!(bind = %listener.local_addr()?, "proxy server listening");
+        tracing::info!(bind = %listener.local_addr(), "proxy server listening");
         Ok(listener)
     }
 

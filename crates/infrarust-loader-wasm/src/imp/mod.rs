@@ -5,6 +5,7 @@
 //! `crate::xxx` paths keep resolving at the crate root.
 
 pub(crate) mod actor;
+pub(crate) mod adapters;
 pub(crate) mod bindings;
 pub(crate) mod cache;
 pub(crate) mod chain;
@@ -23,24 +24,21 @@ pub(crate) mod gates;
 pub(crate) mod host_error;
 pub(crate) mod hosts;
 pub(crate) mod instance;
-pub(crate) mod limbo;
 pub(crate) mod linker;
 pub(crate) mod loader;
 pub(crate) mod metadata;
 pub(crate) mod mounts;
 pub(crate) mod network;
 pub(crate) mod plugin;
-pub(crate) mod providers;
-pub(crate) mod proxies;
 pub(crate) mod rate_limit;
 pub(crate) mod recovery;
 pub(crate) mod registrations;
-pub(crate) mod resources;
 pub(crate) mod snapshots;
 pub(crate) mod status;
 pub(crate) mod store_state;
 pub(crate) mod supervisor;
 pub(crate) mod sync;
+pub(crate) mod wait_window;
 
 pub use config::WasmLoaderConfig;
 pub use engine::build_engine;

@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use infrarust_api::messaging::{
-    ChannelId, ChannelRegistrar, MAX_CHANNEL_LENGTH, MAX_TO_BACKEND_PAYLOAD, private,
+    ChannelId, ChannelRegistrar, MAX_CHANNEL_LENGTH, MAX_TO_BACKEND_PAYLOAD,
 };
 use infrarust_protocol::codec::{McBufReadExt, McBufWriteExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
@@ -306,7 +306,7 @@ impl TrackingChannelRegistrar {
     }
 }
 
-impl private::Sealed for TrackingChannelRegistrar {}
+impl infrarust_api::__sealed::Sealed for TrackingChannelRegistrar {}
 
 impl ChannelRegistrar for TrackingChannelRegistrar {
     fn register(&self, channel: ChannelId) {

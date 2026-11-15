@@ -5,12 +5,11 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
 
-use super::forwarded::{Arrival, ForwardedLogin, Opening, Route, Wire};
+use super::forwarded::{Applicant, ForwardedLogin, Opening, Route, Wire};
 use crate::error::CoreError;
-use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-use crate::services::ProxyServices;
+use crate::pipeline::types::BackendTargets;
+use crate::server::ProxyServices;
 
 pub struct PassthroughHandler {
     backend_connector: Arc<BackendConnector>,
@@ -41,14 +40,12 @@ impl PassthroughHandler {
         mut ctx: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
-        let handshake = ctx
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .clone();
-        let login_data = ctx.extensions.get::<LoginData>().cloned();
+        let routing = ctx.require_routing()?.clone();
+        let handshake = ctx.require_handshake()?.clone();
+        let login_data = ctx.login.clone();
         let origin = Route::forwarding(routing, |routing| {
             BackendTargets::addresses_or_config(
-                ctx.extensions.get::<BackendTargets>(),
+                ctx.backend_targets.as_ref(),
                 &routing.server_config,
             )
         })
@@ -56,7 +53,7 @@ impl PassthroughHandler {
             "a server where the proxy runs the login reached the passthrough handler",
         ))?;
 
-        let arrival = Arrival {
+        let applicant = Applicant {
             username: login_data
                 .as_ref()
                 .map(|d| d.username.clone())
@@ -74,7 +71,7 @@ impl PassthroughHandler {
             wire: Wire::Modern(handshake.protocol_version),
         };
         let Some(ready) = login
-            .open(&mut ctx, arrival, origin, Opening::Modern(&handshake))
+            .open(&mut ctx, applicant, origin, Opening::Modern(&handshake))
             .await?
         else {
             return Ok(());

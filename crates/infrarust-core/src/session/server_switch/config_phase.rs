@@ -22,6 +22,7 @@ use crate::session::frame_chain::FrameChain;
 use crate::session::kick::BackendKick;
 
 pub(super) enum PhaseError {
+    Kicked(Box<BackendKick>),
     Backend(CoreError),
     Client(CoreError),
 }
@@ -36,8 +37,8 @@ fn backend_frame(
         .map_err(PhaseError::Backend)?
         .ok_or(PhaseError::Backend(CoreError::ConnectionClosed))?;
     if Some(frame.id) == kick_id {
-        return Err(PhaseError::Backend(CoreError::BackendKick(Box::new(
-            BackendKick::new(frame, state, version),
+        return Err(PhaseError::Kicked(Box::new(BackendKick::new(
+            frame, state, version,
         ))));
     }
     Ok(frame)

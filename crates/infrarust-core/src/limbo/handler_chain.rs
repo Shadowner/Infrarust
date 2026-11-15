@@ -40,7 +40,7 @@ use crate::session::frame_chain::FrameChain;
 use crate::util::guard::{self, Unanswered};
 
 #[derive(Debug)]
-pub(crate) enum LimboChainResult {
+pub(crate) enum LimboExit {
     Completed,
     Switch(ServerId),
     Kick(Component),
@@ -73,7 +73,7 @@ pub(crate) async fn run_handler_chain(
     limbo: &mut Limbo,
     handlers: &[Arc<dyn LimboHandler>],
     needs_join_game: bool,
-) -> LimboChainResult {
+) -> LimboExit {
     let mut spawn_sent = false;
 
     for handler in handlers {
@@ -102,7 +102,7 @@ pub(crate) async fn run_handler_chain(
                     .await
                     {
                         tracing::warn!(error = %e, "failed to send limbo spawn sequence");
-                        return LimboChainResult::Kick(Component::text("Internal error"));
+                        return LimboExit::Kick(Component::text("Internal error"));
                     }
                     spawn_sent = true;
                 }
@@ -115,13 +115,13 @@ pub(crate) async fn run_handler_chain(
         }
     }
 
-    LimboChainResult::Completed
+    LimboExit::Completed
 }
 
 #[derive(Debug)]
 enum HandlerAction {
     Continue,
-    Exit(LimboChainResult),
+    Exit(LimboExit),
     Hold(Option<HoldTimeout>),
 }
 
@@ -131,17 +131,17 @@ struct HoldTimeout {
     on_timeout: LimboOutcome,
 }
 
-fn unavailable() -> LimboChainResult {
-    LimboChainResult::Kick(Component::text(HANDLER_UNAVAILABLE))
+fn unavailable() -> LimboExit {
+    LimboExit::Kick(Component::text(HANDLER_UNAVAILABLE))
 }
 
 fn process_handler_result(result: HandlerResult) -> HandlerAction {
     match result {
         HandlerResult::Accept => HandlerAction::Continue,
-        HandlerResult::Deny(reason) => HandlerAction::Exit(LimboChainResult::Kick(reason)),
-        HandlerResult::Redirect(server) => HandlerAction::Exit(LimboChainResult::Switch(server)),
+        HandlerResult::Deny(reason) => HandlerAction::Exit(LimboExit::Kick(reason)),
+        HandlerResult::Redirect(server) => HandlerAction::Exit(LimboExit::Switch(server)),
         HandlerResult::SendToLimbo(handlers) => {
-            HandlerAction::Exit(LimboChainResult::SendToLimbo(handlers))
+            HandlerAction::Exit(LimboExit::SendToLimbo(handlers))
         }
         HandlerResult::Hold => HandlerAction::Hold(None),
         HandlerResult::HoldWithTimeout { after, on_timeout } => {
@@ -154,14 +154,12 @@ fn process_handler_result(result: HandlerResult) -> HandlerAction {
     }
 }
 
-fn process_outcome(outcome: LimboOutcome) -> ControlFlow<LimboChainResult> {
+fn process_outcome(outcome: LimboOutcome) -> ControlFlow<LimboExit> {
     match outcome {
         LimboOutcome::Accept => ControlFlow::Continue(()),
-        LimboOutcome::Deny(reason) => ControlFlow::Break(LimboChainResult::Kick(reason)),
-        LimboOutcome::Redirect(server) => ControlFlow::Break(LimboChainResult::Switch(server)),
-        LimboOutcome::SendToLimbo(handlers) => {
-            ControlFlow::Break(LimboChainResult::SendToLimbo(handlers))
-        }
+        LimboOutcome::Deny(reason) => ControlFlow::Break(LimboExit::Kick(reason)),
+        LimboOutcome::Redirect(server) => ControlFlow::Break(LimboExit::Switch(server)),
+        LimboOutcome::SendToLimbo(handlers) => ControlFlow::Break(LimboExit::SendToLimbo(handlers)),
         unknown => {
             tracing::warn!(outcome = ?unknown, "unknown limbo outcome; denying");
             ControlFlow::Break(unavailable())
@@ -169,7 +167,7 @@ fn process_outcome(outcome: LimboOutcome) -> ControlFlow<LimboChainResult> {
     }
 }
 
-async fn guarded<F: Future>(
+pub(super) async fn guarded<F: Future>(
     handler: &dyn LimboHandler,
     call: &'static str,
     start: impl FnOnce() -> F,
@@ -201,10 +199,10 @@ fn cancelled(
     client: &mut ClientBridge,
     commands: &mut CommandInbox,
     registry: &PacketRegistry,
-) -> LimboChainResult {
+) -> LimboExit {
     match commands.take_kick(client, registry, true) {
-        Some(reason) => LimboChainResult::Kick(reason),
-        None => LimboChainResult::Shutdown,
+        Some(reason) => LimboExit::Kick(reason),
+        None => LimboExit::Shutdown,
     }
 }
 
@@ -214,7 +212,7 @@ async fn wait_for_hold(
     limbo: &mut Limbo,
     handler: &dyn LimboHandler,
     hold: Hold,
-) -> ControlFlow<LimboChainResult> {
+) -> ControlFlow<LimboExit> {
     let SessionIo {
         client, commands, ..
     } = io;
@@ -305,18 +303,18 @@ async fn wait_for_hold(
                             }
                         }
                     }
-                    Ok(None) => return ControlFlow::Break(LimboChainResult::ClientDisconnected),
+                    Ok(None) => return ControlFlow::Break(LimboExit::ClientDisconnected),
                     Err(e) if e.is_expected_disconnect() => {
-                        return ControlFlow::Break(LimboChainResult::ClientDisconnected);
+                        return ControlFlow::Break(LimboExit::ClientDisconnected);
                     }
-                    Err(e) => return ControlFlow::Break(LimboChainResult::Error(e)),
+                    Err(e) => return ControlFlow::Break(LimboExit::Error(e)),
                 }
             }
 
             frame = core.outgoing_rx.recv() => {
                 if let Some(frame) = frame
                     && client.write_frame(&frame).await.is_err() {
-                        return ControlFlow::Break(LimboChainResult::ClientDisconnected);
+                        return ControlFlow::Break(LimboExit::ClientDisconnected);
                     }
             }
 
@@ -324,12 +322,12 @@ async fn wait_for_hold(
                 match keepalive.tick(core.protocol_version, &core.packet_registry) {
                     Ok(KeepAliveTick::Send(frame)) => {
                         if client.write_frame(&frame).await.is_err() {
-                            return ControlFlow::Break(LimboChainResult::ClientDisconnected);
+                            return ControlFlow::Break(LimboExit::ClientDisconnected);
                         }
                     }
                     Ok(KeepAliveTick::Idle) => {}
                     Ok(KeepAliveTick::Timeout) | Err(_) => {
-                        return ControlFlow::Break(LimboChainResult::Timeout);
+                        return ControlFlow::Break(LimboExit::Timeout);
                     }
                 }
             }
@@ -350,7 +348,7 @@ async fn wait_for_hold(
     }
 }
 
-fn completion_lost() -> ControlFlow<LimboChainResult> {
+fn completion_lost() -> ControlFlow<LimboExit> {
     tracing::warn!("limbo hold completion sender dropped without a result; denying");
     ControlFlow::Break(unavailable())
 }
@@ -430,21 +428,21 @@ async fn settle_commands(
     commands: &mut CommandInbox,
     registry: &PacketRegistry,
     mut outcome: CommandOutcome,
-) -> Option<LimboChainResult> {
+) -> Option<LimboExit> {
     let exit = loop {
         match outcome {
             CommandOutcome::Switch(target, _) if target.as_str() == LIMBO_SWITCH_TARGET => {
                 tracing::debug!("ignoring a request to enter limbo from limbo");
                 outcome = commands.drain(client, registry, true);
             }
-            CommandOutcome::Switch(target, _) => break Some(LimboChainResult::Switch(target)),
-            CommandOutcome::Kick(reason) => break Some(LimboChainResult::Kick(reason)),
+            CommandOutcome::Switch(target, _) => break Some(LimboExit::Switch(target)),
+            CommandOutcome::Kick(reason) => break Some(LimboExit::Kick(reason)),
             CommandOutcome::Continue => break None,
         }
     };
     commands.deliver_messages(client, None, registry, true);
     if client.flush().await.is_err() {
-        return Some(LimboChainResult::ClientDisconnected);
+        return Some(LimboExit::ClientDisconnected);
     }
     exit
 }
@@ -472,7 +470,7 @@ mod tests {
     use super::super::virtual_session::VirtualSessionCore;
     use super::*;
     use crate::player::PlayerSession;
-    use crate::services::ProxyServices;
+    use crate::server::ProxyServices;
     use crate::session::context::test_helpers::{test_connector, test_context, test_io};
 
     #[test]
@@ -487,7 +485,7 @@ mod tests {
     fn test_process_handler_result_deny() {
         let reason = Component::text("go away");
         match process_handler_result(HandlerResult::Deny(reason)) {
-            HandlerAction::Exit(LimboChainResult::Kick(r)) => {
+            HandlerAction::Exit(LimboExit::Kick(r)) => {
                 assert_eq!(r, Component::text("go away"));
             }
             other => panic!("expected Exit(Kick), got {other:?}"),
@@ -498,7 +496,7 @@ mod tests {
     fn test_process_handler_result_redirect() {
         let server = ServerId::new("lobby");
         match process_handler_result(HandlerResult::Redirect(server)) {
-            HandlerAction::Exit(LimboChainResult::Switch(s)) => {
+            HandlerAction::Exit(LimboExit::Switch(s)) => {
                 assert_eq!(s, ServerId::new("lobby"));
             }
             other => panic!("expected Exit(Switch), got {other:?}"),
@@ -517,7 +515,7 @@ mod tests {
     fn test_process_handler_result_send_to_limbo() {
         let names = vec!["auth".to_string()];
         match process_handler_result(HandlerResult::SendToLimbo(names)) {
-            HandlerAction::Exit(LimboChainResult::SendToLimbo(n)) => {
+            HandlerAction::Exit(LimboExit::SendToLimbo(n)) => {
                 assert_eq!(n, vec!["auth".to_string()]);
             }
             other => panic!("expected Exit(SendToLimbo), got {other:?}"),
@@ -583,7 +581,7 @@ mod tests {
         });
     }
 
-    async fn run(handlers: Vec<Arc<dyn LimboHandler>>) -> LimboChainResult {
+    async fn run(handlers: Vec<Arc<dyn LimboHandler>>) -> LimboExit {
         let services = test_proxy_services();
         let connector = test_connector();
         let mut p = plumbing(&services, &connector).await;
@@ -608,7 +606,7 @@ mod tests {
         ];
 
         let result = run(handlers).await;
-        assert!(matches!(result, LimboChainResult::Completed));
+        assert!(matches!(result, LimboExit::Completed));
     }
 
     #[tokio::test]
@@ -627,7 +625,7 @@ mod tests {
         ];
 
         let result = run(handlers).await;
-        assert!(matches!(result, LimboChainResult::Kick(_)));
+        assert!(matches!(result, LimboExit::Kick(_)));
         assert!(
             !second_called.load(Ordering::SeqCst),
             "second handler should not have been called"
@@ -649,7 +647,7 @@ mod tests {
 
         let result = run(handlers).await;
         match result {
-            LimboChainResult::Switch(s) => assert_eq!(s, ServerId::new("lobby")),
+            LimboExit::Switch(s) => assert_eq!(s, ServerId::new("lobby")),
             other => panic!("expected Switch, got {other:?}"),
         }
     }
@@ -664,7 +662,7 @@ mod tests {
         complete_later(&p.limbo.session, 50, LimboOutcome::Accept);
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
-        assert!(matches!(result, LimboChainResult::Completed));
+        assert!(matches!(result, LimboExit::Completed));
     }
 
     #[tokio::test]
@@ -682,7 +680,7 @@ mod tests {
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         match result {
-            LimboChainResult::Switch(s) => assert_eq!(s, ServerId::new("survival")),
+            LimboExit::Switch(s) => assert_eq!(s, ServerId::new("survival")),
             other => panic!("expected Switch, got {other:?}"),
         }
     }
@@ -701,7 +699,7 @@ mod tests {
         });
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
-        assert!(matches!(result, LimboChainResult::Shutdown));
+        assert!(matches!(result, LimboExit::Shutdown));
     }
 
     #[tokio::test]
@@ -722,13 +720,13 @@ mod tests {
         });
 
         let result = run_handler_chain(&ctx, &mut io, &mut limbo, &handlers, true).await;
-        assert!(matches!(result, LimboChainResult::ClientDisconnected));
+        assert!(matches!(result, LimboExit::ClientDisconnected));
     }
 
     #[tokio::test]
     async fn test_chain_empty_handlers() {
         let result = run(Vec::new()).await;
-        assert!(matches!(result, LimboChainResult::Completed));
+        assert!(matches!(result, LimboExit::Completed));
     }
 
     #[tokio::test]
@@ -742,7 +740,7 @@ mod tests {
         })];
 
         let result = run(handlers).await;
-        assert!(matches!(result, LimboChainResult::Kick(_)));
+        assert!(matches!(result, LimboExit::Kick(_)));
     }
 
     #[tokio::test]
@@ -761,7 +759,7 @@ mod tests {
         complete_later(&p.limbo.session, 50, LimboOutcome::Accept);
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
-        assert!(matches!(result, LimboChainResult::Completed));
+        assert!(matches!(result, LimboExit::Completed));
     }
 
     /// Completes the session with `completion` during `on_player_enter`, then
@@ -806,7 +804,7 @@ mod tests {
 
         let result = run_handler_chain(&p.ctx, &mut p.io, &mut p.limbo, &handlers, true).await;
         assert!(
-            matches!(result, LimboChainResult::Completed),
+            matches!(result, LimboExit::Completed),
             "handler B must stay held until its own completion, got {result:?}"
         );
     }
@@ -847,8 +845,8 @@ mod tests {
         );
     }
 
-    fn is_unavailable(result: &LimboChainResult) -> bool {
-        matches!(result, LimboChainResult::Kick(reason) if reason.to_plain() == HANDLER_UNAVAILABLE)
+    fn is_unavailable(result: &LimboExit) -> bool {
+        matches!(result, LimboExit::Kick(reason) if reason.to_plain() == HANDLER_UNAVAILABLE)
     }
 
     struct PanickingEnter;
@@ -1045,10 +1043,7 @@ mod tests {
         )
         .await
         .expect("the chain must not wait on a hung handler once the session ends");
-        assert!(
-            matches!(result, LimboChainResult::Shutdown),
-            "got {result:?}"
-        );
+        assert!(matches!(result, LimboExit::Shutdown), "got {result:?}");
     }
 
     #[tokio::test(start_paused = true)]
@@ -1115,10 +1110,7 @@ mod tests {
         )
         .await
         .expect("the busy command handler must not stall the hold loop");
-        assert!(
-            matches!(result, LimboChainResult::Shutdown),
-            "got {result:?}"
-        );
+        assert!(matches!(result, LimboExit::Shutdown), "got {result:?}");
         assert!(client.await.unwrap());
     }
 }

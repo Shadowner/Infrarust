@@ -21,7 +21,6 @@ use infrarust_api::types::{ServerAddress, ServerId};
 use infrarust_plugin_admin_api::config::{ApiConfig, RateLimitConfig};
 use infrarust_plugin_admin_api::drain_store::DrainStore;
 use infrarust_plugin_admin_api::health_cache::HealthCache;
-use infrarust_plugin_admin_api::health_checker::HealthChecker;
 use infrarust_plugin_admin_api::log_layer::LogBroadcast;
 use infrarust_plugin_admin_api::rate_limit::RateLimiter;
 use infrarust_plugin_admin_api::router::build_router;
@@ -262,8 +261,7 @@ impl TestApiBuilder {
             logs: self.logs,
             server_dir: Arc::new(ServerDir::open(dir.path()).unwrap()),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
-            health_cache: Arc::new(HealthCache::new()),
-            health_checker: Arc::new(HealthChecker::new()),
+            health_cache: HealthCache::new(),
             recent_events: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
             drain_store: Arc::new(DrainStore::open(dir.path())),
         });

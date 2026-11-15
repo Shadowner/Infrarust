@@ -44,7 +44,7 @@ use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
 use crate::util::sync::{lock, read, write};
 
-use crate::session::connection_registry::{Seat, ServerRoster};
+use crate::registry::{Seat, ServerRoster};
 use crate::session::presentation::Presentation;
 use client_state::ClientState;
 use command_queue::CommandQueue;
@@ -64,28 +64,41 @@ const SELF_WAIT_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
 pub const SHUTDOWN_REASON: &str = "Proxy is shutting down";
 
-/// Commands sent to the proxy loop for a specific player.
+pub(crate) struct PendingConnect {
+    pub(crate) target: ServerId,
+    pub(crate) reply: oneshot::Sender<ConnectionResult>,
+}
+
 #[derive(Debug)]
 pub enum PlayerCommand {
-    /// Send a system chat message to the player.
-    SendMessage(Component),
-    /// Display a title on the player's screen.
-    SendTitle(Box<TitleData>),
-    /// Display a message in the action bar.
-    SendActionBar(Component),
-    /// Send a raw packet to the player's client.
-    SendPacket(RawPacket),
-    /// Kick the player with a reason.
+    Packet(ClientPacket),
     Kick(Component),
-    /// Switch the player to a different backend server.
     SwitchServer(ServerId, ConnectCause),
     PluginMessage(OutgoingMessage),
-    HeaderFooter(Box<(Component, Component)>),
-    ClearTitle {
-        reset: bool,
-    },
-    BossBar(Uuid, BossBarCommand),
     Client(ClientCommand),
+}
+
+#[derive(Debug)]
+pub enum ClientPacket {
+    Message(Component),
+    Title(Box<TitleData>),
+    ActionBar(Component),
+    Raw(RawPacket),
+    HeaderFooter(Box<HeaderFooter>),
+    ClearTitle { reset: bool },
+    BossBar(Uuid, BossBarCommand),
+}
+
+impl From<ClientPacket> for PlayerCommand {
+    fn from(packet: ClientPacket) -> Self {
+        Self::Packet(packet)
+    }
+}
+
+#[derive(Debug)]
+pub struct HeaderFooter {
+    pub header: Component,
+    pub footer: Component,
 }
 
 #[derive(Debug)]
@@ -198,7 +211,7 @@ pub struct PlayerSession {
     presentation: Arc<Presentation>,
     events: Option<Arc<EventBusImpl>>,
     shared: Weak<Self>,
-    connects: Mutex<Vec<(ServerId, oneshot::Sender<ConnectionResult>)>>,
+    connects: Mutex<Vec<PendingConnect>>,
     typed_commands: CommandQueue,
     self_waits: Mutex<WarnWindow>,
 }
@@ -391,12 +404,12 @@ impl PlayerSession {
             let mut connects = lock(&self.connects);
             let (settled, waiting) = std::mem::take(&mut *connects)
                 .into_iter()
-                .partition(|(server, _)| server == target);
+                .partition(|pending| pending.target == *target);
             *connects = waiting;
             settled
         };
-        for (_, reply) in settled {
-            let _ = reply.send(result.clone());
+        for pending in settled {
+            let _ = pending.reply.send(result.clone());
         }
     }
 

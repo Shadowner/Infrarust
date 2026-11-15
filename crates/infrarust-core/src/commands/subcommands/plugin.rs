@@ -3,7 +3,7 @@ use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 use infrarust_api::plugin::{PluginHealth, PluginRuntimeStatus};
 
-use crate::commands::{CommandServices, SubcommandAlias, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SubcommandAlias, SubcommandHandler};
 use crate::services::command_manager::DispatchOutcome;
 
 pub(crate) struct PluginSubcommand;
@@ -31,6 +31,19 @@ impl SubcommandHandler for PluginSubcommand {
 
     fn usage(&self) -> &str {
         "/ir plugin <plugin_id> <command> [args...]"
+    }
+
+    fn runs_bare(&self) -> bool {
+        false
+    }
+
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const {
+            &[
+                ArgSpec::word("plugin_id").needs_more(),
+                ArgSpec::phrase("command").ask_server(),
+            ]
+        }
     }
 
     fn execute<'a>(

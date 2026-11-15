@@ -8,8 +8,8 @@ use infrarust_api::types::Component;
 
 use super::PlayerSession;
 use crate::event_bus::EventBusImpl;
-use crate::services::ProxyServices;
-use crate::session::connection_registry::SessionGuard;
+use crate::registry::SessionGuard;
+use crate::server::ProxyServices;
 
 pub(crate) const REPLACED_REASON: &str = "You logged in from another location";
 
@@ -334,7 +334,7 @@ mod tests {
         assert_eq!(
             services
                 .connection_registry
-                .find_by_uuid(&offline_uuid("Steve"))
+                .get(&offline_uuid("Steve"))
                 .map(|p| p.id()),
             Some(PlayerId::new(2))
         );

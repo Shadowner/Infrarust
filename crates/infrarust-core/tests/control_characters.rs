@@ -9,7 +9,7 @@ use infrarust_core::console::output::{
     Block, CommandOutput, Failure, Hint, Line, OutputLine, Span, Table,
 };
 use infrarust_core::console::render::Renderer;
-use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_core::util::text::escape_control;
 use infrarust_protocol::ProtocolVersion;
 use infrarust_protocol::legacy::parse_legacy_handshake;

@@ -4,11 +4,11 @@ use infrarust_api::command::{CommandInfo, CommandManager, CommandRegistration, C
 
 use super::Gate;
 use crate::actor::CallKind;
+use crate::adapters::WasmCommandHandler;
 use crate::bindings::infrarust::plugin::command_manager as wcm;
 use crate::host_error::{HostResult, command_error};
-use crate::proxies::WasmCommandHandler;
 use crate::registrations::Bound;
-use crate::store_state::{PluginStoreState, Quota};
+use crate::store_state::{PluginStoreState, Quota, Refused};
 
 fn registration_to_wit(registration: &CommandRegistration) -> wcm::CommandRegistration {
     wcm::CommandRegistration {
@@ -137,14 +137,16 @@ impl PluginStoreState {
         let binding =
             match self
                 .registrations()
-                .bind_command(&name, self.generation(), handler, limit)
+                .commands()
+                .bind(&name, self.generation(), handler, limit)
             {
                 Bound::Fresh(binding) => binding,
                 Bound::Full => return Err(self.quota_exceeded(Quota::Commands)),
                 Bound::Rebound => {
                     return Ok(self
                         .registrations()
-                        .command_registration(&name)
+                        .commands()
+                        .registration(&name)
                         .map_or_else(
                             || wcm::CommandRegistration {
                                 name: name.clone(),
@@ -164,16 +166,15 @@ impl PluginStoreState {
                         "aliases {:?} are taken or invalid and were skipped",
                         registration.rejected_aliases
                     );
-                    self.report_command_refusal(&name, &reason);
+                    self.report_refusal(Refused::Command, &name, &reason);
                 }
                 let answer = registration_to_wit(&registration);
-                self.registrations()
-                    .record_command_registration(&name, registration);
+                self.registrations().commands().record(&name, registration);
                 Ok(answer)
             }
             Err(error) => {
-                self.registrations().unbind_command(&name);
-                self.report_command_refusal(&name, &format!("refused, {error}"));
+                self.registrations().commands().unbind(&name);
+                self.report_refusal(Refused::Command, &name, &format!("refused, {error}"));
                 Err(command_error(&error))
             }
         }
@@ -183,16 +184,20 @@ impl PluginStoreState {
         self.check(gate!("command-manager", "unregister"))?;
         let key = command_key(name);
         let Ok(ctx) = self.services() else {
-            self.registrations().unbind_command(&key);
+            self.registrations().commands().unbind(&key);
             return Ok(());
         };
         match ctx.command_manager().unregister(name) {
             Ok(()) => {
-                self.registrations().unbind_command(&key);
+                self.registrations().commands().unbind(&key);
                 Ok(())
             }
             Err(error) => {
-                self.report_command_refusal(name, &format!("unregister refused, {error}"));
+                self.report_refusal(
+                    Refused::Command,
+                    name,
+                    &format!("unregister refused, {error}"),
+                );
                 Err(command_error(&error))
             }
         }

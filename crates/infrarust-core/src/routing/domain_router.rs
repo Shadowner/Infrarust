@@ -1,9 +1,3 @@
-//! `DomainRouter` — thread-safe, incrementally updatable domain router.
-//!
-//! Replaces the immutable `DomainIndex` + `ArcSwap` pattern with
-//! `DashMap` for lock-free concurrent reads and `RwLock` for the
-//! (rarely-written) wildcard pattern list.
-
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
@@ -14,7 +8,7 @@ use wildmatch::WildMatch;
 use infrarust_config::ServerConfig;
 
 use crate::loadbalancer::{LoadBalancer, build_load_balancer};
-use crate::provider::{ProviderId, ProviderTrust};
+use crate::provider::{ProviderId, ProviderSource, ProviderTrust};
 use crate::util::sync::{lock, read, write};
 
 /// Entry stored per provider in the router.
@@ -98,13 +92,14 @@ pub struct RoutingChanges {
     pub left: Vec<(ProviderId, Arc<ServerConfig>)>,
 }
 
-/// Pre-compiled wildcard pattern entry.
+pub struct Route {
+    pub provider_id: ProviderId,
+    pub config: Arc<ServerConfig>,
+    pub load_balancer: Arc<dyn LoadBalancer>,
+}
+
 struct WildcardEntry {
-    /// The original pattern string (for debug / rebuild).
-    _raw: String,
-    /// Compiled matcher.
     matcher: WildMatch,
-    /// The provider that owns this pattern.
     provider_id: ProviderId,
 }
 
@@ -183,12 +178,9 @@ impl DomainRouter {
         self.publish(&registrations, None)
     }
 
-    /// Removes all configurations from a given provider type.
-    pub fn remove_all_by_provider_type(&self, provider_type: &str) -> RoutingChanges {
+    pub fn remove_all_from(&self, source: &ProviderSource) -> RoutingChanges {
         let mut registrations = lock(&self.registrations);
-        registrations
-            .entries
-            .retain(|id, _| id.provider_type != provider_type);
+        registrations.entries.retain(|id, _| id.source != *source);
         self.publish(&registrations, None)
     }
 
@@ -219,7 +211,6 @@ impl DomainRouter {
             for domain in &entry.domains {
                 if is_wildcard(domain) {
                     wildcards.push(WildcardEntry {
-                        _raw: domain.clone(),
                         matcher: WildMatch::new(domain),
                         provider_id: (*id).clone(),
                     });
@@ -302,13 +293,11 @@ impl DomainRouter {
     /// Exact matches take priority over wildcard matches.
     /// FML markers and trailing dots are stripped before resolution.
     pub fn resolve(&self, domain: &str) -> Option<(ProviderId, Arc<ServerConfig>)> {
-        self.resolve_route(domain).map(|(id, cfg, _lb)| (id, cfg))
+        self.resolve_route(domain)
+            .map(|route| (route.provider_id, route.config))
     }
 
-    pub fn resolve_route(
-        &self,
-        domain: &str,
-    ) -> Option<(ProviderId, Arc<ServerConfig>, Arc<dyn LoadBalancer>)> {
+    pub fn resolve_route(&self, domain: &str) -> Option<Route> {
         let stripped = normalize_handshake(domain);
         let normalized = stripped.to_lowercase();
 
@@ -316,11 +305,11 @@ impl DomainRouter {
         if let Some(provider_id) = self.exact_domains.get(&normalized)
             && let Some(entry) = self.configs.get(provider_id.value())
         {
-            return Some((
-                provider_id.value().clone(),
-                Arc::clone(&entry.config),
-                Arc::clone(&entry.load_balancer),
-            ));
+            return Some(Route {
+                provider_id: provider_id.value().clone(),
+                config: Arc::clone(&entry.config),
+                load_balancer: Arc::clone(&entry.load_balancer),
+            });
         }
 
         // 2. Wildcard match (sequential scan)
@@ -330,11 +319,11 @@ impl DomainRouter {
                 if wc.matcher.matches(&normalized)
                     && let Some(entry) = self.configs.get(&wc.provider_id)
                 {
-                    return Some((
-                        wc.provider_id.clone(),
-                        Arc::clone(&entry.config),
-                        Arc::clone(&entry.load_balancer),
-                    ));
+                    return Some(Route {
+                        provider_id: wc.provider_id.clone(),
+                        config: Arc::clone(&entry.config),
+                        load_balancer: Arc::clone(&entry.load_balancer),
+                    });
                 }
             }
         }
@@ -381,7 +370,7 @@ impl DomainRouter {
     pub fn count_by_provider(&self) -> HashMap<String, usize> {
         let mut counts = HashMap::new();
         for entry in &self.configs {
-            *counts.entry(entry.key().provider_type.clone()).or_insert(0) += 1;
+            *counts.entry(entry.key().source.to_string()).or_insert(0) += 1;
         }
         counts
     }

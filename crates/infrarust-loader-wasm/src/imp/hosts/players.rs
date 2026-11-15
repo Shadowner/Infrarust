@@ -10,6 +10,7 @@ use infrarust_api::player::{
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::{PlayerId, ServerId};
 use tokio::time::timeout;
+use tracing::instrument::WithSubscriber;
 
 use super::{Gate, parse_text};
 use crate::bindings::infrarust::plugin::players as wp;
@@ -456,13 +457,16 @@ impl PluginStoreState {
         let reason = parse_text(reason)?;
         let plugin_id = self.plugin_id().to_owned();
         let limit = self.host_call_timeout();
-        tokio::spawn(async move {
-            let player_id = player.id().as_u64();
-            if timeout(limit, player.disconnect(reason)).await.is_err() {
-                tracing::warn!(plugin = %plugin_id, player = player_id,
-                    "player disconnect requested by plugin timed out");
+        self.run_disconnect(
+            async move {
+                let player_id = player.id().as_u64();
+                if timeout(limit, player.disconnect(reason)).await.is_err() {
+                    tracing::warn!(plugin = %plugin_id, player = player_id,
+                        "player disconnect requested by plugin timed out");
+                }
             }
-        });
+            .with_current_subscriber(),
+        );
         Ok(())
     }
 

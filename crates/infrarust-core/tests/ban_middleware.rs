@@ -8,11 +8,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::services::ban_service::BanRequest;
 use infrarust_core::ban::FileBanStorage;
 use infrarust_core::ban::manager::{BAN_CHECK_UNAVAILABLE, BanManager};
-use infrarust_core::ban::storage::BanStorage;
 use infrarust_core::ban::types::{BanEntry, BanSource, BanTarget};
+use infrarust_core::error::CoreError;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::middleware::ban_check::BanCheckMiddleware;
 use infrarust_core::middleware::ban_ip_check::BanIpCheckMiddleware;
@@ -24,7 +25,7 @@ use infrarust_core::pipeline::types::{
 use infrarust_core::registry::ConnectionRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-fn builtin(storage: Arc<dyn BanStorage>) -> Arc<BanManager> {
+fn builtin(storage: Arc<FileBanStorage>) -> Arc<BanManager> {
     Arc::new(BanManager::builtin(
         storage,
         Arc::new(ConnectionRegistry::new()),
@@ -48,12 +49,12 @@ async fn loopback(ip: IpAddr) -> ConnectionContext {
 
     let peer: SocketAddr = SocketAddr::new(ip, 12345);
     let local: SocketAddr = "0.0.0.0:25565".parse().unwrap();
-    ConnectionContext::new_for_test(stream, peer, ip, local)
+    ConnectionContext::new_for_test(stream, peer, local)
 }
 
 async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContext {
     let mut ctx = loopback(ip).await;
-    ctx.extensions.insert(LoginData {
+    ctx.login = Some(LoginData {
         username: username.to_string(),
         player_uuid: None,
         profile_key: None,
@@ -65,7 +66,7 @@ async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContex
 
 async fn make_context_with_intent(ip: IpAddr, intent: ConnectionIntent) -> ConnectionContext {
     let mut ctx = loopback(ip).await;
-    ctx.extensions.insert(HandshakeData {
+    ctx.handshake = Some(HandshakeData {
         domain: "lobby.test".to_string(),
         raw_host: "lobby.test".to_string(),
         port: 25565,
@@ -85,7 +86,7 @@ async fn ban(manager: &BanManager, target: BanTarget, reason: &str) {
 
 fn kick_text(result: MiddlewareResult) -> String {
     match result {
-        MiddlewareResult::Kick(reason) => reason.to_plain(),
+        MiddlewareResult::Kick { message, .. } => message.to_plain(),
         other => panic!("expected a kick, got {other:?}"),
     }
 }
@@ -109,7 +110,7 @@ async fn test_banned_username_rejected() {
 
     let mut ctx = make_context_with_login(ip, "Cheater").await;
     let result = middleware.process(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::Kick(_)));
+    assert!(matches!(result, MiddlewareResult::Kick { .. }));
 }
 
 #[tokio::test]
@@ -164,13 +165,16 @@ async fn test_reject_message_contains_reason() {
 }
 
 #[tokio::test]
-async fn test_no_login_data_continues() {
+async fn a_login_without_login_data_is_refused() {
     let (middleware, _manager, _dir) = setup_with_manager().await;
     let ip: IpAddr = "10.0.0.1".parse().unwrap();
 
     let mut ctx = loopback(ip).await;
-    let result = middleware.process(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::Continue));
+    let result = middleware.process(&mut ctx).await;
+    assert!(matches!(
+        result,
+        Err(CoreError::MissingExtension("LoginData"))
+    ));
 }
 
 #[tokio::test]
@@ -215,7 +219,7 @@ async fn a_banned_address_gets_no_status_answer_but_may_try_to_log_in() {
     let mut status = make_context_with_intent(ip, ConnectionIntent::Status).await;
     assert!(matches!(
         gate.process(&mut status).await.unwrap(),
-        MiddlewareResult::ShortCircuit
+        MiddlewareResult::Drop(RejectReason::IpBanned)
     ));
 
     let mut login = make_context_with_intent(ip, ConnectionIntent::Login).await;

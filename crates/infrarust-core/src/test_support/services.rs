@@ -13,7 +13,7 @@ use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::plugin::PluginRegistryImpl;
 use crate::plugin::manager::PluginServices;
 use crate::provider::plugin_adapter::PluginProviderActivator;
-use crate::routing::DomainRouter;
+use crate::provider::registry::PluginRoutes;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::NoopServerManager;
@@ -26,7 +26,6 @@ impl PluginServices {
 
     #[must_use]
     pub fn for_tests_with(event_bus: Arc<EventBusImpl>) -> Self {
-        let (provider_events, _) = tokio::sync::mpsc::channel(1);
         Self {
             event_bus,
             player_registry: Arc::new(MockPlayerRegistry::new()),
@@ -41,10 +40,8 @@ impl PluginServices {
             transport_filter_registry: Arc::new(TransportFilterRegistryImpl::new()),
             connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
             provider_activator: Arc::new(PluginProviderActivator::new(
-                provider_events,
-                Arc::new(DomainRouter::new()),
+                PluginRoutes::channel().0,
                 CancellationToken::new(),
-                infrarust_config::ForwardingMode::None,
             )),
             proxy_shutdown: CancellationToken::new(),
             proxy_info: ProxyInfo::default(),

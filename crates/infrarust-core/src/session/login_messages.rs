@@ -19,7 +19,7 @@ use infrarust_protocol::version::ProtocolVersion;
 
 use crate::forwarding::velocity::is_velocity_request;
 use crate::player::PlayerSession;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::context::SessionContext;
 
 pub(crate) enum Routed {
@@ -37,7 +37,7 @@ pub(crate) struct LoginMessages<'a> {
     session: &'a Arc<PlayerSession>,
     server: ServerId,
     version: ProtocolVersion,
-    relayed: HashMap<i32, String>,
+    awaiting_client: HashMap<i32, Option<String>>,
 }
 
 impl<'a> LoginMessages<'a> {
@@ -47,7 +47,7 @@ impl<'a> LoginMessages<'a> {
             session: &ctx.session,
             server,
             version: ctx.version(),
-            relayed: HashMap::new(),
+            awaiting_client: HashMap::new(),
         }
     }
 
@@ -57,6 +57,7 @@ impl<'a> LoginMessages<'a> {
         request: &CLoginPluginRequest,
     ) -> Routed {
         let Some(watch) = self.watch(request) else {
+            self.awaiting_client.insert(request.message_id.0, None);
             return Routed::Client(None);
         };
         let result = if watch.requests {
@@ -78,10 +79,10 @@ impl<'a> LoginMessages<'a> {
             }
             _ => None,
         };
-        if watch.responses {
-            self.relayed
-                .insert(request.message_id.0, request.channel.clone());
-        }
+        self.awaiting_client.insert(
+            request.message_id.0,
+            watch.responses.then(|| request.channel.clone()),
+        );
         Routed::Client(replaced)
     }
 
@@ -103,12 +104,39 @@ impl<'a> LoginMessages<'a> {
         response_to(request.message_id, None)
     }
 
-    pub(crate) async fn response(&mut self, frame: &PacketFrame) -> Option<PacketFrame> {
-        if self.relayed.is_empty() {
+    pub(crate) fn awaits_client(&self) -> bool {
+        !self.awaiting_client.is_empty()
+    }
+
+    pub(crate) fn unanswered(&self) -> usize {
+        self.awaiting_client.len()
+    }
+
+    pub(crate) async fn client_answer(&mut self, frame: PacketFrame) -> Option<PacketFrame> {
+        let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
+            tracing::debug!("dropping a malformed login plugin response from the client");
             return None;
-        }
-        let message_id = frame.payload.as_ref().read_var_int().ok()?.0;
-        let channel = self.relayed.remove(&message_id)?;
+        };
+        let Some(watched) = self.awaiting_client.remove(&message_id.0) else {
+            tracing::debug!(
+                message_id = message_id.0,
+                "dropping a login plugin response the backend did not ask for"
+            );
+            return None;
+        };
+        let replaced = match watched {
+            Some(channel) => self.replaced_answer(&frame, message_id.0, channel).await,
+            None => None,
+        };
+        Some(replaced.unwrap_or(frame))
+    }
+
+    async fn replaced_answer(
+        &self,
+        frame: &PacketFrame,
+        message_id: i32,
+        channel: String,
+    ) -> Option<PacketFrame> {
         let response = match SLoginPluginResponse::decode(&mut frame.payload.as_ref(), self.version)
         {
             Ok(response) => response,

@@ -182,7 +182,6 @@ impl LimboHandler for ServerWakeHandler {
             let entry = WaitingEntry {
                 target_server: target.clone(),
                 session_handle: handle.clone(),
-                started_waiting: tokio::time::Instant::now(),
                 tick: std::sync::atomic::AtomicU32::new(0),
             };
             self.state.waiting.insert(session.player_id(), entry);

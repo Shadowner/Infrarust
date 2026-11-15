@@ -4,7 +4,6 @@ use crate::packets::{Packet, PacketMapping};
 use crate::version::{ConnectionState, Direction, ProtocolVersion};
 
 #[derive(Debug, Clone)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct CJoinGame {
     pub entity_id: i32,
     pub is_hardcore: bool,

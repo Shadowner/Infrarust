@@ -12,7 +12,8 @@ use super::service_registry::ServiceRegistryImpl;
 use crate::ban::BanManager;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
-use crate::plugin_messaging::PluginChannels;
+use crate::plugin_messaging::{PluginChannels, PluginMessaging};
+use crate::registry::ConnectionRegistry;
 use crate::util::sync::lock;
 
 /// Per-plugin permissions extracted from proxy configuration.
@@ -32,14 +33,52 @@ pub struct PluginContextFactoryImpl {
     permissions: Arc<PermissionService>,
     limbo_handlers: Arc<LimboHandlerRegistry>,
     service_registry: Arc<ServiceRegistryImpl>,
-    messaging: Option<(
-        Arc<crate::plugin_messaging::PluginMessaging>,
-        Arc<crate::session::connection_registry::ConnectionRegistry>,
-    )>,
+    messaging: Option<Messaging>,
+}
+
+struct Messaging {
+    channels: Arc<PluginMessaging>,
+    players: Arc<ConnectionRegistry>,
+}
+
+pub(crate) struct HostWiring {
+    pub(crate) ban_manager: Arc<BanManager>,
+    pub(crate) permissions: Arc<PermissionService>,
+    pub(crate) limbo_handlers: Arc<LimboHandlerRegistry>,
+    pub(crate) channels: Arc<PluginMessaging>,
+    pub(crate) players: Arc<ConnectionRegistry>,
 }
 
 impl PluginContextFactoryImpl {
-    pub fn new(
+    pub(crate) fn new(
+        services: PluginServices,
+        plugin_configs: HashMap<String, PluginPermissions>,
+        wiring: HostWiring,
+    ) -> Self {
+        let HostWiring {
+            ban_manager,
+            permissions,
+            limbo_handlers,
+            channels,
+            players,
+        } = wiring;
+        let service_registry = Arc::new(ServiceRegistryImpl::new(Some(Arc::clone(
+            &services.event_bus,
+        ))));
+        Self {
+            services,
+            plugin_configs,
+            contexts: Mutex::new(HashMap::new()),
+            ban_manager: Some(ban_manager),
+            permissions,
+            limbo_handlers,
+            service_registry,
+            messaging: Some(Messaging { channels, players }),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests(
         services: PluginServices,
         plugin_configs: HashMap<String, PluginPermissions>,
     ) -> Self {
@@ -58,32 +97,18 @@ impl PluginContextFactoryImpl {
         }
     }
 
-    #[must_use]
-    pub fn with_messaging(
-        mut self,
-        messaging: Arc<crate::plugin_messaging::PluginMessaging>,
-        players: Arc<crate::session::connection_registry::ConnectionRegistry>,
-    ) -> Self {
-        self.messaging = Some((messaging, players));
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_limbo_handlers(mut self, registry: Arc<LimboHandlerRegistry>) -> Self {
-        self.limbo_handlers = registry;
-        self
-    }
-
     pub fn service_registry(&self) -> &Arc<ServiceRegistryImpl> {
         &self.service_registry
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn with_ban_manager(mut self, bans: Arc<BanManager>) -> Self {
         self.ban_manager = Some(bans);
         self
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
         self.permissions = permissions;
@@ -92,8 +117,8 @@ impl PluginContextFactoryImpl {
 
     fn registries(&self, plugin_id: &str) -> HostRegistries {
         let channels = match &self.messaging {
-            Some((messaging, players)) => {
-                PluginChannels::new(plugin_id, messaging, Arc::clone(players))
+            Some(Messaging { channels, players }) => {
+                PluginChannels::new(plugin_id, channels, Arc::clone(players))
             }
             None => PluginChannels::default(),
         };

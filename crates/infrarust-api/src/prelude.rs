@@ -47,8 +47,9 @@ pub use crate::services::{
     BanService, BanSource, BanTarget, BanVerdict, ConfigService, ConfigWriteError, KeepaliveInfo,
     LbError, LoadBalancerService, LoginAttempt, LoginStage, PlayerRegistry, PluginInfo,
     PluginRegistry, ProviderKind, ProviderRejected, ProxyInfo, ProxyMode, RateLimitInfo, Scheduler,
-    ServerConfig, ServerManager, ServerSource, ServerState, ServiceHandle, ServiceRegistry,
-    ServiceRegistryExt, StatusCacheInfo, TaskHandle, UnbanRequest, UnknownDomainBehavior,
+    SchedulerExt, ServerConfig, ServerManager, ServerSource, ServerState, ServiceHandle,
+    ServiceRegistry, ServiceRegistryExt, StatusCacheInfo, TaskHandle, UnbanRequest,
+    UnknownDomainBehavior,
 };
 
 // Permissions and capabilities

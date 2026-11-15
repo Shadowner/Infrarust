@@ -12,7 +12,6 @@ use infrarust_api::services::ban_service::{
     BanPage, BanQuery, IpNet, LoginAttempt, LoginStage, epoch_serde, option_epoch_serde,
 };
 
-use crate::ban::storage::{BanStorage, StorageFuture};
 use crate::ban::types::{BanAction, BanAuditLogEntry, BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
 use crate::util::atomic_file::write_atomic;
@@ -309,140 +308,127 @@ fn audit(action: BanAction, entry: &BanEntry, source: &BanSource) -> BanAuditLog
     }
 }
 
-impl BanStorage for FileBanStorage {
-    fn load(&self) -> StorageFuture<'_, ()> {
-        Box::pin(async move {
-            match tokio::fs::read_to_string(&self.file_path).await {
-                Ok(contents) if contents.trim().is_empty() => {
-                    tracing::debug!(path = %self.file_path.display(), "ban file is empty, starting empty");
-                    Ok(())
-                }
-                Ok(contents) => {
-                    let mut data =
+impl FileBanStorage {
+    pub async fn load(&self) -> Result<(), CoreError> {
+        match tokio::fs::read_to_string(&self.file_path).await {
+            Ok(contents) if contents.trim().is_empty() => {
+                tracing::debug!(path = %self.file_path.display(), "ban file is empty, starting empty");
+                Ok(())
+            }
+            Ok(contents) => {
+                let mut data =
                         serde_json::from_str::<BanFileData>(&contents).map_err(|e| {
                             CoreError::Ban(format!(
                                 "ban file {} is corrupt: {e}. Repair it, or move it away to start with no bans",
                                 self.file_path.display()
                             ))
                         })?;
-                    let audit_log = std::mem::take(&mut data.audit_log);
-                    self.populate(data);
-                    *self.audit_log.write().await = audit_log;
-                    tracing::info!(
-                        path = %self.file_path.display(),
-                        bans = self.read().by_id.len(),
-                        "loaded ban data"
-                    );
-                    Ok(())
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    tracing::debug!(path = %self.file_path.display(), "ban file not found, starting empty");
-                    Ok(())
-                }
-                Err(e) => Err(CoreError::Io(e)),
+                let audit_log = std::mem::take(&mut data.audit_log);
+                self.populate(data);
+                *self.audit_log.write().await = audit_log;
+                tracing::info!(
+                    path = %self.file_path.display(),
+                    bans = self.read().by_id.len(),
+                    "loaded ban data"
+                );
+                Ok(())
             }
-        })
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!(path = %self.file_path.display(), "ban file not found, starting empty");
+                Ok(())
+            }
+            Err(e) => Err(CoreError::Io(e)),
+        }
     }
 
-    fn save(&self) -> StorageFuture<'_, ()> {
-        Box::pin(async move { self.persist().await })
+    pub async fn save(&self) -> Result<(), CoreError> {
+        self.persist().await
     }
 
-    fn add_ban(&self, entry: BanEntry) -> StorageFuture<'_, BanEntry> {
-        Box::pin(async move {
-            let Some(key) = key_of(&entry.target) else {
-                return Err(CoreError::Ban(format!(
-                    "unsupported ban target type: {}",
-                    entry.target
-                )));
-            };
-            let mut entry = entry;
-            entry.target = entry.target.canonical();
-            {
-                let mut table = self.write();
-                let id = table.last_id + 1;
-                entry.id = id.to_string();
-                table.insert(key, id, entry.clone());
-            }
+    pub async fn add_ban(&self, entry: BanEntry) -> Result<BanEntry, CoreError> {
+        let Some(key) = key_of(&entry.target) else {
+            return Err(CoreError::Ban(format!(
+                "unsupported ban target type: {}",
+                entry.target
+            )));
+        };
+        let mut entry = entry;
+        entry.target = entry.target.canonical();
+        {
+            let mut table = self.write();
+            let id = table.last_id + 1;
+            entry.id = id.to_string();
+            table.insert(key, id, entry.clone());
+        }
 
-            self.add_audit_entry(audit(BanAction::Ban, &entry, &entry.source))
+        self.add_audit_entry(audit(BanAction::Ban, &entry, &entry.source))
+            .await;
+        self.persist().await?;
+
+        tracing::info!(id = %entry.id, target = %entry.target, source = %entry.source, "ban added");
+        Ok(entry)
+    }
+
+    pub async fn remove_ban(
+        &self,
+        target: &BanTarget,
+        source: &BanSource,
+    ) -> Result<Option<BanEntry>, CoreError> {
+        let Some(key) = key_of(target) else {
+            return Ok(None);
+        };
+        let Some(entry) = self.write().remove(&key) else {
+            return Ok(None);
+        };
+
+        self.add_audit_entry(audit(BanAction::Unban, &entry, source))
+            .await;
+        self.persist().await?;
+        tracing::info!(id = %entry.id, target = %entry.target, source = %source, "ban removed");
+
+        Ok((!entry.is_expired()).then_some(entry))
+    }
+
+    pub async fn get_ban(&self, target: &BanTarget) -> Result<Option<BanEntry>, CoreError> {
+        Ok(key_of(target).and_then(|key| self.read().active(&key).cloned()))
+    }
+
+    pub async fn check(&self, attempt: &LoginAttempt) -> Result<Option<BanEntry>, CoreError> {
+        Ok(self.read().check(attempt))
+    }
+
+    pub async fn list(&self, query: BanQuery) -> Result<BanPage, CoreError> {
+        let after = match query.cursor.as_deref() {
+            None => None,
+            Some(cursor) => Some(
+                cursor
+                    .parse::<u64>()
+                    .map_err(|_| CoreError::Ban(format!("invalid ban list cursor: {cursor}")))?,
+            ),
+        };
+        Ok(self.read().page(after, query.effective_limit()))
+    }
+
+    pub async fn get_all_active(&self) -> Result<Vec<BanEntry>, CoreError> {
+        Ok(self
+            .read()
+            .by_id
+            .values()
+            .filter(|entry| !entry.is_expired())
+            .cloned()
+            .collect())
+    }
+
+    pub async fn purge_expired(&self) -> Result<usize, CoreError> {
+        let purged = self.write().remove_expired();
+        if purged.is_empty() {
+            return Ok(0);
+        }
+        for entry in &purged {
+            self.add_audit_entry(audit(BanAction::Expired, entry, &BanSource::System))
                 .await;
-            self.persist().await?;
-
-            tracing::info!(id = %entry.id, target = %entry.target, source = %entry.source, "ban added");
-            Ok(entry)
-        })
-    }
-
-    fn remove_ban<'a>(
-        &'a self,
-        target: &'a BanTarget,
-        source: &'a BanSource,
-    ) -> StorageFuture<'a, Option<BanEntry>> {
-        Box::pin(async move {
-            let Some(key) = key_of(target) else {
-                return Ok(None);
-            };
-            let Some(entry) = self.write().remove(&key) else {
-                return Ok(None);
-            };
-
-            self.add_audit_entry(audit(BanAction::Unban, &entry, source))
-                .await;
-            self.persist().await?;
-            tracing::info!(id = %entry.id, target = %entry.target, source = %source, "ban removed");
-
-            Ok((!entry.is_expired()).then_some(entry))
-        })
-    }
-
-    fn get_ban<'a>(&'a self, target: &'a BanTarget) -> StorageFuture<'a, Option<BanEntry>> {
-        Box::pin(
-            async move { Ok(key_of(target).and_then(|key| self.read().active(&key).cloned())) },
-        )
-    }
-
-    fn check<'a>(&'a self, attempt: &'a LoginAttempt) -> StorageFuture<'a, Option<BanEntry>> {
-        Box::pin(async move { Ok(self.read().check(attempt)) })
-    }
-
-    fn list(&self, query: BanQuery) -> StorageFuture<'_, BanPage> {
-        Box::pin(async move {
-            let after =
-                match query.cursor.as_deref() {
-                    None => None,
-                    Some(cursor) => Some(cursor.parse::<u64>().map_err(|_| {
-                        CoreError::Ban(format!("invalid ban list cursor: {cursor}"))
-                    })?),
-                };
-            Ok(self.read().page(after, query.effective_limit()))
-        })
-    }
-
-    fn get_all_active(&self) -> StorageFuture<'_, Vec<BanEntry>> {
-        Box::pin(async move {
-            Ok(self
-                .read()
-                .by_id
-                .values()
-                .filter(|entry| !entry.is_expired())
-                .cloned()
-                .collect())
-        })
-    }
-
-    fn purge_expired(&self) -> StorageFuture<'_, usize> {
-        Box::pin(async move {
-            let purged = self.write().remove_expired();
-            if purged.is_empty() {
-                return Ok(0);
-            }
-            for entry in &purged {
-                self.add_audit_entry(audit(BanAction::Expired, entry, &BanSource::System))
-                    .await;
-            }
-            self.persist().await?;
-            Ok(purged.len())
-        })
+        }
+        self.persist().await?;
+        Ok(purged.len())
     }
 }

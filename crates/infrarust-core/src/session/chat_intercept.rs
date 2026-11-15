@@ -15,7 +15,7 @@ use crate::player::PlayerSession;
 use crate::player::packets::build_system_chat_message;
 use crate::services::command_manager::DispatchOutcome;
 use crate::session::backend_bridge::BackendBridge;
-use crate::session::chat_utils::{ChatIds, ChatInput, CommandInput, Outgoing, PlayerInput};
+use crate::session::chat_input::{ChatIds, ChatInput, CommandInput, Outgoing, PlayerInput};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::SessionContext;
 

@@ -7,8 +7,7 @@
 //!
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
-use std::any::Any;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use infrarust_api::command::{CommandSource, Suggestion};
@@ -19,7 +18,7 @@ use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, 
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use infrarust_protocol::codec::McBufReadExt;
+use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
@@ -39,43 +38,37 @@ use infrarust_protocol::packets::play::start_configuration::{
 use infrarust_protocol::packets::play::tab_complete::{
     CTabCompleteResponse, STabCompleteRequest, TabCompleteMatch,
 };
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
+use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
 use crate::player::commands::CommandOutcome;
-use crate::player::packets::encode_for_state;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::services::command_manager::Prepared;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
+use crate::session::framed_stream::{Cipher, FramedStream};
 use crate::session::kick::BackendKick;
 use crate::session::login_bridge::{LoginClock, read_timeout};
 use crate::session::login_messages::{LoginMessages, Routed};
 use crate::session::presentation;
 use crate::session::server_join::ServerJoin;
+use crate::util::packets::encode_for_state;
 use crate::util::text::encode_text_component;
 
-/// Result of the proxy loop, determining what happens after the loop ends.
 #[derive(Debug)]
 pub enum ProxyLoopOutcome {
-    /// Client closed its connection — full cleanup.
     ClientDisconnected,
-    /// Backend closed its connection.
-    /// In Phase 2A: cleanup. In Phase 4+: server switch / limbo.
     BackendDisconnected {
         reason: Option<String>,
     },
-    /// Global proxy shutdown.
     Shutdown,
-    /// I/O or protocol error.
     Error(CoreError),
-    /// Server switch requested by plugin/command — handler should perform the switch.
     SwitchRequested {
         target: ServerId,
         cause: ConnectCause,
@@ -89,8 +82,8 @@ pub enum ProxyLoopOutcome {
     },
 }
 
+use super::chat_input::{ChatIds, decode_player_input};
 use super::chat_intercept::{ChatScope, intercept};
-use super::chat_utils::{ChatIds, decode_player_input};
 
 #[inline]
 fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
@@ -116,12 +109,26 @@ struct HotIds {
     c_start_config: Option<i32>,
     s_ack_config: Option<i32>,
     s_login_answer: Option<i32>,
+    s_login_ack: Option<i32>,
+    s_finish_config_ack: Option<i32>,
+    c_set_compression: Option<i32>,
+    c_login_plugin_request: Option<i32>,
+    c_login_disconnect: Option<i32>,
+    c_config_disconnect: Option<i32>,
+    c_finish_config: Option<i32>,
 }
 
 impl HotIds {
     fn resolve(registry: &PacketRegistry, version: ProtocolVersion) -> Self {
         Self {
             s_login_answer: registry.get_packet_id::<SLoginPluginResponse>(version),
+            s_login_ack: registry.get_packet_id::<SLoginAcknowledged>(version),
+            s_finish_config_ack: registry.get_packet_id::<SAcknowledgeFinishConfig>(version),
+            c_set_compression: registry.get_packet_id::<CSetCompression>(version),
+            c_login_plugin_request: registry.get_packet_id::<CLoginPluginRequest>(version),
+            c_login_disconnect: registry.get_packet_id::<CLoginDisconnect>(version),
+            c_config_disconnect: registry.get_packet_id::<CConfigDisconnect>(version),
+            c_finish_config: registry.get_packet_id::<CFinishConfig>(version),
             s_chat_session: registry.get_packet_id::<SChatSessionUpdate>(version),
             s_tab_request: registry.get_packet_id::<STabCompleteRequest>(version),
             c_tab_response: registry.get_packet_id::<CTabCompleteResponse>(version),
@@ -146,12 +153,20 @@ impl HotIds {
         if !awaiting_join {
             return None;
         }
-        match backend.state {
+        match backend.state() {
             ConnectionState::Play if Some(frame.id) == self.c_join_game => Some(Milestone::Joined),
             ConnectionState::Login if Some(frame.id) == self.c_login_success => {
                 Some(Milestone::LoggedIn)
             }
             _ => None,
+        }
+    }
+
+    fn kicks(&self, frame: &PacketFrame, reading: ConnectionState) -> bool {
+        match reading {
+            ConnectionState::Login => Some(frame.id) == self.c_login_disconnect,
+            ConnectionState::Config => Some(frame.id) == self.c_config_disconnect,
+            _ => false,
         }
     }
 
@@ -188,7 +203,7 @@ impl LoopState {
         }
     }
 
-    const fn client_reading(client: &ClientBridge) -> ConnectionState {
+    fn client_reading(client: &ClientBridge) -> ConnectionState {
         if client.awaits_config_ack() {
             ConnectionState::Play
         } else {
@@ -196,11 +211,11 @@ impl LoopState {
         }
     }
 
-    const fn backend_reading(&self, backend: &BackendBridge) -> ConnectionState {
+    fn backend_reading(&self, backend: &BackendBridge) -> ConnectionState {
         if self.reconfiguring {
             ConnectionState::Config
         } else {
-            backend.state
+            backend.state()
         }
     }
 
@@ -213,7 +228,6 @@ impl LoopState {
     }
 
     fn keepalive_sent(&mut self, frame: &PacketFrame, version: ProtocolVersion) {
-        use infrarust_protocol::packets::Packet;
         let Ok(keepalive) = CKeepAlive::decode(&mut frame.payload.as_ref(), version) else {
             return;
         };
@@ -229,7 +243,6 @@ impl LoopState {
         frame: &PacketFrame,
         version: ProtocolVersion,
     ) {
-        use infrarust_protocol::packets::Packet;
         let Ok(keepalive) = SKeepAlive::decode(&mut frame.payload.as_ref(), version) else {
             return;
         };
@@ -245,7 +258,7 @@ impl LoopState {
         session.client_state().record_ping(sent_at.elapsed());
     }
 
-    const fn client_open(&self, client: &ClientBridge, in_game: bool) -> bool {
+    fn client_open(&self, client: &ClientBridge, in_game: bool) -> bool {
         match client.state() {
             ConnectionState::Play => in_game,
             ConnectionState::Config => !self.config_closing,
@@ -311,7 +324,6 @@ pub async fn proxy_loop(
         codec_closed: None,
         login: LoginMessages::new(ctx, server.clone()),
         login_clock,
-        relayed: HashSet::new(),
     }
     .run()
     .await
@@ -368,7 +380,6 @@ struct Loop<'a> {
     codec_closed: Option<String>,
     login: LoginMessages<'a>,
     login_clock: Option<LoginClock>,
-    relayed: HashSet<i32>,
 }
 
 impl Loop<'_> {
@@ -630,7 +641,7 @@ impl Loop<'_> {
         let frames = match presentation::restore_frames(
             &self.ctx.session,
             self.ctx.registry(),
-            self.io.client.protocol_version,
+            self.io.client.protocol_version(),
         ) {
             Ok(frames) => frames,
             Err(e) => {
@@ -659,7 +670,7 @@ impl Loop<'_> {
             return;
         }
         let Some(id) =
-            MessageIds::resolve(self.ctx.registry(), version).serverbound(self.backend.state)
+            MessageIds::resolve(self.ctx.registry(), version).serverbound(self.backend.state())
         else {
             return;
         };
@@ -679,7 +690,7 @@ impl Loop<'_> {
         let registry = self.ctx.registry();
         let services = self.ctx.services;
         let session = &self.ctx.session;
-        let version = self.io.client.protocol_version;
+        let version = self.io.client.protocol_version();
         let state = LoopState::client_reading(&self.io.client);
 
         if state == ConnectionState::Play {
@@ -717,12 +728,10 @@ impl Loop<'_> {
 
             if Some(frame.id) == self.ids.s_tab_request
                 && let Some(packet_id) = self.ids.c_tab_response
-                && let Ok(DecodedPacket::Typed { id: _, packet }) =
-                    registry.decode_frame(&frame, state, Direction::Serverbound, version)
-                && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
+                && let Ok(Some(req)) = registry.decode_as::<STabCompleteRequest>(&frame, version)
                 && let Some(input) = req.text.trim_start().strip_prefix('/')
             {
-                let reply = TabReply::new(packet_id, req, version);
+                let reply = TabReply::new(packet_id, &req, version);
                 let source = CommandSource::Player(self.ctx.player());
                 match services.command_manager.prepare_suggestion(source, input) {
                     Prepared::Unknown => {}
@@ -793,71 +802,41 @@ impl Loop<'_> {
             }
         }
 
-        match registry.decode_frame(&frame, state, Direction::Serverbound, version) {
-            Ok(DecodedPacket::Typed { packet, .. }) => {
-                if packet
-                    .as_any()
-                    .downcast_ref::<SLoginAcknowledged>()
-                    .is_some()
-                {
-                    if !self.state.login_success_sent {
-                        tracing::debug!(
-                            "ignoring a login acknowledgement sent before the login succeeded"
-                        );
-                        return Ok(());
-                    }
-                    self.backend.queue_frame(&frame)?;
-                    self.io.client.set_state(ConnectionState::Config);
-                    self.backend.set_state(ConnectionState::Config);
-                    self.login_clock = None;
-                    self.io.entered(ConnectionState::Config);
-                    tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
-                    return Ok(());
-                }
-
-                if packet
-                    .as_any()
-                    .downcast_ref::<SAcknowledgeFinishConfig>()
-                    .is_some()
-                {
-                    self.backend.queue_frame(&frame)?;
-                    self.io.client.set_state(ConnectionState::Play);
-                    self.backend.set_state(ConnectionState::Play);
-                    self.state.config_closing = false;
-                    self.io.entered(ConnectionState::Play);
-                    tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
-                    return Ok(());
-                }
-
-                self.backend.queue_frame(&frame)?;
+        if state == ConnectionState::Login && Some(frame.id) == self.ids.s_login_ack {
+            if !self.state.login_success_sent {
+                tracing::debug!("ignoring a login acknowledgement sent before the login succeeded");
+                return Ok(());
             }
-            Ok(DecodedPacket::Opaque { .. }) | Err(_) => {
-                self.backend.queue_frame(&frame)?;
-            }
+            self.backend.queue_frame(&frame)?;
+            self.io.client.set_state(ConnectionState::Config);
+            self.backend.set_state(ConnectionState::Config);
+            self.login_clock = None;
+            self.io.entered(ConnectionState::Config);
+            tracing::debug!("state transition: Login → Config (LoginAcknowledged)");
+            return Ok(());
         }
 
-        Ok(())
+        if state == ConnectionState::Config && Some(frame.id) == self.ids.s_finish_config_ack {
+            self.backend.queue_frame(&frame)?;
+            self.io.client.set_state(ConnectionState::Play);
+            self.backend.set_state(ConnectionState::Play);
+            self.state.config_closing = false;
+            self.io.entered(ConnectionState::Play);
+            tracing::debug!("state transition: Config → Play (AcknowledgeFinishConfig)");
+            return Ok(());
+        }
+
+        self.backend.queue_frame(&frame)
     }
 
-    async fn on_login_answer(&mut self, mut frame: PacketFrame) -> Result<(), CoreError> {
-        let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
-            tracing::debug!("dropping a malformed login plugin response from the client");
+    async fn on_login_answer(&mut self, frame: PacketFrame) -> Result<(), CoreError> {
+        let Some(answer) = self.login.client_answer(frame).await else {
             return Ok(());
         };
-        if !self.relayed.remove(&message_id.0) {
-            tracing::debug!(
-                message_id = message_id.0,
-                "dropping a login plugin response to a request the client was never sent"
-            );
-            return Ok(());
-        }
         if let Some(clock) = self.login_clock.as_mut() {
-            clock.client_answered(!self.relayed.is_empty());
+            clock.client_answered(self.login.awaits_client());
         }
-        if let Some(replaced) = self.login.response(&frame).await {
-            frame = replaced;
-        }
-        self.backend.queue_frame(&frame)
+        self.backend.queue_frame(&answer)
     }
 
     async fn on_backend(&mut self, frame: PacketFrame) -> Result<Step, CoreError> {
@@ -871,7 +850,7 @@ impl Loop<'_> {
             .milestone(&frame, self.backend, self.join.is_some());
         let action = self.forward_backend(frame).await?;
         if let Some(clock) = self.login_clock.as_mut() {
-            clock.backend_spoke(!self.relayed.is_empty());
+            clock.backend_spoke(self.login.awaits_client());
         }
         self.in_game |= joins;
         self.in_game &= !self.state.reconfiguring;
@@ -890,7 +869,7 @@ impl Loop<'_> {
     ) -> Result<BackendAction, CoreError> {
         let registry = self.ctx.registry();
         let services = self.ctx.services;
-        let version = self.io.client.protocol_version;
+        let version = self.io.client.protocol_version();
         let state = self.state.backend_reading(self.backend);
 
         if state == ConnectionState::Play {
@@ -952,11 +931,8 @@ impl Loop<'_> {
                 );
                 None
             } else {
-                match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-                    Ok(DecodedPacket::Typed { packet, .. }) => {
-                        packet.as_any().downcast_ref::<CCommands>().cloned()
-                    }
-                    Ok(DecodedPacket::Opaque { .. }) => None,
+                match registry.decode_as::<CCommands>(&frame, version) {
+                    Ok(tree) => tree,
                     Err(e) => {
                         tracing::warn!(
                             "relaying the backend's command tree without the proxy's commands: {e}"
@@ -976,20 +952,16 @@ impl Loop<'_> {
         }
 
         if self.state.awaits_client_ack(state) {
-            return Ok(
-                match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-                    Ok(DecodedPacket::Typed { packet, .. }) if is_backend_kick(packet.as_any()) => {
-                        BackendAction::Kicked(Box::new(BackendKick::new(frame, state, version)))
-                    }
-                    _ => {
-                        tracing::debug!(
-                            id = frame.id,
-                            "dropping a backend frame sent before the client acknowledged the state change"
-                        );
-                        BackendAction::Continue
-                    }
-                },
+            if self.ids.kicks(&frame, state) {
+                return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                    frame, state, version,
+                ))));
+            }
+            tracing::debug!(
+                id = frame.id,
+                "dropping a backend frame sent before the client acknowledged the state change"
             );
+            return Ok(BackendAction::Continue);
         }
 
         if state == ConnectionState::Config {
@@ -1003,86 +975,98 @@ impl Loop<'_> {
             }
         }
 
-        match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-            Ok(DecodedPacket::Typed { packet, .. }) => {
-                if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
-                    let threshold = set_comp.threshold.0;
-                    self.backend.set_compression(threshold);
-                    self.io.client.queue_frame(&frame)?;
-                    self.io.client.set_compression(threshold);
-                    if let Some(backend) = self.backend.compression_threshold() {
-                        self.io.server_codec.notify_compression_change(backend);
-                    }
-                    match self.io.client.compression_threshold() {
-                        Some(effective) => {
-                            self.io.client_codec.notify_compression_change(effective);
-                            tracing::debug!(threshold = effective, "compression activated");
-                        }
-                        None => {
-                            tracing::debug!(threshold, "compression left disabled by backend");
-                        }
-                    }
-                    return Ok(BackendAction::Continue);
-                }
+        if self.ids.kicks(&frame, state) {
+            return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
+                frame, state, version,
+            ))));
+        }
 
-                if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
-                    self.io.client.queue_frame(&frame)?;
-                    self.state.login_success_sent = true;
-                    if version.less_than(ProtocolVersion::V1_20_2) {
-                        self.io.client.set_state(ConnectionState::Play);
-                        self.backend.set_state(ConnectionState::Play);
-                        self.login_clock = None;
-                        self.io.entered(ConnectionState::Play);
-                        tracing::debug!("state transition: Login → Play (pre-1.20.2)");
-                    }
-                    return Ok(BackendAction::Continue);
-                }
-
-                if is_backend_kick(packet.as_any()) {
-                    return Ok(BackendAction::Kicked(Box::new(BackendKick::new(
-                        frame, state, version,
-                    ))));
-                }
-
-                if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>() {
-                    match self.login.relay(&frame, request).await {
-                        Routed::Client(replaced) => {
-                            self.io
-                                .client
-                                .queue_frame(replaced.as_ref().unwrap_or(&frame))?;
-                            self.relayed.insert(request.message_id.0);
-                        }
-                        Routed::Backend(answer) => {
-                            let answer = encode_for_state(
-                                &answer,
-                                ConnectionState::Login,
-                                version,
-                                registry,
-                            )?;
-                            self.backend.queue_frame(&answer)?;
-                        }
-                    }
-                    return Ok(BackendAction::Continue);
-                }
-
-                if packet.as_any().downcast_ref::<CFinishConfig>().is_some() {
-                    self.io.client.queue_frame(&frame)?;
+        match state {
+            ConnectionState::Login => self.forward_login(&frame).await?,
+            ConnectionState::Config => {
+                self.io.client.queue_frame(&frame)?;
+                if Some(frame.id) == self.ids.c_finish_config {
                     self.state.config_closing = true;
-                    return Ok(BackendAction::Continue);
                 }
+            }
+            _ => self.io.client.queue_frame(&frame)?,
+        }
+        Ok(BackendAction::Continue)
+    }
 
-                self.io.client.queue_frame(&frame)?;
+    async fn forward_login(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
+        let version = self.io.client.protocol_version();
+        let id = Some(frame.id);
+
+        if id == self.ids.c_login_success {
+            self.io.client.queue_frame(frame)?;
+            self.state.login_success_sent = true;
+            if version.less_than(ProtocolVersion::V1_20_2) {
+                self.io.client.set_state(ConnectionState::Play);
+                self.backend.set_state(ConnectionState::Play);
+                self.login_clock = None;
+                self.io.entered(ConnectionState::Play);
+                tracing::debug!("state transition: Login → Play (pre-1.20.2)");
             }
-            Ok(DecodedPacket::Opaque { .. }) => {
-                self.io.client.queue_frame(&frame)?;
-            }
-            Err(e) => {
-                tracing::warn!("failed to decode backend frame: {e}");
-                self.io.client.queue_frame(&frame)?;
+            return Ok(());
+        }
+
+        if id == self.ids.c_set_compression {
+            match CSetCompression::decode(&mut frame.payload.as_ref(), version) {
+                Ok(packet) => return self.set_compression(frame, packet.threshold.0),
+                Err(e) => tracing::warn!("failed to decode backend frame: {e}"),
             }
         }
 
-        Ok(BackendAction::Continue)
+        if id == self.ids.c_login_plugin_request {
+            match CLoginPluginRequest::decode(&mut frame.payload.as_ref(), version) {
+                Ok(request) => return self.relay_login_request(frame, &request).await,
+                Err(e) => tracing::warn!("failed to decode backend frame: {e}"),
+            }
+        }
+
+        self.io.client.queue_frame(frame)
+    }
+
+    fn set_compression(&mut self, frame: &PacketFrame, threshold: i32) -> Result<(), CoreError> {
+        self.backend.set_compression(threshold);
+        self.io.client.queue_frame(frame)?;
+        self.io.client.set_compression(threshold);
+        if let Some(backend) = self.backend.compression_threshold() {
+            self.io.server_codec.notify_compression_change(backend);
+        }
+        match self.io.client.compression_threshold() {
+            Some(effective) => {
+                self.io.client_codec.notify_compression_change(effective);
+                tracing::debug!(threshold = effective, "compression activated");
+            }
+            None => {
+                tracing::debug!(threshold, "compression left disabled by backend");
+            }
+        }
+        Ok(())
+    }
+
+    async fn relay_login_request(
+        &mut self,
+        frame: &PacketFrame,
+        request: &CLoginPluginRequest,
+    ) -> Result<(), CoreError> {
+        match self.login.relay(frame, request).await {
+            Routed::Client(replaced) => self
+                .io
+                .client
+                .queue_frame(replaced.as_ref().unwrap_or(frame)),
+            Routed::Backend(answer) => {
+                let answer = encode_for_state(
+                    &answer,
+                    ConnectionState::Login,
+                    self.io.client.protocol_version(),
+                    self.ctx.registry(),
+                )?;
+                self.backend.queue_frame(&answer)
+            }
+        }
     }
 }
 
@@ -1090,10 +1074,6 @@ impl Loop<'_> {
 enum BackendAction {
     Continue,
     Kicked(Box<BackendKick>),
-}
-
-fn is_backend_kick(packet: &dyn Any) -> bool {
-    packet.is::<CLoginDisconnect>() || packet.is::<CConfigDisconnect>()
 }
 
 fn ended(error: CoreError, peer: Side, side: Side) -> ProxyLoopOutcome {
@@ -1143,7 +1123,7 @@ fn command_tree_frame(
         return None;
     }
     let mut buf = Vec::new();
-    match infrarust_protocol::packets::Packet::encode(&modified, &mut buf, version) {
+    match Packet::encode(&modified, &mut buf, version) {
         Ok(()) => Some(PacketFrame::new(id, buf.into())),
         Err(e) => {
             tracing::warn!("failed to re-encode CCommands: {e}");
@@ -1152,9 +1132,8 @@ fn command_tree_frame(
     }
 }
 
-/// Queues injected frames from a codec filter's FrameOutput.
 fn send_injected_frames(
-    writer: &mut impl FrameWriter,
+    writer: &mut FramedStream<impl Cipher>,
     output: &mut infrarust_api::filter::FrameOutput,
     send_before: bool,
     send_after: bool,
@@ -1172,24 +1151,6 @@ fn send_injected_frames(
     Ok(())
 }
 
-/// Helper trait to abstract over client/backend bridge for queueing writes.
-/// Queued frames are sent by the arm-end `flush()` in `proxy_loop`.
-trait FrameWriter {
-    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError>;
-}
-
-impl FrameWriter for ClientBridge {
-    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        ClientBridge::queue_frame(self, frame)
-    }
-}
-
-impl FrameWriter for BackendBridge {
-    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        BackendBridge::queue_frame(self, frame)
-    }
-}
-
 enum Filtered {
     Forward,
     Consumed,
@@ -1199,7 +1160,7 @@ enum Filtered {
 fn apply_codec_filter(
     chain: &mut CodecFilterChain,
     frame: &mut PacketFrame,
-    writer: &mut impl FrameWriter,
+    writer: &mut FramedStream<impl Cipher>,
 ) -> Result<Filtered, CoreError> {
     if chain.is_empty() {
         return Ok(Filtered::Forward);
@@ -1271,7 +1232,7 @@ impl TabReply {
                 .collect(),
         };
         let mut buf = Vec::new();
-        match infrarust_protocol::packets::Packet::encode(&response, &mut buf, self.version) {
+        match Packet::encode(&response, &mut buf, self.version) {
             Ok(()) => Some(PacketFrame::new(self.packet_id, buf.into())),
             Err(e) => {
                 tracing::warn!("failed to encode proxy command suggestions: {e}");

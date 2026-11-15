@@ -10,6 +10,7 @@ use infrarust_api::player::Player;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use infrarust_transport::BackendConnector;
 
@@ -17,19 +18,17 @@ use super::helpers::cancelled_cause;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
+use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::commands::CommandInbox;
 use crate::player::{SHUTDOWN_REASON, SessionKind};
-use crate::services::ProxyServices;
-use crate::session::admission::{Admission, Admitted, Arrival, admit};
+use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
+use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
 use crate::session::context::{SessionContext, SessionIo};
-use crate::session::initial_connect::{
-    ConnectionMode, InitialMode, LoginProgress, resolve_initial_mode,
-};
-use crate::session::session_loop::run_session_loop;
+use crate::session::initial_connect::{InitialMode, LoginFacts, resolve_initial_mode};
+use crate::session::session_loop::{ConnectionMode, run_session_loop};
 use auth::{AuthStrategy, Authenticated};
 
 pub struct InterceptedHandler {
@@ -92,23 +91,11 @@ impl InterceptedHandler {
         mut conn: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = conn
-            .require_extension::<RoutingData>("RoutingData")?
-            .clone();
-        let handshake = conn
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .clone();
-        let login_data = conn.extensions.get::<LoginData>().cloned();
-        let backend_targets = conn
-            .extensions
-            .get::<crate::middleware::backend_selection::BackendTargets>()
-            .cloned();
+        let routing = conn.require_routing()?.clone();
+        let handshake = conn.require_handshake()?.clone();
+        let login_data = conn.login.clone();
 
         let version = handshake.protocol_version;
-        let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
-        let peer_addr = conn.peer_addr;
-        let remote_addr = conn.client_addr();
-        let connection_info = conn.connection_info();
         let registry = &self.services.packet_registry;
 
         let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
@@ -121,7 +108,7 @@ impl InterceptedHandler {
                 login_data.as_ref(),
                 &self.services,
                 version,
-                remote_addr,
+                conn.client_addr(),
                 &handshake.domain,
             )
             .await?
@@ -138,99 +125,90 @@ impl InterceptedHandler {
 
         let arrival = Arrival {
             profile,
-            protocol_version: api_version,
+            protocol_version: infrarust_api::types::ProtocolVersion::new(version.0),
             domain: handshake.domain.clone(),
             origin: ServerId::new(routing.config_id.clone()),
         };
         let kind = SessionKind::Intercepted { online_mode };
-        let Admitted {
-            session: player,
-            lifecycle,
-            commands: cmd_rx,
-            token: session_token,
-            rewritten,
-        } = match admit(&self.services, &conn, &shutdown, arrival, kind).await {
-            Admission::Admitted(admitted) => admitted,
-            Admission::Refused(reason) => {
+        let admitted = match admit(&self.services, &conn, &shutdown, arrival, kind).await {
+            LoginAdmission::Admitted(admitted) => admitted,
+            LoginAdmission::Refused(reason) => {
                 client.disconnect(&reason, registry).await.ok();
                 return Ok(());
             }
         };
-        client.set_cancel(session_token.clone());
-        let commands = CommandInbox::new(cmd_rx).with_session(Arc::clone(&player));
+        client.set_cancel(admitted.token.clone());
+
+        let entry = Entry {
+            routing,
+            handshake,
+            online_mode,
+        };
+        self.play(conn, &shutdown, client, admitted, entry).await
+    }
+
+    async fn play(
+        &self,
+        mut conn: ConnectionContext,
+        shutdown: &CancellationToken,
+        client: ClientBridge,
+        admitted: Admitted,
+        entry: Entry,
+    ) -> Result<(), CoreError> {
+        let Admitted {
+            session: player,
+            lifecycle,
+            commands,
+            token,
+            rewritten,
+        } = admitted;
+        let Entry {
+            routing,
+            handshake,
+            online_mode,
+        } = entry;
+        let registry = &self.services.packet_registry;
         let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
             &self.services.codec_filter_registry,
-            api_version,
+            infrarust_api::types::ProtocolVersion::new(handshake.protocol_version.0),
             player.id().as_u64(),
-            peer_addr,
-            Some(conn.client_ip),
+            conn.peer_addr(),
+            Some(conn.client_ip()),
         );
         let mut io = SessionIo {
             client,
-            commands,
+            commands: CommandInbox::new(commands).with_session(Arc::clone(&player)),
             client_codec,
             server_codec,
         };
-        let refused = io
-            .client_codec
-            .close_reason()
-            .or_else(|| io.server_codec.close_reason())
-            .map(str::to_owned);
-        if let Some(refused) = refused {
-            tracing::warn!(reason = %refused, "a required codec filter refused the connection");
-            let reason = Component::text(crate::filter::codec_chain::CODEC_FILTER_UNAVAILABLE);
-            io.client.disconnect(&reason, registry).await.ok();
-            io.close();
-            lifecycle
-                .end(DisconnectCause::Kicked {
-                    reason: Some(reason),
-                })
-                .await;
-            return Ok(());
-        }
         let ctx = SessionContext {
             services: &self.services,
             backend_connector: &self.backend_connector,
             session: Arc::clone(&player),
             handshake,
-            connection_info,
-            token: session_token,
+            connection_info: conn.connection_info().clone(),
+            token,
         };
 
-        if let Some(reason) = io.commands.take_kick(&mut io.client, registry, false) {
-            io.client.disconnect(&reason, registry).await.ok();
-            io.close();
-            lifecycle
-                .end(DisconnectCause::Kicked {
-                    reason: Some(reason),
-                })
-                .await;
-            return Ok(());
-        }
-        if ctx.token.is_cancelled() {
-            let cause = cancelled_cause(&shutdown, None);
-            announce_shutdown(&mut io.client, &cause, registry).await;
+        if let Some(cause) = ended_before_start(&ctx, &mut io, shutdown).await {
             io.close();
             lifecycle.end(cause).await;
             return Ok(());
         }
 
-        let mut progress = LoginProgress {
-            completed: false,
+        let backend_targets = conn.backend_targets.clone();
+        let mut pending_ticket = conn.pending_ticket.take();
+        let facts = LoginFacts {
             rewritten,
             online_mode,
         };
-        let mut pending_ticket = conn
-            .extensions
-            .remove::<crate::loadbalancer::PendingTicket>();
-
         let initial = match resolve_initial_mode(
             &ctx,
             &mut io,
             &routing,
             backend_targets.as_ref(),
             &mut pending_ticket,
-            &mut progress,
+            facts,
         )
         .await
         {
@@ -272,13 +250,8 @@ impl InterceptedHandler {
         player.end_commands().await;
 
         let cause = match io.commands.take_kick(&mut io.client, registry, false) {
-            Some(reason) => {
-                io.client.disconnect(&reason, registry).await.ok();
-                DisconnectCause::Kicked {
-                    reason: Some(reason),
-                }
-            }
-            None => disconnect_cause(&outcome, &shutdown),
+            Some(reason) => kicked(&mut io.client, reason, registry).await,
+            None => disconnect_cause(&outcome, shutdown),
         };
         announce_shutdown(&mut io.client, &cause, registry).await;
         io.close();
@@ -293,9 +266,53 @@ impl InterceptedHandler {
             mode_label,
         );
 
-        super::helpers::log_proxy_loop_outcome(&session_id, &outcome);
+        log_proxy_loop_outcome(&session_id, &outcome);
 
         Ok(())
+    }
+}
+
+struct Entry {
+    routing: RoutingData,
+    handshake: HandshakeData,
+    online_mode: bool,
+}
+
+async fn ended_before_start(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    shutdown: &CancellationToken,
+) -> Option<DisconnectCause> {
+    let registry = ctx.registry();
+    let refused = io
+        .client_codec
+        .close_reason()
+        .or_else(|| io.server_codec.close_reason())
+        .map(str::to_owned);
+    if let Some(refused) = refused {
+        tracing::warn!(reason = %refused, "a required codec filter refused the connection");
+        let reason = Component::text(crate::filter::codec_chain::CODEC_FILTER_UNAVAILABLE);
+        return Some(kicked(&mut io.client, reason, registry).await);
+    }
+    if let Some(reason) = io.commands.take_kick(&mut io.client, registry, false) {
+        return Some(kicked(&mut io.client, reason, registry).await);
+    }
+    if ctx.token.is_cancelled() {
+        let cause = cancelled_cause(shutdown, None);
+        announce_shutdown(&mut io.client, &cause, registry).await;
+        return Some(cause);
+    }
+    None
+}
+
+async fn kicked(
+    client: &mut ClientBridge,
+    reason: Component,
+    registry: &PacketRegistry,
+) -> DisconnectCause {
+    client.disconnect(&reason, registry).await.ok();
+    DisconnectCause::Kicked {
+        reason: Some(reason),
     }
 }
 
@@ -330,6 +347,43 @@ fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) ->
         ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown, None),
         ProxyLoopOutcome::Error(_) | ProxyLoopOutcome::SwitchRequested { .. } => {
             DisconnectCause::Error
+        }
+    }
+}
+
+fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutcome) {
+    match outcome {
+        ProxyLoopOutcome::ClientDisconnected => {
+            tracing::info!(session = %session_id, "client disconnected");
+        }
+        ProxyLoopOutcome::BackendDisconnected { reason } => {
+            tracing::info!(session = %session_id, ?reason, "backend disconnected");
+        }
+        ProxyLoopOutcome::Shutdown => {
+            tracing::debug!(session = %session_id, "shutdown");
+        }
+        ProxyLoopOutcome::Error(e) => {
+            if e.is_expected_disconnect() {
+                tracing::debug!(session = %session_id, error = %e, "session ended (expected)");
+            } else {
+                tracing::warn!(session = %session_id, error = %e, "session error");
+            }
+        }
+        ProxyLoopOutcome::SwitchRequested { target, .. } => {
+            tracing::info!(session = %session_id, %target, "server switch requested");
+        }
+        ProxyLoopOutcome::Kicked { reason } => {
+            tracing::info!(session = %session_id, reason = %reason.to_plain(), "player kicked");
+        }
+        ProxyLoopOutcome::BackendKick(kick) => {
+            tracing::info!(session = %session_id, reason = %kick, "backend kicked the player");
+        }
+        ProxyLoopOutcome::BackendClosed { reason } => {
+            tracing::info!(
+                session = %session_id,
+                reason = reason.as_ref().map(Component::to_plain),
+                "backend dropped the player"
+            );
         }
     }
 }

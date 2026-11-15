@@ -1,39 +1,38 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use infrarust_api::command::CommandSource;
+use infrarust_api::event::BoxFuture;
 
 use super::ConsoleServices;
 use super::output::{CommandCategory, CommandOutput, Failure, Hint};
 use super::parser;
 use crate::services::command_manager::DispatchOutcome;
 
-pub trait ConsoleCommand: Send + Sync {
-    fn name(&self) -> &str;
+#[derive(Debug)]
+pub struct ConsoleCommandSpec {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub description: &'static str,
+    pub usage: &'static str,
+    pub category: CommandCategory,
+}
 
-    fn aliases(&self) -> &[&str] {
-        &[]
+impl ConsoleCommandSpec {
+    pub fn answers_to(&self, name: &str) -> bool {
+        self.name == name || self.aliases.contains(&name)
     }
 
-    fn description(&self) -> &str;
+    fn names<'a>(&self) -> impl Iterator<Item = &'a str> {
+        std::iter::once(self.name).chain(self.aliases.iter().copied())
+    }
+}
 
-    fn usage(&self) -> &str;
-
-    fn category(&self) -> CommandCategory;
+pub trait ConsoleCommand: Send + Sync {
+    fn spec(&self) -> &'static ConsoleCommandSpec;
 
     fn execute<'a>(
         &'a self,
         args: &'a [&'a str],
         services: &'a ConsoleServices,
-    ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>>;
-}
-
-pub struct CommandInfo {
-    pub name: String,
-    pub aliases: Vec<String>,
-    pub description: String,
-    pub usage: String,
-    pub category: CommandCategory,
+    ) -> BoxFuture<'a, CommandOutput>;
 }
 
 pub struct CommandDispatcher {
@@ -61,17 +60,8 @@ impl CommandDispatcher {
         &self.commands
     }
 
-    pub fn command_info(&self) -> Vec<CommandInfo> {
-        self.commands
-            .iter()
-            .map(|cmd| CommandInfo {
-                name: cmd.name().to_string(),
-                aliases: cmd.aliases().iter().map(|a| a.to_string()).collect(),
-                description: cmd.description().to_string(),
-                usage: cmd.usage().to_string(),
-                category: cmd.category(),
-            })
-            .collect()
+    pub fn specs(&self) -> Vec<&'static ConsoleCommandSpec> {
+        self.commands.iter().map(|cmd| cmd.spec()).collect()
     }
 
     pub async fn dispatch(&self, line: &str, services: &ConsoleServices) -> CommandOutput {
@@ -87,7 +77,7 @@ impl CommandDispatcher {
         let command = self
             .commands
             .iter()
-            .find(|cmd| cmd.name() == name || cmd.aliases().iter().any(|a| *a == name));
+            .find(|cmd| cmd.spec().answers_to(&name));
 
         if let Some(cmd) = command {
             return cmd.execute(&parsed.args, services).await;
@@ -108,9 +98,7 @@ impl CommandDispatcher {
                 let known = self
                     .commands
                     .iter()
-                    .flat_map(|cmd| {
-                        std::iter::once(cmd.name()).chain(cmd.aliases().iter().copied())
-                    })
+                    .flat_map(|cmd| cmd.spec().names())
                     .chain(plugin_names.iter().map(String::as_str));
                 let hint = match closest(&name, known) {
                     Some(candidate) => {
@@ -158,31 +146,21 @@ mod tests {
     struct MockCommand;
 
     impl ConsoleCommand for MockCommand {
-        fn name(&self) -> &str {
-            "mock"
-        }
-
-        fn aliases(&self) -> &[&str] {
-            &["m", "test"]
-        }
-
-        fn description(&self) -> &str {
-            "A mock command"
-        }
-
-        fn usage(&self) -> &str {
-            "mock [args...]"
-        }
-
-        fn category(&self) -> CommandCategory {
-            CommandCategory::System
+        fn spec(&self) -> &'static ConsoleCommandSpec {
+            &ConsoleCommandSpec {
+                name: "mock",
+                aliases: &["m", "test"],
+                description: "A mock command",
+                usage: "mock [args...]",
+                category: CommandCategory::System,
+            }
         }
 
         fn execute<'a>(
             &'a self,
             args: &'a [&'a str],
             _services: &'a ConsoleServices,
-        ) -> Pin<Box<dyn Future<Output = CommandOutput> + Send + 'a>> {
+        ) -> BoxFuture<'a, CommandOutput> {
             Box::pin(async move {
                 CommandOutput::Success(format!("mock called with {} args", args.len()))
             })
@@ -190,16 +168,12 @@ mod tests {
     }
 
     #[test]
-    fn test_command_info_collection() {
-        let mut dispatcher = CommandDispatcher::new();
-        dispatcher.register(Box::new(MockCommand));
-
-        let infos = dispatcher.command_info();
-        assert_eq!(infos.len(), 1);
-        assert_eq!(infos[0].name, "mock");
-        assert_eq!(infos[0].aliases, vec!["m", "test"]);
-        assert_eq!(infos[0].description, "A mock command");
-        assert_eq!(infos[0].category, CommandCategory::System);
+    fn a_spec_answers_to_its_name_and_aliases() {
+        let spec = MockCommand.spec();
+        assert!(spec.answers_to("mock"));
+        assert!(spec.answers_to("test"));
+        assert!(!spec.answers_to("moc"));
+        assert_eq!(spec.names().collect::<Vec<_>>(), ["mock", "m", "test"]);
     }
 
     #[test]

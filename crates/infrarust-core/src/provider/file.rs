@@ -1,23 +1,24 @@
 //! File-based configuration provider.
 //!
 //! Scans a directory of `.toml` files, loading each as a `ServerConfig`.
-//! Watches for changes via `notify` and emits incremental `ProviderEvent`s
+//! Watches for changes via `notify` and emits incremental `ProviderChange`s
 //! (Added/Updated/Removed).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::{ConfigError, ServerConfig};
 
 use crate::error::CoreError;
-use crate::provider::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
+use crate::provider::{ConfigProvider, ProviderChange, ProviderConfig, ProviderId};
 use crate::util::sync::lock;
 
 const QUIET_PERIOD: Duration = Duration::from_millis(300);
@@ -50,51 +51,25 @@ impl ConfigProvider for FileProvider {
         "file"
     }
 
-    fn load_initial(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>>
-    {
-        Box::pin(async move { self.do_load_initial() })
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>> {
+        Box::pin(self.do_load_initial())
     }
 
     fn watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(self.do_watch(sender, shutdown))
     }
 }
 
 impl FileProvider {
-    fn do_load_initial(&self) -> Result<Vec<ProviderConfig>, CoreError> {
-        let dir = &self.servers_dir;
-        if !dir.exists() {
-            tracing::warn!(dir = %dir.display(), "servers directory not found, returning empty");
-            *self.lock_published() = Some(HashMap::new());
-            return Ok(Vec::new());
-        }
-
-        let mut loaded = HashMap::new();
-        let entries = std::fs::read_dir(dir)?;
-
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.extension().is_none_or(|ext| ext != "toml") {
-                continue;
-            }
-
-            match load_server_config(&path) {
-                Ok(config) => {
-                    loaded.insert(path, config);
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "skipping invalid config");
-                }
-            }
-        }
+    async fn do_load_initial(&self) -> Result<Vec<ProviderConfig>, CoreError> {
+        let dir = self.servers_dir.clone();
+        let loaded = tokio::task::spawn_blocking(move || load_directory(&dir))
+            .await
+            .map_err(std::io::Error::other)??;
 
         let configs: Vec<ProviderConfig> = loaded
             .iter()
@@ -106,7 +81,7 @@ impl FileProvider {
         *self.lock_published() = Some(loaded);
 
         tracing::info!(
-            dir = %dir.display(),
+            dir = %self.servers_dir.display(),
             count = configs.len(),
             "file provider loaded initial configs"
         );
@@ -115,28 +90,49 @@ impl FileProvider {
 
     async fn do_watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let (changes_tx, changes) = mpsc::unbounded_channel::<()>();
-        let _watcher = watch_directory(&self.servers_dir, changes_tx)?;
+        let changes = Arc::new(Notify::new());
+        let _watcher = watch_directory(&self.servers_dir, Arc::clone(&changes))?;
         let published = self.lock_published().take().unwrap_or_default();
-        follow(&self.servers_dir, published, changes, &sender, &shutdown).await;
+        follow(&self.servers_dir, published, &changes, &sender, &shutdown).await;
         Ok(())
     }
 }
 
-fn watch_directory(
-    dir: &Path,
-    changes: mpsc::UnboundedSender<()>,
-) -> Result<RecommendedWatcher, CoreError> {
+fn load_directory(dir: &Path) -> std::io::Result<HashMap<PathBuf, ServerConfig>> {
+    let mut loaded = HashMap::new();
+    if !dir.exists() {
+        tracing::warn!(dir = %dir.display(), "servers directory not found, returning empty");
+        return Ok(loaded);
+    }
+
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().is_none_or(|ext| ext != "toml") {
+            continue;
+        }
+        match load_server_config(&path) {
+            Ok(config) => {
+                loaded.insert(path, config);
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping invalid config");
+            }
+        }
+    }
+    Ok(loaded)
+}
+
+fn watch_directory(dir: &Path, changes: Arc<Notify>) -> Result<RecommendedWatcher, CoreError> {
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res {
                 use notify::EventKind;
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
-                        let _ = changes.send(());
+                        changes.notify_one();
                     }
                     _ => {}
                 }
@@ -151,11 +147,11 @@ fn watch_directory(
 async fn follow(
     dir: &Path,
     mut known: HashMap<PathBuf, ServerConfig>,
-    mut changes: mpsc::UnboundedReceiver<()>,
-    sender: &mpsc::Sender<ProviderEvent>,
+    changes: &Notify,
+    sender: &mpsc::Sender<Vec<ProviderChange>>,
     shutdown: &CancellationToken,
 ) {
-    if !publish(compute_diff(dir, &mut known), sender).await {
+    if !rescan(dir, &mut known, sender).await {
         return;
     }
 
@@ -170,14 +166,11 @@ async fn follow(
             }
             () = sleep_until_some(reload_at) => {
                 pending = None;
-                if !publish(compute_diff(dir, &mut known), sender).await {
+                if !rescan(dir, &mut known, sender).await {
                     return;
                 }
             }
-            change = changes.recv() => {
-                if change.is_none() {
-                    return;
-                }
+            () = changes.notified() => {
                 let now = Instant::now();
                 pending = Some(Pending {
                     quiet_until: now + QUIET_PERIOD,
@@ -206,8 +199,23 @@ async fn sleep_until_some(at: Option<Instant>) {
     }
 }
 
-async fn publish(events: Vec<ProviderChange>, sender: &mpsc::Sender<ProviderEvent>) -> bool {
-    events.is_empty() || sender.send(ProviderEvent::Batch(events)).await.is_ok()
+async fn rescan(
+    dir: &Path,
+    known: &mut HashMap<PathBuf, ServerConfig>,
+    sender: &mpsc::Sender<Vec<ProviderChange>>,
+) -> bool {
+    let dir = dir.to_path_buf();
+    let mut scanned = std::mem::take(known);
+    let Ok((changes, scanned)) = tokio::task::spawn_blocking(move || {
+        let changes = compute_diff(&dir, &mut scanned);
+        (changes, scanned)
+    })
+    .await
+    else {
+        return false;
+    };
+    *known = scanned;
+    changes.is_empty() || sender.send(changes).await.is_ok()
 }
 
 fn file_id(path: &Path) -> ProviderId {
@@ -220,7 +228,7 @@ fn file_id(path: &Path) -> ProviderId {
 
 /// Computes the diff between the current directory and the known map.
 ///
-/// Returns a list of `ProviderEvent`s and updates the known map in-place.
+/// Returns a list of `ProviderChange`s and updates the known map in-place.
 fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<ProviderChange> {
     let mut events = Vec::new();
 
@@ -332,7 +340,7 @@ mod tests {
     struct Follower {
         dir: tempfile::TempDir,
         start: Instant,
-        changes: mpsc::UnboundedSender<()>,
+        changes: Arc<Notify>,
         shutdown: CancellationToken,
         received: JoinHandle<Vec<(u64, String)>>,
     }
@@ -345,14 +353,15 @@ mod tests {
             let known = HashMap::from([(path.clone(), load_server_config(&path).unwrap())]);
 
             let start = Instant::now() + Duration::from_secs(1);
-            let (changes, changes_rx) = mpsc::unbounded_channel();
+            let changes = Arc::new(Notify::new());
+            let notified = Arc::clone(&changes);
             let (tx, mut rx) = mpsc::channel(32);
             let shutdown = CancellationToken::new();
 
             let watched = dir.path().to_path_buf();
             let token = shutdown.clone();
             tokio::spawn(async move {
-                follow(&watched, known, changes_rx, &tx, &token).await;
+                follow(&watched, known, &notified, &tx, &token).await;
             });
             let received = tokio::spawn(async move {
                 let mut received = Vec::new();
@@ -379,7 +388,7 @@ mod tests {
 
         fn write(&self, content: &str) {
             std::fs::write(self.dir.path().join(SERVER), content).unwrap();
-            self.changes.send(()).unwrap();
+            self.changes.notify_one();
         }
 
         fn append(&self, content: &str) {
@@ -389,7 +398,7 @@ mod tests {
                 .open(self.dir.path().join(SERVER))
                 .unwrap();
             file.write_all(content.as_bytes()).unwrap();
-            self.changes.send(()).unwrap();
+            self.changes.notify_one();
         }
 
         async fn finish(self, millis: u64) -> Vec<(u64, String)> {
@@ -399,19 +408,15 @@ mod tests {
         }
     }
 
-    fn describe(event: &ProviderEvent) -> String {
-        match event {
-            ProviderEvent::Added(pc) | ProviderEvent::Updated(pc) => describe_config(pc),
-            ProviderEvent::Removed(id) => format!("{id} removed"),
-            ProviderEvent::Batch(changes) => changes
-                .iter()
-                .map(|change| match change {
-                    ProviderChange::Added(pc) | ProviderChange::Updated(pc) => describe_config(pc),
-                    ProviderChange::Removed(id) => format!("{id} removed"),
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        }
+    fn describe(changes: &[ProviderChange]) -> String {
+        changes
+            .iter()
+            .map(|change| match change {
+                ProviderChange::Added(pc) | ProviderChange::Updated(pc) => describe_config(pc),
+                ProviderChange::Removed(id) => format!("{id} removed"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn describe_config(pc: &ProviderConfig) -> String {

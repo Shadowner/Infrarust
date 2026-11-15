@@ -3,12 +3,12 @@ use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use dashmap::mapref::one::RefMut;
+use dashmap::mapref::one::{Ref, RefMut};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::ServerManagerConfig;
+use infrarust_config::{ManagerLifecycle, ServerManagerConfig};
 
 use crate::crafty::CraftyProvider;
 use crate::error::ServerManagerError;
@@ -97,11 +97,9 @@ impl StartThrottle {
 /// Implemented by the connection registry in `infrarust-core` to avoid
 /// a circular dependency.
 pub trait PlayerCounter: Send + Sync {
-    /// Returns the number of players connected to the given server.
     fn count_by_server(&self, server_id: &str) -> usize;
 }
 
-/// Callback type for server state change notifications.
 pub type StateChangeCallback = Arc<dyn Fn(&str, ServerState, ServerState) + Send + Sync>;
 
 /// Central orchestrator for server management.
@@ -115,22 +113,15 @@ pub struct ServerManagerService {
 }
 
 pub(crate) struct ServerEntry {
-    /// Current state.
     pub(crate) state: ServerState,
     /// Transition counter: bumped on every state write so an in-flight monitor
     /// poll can detect that a transition intervened and drop its stale result.
     pub(crate) generation: u64,
-    /// The provider controlling this server.
     pub(crate) provider: Arc<dyn ServerProvider>,
-    /// Duration of inactivity before auto-shutdown (None = disabled).
     pub(crate) shutdown_after: Option<Duration>,
-    /// Maximum time to wait for the server to become Online.
     pub(crate) start_timeout: Duration,
-    /// Base polling interval.
     pub(crate) poll_interval: Duration,
-    /// Timestamp of the last player seen connected (for auto-shutdown).
     pub(crate) last_player_seen: Option<Instant>,
-    /// Waiters: connections waiting for the server to become Online.
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), ServerManagerError>>>,
     /// Set by a start request until the provider reports it starting or running:
     /// before this deadline a `Stopped` poll means the panel has not caught up yet.
@@ -139,6 +130,21 @@ pub(crate) struct ServerEntry {
 }
 
 impl ServerEntry {
+    fn new(provider: Arc<dyn ServerProvider>, lifecycle: ManagerLifecycle) -> Self {
+        Self {
+            state: ServerState::Sleeping,
+            generation: 0,
+            provider,
+            shutdown_after: lifecycle.shutdown_after,
+            start_timeout: lifecycle.start_timeout,
+            poll_interval: lifecycle.poll_interval,
+            last_player_seen: None,
+            waiters: Vec::new(),
+            unconfirmed_start_until: None,
+            throttle: StartThrottle::new(),
+        }
+    }
+
     /// Sole mutation point for `state`: keeps the generation in sync.
     pub(crate) fn set_state(&mut self, new_state: ServerState) {
         if new_state == ServerState::Crashed && self.state != ServerState::Crashed {
@@ -162,11 +168,13 @@ impl ServerEntry {
     }
 }
 
+fn not_found(server_id: &str) -> ServerManagerError {
+    ServerManagerError::ServerNotFound {
+        server_id: server_id.to_string(),
+    }
+}
+
 impl ServerManagerService {
-    /// Creates the service from server configs.
-    ///
-    /// For each `(server_id, ServerManagerConfig)`, creates the appropriate provider
-    /// and registers it with default state `Sleeping`.
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(
         server_configs: &[(String, ServerManagerConfig)],
@@ -175,46 +183,19 @@ impl ServerManagerService {
         let entries = DashMap::new();
 
         for (server_id, config) in server_configs {
-            let (provider, shutdown_after, start_timeout, poll_interval): (
-                Arc<dyn ServerProvider>,
-                Option<Duration>,
-                Duration,
-                Duration,
-            ) = match config {
-                ServerManagerConfig::Local(cfg) => (
-                    Arc::new(LocalProvider::new(cfg.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::Pterodactyl(cfg) => (
-                    Arc::new(PterodactylProvider::new(cfg, http_client.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::Crafty(cfg) => (
-                    Arc::new(CraftyProvider::new(cfg, http_client.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
+            let provider: Arc<dyn ServerProvider> = match config {
+                ServerManagerConfig::Local(cfg) => Arc::new(LocalProvider::new(cfg.clone())),
+                ServerManagerConfig::Pterodactyl(cfg) => {
+                    Arc::new(PterodactylProvider::new(cfg, http_client.clone()))
+                }
+                ServerManagerConfig::Crafty(cfg) => {
+                    Arc::new(CraftyProvider::new(cfg, http_client.clone()))
+                }
             };
 
             entries.insert(
                 server_id.clone(),
-                ServerEntry {
-                    state: ServerState::Sleeping,
-                    generation: 0,
-                    provider,
-                    shutdown_after,
-                    start_timeout,
-                    poll_interval,
-                    last_player_seen: None,
-                    waiters: Vec::new(),
-                    unconfirmed_start_until: None,
-                    throttle: StartThrottle::new(),
-                },
+                ServerEntry::new(provider, config.lifecycle()),
             );
 
             tracing::info!(server = %server_id, "registered managed server");
@@ -227,7 +208,6 @@ impl ServerManagerService {
         }
     }
 
-    /// Registers a server with a custom provider.
     pub fn register_server(
         &self,
         server_id: String,
@@ -238,27 +218,21 @@ impl ServerManagerService {
     ) {
         self.entries.insert(
             server_id,
-            ServerEntry {
-                state: ServerState::Sleeping,
-                generation: 0,
+            ServerEntry::new(
                 provider,
-                shutdown_after,
-                start_timeout,
-                poll_interval,
-                last_player_seen: None,
-                waiters: Vec::new(),
-                unconfirmed_start_until: None,
-                throttle: StartThrottle::new(),
-            },
+                ManagerLifecycle {
+                    shutdown_after,
+                    start_timeout,
+                    poll_interval,
+                },
+            ),
         );
     }
 
-    /// Returns the current state of a server.
     pub fn get_state(&self, server_id: &str) -> Option<ServerState> {
         self.entries.get(server_id).map(|e| e.state)
     }
 
-    /// Lists all managed servers and their states.
     pub fn get_all_managed(&self) -> Vec<(String, ServerState)> {
         self.entries
             .iter()
@@ -277,6 +251,21 @@ impl ServerManagerService {
             .unwrap_or_else(PoisonError::into_inner);
         listeners.push((id, callback));
         id
+    }
+
+    fn entry(&self, server_id: &str) -> Result<Ref<'_, String, ServerEntry>, ServerManagerError> {
+        self.entries
+            .get(server_id)
+            .ok_or_else(|| not_found(server_id))
+    }
+
+    fn entry_mut(
+        &self,
+        server_id: &str,
+    ) -> Result<RefMut<'_, String, ServerEntry>, ServerManagerError> {
+        self.entries
+            .get_mut(server_id)
+            .ok_or_else(|| not_found(server_id))
     }
 
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
@@ -364,11 +353,7 @@ impl ServerManagerService {
         server_id: &str,
     ) -> Result<(), ServerManagerError> {
         let (rx, start_timeout) = {
-            let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
-                ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                }
-            })?;
+            let mut entry = self.entry_mut(server_id)?;
 
             match entry.state {
                 ServerState::Online => return Ok(()),
@@ -395,16 +380,12 @@ impl ServerManagerService {
             }
         };
 
-        // Wait for the server to become Online (or timeout)
         match tokio::time::timeout(start_timeout, rx).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => {
-                // Channel closed without a message — monitoring task died
-                Err(ServerManagerError::Provider {
-                    server_id: server_id.to_string(),
-                    message: "waiter channel closed unexpectedly".to_string(),
-                })
-            }
+            Ok(Err(_)) => Err(ServerManagerError::Provider {
+                server_id: server_id.to_string(),
+                message: "waiter channel closed unexpectedly".to_string(),
+            }),
             Err(_) => Err(ServerManagerError::StartTimeout {
                 server_id: server_id.to_string(),
                 timeout: start_timeout,
@@ -424,12 +405,7 @@ impl ServerManagerService {
     /// [`ServerManagerError::StartThrottled`] if it was started or crashed too recently,
     /// or a provider-specific error if the start command fails.
     pub async fn wake(self: &Arc<Self>, server_id: &str) -> Result<(), ServerManagerError> {
-        let entry =
-            self.entries
-                .get_mut(server_id)
-                .ok_or_else(|| ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                })?;
+        let entry = self.entry_mut(server_id)?;
         let start = match entry.state {
             ServerState::Online | ServerState::Starting => return Ok(()),
             ServerState::Stopping => {
@@ -475,12 +451,21 @@ impl ServerManagerService {
         let service = Arc::clone(self);
         let server_id = server_id.to_string();
         Ok(tokio::spawn(async move {
-            let started = provider.start().await;
-            if let Err(e) = &started {
-                service.record_failed_start(&server_id, attempt, e.clone());
-            }
-            started
+            service.run_start(&*provider, &server_id, attempt).await
         }))
+    }
+
+    async fn run_start(
+        &self,
+        provider: &dyn ServerProvider,
+        server_id: &str,
+        attempt: u64,
+    ) -> Result<(), ServerManagerError> {
+        let started = provider.start().await;
+        if let Err(e) = &started {
+            self.record_failed_start(server_id, attempt, e.clone());
+        }
+        started
     }
 
     fn record_failed_start(&self, server_id: &str, attempt: u64, error: ServerManagerError) {
@@ -505,12 +490,8 @@ impl ServerManagerService {
     /// [`ServerManagerError::InvalidState`] if the server is not in a startable state,
     /// or a provider-specific error if the start command fails.
     pub async fn start_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
-        let (provider, old_state) = {
-            let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
-                ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                }
-            })?;
+        let (provider, old_state, attempt) = {
+            let mut entry = self.entry_mut(server_id)?;
 
             if !entry.state.is_startable() {
                 return Err(ServerManagerError::InvalidState {
@@ -522,11 +503,11 @@ impl ServerManagerService {
 
             let old = entry.state;
             entry.begin_start();
-            (Arc::clone(&entry.provider), old)
+            (Arc::clone(&entry.provider), old, entry.generation)
         };
 
         self.fire_state_change(server_id, old_state, ServerState::Starting);
-        provider.start().await
+        self.run_start(&*provider, server_id, attempt).await
     }
 
     /// Stops a server manually.
@@ -537,11 +518,7 @@ impl ServerManagerService {
     /// or a provider-specific error if the stop command fails.
     pub async fn stop_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let (provider, old_state) = {
-            let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
-                ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                }
-            })?;
+            let mut entry = self.entry_mut(server_id)?;
 
             let old = entry.state;
             entry.set_state(ServerState::Stopping);
@@ -569,9 +546,6 @@ impl ServerManagerService {
         Ok(())
     }
 
-    /// Starts monitoring tasks for all managed servers.
-    ///
-    /// Returns join handles for the spawned tasks.
     #[allow(clippy::needless_pass_by_value)]
     pub fn start_monitoring(
         self: &Arc<Self>,
@@ -596,18 +570,12 @@ impl ServerManagerService {
         handles
     }
 
-    /// Checks provider status for a server (used by monitoring task).
     pub(crate) async fn check_provider_status(
         &self,
         server_id: &str,
     ) -> Result<ProviderStatus, ServerManagerError> {
         let provider = {
-            let entry =
-                self.entries
-                    .get(server_id)
-                    .ok_or_else(|| ServerManagerError::ServerNotFound {
-                        server_id: server_id.to_string(),
-                    })?;
+            let entry = self.entry(server_id)?;
             Arc::clone(&entry.provider)
         };
 
@@ -675,13 +643,11 @@ impl ServerManagerService {
             (old_state, new_state)
         };
 
-        // Fire callback outside DashMap lock
         self.fire_state_change(server_id, old_state, new_state);
 
         Some((old_state, new_state))
     }
 
-    /// Notifies all waiters for a server with the given result.
     pub(crate) fn notify_waiters(&self, server_id: &str, result: &Result<(), ServerManagerError>) {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             let waiters = std::mem::take(&mut entry.waiters);
@@ -697,12 +663,10 @@ impl ServerManagerService {
         }
     }
 
-    /// Returns the current transition generation for a server.
     pub(crate) fn generation(&self, server_id: &str) -> Option<u64> {
         self.entries.get(server_id).map(|e| e.generation)
     }
 
-    /// Returns the poll interval for a server.
     pub(crate) fn get_poll_interval(&self, server_id: &str) -> Duration {
         self.entries
             .get(server_id)
@@ -715,26 +679,21 @@ impl ServerManagerService {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::future::Future;
-    use std::pin::Pin;
-
     use super::*;
+    use crate::provider::ProviderFuture;
 
     struct NoopProvider;
 
     impl ServerProvider for NoopProvider {
-        fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send>> {
+        fn start(&self) -> ProviderFuture<'_, ()> {
             Box::pin(async { Ok(()) })
         }
 
-        fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send>> {
+        fn stop(&self) -> ProviderFuture<'_, ()> {
             Box::pin(async { Ok(()) })
         }
 
-        fn check_status(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send>>
-        {
+        fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
             Box::pin(async { Ok(ProviderStatus::Running) })
         }
 

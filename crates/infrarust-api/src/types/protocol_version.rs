@@ -102,11 +102,4 @@ mod tests {
     fn display_unknown() {
         assert_eq!(ProtocolVersion::new(999).to_string(), "Unknown(999)");
     }
-
-    #[test]
-    fn copy_semantics() {
-        let a = ProtocolVersion::MINECRAFT_1_21;
-        let b = a;
-        assert_eq!(a, b);
-    }
 }

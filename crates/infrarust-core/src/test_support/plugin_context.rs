@@ -46,7 +46,7 @@ impl MockPluginContext {
     }
 }
 
-impl infrarust_api::plugin::private::Sealed for MockPluginContext {}
+impl infrarust_api::__sealed::Sealed for MockPluginContext {}
 
 impl PluginContext for MockPluginContext {
     fn event_bus(&self) -> Arc<dyn EventBus> {

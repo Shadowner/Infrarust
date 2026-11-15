@@ -28,7 +28,6 @@ fn write_byte_array_short(
     Ok(())
 }
 
-#[allow(clippy::many_single_char_names)]
 fn read_uuid_int_array(r: &mut &[u8]) -> ProtocolResult<uuid::Uuid> {
     let a = r.read_i32_be()? as u32;
     let b = r.read_i32_be()? as u32;

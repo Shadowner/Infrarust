@@ -20,14 +20,14 @@ use infrarust_api::types::{
 };
 
 use super::{
-    BOSS_BAR_SINCE, BossBarCommand, COOKIES_SINCE, ClientCommand, MAX_TRANSFER_HOST, MessageTarget,
-    PACK_STACK_SINCE, PlayerCommand, PlayerSession, RESOURCE_PACK_SINCE, TAB_LIST_SINCE,
-    TRANSFER_SINCE,
+    BOSS_BAR_SINCE, BossBarCommand, COOKIES_SINCE, ClientCommand, ClientPacket, HeaderFooter,
+    MAX_TRANSFER_HOST, MessageTarget, PACK_STACK_SINCE, PendingConnect, PlayerCommand,
+    PlayerSession, RESOURCE_PACK_SINCE, TAB_LIST_SINCE, TRANSFER_SINCE,
 };
 use crate::session::presentation::BarControl;
 use crate::util::sync::{lock, read};
 
-impl infrarust_api::player::private::Sealed for PlayerSession {}
+impl infrarust_api::__sealed::Sealed for PlayerSession {}
 
 impl Player for PlayerSession {
     fn id(&self) -> PlayerId {
@@ -71,19 +71,19 @@ impl Player for PlayerSession {
     }
 
     fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        self.try_send_command(PlayerCommand::SendMessage(message))
+        self.try_send_command(ClientPacket::Message(message).into())
     }
 
     fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        self.try_send_command(PlayerCommand::SendTitle(Box::new(title)))
+        self.try_send_command(ClientPacket::Title(Box::new(title)).into())
     }
 
     fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
-        self.try_send_command(PlayerCommand::SendActionBar(message))
+        self.try_send_command(ClientPacket::ActionBar(message).into())
     }
 
     fn send_packet(&self, packet: RawPacket) -> Result<(), PlayerError> {
-        self.try_send_command(PlayerCommand::SendPacket(packet))
+        self.try_send_command(ClientPacket::Raw(packet).into())
     }
 
     fn switch_server(&self, target: ServerId) -> BoxFuture<'_, Result<(), PlayerError>> {
@@ -167,7 +167,10 @@ impl Player for PlayerSession {
             self.ready()?;
             self.refuse_self_wait("connect")?;
             let (reply, result) = oneshot::channel();
-            lock(&self.connects).push((target.clone(), reply));
+            lock(&self.connects).push(PendingConnect {
+                target: target.clone(),
+                reply,
+            });
             self.send_command(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
                 .await?;
             Ok(result.await.unwrap_or(ConnectionResult::Cancelled))
@@ -180,26 +183,28 @@ impl Player for PlayerSession {
         footer: Component,
     ) -> Result<(), PlayerError> {
         self.supports(TAB_LIST_SINCE, "tab list headers and footers")?;
-        self.try_send_command(PlayerCommand::HeaderFooter(Box::new((
-            header.clone(),
-            footer.clone(),
-        ))))?;
+        self.try_send_command(
+            ClientPacket::HeaderFooter(Box::new(HeaderFooter {
+                header: header.clone(),
+                footer: footer.clone(),
+            }))
+            .into(),
+        )?;
         self.presentation.set_header_footer(header, footer);
         Ok(())
     }
 
     fn clear_title(&self, reset: bool) -> Result<(), PlayerError> {
-        self.try_send_command(PlayerCommand::ClearTitle { reset })
+        self.try_send_command(ClientPacket::ClearTitle { reset }.into())
     }
 
     fn show_boss_bar(&self, bar: BossBar) -> Result<BossBarHandle, PlayerError> {
         self.supports(BOSS_BAR_SINCE, "boss bars")?;
         let id = Uuid::new_v4();
         self.presentation.show_bar(id, bar.clone());
-        if let Err(e) = self.try_send_command(PlayerCommand::BossBar(
-            id,
-            BossBarCommand::Show(Box::new(bar)),
-        )) {
+        if let Err(e) = self
+            .try_send_command(ClientPacket::BossBar(id, BossBarCommand::Show(Box::new(bar))).into())
+        {
             self.presentation.hide_bar(id);
             return Err(e);
         }

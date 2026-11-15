@@ -12,5 +12,6 @@ publish = false
 workspace = true
 
 [dependencies]
+infrarust_protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 clap = { workspace = true }

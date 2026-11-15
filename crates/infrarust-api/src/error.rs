@@ -184,18 +184,4 @@ mod tests {
         assert!(matches!(io, PluginError::Other(_)));
         assert_eq!(io.to_string(), "disk");
     }
-
-    #[test]
-    fn non_exhaustive_match() {
-        let err = PlayerError::Disconnected;
-        #[allow(unreachable_patterns)]
-        match err {
-            PlayerError::NotActive
-            | PlayerError::Disconnected
-            | PlayerError::SendFailed(_)
-            | PlayerError::ServerNotFound(_)
-            | PlayerError::SwitchFailed(_)
-            | _ => {}
-        }
-    }
 }

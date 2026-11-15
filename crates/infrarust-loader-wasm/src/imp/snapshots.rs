@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use infrarust_api::permissions::{PermissionSnapshot, SnapshotPermissionChecker};
 use infrarust_api::types::PlayerId;
 
 use crate::actor::CallFailure;
 use crate::bindings::infrarust::plugin::permissions as wp;
+use crate::sync::lock;
 
 pub(crate) const MAX_PERMISSION_RULES: usize = 65_536;
 
@@ -63,7 +64,7 @@ impl PermissionSnapshots {
     }
 
     fn players(&self) -> MutexGuard<'_, HashMap<PlayerId, Weak<SnapshotPermissionChecker>>> {
-        self.players.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.players)
     }
 
     #[cfg(test)]

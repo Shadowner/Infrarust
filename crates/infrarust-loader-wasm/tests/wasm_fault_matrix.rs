@@ -734,7 +734,7 @@ async fn a_plugin_whose_metadata_traps_does_not_fail_the_plugin_manager_discover
     support::add_fixture(tmp.path(), "metadata-trap", "metadata-trap");
     let loader: Box<dyn PluginLoader> =
         Box::new(support::cached_loader_from_toml(LIMITS, tmp.path()));
-    let mut manager = infrarust_core::plugin::manager::PluginManager::new(vec![loader]);
+    let mut manager = infrarust_core::plugin::manager::PluginManager::for_tests(vec![loader]);
     let discovered = tokio::time::timeout(PROMPTLY, manager.discover_all(tmp.path()))
         .await
         .expect("discovery returns");

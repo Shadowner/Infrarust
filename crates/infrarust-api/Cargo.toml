@@ -23,13 +23,14 @@ ipnet = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
 proptest = "1.11.0"
+tokio = { workspace = true }
 
 [features]
 default = []
@@ -37,6 +38,6 @@ serde = ["dep:serde"]
 # Tier 3 virtual backends: the proxy does not dispatch to them yet.
 unstable = []
 # Proxy-only plumbing (`__private`) for infrarust-core and the WASM loader. Plugins must not enable it.
-host = []
+host = ["dep:tokio"]
 # Test-only helpers (e.g. a constructible LimboSession) for downstream crates.
-test-util = []
+test-util = ["dep:tokio"]

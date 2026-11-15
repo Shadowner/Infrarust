@@ -9,7 +9,8 @@ use infrarust_api::types::ServerId;
 
 use infrarust_server_manager::ServerManagerError;
 use infrarust_server_manager::service::ServerManagerService;
-use infrarust_server_manager::state::ServerState as CoreServerState;
+
+use crate::api_convert::convert_server_state;
 
 /// Bridges the API-level [`ServerManager`] trait to the core [`ServerManagerService`].
 pub struct ServerManagerBridge {
@@ -22,11 +23,13 @@ impl ServerManagerBridge {
     }
 }
 
-impl infrarust_api::services::server_manager::private::Sealed for ServerManagerBridge {}
+impl infrarust_api::__sealed::Sealed for ServerManagerBridge {}
 
 impl ServerManager for ServerManagerBridge {
     fn get_state(&self, server: &ServerId) -> Option<ServerState> {
-        self.service.get_state(server.as_str()).map(convert_state)
+        self.service
+            .get_state(server.as_str())
+            .map(convert_server_state)
     }
 
     fn start(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
@@ -65,7 +68,7 @@ impl ServerManager for ServerManagerBridge {
         self.service
             .get_all_managed()
             .into_iter()
-            .map(|(id, state)| (ServerId::new(id), convert_state(state)))
+            .map(|(id, state)| (ServerId::new(id), convert_server_state(state)))
             .collect()
     }
 }
@@ -73,7 +76,7 @@ impl ServerManager for ServerManagerBridge {
 /// A no-op [`ServerManager`] for proxies with no managed servers.
 pub struct NoopServerManager;
 
-impl infrarust_api::services::server_manager::private::Sealed for NoopServerManager {}
+impl infrarust_api::__sealed::Sealed for NoopServerManager {}
 
 impl ServerManager for NoopServerManager {
     fn get_state(&self, _server: &ServerId) -> Option<ServerState> {
@@ -96,17 +99,5 @@ impl ServerManager for NoopServerManager {
 
     fn get_all_servers(&self) -> Vec<(ServerId, ServerState)> {
         Vec::new()
-    }
-}
-
-/// Converts core server state to API server state.
-fn convert_state(state: CoreServerState) -> ServerState {
-    match state {
-        CoreServerState::Online => ServerState::Online,
-        CoreServerState::Starting => ServerState::Starting,
-        CoreServerState::Stopping => ServerState::Stopping,
-        CoreServerState::Sleeping => ServerState::Sleeping,
-        CoreServerState::Crashed => ServerState::Crashed,
-        _ => ServerState::Offline,
     }
 }

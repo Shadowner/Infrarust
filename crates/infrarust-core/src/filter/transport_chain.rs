@@ -10,7 +10,7 @@ use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::filter::{FilterVerdict, TransportContext, TransportFilter};
 
 use super::registry_base::FilterOwner;
-use crate::event_bus::diagnostic::panic_message;
+use crate::util::guard::panic_message;
 
 #[derive(Clone)]
 pub struct ChainedFilter {
@@ -176,7 +176,6 @@ mod tests {
 
     use infrarust_api::event::BoxFuture;
     use infrarust_api::filter::*;
-    use infrarust_api::types::Extensions;
 
     use super::*;
 
@@ -251,14 +250,13 @@ mod tests {
     }
 
     fn test_ctx() -> TransportContext {
-        TransportContext {
-            remote_addr: "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
-            local_addr: "0.0.0.0:25565".parse::<SocketAddr>().unwrap(),
-            real_ip: None,
-            connection_time: Instant::now(),
-            connection_id: 7,
-            extensions: Extensions::new(),
-        }
+        TransportContext::new(
+            "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            "0.0.0.0:25565".parse::<SocketAddr>().unwrap(),
+            None,
+            Instant::now(),
+            7,
+        )
     }
 
     fn entries(journal: &Journal) -> Vec<String> {

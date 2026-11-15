@@ -2,27 +2,20 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ServerState {
-    /// The server is online and accepting connections.
     Online,
     /// The server is stopped, ready to be woken up.
     Sleeping,
-    /// The server is starting up.
     Starting,
-    /// The server is shutting down.
     Stopping,
-    /// The server crashed unexpectedly.
     Crashed,
-    /// Unable to determine state.
     Unknown,
 }
 
 impl ServerState {
-    /// Returns `true` if the server can accept player connections.
     pub const fn is_joinable(&self) -> bool {
         matches!(self, Self::Online)
     }
 
-    /// Returns `true` if the server can be started.
     pub const fn is_startable(&self) -> bool {
         matches!(self, Self::Sleeping | Self::Crashed)
     }

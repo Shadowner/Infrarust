@@ -95,7 +95,7 @@ pub fn make_env_with(plugins_dir: PathBuf, options: EnvOptions) -> TestEnv {
         ..PluginServices::for_tests_with(Arc::clone(&event_bus))
     };
     let connection_claims = Arc::clone(&services.connection_claims);
-    let mut factory = PluginContextFactoryImpl::new(services, options.grants);
+    let mut factory = PluginContextFactoryImpl::for_tests(services, options.grants);
     if let Some(bans) = options.ban_manager {
         factory = factory.with_ban_manager(bans);
     }

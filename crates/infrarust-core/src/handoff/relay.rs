@@ -5,19 +5,18 @@ use infrarust_api::handoff::{Handoff, HandoffTarget};
 use infrarust_api::types::ServerId;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_transport::{
-    BackendConnection, BackendConnector, CopyForwarder, ForwardResult, Forwarder, TransportError,
+    BackendConnection, BackendConnector, ForwardResult, Forwarder, TransportError,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::handoff_handshake;
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
-use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::services::ProxyServices;
-use crate::util::domain_rewrite::handoff_handshake;
+use crate::pipeline::types::RoutingData;
+use crate::server::ProxyServices;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -183,12 +182,12 @@ impl HandoffRelay {
         Ok(result)
     }
 
-    fn forwarder(&self) -> Box<dyn Forwarder> {
+    fn forwarder(&self) -> Forwarder {
         #[cfg(target_os = "linux")]
         if self.zero_copy {
-            return Box::new(infrarust_transport::SpliceForwarder::new());
+            return Forwarder::Splice;
         }
-        Box::new(CopyForwarder)
+        Forwarder::Copy
     }
 
     fn resolve(
@@ -199,14 +198,10 @@ impl HandoffRelay {
         let explicit = handoff.proxy_protocol;
         match &handoff.target {
             HandoffTarget::Route => {
-                let routing = ctx
-                    .extensions
-                    .get::<RoutingData>()
-                    .cloned()
-                    .ok_or(HandoffError::NoRoute)?;
+                let routing = ctx.routing.clone().ok_or(HandoffError::NoRoute)?;
                 let chosen = ctx
-                    .extensions
-                    .get::<BackendTargets>()
+                    .backend_targets
+                    .as_ref()
                     .map(|targets| targets.addresses.to_vec());
                 self.balanced(&routing, chosen, explicit)
             }
@@ -230,7 +225,7 @@ impl HandoffRelay {
                     host: host.clone(),
                     port: *port,
                 }],
-                timeout: self.connector.default_timeout,
+                timeout: self.connector.default_timeout(),
                 proxy_protocol: explicit.unwrap_or(false),
                 server: None,
                 balanced: false,
@@ -286,7 +281,7 @@ impl HandoffRelay {
             timeout: config
                 .timeouts
                 .as_ref()
-                .map_or(self.connector.default_timeout, |t| t.connect),
+                .map_or(self.connector.default_timeout(), |t| t.connect),
             proxy_protocol: explicit.unwrap_or(config.send_proxy_protocol),
             server: Some(Arc::clone(config)),
             balanced: true,
@@ -309,7 +304,7 @@ impl HandoffRelay {
                     &resolved.addresses,
                     Some(resolved.timeout),
                     resolved.proxy_protocol,
-                    &info,
+                    info,
                 )
                 .await?);
         }
@@ -317,7 +312,7 @@ impl HandoffRelay {
         for address in &resolved.addresses {
             match self
                 .connector
-                .connect_one(address, resolved.timeout, resolved.proxy_protocol, &info)
+                .connect_one(address, resolved.timeout, resolved.proxy_protocol, info)
                 .await
             {
                 Ok(backend) => return Ok(backend),
@@ -359,8 +354,8 @@ fn replay_bytes(
         return Ok(ctx.buffered_data.to_vec());
     }
     let handshake = ctx
-        .extensions
-        .get::<HandshakeData>()
+        .handshake
+        .as_ref()
         .ok_or(HandoffError::MissingHandshake)?;
     let mut replay = handoff_handshake(handshake, server)
         .map_err(|error| HandoffError::Handshake(Box::new(error)))?;
@@ -411,12 +406,12 @@ mod tests {
         let local = listener.local_addr().unwrap();
         let _peer = TcpStream::connect(local).await.unwrap();
         let (stream, remote) = listener.accept().await.unwrap();
-        let mut ctx = ConnectionContext::new_for_test(stream, remote, remote.ip(), local);
+        let mut ctx = ConnectionContext::new_for_test(stream, remote, local);
         let (server_config, load_balancer) = services
             .domain_router
             .find_route_by_server_id("modded")
             .unwrap();
-        ctx.extensions.insert(RoutingData {
+        ctx.routing = Some(RoutingData {
             server_config,
             config_id: "modded".into(),
             load_balancer,

@@ -1,15 +1,39 @@
-use infrarust_api::types::ServerId;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::rewrite_handshake;
+use crate::forwarding::velocity::VelocityForwarding;
 use crate::forwarding::{ForwardingHandler, build_handshake_for_backend};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::context::{SessionContext, SessionIo};
+use crate::session::kick::BackendKick;
 use crate::session::login_bridge::bridge_login;
-use crate::session::login_messages::LoginMessages;
-use crate::util::domain_rewrite::rewrite_handshake;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnectError {
+    #[error("backend kicked the player: {0}")]
+    Kicked(Box<BackendKick>),
+
+    #[error("the client left during the login")]
+    ClientLeft,
+
+    #[error("the session ended during the backend login")]
+    Cancelled,
+
+    #[error("transport error: {0}")]
+    Unreachable(#[from] infrarust_transport::TransportError),
+
+    #[error(transparent)]
+    Failed(#[from] CoreError),
+}
+
+impl From<infrarust_protocol::ProtocolError> for ConnectError {
+    fn from(error: infrarust_protocol::ProtocolError) -> Self {
+        Self::Failed(error.into())
+    }
+}
 
 pub(crate) enum Login<'a> {
     Relay,
@@ -23,7 +47,7 @@ pub(crate) async fn connect_backend(
     config: &ServerConfig,
     addresses: &[ServerAddress],
     login: Login<'_>,
-) -> Result<BackendBridge, CoreError> {
+) -> Result<BackendBridge, ConnectError> {
     let version = ctx.version();
     let connection = ctx
         .backend_connector
@@ -44,25 +68,27 @@ pub(crate) async fn connect_backend(
         Login::Relay => {
             backend.send_initial_packets(&ctx.handshake, config).await?;
         }
-        Login::Proxied => {
-            let handler = start_login(ctx, config, &mut backend).await?;
-            let data = ctx.forwarding_data();
-            let velocity = velocity_secret(ctx, &handler).map(|secret| (&data, secret));
-            let messages = LoginMessages::new(ctx, ServerId::new(server));
-            backend
-                .consume_backend_login(ctx.registry(), version, velocity, &messages)
-                .await?;
-            acknowledge_login(ctx, &mut backend).await?;
-        }
-        Login::Bridged(io) => {
-            let handler = start_login(ctx, config, &mut backend).await?;
-            let data = ctx.forwarding_data();
-            let velocity = velocity_secret(ctx, &handler).map(|secret| (&data, secret));
-            bridge_login(ctx, io, &mut backend, server, config, velocity).await?;
-        }
+        Login::Proxied => log_in(ctx, None, &mut backend, server, config).await?,
+        Login::Bridged(io) => log_in(ctx, Some(io), &mut backend, server, config).await?,
     }
 
     Ok(backend)
+}
+
+async fn log_in(
+    ctx: &SessionContext<'_>,
+    io: Option<&mut SessionIo>,
+    backend: &mut BackendBridge,
+    server: &str,
+    config: &ServerConfig,
+) -> Result<(), ConnectError> {
+    let handler = start_login(ctx, config, backend).await?;
+    let data = ctx.forwarding_data();
+    let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {
+        data: &data,
+        secret,
+    });
+    bridge_login(ctx, io, backend, server, config, velocity).await
 }
 
 async fn start_login(
@@ -77,7 +103,7 @@ async fn start_login(
         backend.send_handshake(&handshake).await?;
     } else {
         backend
-            .send_raw(&rewrite_handshake(&ctx.handshake, config)?)
+            .write_unframed(&rewrite_handshake(&ctx.handshake, config)?)
             .await?;
     }
     backend

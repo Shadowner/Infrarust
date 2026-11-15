@@ -1,6 +1,6 @@
 use axum::http::{Method, StatusCode};
+use infrarust_plugin_admin_api::address::parse_address;
 use infrarust_plugin_admin_api::drain_store::DrainStore;
-use infrarust_plugin_admin_api::util::parse_address;
 use serde_json::json;
 
 use crate::common::TestApi;

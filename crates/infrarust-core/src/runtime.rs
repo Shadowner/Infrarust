@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -20,15 +19,16 @@ use infrarust_config::proxy::PluginConfig;
 use infrarust_server_manager::ServerProvider;
 use infrarust_transport::Listener;
 
+use crate::console::ConsoleServices;
 use crate::error::CoreError;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
-    PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginPermissions,
-    PluginRegistryImpl,
+    HostWiring, PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginManagerHandle,
+    PluginPermissions, PluginRegistryImpl,
 };
 use crate::provider::plugin_adapter::PluginProviderActivator;
+use crate::server::ProxyServices;
 use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
-use crate::services::ProxyServices;
 use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
@@ -47,6 +47,7 @@ impl ProxyRuntime {
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             plugin_shutdown: ShutdownLimits::default(),
             server_providers: Vec::new(),
+            inherited_listener: None,
         }
     }
 }
@@ -68,9 +69,16 @@ pub struct ProxyRuntimeBuilder {
     drain_timeout: Duration,
     plugin_shutdown: ShutdownLimits,
     server_providers: Vec<ProviderOverride>,
+    inherited_listener: Option<std::net::TcpListener>,
 }
 
 impl ProxyRuntimeBuilder {
+    #[must_use]
+    pub fn inherited_listener(mut self, listener: Option<std::net::TcpListener>) -> Self {
+        self.inherited_listener = listener;
+        self
+    }
+
     #[must_use]
     pub fn shutdown_token(mut self, token: CancellationToken) -> Self {
         self.shutdown = token;
@@ -141,6 +149,7 @@ impl ProxyRuntimeBuilder {
             drain_timeout,
             plugin_shutdown,
             server_providers,
+            inherited_listener,
         } = self;
 
         let proxy_info = proxy_info
@@ -151,8 +160,12 @@ impl ProxyRuntimeBuilder {
         let server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
         register_server_providers(&server, server_providers)?;
 
-        let mut plugin_manager = PluginManager::new(loaders);
-        plugin_manager.set_event_bus(Arc::clone(&server.services().event_bus));
+        let plugin_registry = Arc::new(PluginRegistryImpl::new());
+        let mut plugin_manager = PluginManager::new(
+            loaders,
+            Arc::clone(&server.services().event_bus),
+            Arc::clone(&plugin_registry),
+        );
         plugin_manager.set_shutdown_limits(plugin_shutdown);
         plugin_manager.set_disabled_plugins(
             plugin_cfgs
@@ -165,8 +178,6 @@ impl ProxyRuntimeBuilder {
         plugin_manager.discover_all(&plugins_dir).await?;
 
         let services = server.services();
-        let plugin_registry = Arc::new(PluginRegistryImpl::new());
-        plugin_manager.set_plugin_registry(Arc::clone(&plugin_registry));
         let start_time = Instant::now();
 
         crate::commands::register_builtin_commands(
@@ -185,19 +196,17 @@ impl ProxyRuntimeBuilder {
             plugins_dir,
         );
         let provider_activator = Arc::clone(&plugin_services.provider_activator);
-        let context_factory = Arc::new(
-            PluginContextFactoryImpl::new(
-                plugin_services,
-                plugin_permissions(plugin_cfgs, trusted),
-            )
-            .with_ban_manager(Arc::clone(&services.ban_manager))
-            .with_permissions(Arc::clone(&services.permission_service))
-            .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
-            .with_messaging(
-                Arc::clone(&services.plugin_messaging),
-                Arc::clone(&services.connection_registry),
-            ),
-        );
+        let context_factory = Arc::new(PluginContextFactoryImpl::new(
+            plugin_services,
+            plugin_permissions(plugin_cfgs, trusted),
+            HostWiring {
+                ban_manager: Arc::clone(&services.ban_manager),
+                permissions: Arc::clone(&services.permission_service),
+                limbo_handlers: Arc::clone(&services.limbo_handler_registry),
+                channels: Arc::clone(&services.plugin_messaging),
+                players: Arc::clone(&services.connection_registry),
+            },
+        ));
 
         let errors = plugin_manager
             .load_and_enable_all(Arc::clone(&context_factory))
@@ -211,13 +220,13 @@ impl ProxyRuntimeBuilder {
         provider_activator.start();
         plugin_manager.activate_config_providers().await;
 
-        let plugin_manager = Arc::new(RwLock::new(plugin_manager));
+        let plugins = PluginManagerHandle::new(plugin_manager);
         let server = Arc::new(server);
 
-        let (listener, local_addr) = match bind_listener(&server).await {
+        let (listener, local_addr) = match bind_listener(&server, inherited_listener).await {
             Ok(bound) => bound,
             Err(e) => {
-                plugin_manager.write().await.shutdown().await;
+                plugins.shutdown().await;
                 return Err(e);
             }
         };
@@ -228,7 +237,7 @@ impl ProxyRuntimeBuilder {
 
         Ok(RunningProxy {
             server,
-            plugin_manager,
+            plugins,
             plugin_registry,
             context_factory,
             serve_task,
@@ -302,15 +311,8 @@ fn plugin_services(
         transport_filter_registry: Arc::clone(&services.transport_filter_registry),
         connection_claims: Arc::clone(&services.connection_claims),
         provider_activator: Arc::new(PluginProviderActivator::new(
-            services.provider_event_sender.clone(),
-            Arc::clone(&services.domain_router),
+            services.plugin_routes.clone(),
             background,
-            services
-                .config
-                .forwarding
-                .as_ref()
-                .map(|forwarding| forwarding.mode.clone())
-                .unwrap_or_default(),
         )),
         proxy_shutdown,
         proxy_info,
@@ -348,9 +350,12 @@ fn plugin_permissions(
     permissions
 }
 
-async fn bind_listener(server: &ProxyServer) -> Result<(Listener, SocketAddr), CoreError> {
-    let listener = server.bind().await?;
-    let local_addr = listener.local_addr()?;
+async fn bind_listener(
+    server: &ProxyServer,
+    inherited: Option<std::net::TcpListener>,
+) -> Result<(Listener, SocketAddr), CoreError> {
+    let listener = server.bind_or_adopt(inherited).await?;
+    let local_addr = listener.local_addr();
     Ok((listener, local_addr))
 }
 
@@ -393,7 +398,7 @@ pub fn proxy_info_from_config(config: &ProxyConfig, version: &str) -> ProxyInfo 
 
 pub struct RunningProxy {
     server: Arc<ProxyServer>,
-    plugin_manager: Arc<RwLock<PluginManager>>,
+    plugins: PluginManagerHandle,
     plugin_registry: Arc<PluginRegistryImpl>,
     context_factory: Arc<PluginContextFactoryImpl>,
     serve_task: JoinHandle<Result<(), CoreError>>,
@@ -417,8 +422,28 @@ impl RunningProxy {
         self.server.services()
     }
 
-    pub fn plugin_manager(&self) -> &Arc<RwLock<PluginManager>> {
-        &self.plugin_manager
+    pub const fn plugins(&self) -> &PluginManagerHandle {
+        &self.plugins
+    }
+
+    pub fn console_services(&self) -> ConsoleServices {
+        let services = self.services();
+        ConsoleServices {
+            player_registry: Arc::clone(&services.player_registry),
+            connection_registry: Arc::clone(&services.connection_registry),
+            ban_manager: Arc::clone(&services.ban_manager),
+            server_manager: services.server_manager.clone(),
+            config_service: Arc::new(ConfigServiceImpl::new(
+                Arc::clone(&services.domain_router),
+                services.config_path.clone(),
+                Arc::clone(&services.config),
+            )),
+            plugins: self.plugins.clone(),
+            permission_service: Arc::clone(&services.permission_service),
+            command_manager: Arc::clone(&services.command_manager),
+            shutdown: self.shutdown.clone(),
+            start_time: self.start_time,
+        }
     }
 
     pub fn plugin_registry(&self) -> &Arc<PluginRegistryImpl> {
@@ -430,9 +455,7 @@ impl RunningProxy {
     }
 
     pub async fn disable_plugin(&self, id: &str) -> Result<(), PluginManagerError> {
-        let stop = self.plugin_manager.write().await.begin_plugin_stop(id)?;
-        stop.run().await;
-        Ok(())
+        self.plugins.disable_plugin(id).await
     }
 
     pub const fn start_time(&self) -> Instant {
@@ -463,11 +486,7 @@ impl RunningProxy {
                 "ProxyShutdownEvent listeners used up the plugin shutdown time; stopping the plugins without waiting for them");
         }
 
-        self.plugin_manager
-            .write()
-            .await
-            .shutdown_until(deadline)
-            .await;
+        self.plugins.shutdown_until(deadline).await;
         self.server.stop_background_tasks();
 
         result
@@ -586,13 +605,7 @@ mod tests {
 
         assert_ne!(running.local_addr().port(), 0);
         assert_eq!(*log.lock().unwrap(), vec!["enable", "initialize"]);
-        assert!(
-            running
-                .plugin_manager()
-                .read()
-                .await
-                .is_plugin_loaded("recorder")
-        );
+        assert!(running.plugins().is_plugin_loaded("recorder").await);
         assert!(running.plugin_registry().plugin_info("recorder").is_some());
 
         let client = tokio::net::TcpStream::connect(running.local_addr()).await;
@@ -635,12 +648,7 @@ mod tests {
             .await
             .unwrap();
 
-        let ctx = running
-            .plugin_manager()
-            .read()
-            .await
-            .plugin_context("late")
-            .unwrap();
+        let ctx = running.plugins().plugin_context("late").await.unwrap();
         ctx.register_limbo_handler(Box::new(LateGate)).unwrap();
 
         assert!(
@@ -707,12 +715,7 @@ mod tests {
             .await
             .unwrap();
 
-        let ctx = running
-            .plugin_manager()
-            .read()
-            .await
-            .plugin_context("late")
-            .unwrap();
+        let ctx = running.plugins().plugin_context("late").await.unwrap();
         ctx.register_config_provider(Box::new(StaticDocuments("late-lobby")));
 
         assert!(
@@ -804,14 +807,11 @@ mod tests {
             .await
             .unwrap();
 
-        {
-            let manager = running.plugin_manager().read().await;
-            assert!(!manager.is_plugin_loaded("sleeper"));
-            assert!(matches!(
-                manager.plugin_state("sleeper"),
-                Some(PluginState::Disabled)
-            ));
-        }
+        assert!(!running.plugins().is_plugin_loaded("sleeper").await);
+        assert!(matches!(
+            running.plugins().plugin_state("sleeper").await,
+            Some(PluginState::Disabled)
+        ));
         assert!(log.lock().unwrap().is_empty());
 
         running.shutdown().await.unwrap();

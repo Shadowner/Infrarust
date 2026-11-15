@@ -1,5 +1,6 @@
 pub mod banner;
 pub mod color;
+pub mod formatter;
 pub mod theme;
 
 pub use banner::Banner;

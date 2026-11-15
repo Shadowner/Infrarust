@@ -1,7 +1,6 @@
 use std::sync::atomic::AtomicU32;
 
 use dashmap::DashMap;
-use tokio::time::Instant;
 
 use infrarust_api::limbo::handle::SessionHandle;
 use infrarust_api::types::{PlayerId, ServerId};
@@ -41,7 +40,6 @@ impl WakeState {
 pub struct WaitingEntry {
     pub target_server: ServerId,
     pub session_handle: SessionHandle,
-    pub started_waiting: Instant,
     pub tick: AtomicU32,
 }
 

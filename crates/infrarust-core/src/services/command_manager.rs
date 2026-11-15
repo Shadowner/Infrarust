@@ -261,6 +261,35 @@ impl CommandManagerImpl {
         Ok(key)
     }
 
+    pub fn keys_owned_by(&self, owner: &str) -> Vec<String> {
+        let mut keys: Vec<String> = self
+            .read()
+            .commands
+            .iter()
+            .filter(|(_, entry)| entry.owner.as_deref() == Some(owner))
+            .map(|(key, _)| key.clone())
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    pub fn unregister_owner(&self, owner: &str) -> usize {
+        let removed = {
+            let mut table = self.write();
+            let before = table.commands.len();
+            table
+                .commands
+                .retain(|_, entry| entry.owner.as_deref() != Some(owner));
+            let Table { commands, labels } = &mut *table;
+            labels.retain(|_, key| commands.contains_key(key));
+            before - commands.len()
+        };
+        if removed > 0 {
+            self.bump();
+        }
+        removed
+    }
+
     pub fn list(&self) -> Vec<CommandInfo> {
         let mut infos: Vec<CommandInfo> = self.read().commands.values().map(Entry::info).collect();
         infos.sort_by(|a, b| a.name().cmp(b.name()).then(a.plugin_id.cmp(&b.plugin_id)));

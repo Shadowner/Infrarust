@@ -141,11 +141,12 @@ impl ClaimError {
     }
 }
 
+#[doc(hidden)]
 pub mod private {
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
-pub trait ConnectionClaimRegistry: Send + Sync + private::Sealed {
+pub trait ConnectionClaimRegistry: Send + Sync + crate::__sealed::Sealed {
     fn register_prefix(&self, prefix: &[u8]) -> Result<(), ClaimError>;
 
     fn unregister_prefix(&self, prefix: &[u8]) -> Result<(), ClaimError>;

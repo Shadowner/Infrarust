@@ -16,8 +16,6 @@ use crate::pipeline::types::RoutingData;
 use crate::status::motd::{DEFAULT_PROXY_MOTD, default_entry, state_max_players, state_motd};
 use crate::status::relay_gate::RelayTurn;
 
-const LEGACY_REPLY_PREFIX: &str = "\u{a7}1\0";
-
 impl LegacyHandler {
     pub(crate) async fn handle_ping(
         &self,
@@ -26,7 +24,7 @@ impl LegacyHandler {
         raw: &[u8],
     ) -> Result<(), CoreError> {
         let virtual_host = admission::virtual_host(ctx);
-        let routing = ctx.extensions.get::<RoutingData>().cloned();
+        let routing = ctx.routing.clone();
         let (server, response) = match routing {
             Some(routing) => (
                 Some(ServerId::new(routing.server_config.effective_id())),
@@ -161,7 +159,7 @@ impl LegacyHandler {
                 addresses,
                 config.timeouts.as_ref().map(|t| t.connect),
                 false,
-                &ctx.connection_info(),
+                ctx.connection_info(),
             )
             .await?;
 
@@ -169,7 +167,7 @@ impl LegacyHandler {
         backend.stream_mut().flush().await?;
 
         let reply = read_legacy_kick_text(backend.stream_mut()).await?;
-        parse_legacy_reply(&reply)
+        Ok(LegacyPingResponse::parse_reply(&reply)?)
     }
 
     fn config_response(&self, config: Option<&ServerConfig>) -> LegacyPingResponse {
@@ -277,39 +275,6 @@ async fn read_legacy_kick_text(stream: &mut tokio::net::TcpStream) -> Result<Str
     })
 }
 
-fn parse_legacy_reply(reply: &str) -> Result<LegacyPingResponse, CoreError> {
-    let invalid = || {
-        CoreError::Protocol(infrarust_protocol::ProtocolError::invalid(format!(
-            "unreadable legacy ping reply {reply:?}"
-        )))
-    };
-    let number = |value: &str| value.parse::<i32>().map_err(|_| invalid());
-    if let Some(fields) = reply.strip_prefix(LEGACY_REPLY_PREFIX) {
-        let parts: Vec<&str> = fields.split('\0').collect();
-        let [protocol, version, motd, online, max] = parts[..] else {
-            return Err(invalid());
-        };
-        return Ok(LegacyPingResponse {
-            protocol_version: number(protocol)?,
-            server_version: version.to_string(),
-            motd: motd.to_string(),
-            online_players: number(online)?,
-            max_players: number(max)?,
-        });
-    }
-    let mut parts = reply.rsplitn(3, LEGACY_SECTION);
-    let (Some(max), Some(online), Some(motd)) = (parts.next(), parts.next(), parts.next()) else {
-        return Err(invalid());
-    };
-    Ok(LegacyPingResponse {
-        protocol_version: 0,
-        server_version: String::new(),
-        motd: motd.to_string(),
-        online_players: number(online)?,
-        max_players: number(max)?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -373,22 +338,5 @@ mod tests {
         assert_eq!((modern.players.max, legacy.max_players), (7, 7));
         assert_eq!(modern.description["text"], "zzz");
         assert_eq!(legacy.motd, "zzz");
-    }
-
-    #[test]
-    fn legacy_replies_are_read_in_both_formats() {
-        let modern =
-            parse_legacy_reply("\u{a7}1\u{0}78\u{0}1.6.4\u{0}\u{a7}6Hello\u{0}3\u{0}20").unwrap();
-        assert_eq!(modern.protocol_version, 78);
-        assert_eq!(modern.server_version, "1.6.4");
-        assert_eq!(modern.motd, "\u{a7}6Hello");
-        assert_eq!((modern.online_players, modern.max_players), (3, 20));
-
-        let beta = parse_legacy_reply("A \u{a7}cred server\u{a7}4\u{a7}10").unwrap();
-        assert_eq!(beta.motd, "A \u{a7}cred server");
-        assert_eq!((beta.online_players, beta.max_players), (4, 10));
-
-        assert!(parse_legacy_reply("\u{a7}1\u{0}78\u{0}1.6.4").is_err());
-        assert!(parse_legacy_reply("no separators").is_err());
     }
 }

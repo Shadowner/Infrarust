@@ -13,7 +13,7 @@ use super::output::CommandOutput;
 use super::parser::parse_duration_arg;
 
 pub(crate) fn usage(command: &dyn ConsoleCommand) -> CommandOutput {
-    CommandOutput::usage(command.usage())
+    CommandOutput::usage(command.spec().usage)
 }
 
 pub(crate) mod args {
@@ -72,7 +72,7 @@ pub fn register_all(dispatcher: &mut CommandDispatcher) {
     dispatcher.register(Box::new(permissions::DeopCommand));
     dispatcher.register(Box::new(permissions::OpListCommand));
 
-    let help = system::HelpCommand::from_commands(dispatcher.command_info());
+    let help = system::HelpCommand::from_commands(dispatcher.specs());
     dispatcher.register(Box::new(help));
 }
 

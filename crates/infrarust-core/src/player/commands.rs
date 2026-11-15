@@ -18,14 +18,16 @@ use infrarust_protocol::packets::resource_pack::{
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
-use super::packets::{self, encode_packet};
+use super::packets;
 use super::{
-    BossBarCommand, ClientCommand, MessageTarget, OutgoingMessage, PlayerCommand, PlayerSession,
+    BossBarCommand, ClientCommand, ClientPacket, MessageTarget, OutgoingMessage, PlayerCommand,
+    PlayerSession,
 };
 use crate::error::CoreError;
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::util::packets::encode_packet;
 use crate::util::text::encode_text_component;
 
 const MAX_DEFERRED_COMMANDS: usize = 128;
@@ -65,9 +67,15 @@ impl MessageQueue {
     }
 }
 
+#[derive(Debug)]
+enum Deferred {
+    Switch(ServerId, ConnectCause),
+    Packet(ClientPacket),
+}
+
 pub(crate) struct CommandInbox {
     receiver: mpsc::Receiver<PlayerCommand>,
-    deferred: VecDeque<PlayerCommand>,
+    deferred: VecDeque<Deferred>,
     messages: MessageQueue,
     client_commands: VecDeque<ClientCommand>,
     session: Option<Arc<PlayerSession>>,
@@ -117,7 +125,7 @@ impl CommandInbox {
         state: ConnectionState,
         command: ClientCommand,
     ) -> Result<(), CoreError> {
-        let version = client.protocol_version;
+        let version = client.protocol_version();
         let config = state == ConnectionState::Config;
         let frame = match command {
             ClientCommand::PushPack(pack) => {
@@ -231,7 +239,7 @@ impl CommandInbox {
         if self.messages.messages.is_empty() {
             return;
         }
-        let version = client.protocol_version;
+        let version = client.protocol_version();
         let ids = MessageIds::resolve(registry, version);
         let api_version = ApiVersion::new(version.0);
         let mut kept = MessageQueue::new();
@@ -245,11 +253,11 @@ impl CommandInbox {
                 MessageTarget::Backend => match backend.as_deref_mut() {
                     Some(backend)
                         if matches!(
-                            backend.state,
+                            backend.state(),
                             ConnectionState::Config | ConnectionState::Play
                         ) =>
                     {
-                        ids.serverbound(backend.state).map(|id| {
+                        ids.serverbound(backend.state()).map(|id| {
                             backend.queue_frame(&channels::build(
                                 id,
                                 channel,
@@ -278,7 +286,7 @@ impl CommandInbox {
         self.deferred.retain(|command| {
             !matches!(
                 command,
-                PlayerCommand::HeaderFooter(_) | PlayerCommand::BossBar(..)
+                Deferred::Packet(ClientPacket::HeaderFooter(_) | ClientPacket::BossBar(..))
             )
         });
     }
@@ -308,7 +316,8 @@ impl CommandInbox {
                 }
                 return CommandOutcome::Continue;
             }
-            command => command,
+            PlayerCommand::SwitchServer(target, cause) => Deferred::Switch(target, cause),
+            PlayerCommand::Packet(packet) => Deferred::Packet(packet),
         };
         self.defer(command);
         if in_game {
@@ -318,8 +327,8 @@ impl CommandInbox {
         }
     }
 
-    fn defer(&mut self, command: PlayerCommand) {
-        if let PlayerCommand::SwitchServer(target, _) = &command {
+    fn defer(&mut self, command: Deferred) {
+        if let Deferred::Switch(target, _) = &command {
             self.supersede_switch(target);
         } else if self.deferred.len() >= MAX_DEFERRED_COMMANDS {
             tracing::debug!("too many player commands deferred; dropping this one");
@@ -332,11 +341,11 @@ impl CommandInbox {
         let Some(index) = self
             .deferred
             .iter()
-            .position(|command| matches!(command, PlayerCommand::SwitchServer(..)))
+            .position(|command| matches!(command, Deferred::Switch(..)))
         else {
             return;
         };
-        let Some(PlayerCommand::SwitchServer(previous, _)) = self.deferred.remove(index) else {
+        let Some(Deferred::Switch(previous, _)) = self.deferred.remove(index) else {
             return;
         };
         if &previous != next
@@ -385,12 +394,9 @@ impl CommandInbox {
     fn release(&mut self, client: &mut ClientBridge, registry: &PacketRegistry) -> CommandOutcome {
         while let Some(command) = self.deferred.pop_front() {
             match command {
-                PlayerCommand::Kick(reason) => return CommandOutcome::Kick(reason),
-                PlayerCommand::SwitchServer(target, cause) => {
-                    return CommandOutcome::Switch(target, cause);
-                }
-                other => {
-                    if let Err(e) = queue_frames(client, other, registry) {
+                Deferred::Switch(target, cause) => return CommandOutcome::Switch(target, cause),
+                Deferred::Packet(packet) => {
+                    if let Err(e) = queue_frames(client, packet, registry) {
                         tracing::warn!("failed to deliver player command: {e}");
                     }
                 }
@@ -402,36 +408,37 @@ impl CommandInbox {
 
 fn queue_frames(
     client: &mut ClientBridge,
-    command: PlayerCommand,
+    packet: ClientPacket,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let version = client.protocol_version;
-    match command {
-        PlayerCommand::SendMessage(message) => client.queue_frame(
-            &packets::build_system_chat_message(&message, version, registry)?,
-        ),
-        PlayerCommand::SendActionBar(message) => {
+    let version = client.protocol_version();
+    match packet {
+        ClientPacket::Message(message) => client.queue_frame(&packets::build_system_chat_message(
+            &message, version, registry,
+        )?),
+        ClientPacket::ActionBar(message) => {
             client.queue_frame(&packets::build_action_bar(&message, version, registry)?)
         }
-        PlayerCommand::SendTitle(title) => {
+        ClientPacket::Title(title) => {
             for frame in packets::build_title_packets(&title, version, registry)? {
                 client.queue_frame(&frame)?;
             }
             Ok(())
         }
-        PlayerCommand::SendPacket(raw) => {
-            client.queue_frame(&PacketFrame::new(raw.packet_id, raw.data))
-        }
-        PlayerCommand::HeaderFooter(texts) => client.queue_frame(&packets::build_header_footer(
-            &texts.0, &texts.1, version, registry,
+        ClientPacket::Raw(raw) => client.queue_frame(&PacketFrame::new(raw.packet_id, raw.data)),
+        ClientPacket::HeaderFooter(texts) => client.queue_frame(&packets::build_header_footer(
+            &texts.header,
+            &texts.footer,
+            version,
+            registry,
         )?),
-        PlayerCommand::ClearTitle { reset } => {
+        ClientPacket::ClearTitle { reset } => {
             match packets::build_clear_title(reset, version, registry)? {
                 Some(frame) => client.queue_frame(&frame),
                 None => Ok(()),
             }
         }
-        PlayerCommand::BossBar(id, command) => {
+        ClientPacket::BossBar(id, command) => {
             let packet = match command {
                 BossBarCommand::Show(bar) => Some(packets::boss_bar_added(id, &bar, version)),
                 BossBarCommand::Update(update) => packets::boss_bar_updated(id, &update, version),
@@ -442,10 +449,6 @@ fn queue_frames(
                 None => Ok(()),
             }
         }
-        PlayerCommand::Kick(_)
-        | PlayerCommand::SwitchServer(..)
-        | PlayerCommand::PluginMessage(_)
-        | PlayerCommand::Client(_) => Ok(()),
     }
 }
 
@@ -466,7 +469,7 @@ mod tests {
     }
 
     fn message(text: &str) -> PlayerCommand {
-        PlayerCommand::SendMessage(Component::text(text))
+        ClientPacket::Message(Component::text(text)).into()
     }
 
     #[tokio::test]
@@ -524,7 +527,7 @@ mod tests {
         assert_eq!(inbox.deferred.len(), MAX_DEFERRED_COMMANDS + 1);
         assert!(matches!(
             inbox.deferred.back(),
-            Some(PlayerCommand::SwitchServer(target, _)) if *target == ServerId::new("b")
+            Some(Deferred::Switch(target, _)) if *target == ServerId::new("b")
         ));
     }
 

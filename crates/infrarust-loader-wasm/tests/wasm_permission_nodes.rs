@@ -87,7 +87,7 @@ async fn a_guest_keeps_its_own_nodes_across_a_recovery_and_loses_them_when_disab
                 .description("Kick players"),
         )
         .unwrap();
-    let mut manager = PluginManager::new(vec![Box::new(loader_from_toml(TWO_NODES))]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader_from_toml(TWO_NODES))]);
     manager.discover_all(&dir).await.unwrap();
     let errors = manager.load_and_enable_all(Arc::clone(&factory)).await;
     assert!(errors.is_empty(), "{errors:?}");

@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use crate::BoxFuture;
 use crate::error::ServiceError;
-use crate::event::BoxFuture;
 use crate::services::ban_service::{
     BanEntry, BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanService, BanSource,
     BanTarget, BanVerdict, LoginAttempt, UnbanRequest,
@@ -99,7 +99,7 @@ impl MockBanService {
     }
 }
 
-impl crate::services::ban_service::private::Sealed for MockBanService {}
+impl crate::__sealed::Sealed for MockBanService {}
 
 impl BanProvider for MockBanService {
     fn check<'a>(

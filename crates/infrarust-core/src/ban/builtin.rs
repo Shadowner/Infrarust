@@ -9,20 +9,20 @@ use infrarust_api::services::ban_service::{
     BanFeatures, BanPage, BanProvider, BanQuery, BanRequest, BanVerdict, LoginAttempt, UnbanRequest,
 };
 
-use crate::ban::storage::BanStorage;
+use crate::ban::file_storage::FileBanStorage;
 use crate::ban::types::{BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
 
 pub struct BuiltinBanProvider {
-    storage: Arc<dyn BanStorage>,
+    storage: Arc<FileBanStorage>,
 }
 
 impl BuiltinBanProvider {
-    pub fn new(storage: Arc<dyn BanStorage>) -> Self {
+    pub fn new(storage: Arc<FileBanStorage>) -> Self {
         Self { storage }
     }
 
-    pub fn storage(&self) -> &Arc<dyn BanStorage> {
+    pub fn storage(&self) -> &Arc<FileBanStorage> {
         &self.storage
     }
 

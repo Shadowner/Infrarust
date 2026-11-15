@@ -24,7 +24,7 @@ use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::player::PlayerSession;
 use crate::player::client_state::to_settings;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 
 pub(crate) const fn phase_of(state: ConnectionState) -> MessagePhase {

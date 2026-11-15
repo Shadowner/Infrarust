@@ -518,7 +518,7 @@ struct Online {
     players: Vec<Arc<PlayerSession>>,
 }
 
-impl infrarust_api::services::player_registry::private::Sealed for Online {}
+impl infrarust_api::__sealed::Sealed for Online {}
 
 impl PlayerRegistry for Online {
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>> {

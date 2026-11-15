@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::event::BoxFuture;
+use crate::BoxFuture;
 use crate::plugin::{Plugin, PluginContext, PluginMetadata};
 
 #[derive(Debug, thiserror::Error)]

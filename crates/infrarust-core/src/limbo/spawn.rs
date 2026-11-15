@@ -22,8 +22,8 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
-use crate::player::packets::{encode_packet, respawn_frame};
 use crate::session::client_bridge::ClientBridge;
+use crate::util::packets::{encode_packet, respawn_frame};
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;
@@ -31,31 +31,44 @@ const LIMBO_PLAYER_ENTITY_ID: i32 = 1;
 const LIMBO_NUM_SECTIONS: usize = 16;
 const LIMBO_DIM: DimensionInfo = DimensionInfo::Legacy(1);
 
+#[derive(Clone, Copy)]
+enum Era {
+    Pre1_16,
+    Legacy,
+    Modern,
+}
+
+impl Era {
+    fn of(version: ProtocolVersion) -> Self {
+        if version.no_less_than(ProtocolVersion::V1_20_2) {
+            Self::Modern
+        } else if version.less_than(ProtocolVersion::V1_16) {
+            Self::Pre1_16
+        } else {
+            Self::Legacy
+        }
+    }
+}
+
 pub(crate) async fn send_spawn_sequence(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
     needs_join_game: bool,
 ) -> Result<(), CoreError> {
-    let is_modern = version.no_less_than(ProtocolVersion::V1_20_2);
-    let is_pre_1_16 = version.less_than(ProtocolVersion::V1_16);
-
-    if is_modern && needs_join_game {
-        send_modern_with_join(client, version, registry).await?;
-    } else if is_modern {
-        send_modern_switch(client, version, registry).await?;
-    } else if is_pre_1_16 && needs_join_game {
-        send_pre_1_16_with_join(client, version, registry).await?;
-    } else if is_pre_1_16 {
-        send_pre_1_16_switch(client, version, registry).await?;
-    } else if needs_join_game {
-        send_legacy_with_join(client, version, registry).await?;
-    } else {
-        send_legacy_switch(client, version, registry).await?;
+    let era = Era::of(version);
+    match (era, needs_join_game) {
+        (Era::Modern, true) => send_modern_with_join(client, version, registry).await?,
+        (Era::Modern, false) => send_modern_switch(client, version, registry).await?,
+        (Era::Pre1_16, true) => send_pre_1_16_with_join(client, version, registry).await?,
+        (Era::Pre1_16, false) => send_pre_1_16_switch(client, version, registry).await?,
+        (Era::Legacy, true) => send_legacy_with_join(client, version, registry).await?,
+        (Era::Legacy, false) => send_legacy_switch(client, version, registry).await?,
     }
 
-    if !is_pre_1_16 {
-        send_clear_inventory(client, version, registry).await?;
+    match era {
+        Era::Pre1_16 => {}
+        Era::Legacy | Era::Modern => send_clear_inventory(client, version, registry).await?,
     }
 
     send_frozen_abilities(client, version, registry).await

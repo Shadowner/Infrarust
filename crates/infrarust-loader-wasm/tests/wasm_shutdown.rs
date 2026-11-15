@@ -42,7 +42,7 @@ struct Running {
 }
 
 async fn start(dir: &Path, proxy_toml: &str) -> Running {
-    let mut manager = PluginManager::new(vec![Box::new(loader_from_toml(proxy_toml))]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader_from_toml(proxy_toml))]);
     manager.discover_all(dir).await.unwrap();
     let env = make_env(dir.to_path_buf());
     let event_bus = Arc::clone(&env.event_bus);

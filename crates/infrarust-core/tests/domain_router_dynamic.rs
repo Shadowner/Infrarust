@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use infrarust_config::ServerConfig;
-use infrarust_core::provider::ProviderId;
+use infrarust_core::provider::{ProviderId, ProviderSource};
 use infrarust_core::routing::DomainRouter;
 
 /// Build a minimal `ServerConfig` with the given domains.
@@ -123,7 +123,7 @@ fn test_remove_only_own_configs() {
 }
 
 #[test]
-fn test_remove_all_by_provider_type() {
+fn test_remove_all_from_a_source() {
     let router = DomainRouter::new();
     let id_file = ProviderId::file("survival.toml");
     let id_docker1 = ProviderId::docker("mc-1");
@@ -135,7 +135,7 @@ fn test_remove_all_by_provider_type() {
 
     assert_eq!(router.len(), 3);
 
-    router.remove_all_by_provider_type("docker");
+    router.remove_all_from(&ProviderSource::Docker);
 
     assert_eq!(router.len(), 1);
     assert!(router.resolve("survival.mc.com").is_some());
@@ -291,10 +291,10 @@ fn test_update_preserves_load_balancer_when_balancing_is_unchanged() {
     };
 
     router.add(id.clone(), config("before"));
-    let (_, _, first) = router.resolve_route("play.mc").unwrap();
+    let first = router.resolve_route("play.mc").unwrap().load_balancer;
 
     router.update(id.clone(), config("after"));
-    let (_, _, reused) = router.resolve_route("play.mc").unwrap();
+    let reused = router.resolve_route("play.mc").unwrap().load_balancer;
     assert!(
         Arc::ptr_eq(&first, &reused),
         "an unrelated edit must keep the rotation state"
@@ -306,7 +306,7 @@ fn test_update_preserves_load_balancer_when_balancing_is_unchanged() {
     )
     .unwrap();
     router.update(id, rebalanced);
-    let (_, _, rebuilt) = router.resolve_route("play.mc").unwrap();
+    let rebuilt = router.resolve_route("play.mc").unwrap().load_balancer;
     assert!(!Arc::ptr_eq(&first, &rebuilt));
     assert_eq!(rebuilt.name(), "least_conn");
 }

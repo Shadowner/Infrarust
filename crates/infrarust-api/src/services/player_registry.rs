@@ -6,15 +6,15 @@ use std::sync::Arc;
 use crate::player::Player;
 use crate::types::{PlayerId, ServerId};
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`PlayerRegistry`](super::PlayerRegistry).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// Registry of all players connected to the proxy.
 ///
 /// Obtained via [`PluginContext::player_registry()`](crate::plugin::PluginContext::player_registry).
-pub trait PlayerRegistry: Send + Sync + private::Sealed {
+pub trait PlayerRegistry: Send + Sync + crate::__sealed::Sealed {
     /// Finds a player by username (case-insensitive).
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>>;
 

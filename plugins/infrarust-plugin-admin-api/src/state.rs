@@ -15,7 +15,6 @@ use tokio_util::sync::CancellationToken;
 use crate::config::ApiConfig;
 use crate::drain_store::DrainStore;
 use crate::health_cache::HealthCache;
-use crate::health_checker::HealthChecker;
 use crate::log_layer::LogBroadcast;
 use crate::rate_limit::RateLimiter;
 use crate::server_dir::{ProviderSenderSlot, ServerDir};
@@ -39,10 +38,7 @@ pub struct ApiState {
     pub server_dir: Arc<ServerDir>,
     /// Sender for emitting config provider events (Added/Updated/Removed).
     pub provider_sender: Arc<ProviderSenderSlot>,
-    /// Cache of last health check result per server.
-    pub health_cache: Arc<HealthCache>,
-    /// Health checker for pinging Minecraft backends.
-    pub health_checker: Arc<HealthChecker>,
+    pub health_cache: HealthCache,
     /// Ring buffer of recent activity events (last 100).
     pub recent_events: Arc<Mutex<VecDeque<RecentEvent>>>,
     /// Persisted drain intent, replayed after a restart.

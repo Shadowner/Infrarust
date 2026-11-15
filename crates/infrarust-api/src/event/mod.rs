@@ -5,16 +5,7 @@
 
 pub mod bus;
 
-use std::future::Future;
-use std::pin::Pin;
-
-/// A boxed, pinned, `Send` future — the standard return type for
-/// async methods on dyn-compatible (sealed) traits.
-///
-/// Plugins never need to construct this directly; it is the return type
-/// of proxy-provided async methods like [`Player::disconnect`](crate::player::Player::disconnect).
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
+pub use crate::BoxFuture;
 pub use infrarust_plugin_common::EventPriority;
 
 /// An opaque handle returned when subscribing to an event.

@@ -9,9 +9,9 @@ use super::context::LimboEntryContext;
 use super::handle::SessionHandle;
 use super::handler::LimboOutcome;
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`LimboSession`](super::LimboSession).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// A session handle for a player in a limbo stage.
@@ -20,7 +20,7 @@ pub mod private {
 /// underlying Minecraft protocol (`JoinGame`, `KeepAlive`, chunks).
 ///
 /// Obtained in [`LimboHandler`](super::handler::LimboHandler) callbacks.
-pub trait LimboSession: Send + Sync + private::Sealed {
+pub trait LimboSession: Send + Sync + crate::__sealed::Sealed {
     fn player_id(&self) -> PlayerId;
 
     fn profile(&self) -> &GameProfile;

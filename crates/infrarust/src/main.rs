@@ -16,9 +16,8 @@ use tracing_subscriber::EnvFilter;
 
 use infrarust_config::ProxyConfig;
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
-use infrarust_core::services::config_service::ConfigServiceImpl;
-use infrarust_core::telemetry::formatter::InfrarustFormatter;
 use infrarust_core::terminal::Banner;
+use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 
 mod migrate;
@@ -79,10 +78,13 @@ fn main() -> ExitCode {
         return migrate::run(input, output, config.as_deref());
     }
 
-    if let Err(e) = infrarust_transport::init_socket_activation() {
-        eprintln!("error: {e}");
-        return ExitCode::FAILURE;
-    }
+    let inherited_listener = match infrarust_transport::activated_listener() {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let (config, config_warnings) = if !cli.config.exists()
         && cli.config == Path::new("infrarust.toml")
@@ -146,7 +148,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config, cli.config, log_broadcast)) {
+    match runtime.block_on(run(config, cli.config, log_broadcast, inherited_listener)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -267,6 +269,7 @@ async fn run(
     config: ProxyConfig,
     config_path: std::path::PathBuf,
     log_broadcast: Option<LogBroadcast>,
+    inherited_listener: Option<std::net::TcpListener>,
 ) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
@@ -280,14 +283,14 @@ async fn run(
         },
     ));
 
-    let mut web_config = config.web.clone();
+    let web_config = config.web.clone();
 
     #[cfg(feature = "wasm")]
     let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
     #[cfg(feature = "wasm")]
     let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
 
-    let static_loader = plugins::build_static_loader(web_config.as_mut(), log_broadcast)?;
+    let static_loader = plugins::build_static_loader(web_config.as_ref(), log_broadcast)?;
     let static_ids = static_loader.registered_ids();
     let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
 
@@ -295,6 +298,7 @@ async fn run(
         .shutdown_token(shutdown.clone())
         .proxy_info(proxy_info)
         .trusted_plugins(static_ids)
+        .inherited_listener(inherited_listener)
         .loader(Box::new(static_loader));
 
     #[cfg(feature = "wasm")]
@@ -308,23 +312,7 @@ async fn run(
         .await
         .context("failed to initialize proxy server")?;
 
-    let services = running.services();
-    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
-        Arc::clone(&services.player_registry),
-        Arc::clone(&services.connection_registry),
-        Arc::clone(&services.ban_manager),
-        services.server_manager.clone(),
-        Arc::new(ConfigServiceImpl::new(
-            Arc::clone(&services.domain_router),
-            services.config_path.clone(),
-            Arc::clone(&services.config),
-        )),
-        Arc::clone(running.plugin_manager()),
-        Arc::clone(&services.permission_service),
-        Arc::clone(&services.command_manager),
-        shutdown.clone(),
-        running.start_time(),
-    ));
+    let console_services = Arc::new(running.console_services());
 
     let console_task = infrarust_core::console::ConsoleTask::new(console_services);
     let console_handle = tokio::spawn(console_task.run());

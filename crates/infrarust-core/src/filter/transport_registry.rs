@@ -96,22 +96,17 @@ impl TransportFilterRegistryImpl {
 
     fn rebuild(&self) {
         let mut chain = write(&self.chain);
-        *chain = self.base.with_ordered(|filters, ordered| {
-            let ordered_filters: Vec<ChainedFilter> = ordered
-                .iter()
-                .filter_map(|id| {
-                    filters
-                        .iter()
-                        .find(|entry| entry.metadata.id == *id)
-                        .map(|entry| ChainedFilter {
-                            id: entry.metadata.id.clone(),
-                            owner: entry.owner.clone(),
-                            filter: Arc::clone(&entry.item),
-                        })
-                })
-                .collect();
-
-            TransportFilterChain::new(ordered_filters)
+        *chain = self.base.with_ordered(|ordered| {
+            TransportFilterChain::new(
+                ordered
+                    .iter()
+                    .map(|entry| ChainedFilter {
+                        id: entry.metadata.id.clone(),
+                        owner: entry.owner.clone(),
+                        filter: Arc::clone(&entry.item),
+                    })
+                    .collect(),
+            )
         });
     }
 }
@@ -129,7 +124,6 @@ mod tests {
 
     use infrarust_api::event::BoxFuture;
     use infrarust_api::filter::*;
-    use infrarust_api::types::Extensions;
 
     use super::*;
 
@@ -172,14 +166,13 @@ mod tests {
     }
 
     async fn verdict(chain: &TransportFilterChain) -> FilterVerdict {
-        let ctx = TransportContext {
-            remote_addr: "127.0.0.1:12345".parse().unwrap(),
-            local_addr: "0.0.0.0:25565".parse().unwrap(),
-            real_ip: None,
-            connection_time: Instant::now(),
-            connection_id: 1,
-            extensions: Extensions::new(),
-        };
+        let ctx = TransportContext::new(
+            "127.0.0.1:12345".parse().unwrap(),
+            "0.0.0.0:25565".parse().unwrap(),
+            None,
+            Instant::now(),
+            1,
+        );
         match chain.open(ctx, Duration::from_secs(5)).await {
             Ok(_) => FilterVerdict::Continue,
             Err(_) => FilterVerdict::Reject,

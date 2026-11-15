@@ -4,8 +4,5 @@ pub mod ban_bridge;
 pub mod command_manager;
 pub mod config_service;
 pub mod load_balancer_service;
-pub mod proxy;
 pub mod scheduler;
 pub mod server_manager_bridge;
-
-pub use proxy::ProxyServices;

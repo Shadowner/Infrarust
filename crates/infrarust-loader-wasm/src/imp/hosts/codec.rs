@@ -5,7 +5,7 @@ use crate::bindings::infrarust::plugin::types::{ErrorKind, HostError};
 use crate::codec::WasmCodecFilterFactory;
 use crate::convert::wit_enum_map;
 use crate::host_error::{HostResult, filter_error, host_error};
-use crate::store_state::{PluginStoreState, Quota};
+use crate::store_state::{PluginStoreState, Quota, Refused};
 
 wit_enum_map!(priority_from_wit: wcr::FilterPriority => FilterPriority {
     First, Early, Normal, Late, Last
@@ -69,7 +69,7 @@ impl PluginStoreState {
                 Ok(())
             }
             Err(error) => {
-                self.report_codec_refusal(&id, &format!("refused, {error}"));
+                self.report_refusal(Refused::CodecFilter, &id, &format!("refused, {error}"));
                 Err(filter_error(&error))
             }
         }

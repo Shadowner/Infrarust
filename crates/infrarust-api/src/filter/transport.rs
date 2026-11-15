@@ -7,7 +7,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
-use crate::event::BoxFuture;
+use crate::BoxFuture;
 use crate::types::Extensions;
 
 use super::metadata::FilterMetadata;
@@ -33,6 +33,7 @@ pub trait TransportFilter: Send + Sync {
 
 /// Context for a transport-level connection.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct TransportContext {
     /// The remote peer's address.
     pub remote_addr: SocketAddr,
@@ -46,6 +47,25 @@ pub struct TransportContext {
     pub connection_id: u64,
     /// Type-erased storage shared between filters for this connection.
     pub extensions: Extensions,
+}
+
+impl TransportContext {
+    pub fn new(
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
+        real_ip: Option<IpAddr>,
+        connection_time: Instant,
+        connection_id: u64,
+    ) -> Self {
+        Self {
+            remote_addr,
+            local_addr,
+            real_ip,
+            connection_time,
+            connection_id,
+            extensions: Extensions::new(),
+        }
+    }
 }
 
 /// The verdict returned by a transport filter.

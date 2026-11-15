@@ -8,9 +8,9 @@ use crate::error::ErrorKind;
 use super::codec::CodecFilterFactory;
 use super::transport::TransportFilter;
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements these registries.
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 pub const PROXY_FILTER_OWNER: &str = "infrarust";
@@ -22,13 +22,15 @@ pub enum FilterRegistryError {
     OwnedBy { id: String, owner: String },
     #[error("no filter '{0}' is registered")]
     NotFound(String),
+    #[error("filter '{id}' would create an ordering cycle involving: {involved}")]
+    OrderingCycle { id: String, involved: String },
 }
 
 impl FilterRegistryError {
     /// The [`ErrorKind`] a WASM guest receives for this error.
     pub const fn kind(&self) -> ErrorKind {
         match self {
-            Self::OwnedBy { .. } => ErrorKind::Conflict,
+            Self::OwnedBy { .. } | Self::OrderingCycle { .. } => ErrorKind::Conflict,
             Self::NotFound(_) => ErrorKind::NotFound,
         }
     }
@@ -38,7 +40,7 @@ impl FilterRegistryError {
 ///
 /// Plugins register factories here; the proxy creates per-connection
 /// instances from them when a new session is established.
-pub trait CodecFilterRegistry: Send + Sync + private::Sealed {
+pub trait CodecFilterRegistry: Send + Sync + crate::__sealed::Sealed {
     /// Registers a codec filter factory.
     fn register(&self, factory: Box<dyn CodecFilterFactory>) -> Result<(), FilterRegistryError>;
 
@@ -50,7 +52,7 @@ pub trait CodecFilterRegistry: Send + Sync + private::Sealed {
 ///
 /// Plugins register transport filters here; the proxy calls them
 /// for every accepted TCP connection.
-pub trait TransportFilterRegistry: Send + Sync + private::Sealed {
+pub trait TransportFilterRegistry: Send + Sync + crate::__sealed::Sealed {
     /// Registers a transport filter.
     fn register(&self, filter: Box<dyn TransportFilter>) -> Result<(), FilterRegistryError>;
 

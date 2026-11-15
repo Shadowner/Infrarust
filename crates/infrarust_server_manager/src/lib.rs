@@ -19,7 +19,7 @@ pub mod state;
 pub use crafty::CraftyProvider;
 pub use error::ServerManagerError;
 pub use local::LocalProvider;
-pub use provider::{ProviderStatus, ServerProvider};
+pub use provider::{ProviderFuture, ProviderStatus, ServerProvider};
 pub use pterodactyl::PterodactylProvider;
 pub use service::{PlayerCounter, ServerManagerService};
 pub use state::ServerState;

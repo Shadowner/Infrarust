@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
+use crate::BoxFuture;
 use crate::error::ServiceError;
-use crate::event::BoxFuture;
 use crate::services::server_manager::{ServerManager, ServerState};
 use crate::types::ServerId;
 
@@ -52,7 +52,7 @@ impl MockServerManager {
     }
 }
 
-impl crate::services::server_manager::private::Sealed for MockServerManager {}
+impl crate::__sealed::Sealed for MockServerManager {}
 
 impl ServerManager for MockServerManager {
     fn get_state(&self, server: &ServerId) -> Option<ServerState> {

@@ -1,13 +1,22 @@
-//! Network validation for server switching.
-//!
-//! Ensures that switches are only allowed between servers in the same network.
-
 use infrarust_api::events::connection::ConnectCause;
+use infrarust_api::types::ServerId;
 use infrarust_config::ServerConfig;
 
 use crate::player::SessionKind;
 
 pub(crate) const UNVERIFIED_REFUSED: &str = "This server requires a verified Minecraft account";
+
+#[derive(Debug, thiserror::Error)]
+pub enum SwitchRefusal {
+    #[error("unknown server: {0}")]
+    UnknownServer(ServerId),
+
+    #[error("servers are in different networks: '{current}' vs '{target}'")]
+    DifferentNetworks { current: String, target: String },
+
+    #[error("server '{target}' is outside the scope of '{current}'")]
+    OutOfScope { target: ServerId, current: ServerId },
+}
 
 pub(crate) const fn admits_session(kind: SessionKind, target: &ServerConfig) -> bool {
     kind.online_mode() || !target.proxy_mode.requires_verified_player()
@@ -35,34 +44,13 @@ pub(crate) fn switch_in_scope(
     }
 }
 
-/// Error when a switch is not allowed due to network constraints.
-#[derive(Debug, thiserror::Error)]
-pub enum SwitchValidationError {
-    #[error("servers are in different networks: '{current}' vs '{target}'")]
-    DifferentNetworks { current: String, target: String },
-}
-
-/// Validates that a switch between two servers is allowed based on network membership.
-///
-/// Rules:
-/// - Both servers must have a `network` set (non-`None`)
-/// - Both must be in the same network
-pub fn validate_switch_allowed(
-    current: &ServerConfig,
-    target: &ServerConfig,
-) -> Result<(), SwitchValidationError> {
+pub(crate) fn different_networks<'a>(
+    current: &'a ServerConfig,
+    target: &'a ServerConfig,
+) -> Option<(&'a str, &'a str)> {
     match (&current.network, &target.network) {
-        // Same network: always allowed.
-        (Some(a), Some(b)) if a == b => Ok(()),
-        // Different networks: blocked.
-        (Some(a), Some(b)) => Err(SwitchValidationError::DifferentNetworks {
-            current: a.clone(),
-            target: b.clone(),
-        }),
-        // Either has no network: allowed (no network = no restriction).
-        // TODO: In future, only allow this when the source is a limbo or virtual backend,
-        // not for arbitrary servers without a network declaration.
-        _ => Ok(()),
+        (Some(a), Some(b)) if a != b => Some((a, b)),
+        _ => None,
     }
 }
 
@@ -113,41 +101,19 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_same_network_allowed() {
-        let a = config_with_network("lobby", Some("my-network"));
-        let b = config_with_network("survival", Some("my-network"));
-        assert!(validate_switch_allowed(&a, &b).is_ok());
-    }
+    fn only_two_named_networks_can_differ() {
+        let unset = config_with_network("lobby", None);
+        let alice = config_with_network("lobby", Some("alice-net"));
+        let alice_too = config_with_network("survival", Some("alice-net"));
+        let bob = config_with_network("survival", Some("bob-net"));
 
-    #[test]
-    fn test_switch_source_no_network_allowed() {
-        let a = config_with_network("lobby", None);
-        let b = config_with_network("survival", Some("my-network"));
-        assert!(validate_switch_allowed(&a, &b).is_ok());
-    }
-
-    #[test]
-    fn test_switch_target_no_network_allowed() {
-        let a = config_with_network("lobby", Some("my-network"));
-        let b = config_with_network("survival", None);
-        assert!(validate_switch_allowed(&a, &b).is_ok());
-    }
-
-    #[test]
-    fn test_switch_different_networks() {
-        let a = config_with_network("lobby", Some("alice-net"));
-        let b = config_with_network("survival", Some("bob-net"));
-        let err = validate_switch_allowed(&a, &b).unwrap_err();
-        assert!(matches!(
-            err,
-            SwitchValidationError::DifferentNetworks { .. }
-        ));
-    }
-
-    #[test]
-    fn test_switch_both_no_network_allowed() {
-        let a = config_with_network("lobby", None);
-        let b = config_with_network("survival", None);
-        assert!(validate_switch_allowed(&a, &b).is_ok());
+        assert_eq!(different_networks(&alice, &alice_too), None);
+        assert_eq!(different_networks(&unset, &bob), None);
+        assert_eq!(different_networks(&alice, &unset), None);
+        assert_eq!(different_networks(&unset, &unset), None);
+        assert_eq!(
+            different_networks(&alice, &bob),
+            Some(("alice-net", "bob-net"))
+        );
     }
 }

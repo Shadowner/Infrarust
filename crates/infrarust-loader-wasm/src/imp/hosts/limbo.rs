@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
-use infrarust_api::error::PlayerError;
 use infrarust_api::limbo::{LimboOutcome, LimboSession, SessionHandle};
-use infrarust_api::types::{Component, PlayerId, TitleData};
 use wasmtime::component::Resource;
 
 use super::parse_text;
 use crate::actor::CallKind;
+use crate::adapters::WasmLimboHandler;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::convert;
 use crate::host_error::{HostResult, invalid_component, limbo_error, player_error};
-use crate::limbo::WasmLimboHandler;
 use crate::registrations::Bound;
 use crate::store_state::{PluginStoreState, Quota};
 
@@ -34,7 +32,8 @@ impl PluginStoreState {
         let binding =
             match self
                 .registrations()
-                .bind_limbo(&name, self.generation(), handler, limit)
+                .limbo()
+                .bind(&name, self.generation(), handler, limit)
             {
                 Bound::Fresh(binding) => binding,
                 Bound::Rebound => return Ok(()),
@@ -48,96 +47,38 @@ impl PluginStoreState {
                 Arc::clone(self.registrations()),
             )))
             .map_err(|error| {
-                self.registrations().unbind_limbo(&name);
+                self.registrations().limbo().unbind(&name);
                 tracing::warn!(plugin = %self.plugin_id(), %error, "limbo handler refused");
                 limbo_error(&error)
             })?;
-        self.registrations()
-            .record_limbo_registration(&name, registration);
+        self.registrations().limbo().record(&name, registration);
         Ok(())
     }
 }
 
-trait LimboTarget {
-    fn player_id(&self) -> PlayerId;
-    fn send_message(&self, message: Component) -> Result<(), PlayerError>;
-    fn send_title(&self, title: TitleData) -> Result<(), PlayerError>;
-    fn send_action_bar(&self, message: Component) -> Result<(), PlayerError>;
-    fn complete(&self, outcome: LimboOutcome);
-}
-
-impl LimboTarget for Arc<dyn LimboSession> {
-    fn player_id(&self) -> PlayerId {
-        LimboSession::player_id(&**self)
-    }
-
-    fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        LimboSession::send_message(&**self, message)
-    }
-
-    fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        LimboSession::send_title(&**self, title)
-    }
-
-    fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
-        LimboSession::send_action_bar(&**self, message)
-    }
-
-    fn complete(&self, outcome: LimboOutcome) {
-        LimboSession::complete(&**self, outcome);
-    }
-}
-
-impl LimboTarget for SessionHandle {
-    fn player_id(&self) -> PlayerId {
-        Self::player_id(self)
-    }
-
-    fn send_message(&self, message: Component) -> Result<(), PlayerError> {
-        Self::send_message(self, message)
-    }
-
-    fn send_title(&self, title: TitleData) -> Result<(), PlayerError> {
-        Self::send_title(self, title)
-    }
-
-    fn send_action_bar(&self, message: Component) -> Result<(), PlayerError> {
-        Self::send_action_bar(self, message)
-    }
-
-    fn complete(&self, outcome: LimboOutcome) {
-        Self::complete(self, outcome);
-    }
-}
-
-fn player_id(target: &impl LimboTarget) -> u64 {
-    target.player_id().as_u64()
-}
-
-fn message(target: &impl LimboTarget, message: &wt::Component) -> HostResult<()> {
+fn message(session: &dyn LimboSession, message: &wt::Component) -> HostResult<()> {
     let message = parse_text(message)?;
-    target.send_message(message).map_err(player_error)
+    session.send_message(message).map_err(player_error)
 }
 
-fn title(target: &impl LimboTarget, title: &wt::TitleData) -> HostResult<()> {
+fn title(session: &dyn LimboSession, title: &wt::TitleData) -> HostResult<()> {
     let title = convert::title_data_from_wit(title).map_err(|e| invalid_component(&e))?;
-    target.send_title(title).map_err(player_error)
+    session.send_title(title).map_err(player_error)
 }
 
-fn action_bar(target: &impl LimboTarget, message: &wt::Component) -> HostResult<()> {
+fn action_bar(session: &dyn LimboSession, message: &wt::Component) -> HostResult<()> {
     let message = parse_text(message)?;
-    target.send_action_bar(message).map_err(player_error)
+    session.send_action_bar(message).map_err(player_error)
 }
 
-fn complete(target: &impl LimboTarget, outcome: &wl::HandlerResult) -> HostResult<()> {
-    let outcome = convert::complete_result_from_wit(outcome)?;
-    target.complete(outcome);
+fn complete(outcome: &wl::HandlerResult, complete: impl FnOnce(LimboOutcome)) -> HostResult<()> {
+    complete(convert::complete_result_from_wit(outcome)?);
     Ok(())
 }
 
 impl wl::HostLimboSession for PluginStoreState {
     async fn player_id(&mut self, self_: Resource<wl::LimboSession>) -> wasmtime::Result<u64> {
-        Ok(player_id(&self.resolve_limbo_session(&self_)?))
+        Ok(self.resolve_limbo_session(&self_)?.player_id().as_u64())
     }
 
     async fn profile(
@@ -161,7 +102,7 @@ impl wl::HostLimboSession for PluginStoreState {
         self_: Resource<wl::LimboSession>,
         text: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(message(&self.resolve_limbo_session(&self_)?, &text))
+        Ok(message(&*self.resolve_limbo_session(&self_)?, &text))
     }
 
     async fn send_title(
@@ -169,7 +110,7 @@ impl wl::HostLimboSession for PluginStoreState {
         self_: Resource<wl::LimboSession>,
         data: wt::TitleData,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(title(&self.resolve_limbo_session(&self_)?, &data))
+        Ok(title(&*self.resolve_limbo_session(&self_)?, &data))
     }
 
     async fn send_action_bar(
@@ -177,7 +118,7 @@ impl wl::HostLimboSession for PluginStoreState {
         self_: Resource<wl::LimboSession>,
         text: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(action_bar(&self.resolve_limbo_session(&self_)?, &text))
+        Ok(action_bar(&*self.resolve_limbo_session(&self_)?, &text))
     }
 
     async fn complete(
@@ -185,7 +126,8 @@ impl wl::HostLimboSession for PluginStoreState {
         self_: Resource<wl::LimboSession>,
         outcome: wl::HandlerResult,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(complete(&self.resolve_limbo_session(&self_)?, &outcome))
+        let session = self.resolve_limbo_session(&self_)?;
+        Ok(complete(&outcome, |outcome| session.complete(outcome)))
     }
 
     async fn acquire_handle(
@@ -207,7 +149,10 @@ impl wl::HostLimboSessionHandle for PluginStoreState {
         &mut self,
         self_: Resource<wl::LimboSessionHandle>,
     ) -> wasmtime::Result<u64> {
-        Ok(player_id(&self.resolve_limbo_session_handle(&self_)?))
+        Ok(self
+            .resolve_limbo_session_handle(&self_)?
+            .player_id()
+            .as_u64())
     }
 
     async fn send_message(
@@ -215,7 +160,8 @@ impl wl::HostLimboSessionHandle for PluginStoreState {
         self_: Resource<wl::LimboSessionHandle>,
         text: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(message(&self.resolve_limbo_session_handle(&self_)?, &text))
+        let session = self.resolve_limbo_session_handle(&self_)?.as_session();
+        Ok(message(&*session, &text))
     }
 
     async fn send_title(
@@ -223,7 +169,8 @@ impl wl::HostLimboSessionHandle for PluginStoreState {
         self_: Resource<wl::LimboSessionHandle>,
         data: wt::TitleData,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(title(&self.resolve_limbo_session_handle(&self_)?, &data))
+        let session = self.resolve_limbo_session_handle(&self_)?.as_session();
+        Ok(title(&*session, &data))
     }
 
     async fn send_action_bar(
@@ -231,10 +178,8 @@ impl wl::HostLimboSessionHandle for PluginStoreState {
         self_: Resource<wl::LimboSessionHandle>,
         text: wt::Component,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(action_bar(
-            &self.resolve_limbo_session_handle(&self_)?,
-            &text,
-        ))
+        let session = self.resolve_limbo_session_handle(&self_)?.as_session();
+        Ok(action_bar(&*session, &text))
     }
 
     async fn complete(
@@ -242,10 +187,8 @@ impl wl::HostLimboSessionHandle for PluginStoreState {
         self_: Resource<wl::LimboSessionHandle>,
         outcome: wl::HandlerResult,
     ) -> wasmtime::Result<HostResult<()>> {
-        Ok(complete(
-            &self.resolve_limbo_session_handle(&self_)?,
-            &outcome,
-        ))
+        let handle = self.resolve_limbo_session_handle(&self_)?;
+        Ok(complete(&outcome, |outcome| handle.complete(outcome)))
     }
 
     async fn cancelled(
@@ -260,6 +203,62 @@ impl wl::HostLimboSessionHandle for PluginStoreState {
 
     async fn drop(&mut self, rep: Resource<wl::LimboSessionHandle>) -> wasmtime::Result<()> {
         let _ = self.drop_limbo_session_handle(rep);
+        Ok(())
+    }
+}
+
+pub struct LimboSessionResource {
+    session: Arc<dyn LimboSession>,
+}
+
+pub struct LimboSessionHandleResource {
+    handle: SessionHandle,
+}
+
+impl PluginStoreState {
+    pub(crate) fn push_limbo_session(
+        &mut self,
+        session: Arc<dyn LimboSession>,
+    ) -> wasmtime::Result<Resource<LimboSessionResource>> {
+        Ok(self.table_mut().push(LimboSessionResource { session })?)
+    }
+
+    pub(crate) fn resolve_limbo_session(
+        &mut self,
+        lent: &Resource<LimboSessionResource>,
+    ) -> wasmtime::Result<Arc<dyn LimboSession>> {
+        Ok(Arc::clone(&self.table_mut().get(lent)?.session))
+    }
+
+    pub(crate) fn drop_limbo_session(
+        &mut self,
+        lent: Resource<LimboSessionResource>,
+    ) -> wasmtime::Result<()> {
+        self.table_mut().delete(lent)?;
+        Ok(())
+    }
+
+    pub(crate) fn push_limbo_session_handle(
+        &mut self,
+        handle: SessionHandle,
+    ) -> wasmtime::Result<Resource<LimboSessionHandleResource>> {
+        Ok(self
+            .table_mut()
+            .push(LimboSessionHandleResource { handle })?)
+    }
+
+    pub(crate) fn resolve_limbo_session_handle(
+        &mut self,
+        held: &Resource<LimboSessionHandleResource>,
+    ) -> wasmtime::Result<SessionHandle> {
+        Ok(self.table_mut().get(held)?.handle.clone())
+    }
+
+    pub(crate) fn drop_limbo_session_handle(
+        &mut self,
+        held: Resource<LimboSessionHandleResource>,
+    ) -> wasmtime::Result<()> {
+        self.table_mut().delete(held)?;
         Ok(())
     }
 }

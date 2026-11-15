@@ -1,12 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use infrarust_server_manager::{
-    PlayerCounter, ProviderStatus, ServerManagerError, ServerManagerService, ServerProvider,
-    ServerState,
+    PlayerCounter, ProviderFuture, ProviderStatus, ServerManagerError, ServerManagerService,
+    ServerProvider, ServerState,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -41,7 +40,7 @@ impl MockProvider {
 }
 
 impl ServerProvider for MockProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.start_called.store(true, Ordering::Release);
             *self.status.lock().await = self.status_after_start;
@@ -49,7 +48,7 @@ impl ServerProvider for MockProvider {
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.stop_called.store(true, Ordering::Release);
             *self.status.lock().await = ProviderStatus::Stopped;
@@ -57,9 +56,7 @@ impl ServerProvider for MockProvider {
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let status = *self.status.lock().await;
             self.polls.fetch_add(1, Ordering::AcqRel);
@@ -327,7 +324,7 @@ struct FailingStartProvider {
 }
 
 impl ServerProvider for FailingStartProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.release.notified().await;
             Err(ServerManagerError::Provider {
@@ -337,13 +334,11 @@ impl ServerProvider for FailingStartProvider {
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async { Ok(ProviderStatus::Stopped) })
     }
 
@@ -357,6 +352,46 @@ fn provider_message(result: &Result<(), ServerManagerError>) -> Option<&str> {
         Err(ServerManagerError::Provider { message, .. }) => Some(message.as_str()),
         _ => None,
     }
+}
+
+#[tokio::test]
+async fn test_failed_manual_start_leaves_the_server_crashed() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(FailingStartProvider {
+        release: tokio::sync::Notify::new(),
+    });
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+    );
+
+    let svc = Arc::clone(&service);
+    let manual = tokio::spawn(async move { svc.start_server("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    let svc = Arc::clone(&service);
+    let player = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    provider.release.notify_one();
+
+    let manual = tokio::time::timeout(Duration::from_secs(5), manual)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+    assert_eq!(provider_message(&manual), Some("docker daemon unreachable"));
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+
+    let player = tokio::time::timeout(Duration::from_secs(1), player)
+        .await
+        .expect("the waiting player is released as soon as the start fails")
+        .expect("task should not panic");
+    assert_eq!(provider_message(&player), Some("docker daemon unreachable"));
 }
 
 #[tokio::test]
@@ -518,20 +553,18 @@ impl CountingProvider {
 }
 
 impl ServerProvider for CountingProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.starts.fetch_add(1, Ordering::AcqRel);
             (self.outcome)()
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             Ok(if self.starts() == 0 {
                 ProviderStatus::Stopped
@@ -740,7 +773,7 @@ struct LateFailingProvider {
 }
 
 impl ServerProvider for LateFailingProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.release.notified().await;
             Err(ServerManagerError::Provider {
@@ -750,13 +783,11 @@ impl ServerProvider for LateFailingProvider {
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move { Ok(self.status) })
     }
 
@@ -834,14 +865,14 @@ struct LaggingStopProvider {
 }
 
 impl ServerProvider for LaggingStopProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.running.store(true, Ordering::Release);
             Ok(())
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             *self.stopped_at.lock().unwrap() = Some(std::time::Instant::now());
             self.running.store(false, Ordering::Release);
@@ -849,9 +880,7 @@ impl ServerProvider for LaggingStopProvider {
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let still_reported = self
                 .stopped_at

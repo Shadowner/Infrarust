@@ -54,7 +54,7 @@ impl Default for PluginRegistryImpl {
     }
 }
 
-impl infrarust_api::services::plugin_registry::private::Sealed for PluginRegistryImpl {}
+impl infrarust_api::__sealed::Sealed for PluginRegistryImpl {}
 
 impl PluginRegistry for PluginRegistryImpl {
     fn list_plugin_info(&self) -> Vec<PluginInfo> {

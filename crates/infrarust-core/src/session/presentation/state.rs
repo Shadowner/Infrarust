@@ -11,7 +11,7 @@ use infrarust_api::events::resource_pack::ResourcePackOrigin;
 use infrarust_api::player::{BossBar, BossBarControl, BossBarUpdate, ResourcePackStatus};
 use infrarust_api::types::Component;
 
-use crate::player::{BossBarCommand, PlayerCommand};
+use crate::player::{BossBarCommand, ClientPacket, PlayerCommand};
 use crate::util::sync::lock;
 
 const MAX_TRACKED_COOKIE_KEYS: usize = 256;
@@ -215,7 +215,7 @@ impl BarControl {
 
     fn send(&self, id: Uuid, command: BossBarCommand) -> Result<(), PlayerError> {
         self.commands
-            .try_send(PlayerCommand::BossBar(id, command))
+            .try_send(ClientPacket::BossBar(id, command).into())
             .map_err(|e| PlayerError::SendFailed(e.to_string()))
     }
 

@@ -3,7 +3,7 @@ use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 
 use crate::commands::actions::find_player;
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SubcommandHandler};
 
 pub(crate) struct FindSubcommand;
 
@@ -18,6 +18,14 @@ impl SubcommandHandler for FindSubcommand {
 
     fn usage(&self) -> &str {
         "/ir find <player>"
+    }
+
+    fn runs_bare(&self) -> bool {
+        false
+    }
+
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const { &[ArgSpec::word("player")] }
     }
 
     fn execute<'a>(

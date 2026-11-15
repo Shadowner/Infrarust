@@ -2,7 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use infrarust_api::__private::caller_deadline;
@@ -32,6 +32,8 @@ use crate::status::StatusBoard;
 use crate::store_state::PluginStoreState;
 use crate::supervisor::Fault;
 use crate::supervisor::Supervisor;
+use crate::sync::lock;
+use crate::wait_window::WaitRecorder;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CallFailure {
@@ -299,8 +301,9 @@ impl ActorInfo {
         capabilities: CapabilitySet,
         network: Arc<NetworkPolicy>,
         servers: Arc<dyn ConfigService>,
-    ) -> Self {
-        Self {
+    ) -> (Self, WaitRecorder) {
+        let (board, waits) = StatusBoard::new(sandbox.queue_capacity, sandbox.recovery);
+        let info = Self {
             plugin_id,
             capacity: sandbox.queue_capacity,
             event_budget: inside(sandbox.event_budget),
@@ -312,11 +315,12 @@ impl ActorInfo {
             loop_warnings: SharedRateLimit::new(GUEST_WARNING_INTERVAL, GUEST_WARNING_BURST),
             snapshots,
             access: Arc::default(),
-            board: StatusBoard::new(sandbox.queue_capacity, sandbox.recovery),
+            board,
             capabilities,
             network,
             servers,
-        }
+        };
+        (info, waits)
     }
 
     fn budget(&self, kind: CallKind) -> Duration {
@@ -389,14 +393,17 @@ impl InstanceRef {
         let (jobs, _) = mpsc::channel(1);
         Self {
             jobs: jobs.downgrade(),
-            info: Arc::new(ActorInfo::new(
-                String::new(),
-                &SandboxLimits::default(),
-                Arc::default(),
-                capabilities,
-                network,
-                servers,
-            )),
+            info: Arc::new(
+                ActorInfo::new(
+                    String::new(),
+                    &SandboxLimits::default(),
+                    Arc::default(),
+                    capabilities,
+                    network,
+                    servers,
+                )
+                .0,
+            ),
             kind: CallKind::Callback,
             generation: None,
         }
@@ -431,11 +438,11 @@ impl InstanceRef {
     }
 
     pub(crate) fn admit_warning(&self) -> Option<u64> {
-        self.info.guest_warnings.admit(Instant::now())
+        self.info.guest_warnings.admit()
     }
 
     pub(crate) fn admit_loop_warning(&self) -> Option<u64> {
-        self.info.loop_warnings.admit(Instant::now())
+        self.info.loop_warnings.admit()
     }
 
     pub(crate) fn is_upstream(&self) -> bool {
@@ -557,14 +564,15 @@ impl PluginActor {
     pub(crate) async fn start(factory: InstanceFactory) -> Result<Arc<Self>, WasmLoaderError> {
         let sandbox = *factory.sandbox();
         let (jobs, queue) = mpsc::channel(sandbox.queue_capacity);
-        let info = Arc::new(ActorInfo::new(
+        let (info, waits) = ActorInfo::new(
             factory.plugin_id().to_owned(),
             &sandbox,
             Arc::clone(factory.registrations().snapshots()),
             factory.capabilities().clone(),
             Arc::clone(factory.network()),
             factory.ctx().config_service(),
-        ));
+        );
+        let info = Arc::new(info);
         let instance = InstanceRef {
             jobs: jobs.downgrade(),
             info: Arc::clone(&info),
@@ -572,7 +580,7 @@ impl PluginActor {
             generation: None,
         };
         let halt = Arc::new(Halt::new(factory.ctx().proxy_shutdown()));
-        let supervisor = Supervisor::start(factory, instance, Arc::clone(&halt)).await?;
+        let supervisor = Supervisor::start(factory, instance, Arc::clone(&halt), waits).await?;
         let task =
             tokio::spawn(run(supervisor, queue, Arc::clone(&halt)).with_current_subscriber());
         Ok(Arc::new(Self {
@@ -587,15 +595,14 @@ impl PluginActor {
         &self.info.plugin_id
     }
 
+    pub(crate) fn proxy_stopping(&self) -> bool {
+        self.halt.proxy_stopping()
+    }
+
     pub(crate) fn runtime_status(&self) -> PluginRuntimeStatus {
-        let depth = self
-            .jobs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map_or(0, |jobs| {
-                jobs.max_capacity().saturating_sub(jobs.capacity())
-            });
+        let depth = lock(&self.jobs).as_ref().map_or(0, |jobs| {
+            jobs.max_capacity().saturating_sub(jobs.capacity())
+        });
         self.info.board.snapshot(depth)
     }
 
@@ -609,11 +616,7 @@ impl PluginActor {
         T: Send + 'static,
         F: GuestFn<T>,
     {
-        let jobs = self
-            .jobs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let jobs = lock(&self.jobs).clone();
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
@@ -639,21 +642,13 @@ impl PluginActor {
 
     pub(crate) fn stop(&self) {
         self.halt.stop();
-        let jobs = self
-            .jobs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let jobs = lock(&self.jobs).take();
         drop(jobs);
     }
 
     pub(crate) async fn shutdown(&self) {
         self.stop();
-        let task = self
-            .task
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let task = lock(&self.task).take();
         if let Some(task) = task
             && let Err(e) = task.await
         {

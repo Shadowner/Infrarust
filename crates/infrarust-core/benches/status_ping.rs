@@ -13,7 +13,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr};
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
@@ -36,7 +35,7 @@ use infrarust_core::pipeline::types::{ConnectionIntent, HandshakeData, RoutingDa
 use infrarust_core::registry::ConnectionRegistry;
 use infrarust_core::status::relay_gate::RelayGate;
 use infrarust_core::status::{
-    FaviconCache, ServerPingResponse, StatusCache, StatusHandler, StatusRelayClient,
+    FaviconCache, ServerPingResponse, StatusCache, StatusDeps, StatusHandler, StatusRelayClient,
 };
 use infrarust_protocol::registry::build_default_registry;
 use infrarust_protocol::version::ProtocolVersion;
@@ -111,8 +110,8 @@ fn fixture(listeners: usize) -> Fixture {
     let favicons = runtime
         .block_on(FaviconCache::load_from_configs(&[], None))
         .unwrap();
-    let handler = StatusHandler::new(
-        StatusRelayClient::new(
+    let handler = StatusHandler::new(StatusDeps {
+        relay_client: StatusRelayClient::new(
             Arc::new(BackendConnector::new(
                 Duration::from_secs(1),
                 KeepaliveConfig::default(),
@@ -120,16 +119,16 @@ fn fixture(listeners: usize) -> Fixture {
             Arc::clone(&registry),
             Duration::from_secs(1),
         ),
-        Arc::clone(&cache),
-        Arc::new(favicons),
-        None,
+        cache: Arc::clone(&cache),
+        favicon_cache: Arc::new(favicons),
+        server_manager: None,
         registry,
-        None,
-        bus,
-        Arc::new(BackendLoad::new()),
-        Arc::new(PassiveBackendHealth::new()),
-        Arc::new(RelayGate::default()),
-    );
+        default_motd: None,
+        event_bus: bus,
+        counts: Arc::new(BackendLoad::new()),
+        health: Arc::new(PassiveBackendHealth::new()),
+        relay_gate: Arc::new(RelayGate::default()),
+    });
 
     let (server, client, peer, local) = runtime.block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -138,19 +137,18 @@ fn fixture(listeners: usize) -> Fixture {
         let (server, peer) = listener.accept().await.unwrap();
         (server, client, peer, local)
     });
-    let mut ctx =
-        ConnectionContext::new_for_test(server, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+    let mut ctx = ConnectionContext::new_for_test(server, peer, local);
 
     let config: Arc<ServerConfig> = Arc::new(
         toml::from_str("domains = [\"play.example.net\"]\naddresses = [\"127.0.0.1:25566\"]\n")
             .unwrap(),
     );
-    ctx.extensions.insert(RoutingData {
+    ctx.routing = Some(RoutingData {
         load_balancer: build_load_balancer(&config.balance_config()),
         server_config: config,
         config_id: SERVER.to_string(),
     });
-    ctx.extensions.insert(HandshakeData {
+    ctx.handshake = Some(HandshakeData {
         domain: "play.example.net".to_string(),
         raw_host: "play.example.net".to_string(),
         port: 25565,
@@ -178,7 +176,12 @@ fn poll_ready<F: Future>(future: F) -> F::Output {
 }
 
 fn status_frame(fixture: &Fixture) -> Bytes {
-    poll_ready(fixture.handler.status_frame(&fixture.ctx, &fixture.sessions)).unwrap()
+    poll_ready(
+        fixture
+            .handler
+            .status_frame(&fixture.ctx, &fixture.sessions),
+    )
+    .unwrap()
 }
 
 #[divan::bench(args = [0, 1])]

@@ -16,7 +16,7 @@ pub struct TimingConfig {
     pub start_timeout_seconds: u64,
     #[serde(default = "default_title_refresh")]
     pub title_refresh_interval_seconds: u64,
-    #[serde(default = "infrarust_config::defaults::true_val")]
+    #[serde(default = "default_show_waiting_count")]
     pub show_waiting_count: bool,
 }
 
@@ -25,7 +25,7 @@ impl Default for TimingConfig {
         Self {
             start_timeout_seconds: default_start_timeout(),
             title_refresh_interval_seconds: default_title_refresh(),
-            show_waiting_count: true,
+            show_waiting_count: default_show_waiting_count(),
         }
     }
 }
@@ -71,6 +71,11 @@ impl Default for ServerWakeMessages {
 const fn default_start_timeout() -> u64 {
     180
 }
+
+const fn default_show_waiting_count() -> bool {
+    true
+}
+
 const fn default_title_refresh() -> u64 {
     3
 }

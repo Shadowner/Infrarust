@@ -75,7 +75,7 @@ impl std::fmt::Debug for MockPlayerRegistry {
     }
 }
 
-impl crate::services::player_registry::private::Sealed for MockPlayerRegistry {}
+impl crate::__sealed::Sealed for MockPlayerRegistry {}
 
 impl PlayerRegistry for MockPlayerRegistry {
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>> {

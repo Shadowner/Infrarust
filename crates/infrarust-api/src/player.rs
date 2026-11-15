@@ -7,8 +7,8 @@ use bytes::Bytes;
 
 use uuid::Uuid;
 
+use crate::BoxFuture;
 use crate::error::PlayerError;
-use crate::event::BoxFuture;
 use crate::messaging::ChannelId;
 use crate::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,
@@ -32,9 +32,9 @@ fn unsupported(feature: &str) -> PlayerError {
     PlayerError::Unsupported(format!("{feature} is not implemented by this player"))
 }
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`Player`](super::Player).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// A player connected to the proxy.
@@ -50,7 +50,7 @@ pub mod private {
 /// will return `Err(PlayerError::NotActive)`.
 ///
 /// Use [`is_active()`](Player::is_active) to check before calling these methods.
-pub trait Player: Send + Sync + private::Sealed {
+pub trait Player: Send + Sync + crate::__sealed::Sealed {
     fn id(&self) -> PlayerId;
 
     fn profile(&self) -> &GameProfile;

@@ -7,22 +7,24 @@ use bytes::Bytes;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::version::ProtocolVersion;
 
-use super::RegistryDataProvider;
-use super::extractor_format::ExtractedRegistryData;
+use super::extractor_format::{ExtractedRegistryData, FrameData};
 use crate::error::CoreError;
 
 include!(concat!(env!("OUT_DIR"), "/registry_bins.rs"));
 
-/// Embedded registry data keyed by protocol version.
-static EMBEDDED_DATA: LazyLock<HashMap<i32, ExtractedRegistryData>> = LazyLock::new(|| {
-    let mut map = HashMap::new();
-    for bin in REGISTRY_BINS {
-        load_embedded(&mut map, bin);
-    }
-    map
+pub(crate) struct EmbeddedFrames {
+    pub(crate) registry: Vec<PacketFrame>,
+    pub(crate) known_packs: Option<PacketFrame>,
+}
+
+static EMBEDDED_FRAMES: LazyLock<HashMap<i32, EmbeddedFrames>> = LazyLock::new(|| {
+    REGISTRY_BINS
+        .iter()
+        .filter_map(|bin| load_embedded(bin))
+        .collect()
 });
 
-fn load_embedded(map: &mut HashMap<i32, ExtractedRegistryData>, compressed: &[u8]) {
+fn load_embedded(compressed: &[u8]) -> Option<(i32, EmbeddedFrames)> {
     use flate2::read::GzDecoder;
     use std::io::Read;
 
@@ -30,63 +32,39 @@ fn load_embedded(map: &mut HashMap<i32, ExtractedRegistryData>, compressed: &[u8
     let mut decompressed = Vec::new();
     if let Err(e) = decoder.read_to_end(&mut decompressed) {
         tracing::error!("Failed to decompress embedded registry data: {e}");
-        return;
+        return None;
     }
 
     match ExtractedRegistryData::from_binary(&decompressed) {
         Ok(extracted) => {
-            map.insert(extracted.protocol_version, extracted);
+            let frame = |f: FrameData| PacketFrame::new(f.packet_id, Bytes::from(f.payload));
+            Some((
+                extracted.protocol_version,
+                EmbeddedFrames {
+                    registry: extracted.registry_frames.into_iter().map(frame).collect(),
+                    known_packs: extracted.known_packs_frame.map(frame),
+                },
+            ))
         }
         Err(e) => {
             tracing::error!("Failed to load embedded registry data: {e}");
+            None
         }
     }
 }
 
 pub(crate) fn highest_version() -> Option<ProtocolVersion> {
-    EMBEDDED_DATA.keys().max().copied().map(ProtocolVersion)
+    EMBEDDED_FRAMES.keys().max().copied().map(ProtocolVersion)
 }
 
-pub(crate) struct EmbeddedRegistryDataProvider;
-
-impl RegistryDataProvider for EmbeddedRegistryDataProvider {
-    fn registry_frames(&self, version: ProtocolVersion) -> Result<Vec<PacketFrame>, CoreError> {
-        let data = EMBEDDED_DATA.get(&version.0).ok_or_else(|| {
-            CoreError::RegistryData(format!(
-                "no embedded registry data for protocol version {} ({})",
-                version.0,
-                version.name(),
-            ))
-        })?;
-
-        Ok(data
-            .registry_frames
-            .iter()
-            .map(|f| PacketFrame::new(f.packet_id, Bytes::from(f.payload.clone())))
-            .collect())
-    }
-
-    fn known_packs_frame(
-        &self,
-        version: ProtocolVersion,
-    ) -> Result<Option<PacketFrame>, CoreError> {
-        let data = EMBEDDED_DATA.get(&version.0).ok_or_else(|| {
-            CoreError::RegistryData(format!(
-                "no embedded registry data for protocol version {} ({})",
-                version.0,
-                version.name(),
-            ))
-        })?;
-
-        Ok(data
-            .known_packs_frame
-            .as_ref()
-            .map(|f| PacketFrame::new(f.packet_id, Bytes::from(f.payload.clone()))))
-    }
-
-    fn supports_version(&self, version: ProtocolVersion) -> bool {
-        EMBEDDED_DATA.contains_key(&version.0)
-    }
+pub(crate) fn frames(version: ProtocolVersion) -> Result<&'static EmbeddedFrames, CoreError> {
+    EMBEDDED_FRAMES.get(&version.0).ok_or_else(|| {
+        CoreError::RegistryData(format!(
+            "no embedded registry data for protocol version {} ({})",
+            version.0,
+            version.name(),
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -103,14 +81,13 @@ mod tests {
     #[test]
     fn every_configuration_phase_version_has_embedded_registry_data() {
         let registry = test_registry();
-        let provider = EmbeddedRegistryDataProvider;
         let versions = ProtocolVersion::SUPPORTED
             .iter()
             .copied()
             .filter(|version| version.no_less_than(ProtocolVersion::V1_20_2));
         for version in versions {
-            assert!(provider.supports_version(version), "{version}");
-            let frames = provider.registry_frames(version).unwrap();
+            let embedded = frames(version).unwrap();
+            let frames = &embedded.registry;
             let required = [
                 registry.get_packet_id::<CRegistryData>(version),
                 registry.get_packet_id::<CFeatureFlags>(version),
@@ -123,16 +100,15 @@ mod tests {
                 );
             }
             let brand = registry.get_packet_id::<CConfigPluginMessage>(version);
-            for frame in &frames {
+            for frame in frames {
                 assert!(
                     required.contains(&Some(frame.id)) || Some(frame.id) == brand,
                     "{version} embeds an unexpected packet 0x{:02X}",
                     frame.id
                 );
             }
-            let known_packs = provider.known_packs_frame(version).unwrap();
             assert_eq!(
-                known_packs.map(|frame| frame.id),
+                embedded.known_packs.as_ref().map(|frame| frame.id),
                 registry
                     .get_packet_id::<CKnownPacks>(version)
                     .filter(|_| version.no_less_than(ProtocolVersion::V1_20_5)),

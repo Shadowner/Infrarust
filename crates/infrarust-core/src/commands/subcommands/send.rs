@@ -3,7 +3,7 @@ use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 
 use crate::commands::actions::send_player;
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SubcommandHandler};
 
 pub(crate) struct SendSubcommand;
 
@@ -22,6 +22,19 @@ impl SubcommandHandler for SendSubcommand {
 
     fn usage(&self) -> &str {
         "/ir send <player> <server>"
+    }
+
+    fn runs_bare(&self) -> bool {
+        false
+    }
+
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const {
+            &[
+                ArgSpec::word("player").needs_more(),
+                ArgSpec::word("server"),
+            ]
+        }
     }
 
     fn execute<'a>(

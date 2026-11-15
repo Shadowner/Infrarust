@@ -36,7 +36,8 @@ pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::{IdentityCheck, ProxyMode};
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{
-    CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
+    CraftyManagerConfig, LocalManagerConfig, ManagerLifecycle, PterodactylManagerConfig,
+    ServerManagerConfig,
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{
@@ -50,7 +51,7 @@ pub use wasm::{
 pub use wasm_network::{
     HostPattern, NetworkRule, NetworkRuleError, PortRange, WasmMount, WasmNetworkConfig,
 };
-pub use web::WebConfig;
+pub use web::{ApiKeyError, ApiKeyState, WebConfig};
 
 /// Default Minecraft port.
 pub const DEFAULT_MC_PORT: u16 = 25565;

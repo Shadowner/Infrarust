@@ -27,6 +27,12 @@ pub enum ApiError {
     Internal(String),
 }
 
+impl ApiError {
+    pub fn server_not_found(id: &str) -> Self {
+        ApiError::NotFound(format!("Server '{id}' not found"))
+    }
+}
+
 impl From<crate::server_dir::StoreError> for ApiError {
     fn from(error: crate::server_dir::StoreError) -> Self {
         use crate::server_dir::StoreError;

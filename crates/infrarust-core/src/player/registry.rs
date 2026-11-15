@@ -7,7 +7,7 @@ use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ServerId};
 
-use crate::session::connection_registry::ConnectionRegistry;
+use crate::registry::ConnectionRegistry;
 
 /// Thin wrapper around [`ConnectionRegistry`] that exposes the API-level
 /// [`PlayerRegistry`] trait.
@@ -21,7 +21,7 @@ impl PlayerRegistryImpl {
     }
 }
 
-impl infrarust_api::services::player_registry::private::Sealed for PlayerRegistryImpl {}
+impl infrarust_api::__sealed::Sealed for PlayerRegistryImpl {}
 
 impl PlayerRegistry for PlayerRegistryImpl {
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>> {
@@ -31,9 +31,7 @@ impl PlayerRegistry for PlayerRegistryImpl {
     }
 
     fn get_player_by_uuid(&self, uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
-        self.registry
-            .find_by_uuid(uuid)
-            .map(|s| s as Arc<dyn Player>)
+        self.registry.get(uuid).map(|s| s as Arc<dyn Player>)
     }
 
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {

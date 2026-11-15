@@ -45,7 +45,7 @@ struct DiscoveredWasm {
 
 impl WasmPluginLoader {
     pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
-        let linker = build_linker(&engine, "host").map_err(std::io::Error::other)?;
+        let linker = build_linker(&engine).map_err(std::io::Error::other)?;
         let cache = AotCache::new(&engine, config.cache_dir().map(Path::to_path_buf));
         Ok(Self {
             engine: TickedEngine::new(engine, config.epoch_tick()),
@@ -258,8 +258,6 @@ impl PluginLoader for WasmPluginLoader {
                 None
             };
 
-            let shutdown = ctx.proxy_shutdown();
-            let shutting_down = Box::new(move || shutdown.is_cancelled());
             let setup = PluginSetup {
                 plugin_id: plugin_id.to_owned(),
                 ctx,
@@ -278,7 +276,7 @@ impl PluginLoader for WasmPluginLoader {
                 .await
                 .map_err(|e| e.into_loader_error(plugin_id))?;
             lock(&self.actors).insert(plugin_id.to_owned(), Arc::downgrade(&actor));
-            Ok(Box::new(WasmPlugin::new(entry.metadata, actor, shutting_down)) as Box<dyn Plugin>)
+            Ok(Box::new(WasmPlugin::new(entry.metadata, actor)) as Box<dyn Plugin>)
         })
     }
 

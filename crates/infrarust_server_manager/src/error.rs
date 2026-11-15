@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::state::ServerState;
 
-/// Errors that can occur during server management operations.
 #[derive(Debug, Clone, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServerManagerError {

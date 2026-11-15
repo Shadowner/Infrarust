@@ -9,19 +9,21 @@ use axum::response::IntoResponse;
 use infrarust_api::provider::{PluginProviderEvent, ServerDocument};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::ServerId;
-use infrarust_config::ServerConfig;
 use infrarust_config::secrets::{SERVER_SECRETS, redact, reinject, still_redacted};
+use infrarust_config::{MAX_IDENTIFIER_LEN, ServerConfig};
 use toml_edit::DocumentMut;
 
+use crate::address::format_address;
 use crate::dto::player::PlayerSummary;
 use crate::dto::server::{
     HealthCheckResponse, ServerDetailResponse, ServerResponse, ValidationResponse,
 };
 use crate::error::ApiError;
+use crate::health_checker;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
-use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
+use crate::server_dir::{Committed, DocumentId, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::{ProxyModeName, server_state_str};
+use crate::vocab::{ProxyModeName, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
 
@@ -62,7 +64,7 @@ fn not_ours(id: &str, providers: Option<&Vec<String>>) -> ApiError {
             "Server '{id}' comes from the '{}' provider and is read-only here",
             source_label(Some(providers))
         )),
-        None => ApiError::NotFound(format!("Server '{id}' not found")),
+        None => ApiError::server_not_found(id),
     }
 }
 
@@ -124,11 +126,7 @@ pub async fn list(
             editable: is_editable(&state, &id_str, providers),
             has_server_manager: config.has_server_manager,
             id: id_str,
-            addresses: config
-                .addresses
-                .iter()
-                .map(|a| format!("{}:{}", a.host, a.port))
-                .collect(),
+            addresses: config.addresses.iter().map(format_address).collect(),
             domains: config.domains.clone(),
             proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
             state: server_state.map(server_state_str).map(String::from),
@@ -149,7 +147,7 @@ pub async fn get(
     let config = state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let server_state = state.server_manager.get_state(&server_id);
     let players = state.player_registry.get_players_on_server(&server_id);
@@ -161,11 +159,7 @@ pub async fn get(
         editable: is_editable(&state, &id, providers),
         has_server_manager: config.has_server_manager,
         id,
-        addresses: config
-            .addresses
-            .iter()
-            .map(|a| format!("{}:{}", a.host, a.port))
-            .collect(),
+        addresses: config.addresses.iter().map(format_address).collect(),
         domains: config.domains.clone(),
         proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
         limbo_handlers: config.limbo_handlers.clone(),
@@ -192,7 +186,7 @@ pub async fn start(
     state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     tracing::info!(
         target: "audit",
@@ -220,7 +214,7 @@ pub async fn stop(
     state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     tracing::info!(
         target: "audit",
@@ -253,7 +247,7 @@ fn settle_id(config: &mut ServerConfig, expected: &str) -> Result<DocumentId, Ap
     }
     let document = DocumentId::new(expected).ok_or_else(|| {
         ApiError::BadRequest(format!(
-            "server ID '{expected}' must be 1 to {MAX_ID_LEN} characters of \
+            "server ID '{expected}' must be 1 to {MAX_IDENTIFIER_LEN} characters of \
              [a-z0-9._-], must not start with '.' and must not contain '..'"
         ))
     })?;
@@ -365,7 +359,7 @@ fn document_of(state: &ApiState, id: &str) -> Result<String, ApiError> {
         .config_service
         .get_server_document(&ServerId::new(id))
         .or_else(|| state.server_dir.document_text(id))
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(id))?;
 
     let mut document = text
         .parse::<DocumentMut>()
@@ -499,7 +493,7 @@ pub async fn delete(
     let removed = lock
         .remove(&document)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let event = PluginProviderEvent::Removed(ServerId::new(removed.id().as_str()));
     announce(&state, removed, event).await;
@@ -525,9 +519,9 @@ pub async fn health_check(
     let config = state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
-    let result = state.health_checker.check(&config).await;
+    let result = health_checker::check(&config).await;
     state.health_cache.set(&id, result.clone());
 
     Ok(ok(result))
@@ -543,7 +537,7 @@ pub async fn health_cached(
     state
         .config_service
         .get_server_config(&server_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Server '{id}' not found")))?;
+        .ok_or_else(|| ApiError::server_not_found(&id))?;
 
     let cached = state
         .health_cache

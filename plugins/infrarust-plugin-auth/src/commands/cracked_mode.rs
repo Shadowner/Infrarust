@@ -82,10 +82,7 @@ async fn set_cracked_mode(handler: &AuthHandler, ctx: CommandContext, cracked: b
     };
     premium_info.force_cracked = cracked;
 
-    if let Err(e) = storage
-        .update_premium_info(&username, Some(premium_info))
-        .await
-    {
+    if let Err(e) = storage.update_premium_info(&username, Some(premium_info)) {
         tracing::error!("{}: {e}", messages.failure);
         let _ = player.send_message(Component::error(INTERNAL_ERROR));
         return;

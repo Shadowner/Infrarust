@@ -10,28 +10,20 @@ use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata, PluginRuntime
 
 pub(crate) struct WasmPlugin {
     metadata: PluginMetadata,
-    plugin_id: String,
     actor: Arc<PluginActor>,
-    shutting_down: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl WasmPlugin {
-    pub(crate) fn new(
-        metadata: PluginMetadata,
-        actor: Arc<PluginActor>,
-        shutting_down: Box<dyn Fn() -> bool + Send + Sync>,
-    ) -> Self {
-        let plugin_id = metadata.id.clone();
-        Self {
-            metadata,
-            plugin_id,
-            actor,
-            shutting_down,
-        }
+    pub(crate) fn new(metadata: PluginMetadata, actor: Arc<PluginActor>) -> Self {
+        Self { metadata, actor }
+    }
+
+    fn plugin_id(&self) -> &str {
+        self.actor.plugin_id()
     }
 
     fn disable_reason(&self) -> DisableReason {
-        if (self.shutting_down)() {
+        if self.actor.proxy_stopping() {
             DisableReason::Shutdown
         } else {
             DisableReason::Unload
@@ -41,12 +33,12 @@ impl WasmPlugin {
     fn lifecycle_error(&self, op: &'static str, failure: CallFailure) -> WasmLoaderError {
         match failure {
             CallFailure::Trapped(trap) => WasmLoaderError::Trap {
-                plugin_id: self.plugin_id.clone(),
+                plugin_id: self.plugin_id().to_owned(),
                 op,
                 trap,
             },
             failure => WasmLoaderError::CallFailed {
-                plugin_id: self.plugin_id.clone(),
+                plugin_id: self.plugin_id().to_owned(),
                 op,
                 source: Box::new(failure),
             },
@@ -63,7 +55,7 @@ impl Plugin for WasmPlugin {
         &'a self,
         _ctx: &'a dyn PluginContext,
     ) -> BoxFuture<'a, Result<(), PluginError>> {
-        debug_assert_eq!(_ctx.plugin_id(), self.plugin_id);
+        debug_assert_eq!(_ctx.plugin_id(), self.plugin_id());
         Box::pin(async move {
             let result = self
                 .actor
@@ -83,7 +75,7 @@ impl Plugin for WasmPlugin {
             if let CallFailure::Abandoned(fault) = &failure
                 && let Some(message) = fault.refusal()
             {
-                tracing::warn!(plugin = %self.plugin_id, %message,
+                tracing::warn!(plugin = %self.plugin_id(), %message,
                     "wasm guest on_enable returned an error");
                 return Err(PluginError::InitFailed(message.to_owned()));
             }
@@ -111,22 +103,22 @@ impl Plugin for WasmPlugin {
             match result {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(message)) => {
-                    tracing::warn!(plugin = %self.plugin_id, %message,
+                    tracing::warn!(plugin = %self.plugin_id(), %message,
                         "wasm guest on_disable returned an error");
                     Err(PluginError::from(message))
                 }
                 Err(CallFailure::Quarantined) => {
-                    tracing::warn!(plugin = %self.plugin_id,
+                    tracing::warn!(plugin = %self.plugin_id(),
                         "skipping on_disable for a quarantined wasm plugin: it has no live instance");
                     Ok(())
                 }
                 Err(CallFailure::Failed) => {
-                    tracing::warn!(plugin = %self.plugin_id,
+                    tracing::warn!(plugin = %self.plugin_id(),
                         "skipping on_disable for a wasm plugin that failed before it was enabled");
                     Ok(())
                 }
                 Err(CallFailure::Stopped) => {
-                    tracing::debug!(plugin = %self.plugin_id,
+                    tracing::debug!(plugin = %self.plugin_id(),
                         "skipping on_disable for a wasm plugin that is already stopped");
                     Ok(())
                 }

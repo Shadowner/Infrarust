@@ -13,7 +13,7 @@ use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::{PluginLoader, PluginState, StaticPluginLoader};
 use infrarust_core::runtime::{ProxyRuntime, RunningProxy};
 use infrarust_core::server::ProxyServer;
-use infrarust_core::services::ProxyServices;
+use infrarust_core::server::ProxyServices;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_server_manager::ServerProvider;
 use tempfile::TempDir;
@@ -365,16 +365,13 @@ impl TestProxyBuilder {
             }
         };
 
-        let failures: Vec<String> = {
-            let manager = running.plugin_manager().read().await;
-            plugin_ids
-                .iter()
-                .filter_map(|id| match manager.plugin_state(id) {
-                    Some(PluginState::Enabled) => None,
-                    other => Some(format!("{id} ({other:?})")),
-                })
-                .collect()
-        };
+        let mut failures = Vec::new();
+        for id in &plugin_ids {
+            match running.plugins().plugin_state(id).await {
+                Some(PluginState::Enabled) => {}
+                other => failures.push(format!("{id} ({other:?})")),
+            }
+        }
         if !failures.is_empty() {
             let _ = running.shutdown().await;
             return Err(HarnessError::setup(format!(
@@ -536,11 +533,7 @@ impl TestProxy {
 
     pub async fn plugin_context(&self, plugin_id: &str) -> Option<Arc<dyn PluginContext>> {
         let running = self.running.as_ref()?;
-        running
-            .plugin_manager()
-            .read()
-            .await
-            .plugin_context(plugin_id)
+        running.plugins().plugin_context(plugin_id).await
     }
 
     pub async fn shutdown(mut self) -> HarnessResult<()> {

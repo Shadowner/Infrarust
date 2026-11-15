@@ -20,27 +20,7 @@ pub use legacy::{
     LegacyDetection, LegacyPingRequest, LegacyPingResponse, LegacyPingVariant,
     detect as detect_legacy, parse_legacy_ping,
 };
-pub use packets::{
-    ArgumentSignature, BossBarAction, CBossBar, CChatMessageLegacy, CChunkBatchFinished,
-    CChunkBatchStart, CChunkData, CClearTitles, CCommands, CConfigCookieRequest, CConfigDisconnect,
-    CConfigPluginMessage, CConfigResourcePack, CConfigResourcePackPop, CConfigResourcePackPush,
-    CConfigStoreCookie, CConfigTransfer, CCookieRequest, CDisconnect, CEncryptionRequest,
-    CFeatureFlags, CFinishConfig, CGameEvent, CJoinGame, CKeepAlive, CKnownPacks,
-    CLoginCookieRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CPingResponse,
-    CPlayerAbilities, CPluginMessage, CRegistryData, CResourcePack, CResourcePackPop,
-    CResourcePackPush, CRespawn, CSetCenterChunk, CSetCompression, CSetDefaultSpawnPosition,
-    CSetSubtitle, CSetTitle, CSetTitleTimes, CStartConfiguration, CStatusResponse, CStoreCookie,
-    CSynchronizePlayerPosition, CSystemChatMessage, CTabCompleteResponse, CTabListHeaderFooter,
-    CTitleLegacy, CTransfer, CUpdateTags, ClientInformation, DimensionInfo, EncryptionProof,
-    ErasedPacket, KnownPack, LastSeenMessages, MAX_COOKIE_PAYLOAD, Packet, PacketMapping,
-    PreviousMessage, PreviousMessages, ProfileKey, Property, ResourcePackResult,
-    SAcknowledgeConfiguration, SAcknowledgeFinishConfig, SChatAcknowledgement, SChatCommand,
-    SChatCommandSigned, SChatMessage, SChatSessionUpdate, SClientInformation,
-    SConfigClientInformation, SConfigCookieResponse, SConfigPluginMessage,
-    SConfigResourcePackResponse, SCookieResponse, SEncryptionResponse, SHandshake, SKeepAlive,
-    SKnownPacks, SLoginAcknowledged, SLoginCookieResponse, SLoginPluginResponse, SLoginStart,
-    SPingRequest, SPluginMessage, SResourcePackResponse, SStatusRequest, STabCompleteRequest,
-};
+pub use packets::*;
 pub use registry::{DecodedPacket, PacketRegistry, build_default_registry};
 pub use version::{ConnectionState, Direction, ProtocolVersion};
 

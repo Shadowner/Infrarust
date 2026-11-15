@@ -1,9 +1,3 @@
-//! Refactored status handler with relay, cache, and contextual MOTDs.
-//!
-//! Replaces the Phase 1/2C handler (`handler/status.rs`). Implements the
-//! full decision tree: server manager states → relay → cache → stale
-//! fallback → synthetic MOTDs.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,8 +7,8 @@ use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::ProtocolVersion;
 
 use infrarust_server_manager::{ServerManagerService, ServerState};
 
@@ -29,11 +23,11 @@ use super::relay_gate::{RelayGate, RelayTurn};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::session::connection_registry::ConnectionRegistry;
+use crate::registry::ConnectionRegistry;
+use crate::status::ping_event::{core_to_api_ping_response, merge_ping_event};
 use crate::util::text::api_version;
 
 enum Backed {
@@ -62,20 +56,33 @@ pub struct StatusHandler {
     relay_gate: Arc<RelayGate>,
 }
 
+pub struct StatusDeps {
+    pub relay_client: StatusRelayClient,
+    pub cache: Arc<StatusCache>,
+    pub favicon_cache: Arc<FaviconCache>,
+    pub server_manager: Option<Arc<ServerManagerService>>,
+    pub registry: Arc<PacketRegistry>,
+    pub default_motd: Option<MotdConfig>,
+    pub event_bus: Arc<EventBusImpl>,
+    pub counts: Arc<dyn AddressConnectionCount>,
+    pub health: Arc<dyn BackendHealthView>,
+    pub relay_gate: Arc<RelayGate>,
+}
+
 impl StatusHandler {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        relay_client: StatusRelayClient,
-        cache: Arc<StatusCache>,
-        favicon_cache: Arc<FaviconCache>,
-        server_manager: Option<Arc<ServerManagerService>>,
-        registry: Arc<PacketRegistry>,
-        default_motd: Option<MotdConfig>,
-        event_bus: Arc<EventBusImpl>,
-        counts: Arc<dyn AddressConnectionCount>,
-        health: Arc<dyn BackendHealthView>,
-        relay_gate: Arc<RelayGate>,
-    ) -> Self {
+    pub fn new(deps: StatusDeps) -> Self {
+        let StatusDeps {
+            relay_client,
+            cache,
+            favicon_cache,
+            server_manager,
+            registry,
+            default_motd,
+            event_bus,
+            counts,
+            health,
+            relay_gate,
+        } = deps;
         Self {
             relay_client,
             cache,
@@ -97,16 +104,6 @@ impl StatusHandler {
     pub fn with_metrics(mut self, metrics: Arc<crate::telemetry::ProxyMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
-    }
-
-    /// Returns a reference to the status cache (for hot-reload invalidation).
-    pub const fn cache(&self) -> &Arc<StatusCache> {
-        &self.cache
-    }
-
-    /// Returns a reference to the favicon cache (for hot-reload).
-    pub const fn favicon_cache(&self) -> &Arc<FaviconCache> {
-        &self.favicon_cache
     }
 
     /// Handles a status request on the given connection context.
@@ -139,8 +136,8 @@ impl StatusHandler {
         ctx: &ConnectionContext,
         connection_registry: &ConnectionRegistry,
     ) -> Result<Bytes, CoreError> {
-        let routing = ctx.extensions.get::<RoutingData>();
-        let handshake = ctx.extensions.get::<HandshakeData>();
+        let routing = ctx.routing.as_ref();
+        let handshake = ctx.handshake.as_ref();
         let client_version = handshake.map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
 
         let resolved = self
@@ -322,7 +319,7 @@ impl StatusHandler {
                 ),
                 domain,
                 client_version,
-                &client_info,
+                client_info,
             )
             .await
         {
@@ -483,20 +480,10 @@ impl StatusHandler {
         )
         .await?;
 
-        let decoded = self.registry.decode_frame(
-            &frame,
-            ConnectionState::Status,
-            Direction::Serverbound,
-            STATUS_PROTOCOL_VERSION,
-        )?;
-
-        let payload = match decoded {
-            DecodedPacket::Typed { packet, .. } => packet
-                .as_any()
-                .downcast_ref::<SPingRequest>()
-                .map_or(0, |p| p.payload),
-            DecodedPacket::Opaque { .. } => 0,
-        };
+        let payload = self
+            .registry
+            .decode_as::<SPingRequest>(&frame, STATUS_PROTOCOL_VERSION)?
+            .map_or(0, |ping| ping.payload);
 
         let pong = CPingResponse { payload };
         send_packet(

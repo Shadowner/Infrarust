@@ -49,7 +49,7 @@ pub struct BackendStatusResponse {
 impl BackendStatusResponse {
     pub fn from_status(status: &BackendStatus) -> Self {
         Self {
-            address: crate::util::format_address(&status.address),
+            address: crate::address::format_address(&status.address),
             weight: status.weight,
             effective_weight: status.effective_weight,
             state: status.state.as_str(),

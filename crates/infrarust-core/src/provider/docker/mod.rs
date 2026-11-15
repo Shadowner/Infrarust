@@ -7,13 +7,14 @@
 
 pub mod labels;
 
+#[cfg(feature = "test-support")]
+pub use labels::labels_to_server_config;
 pub use labels::{
-    DomainsNotAllowed, container_server_config, labels_to_server_config, resolve_container_address,
+    ContainerRefused, container_server_config, resolve_container_address,
     withheld_forwarding_warning,
 };
 
 use std::collections::{HashMap, HashSet};
-use std::pin::Pin;
 use std::sync::Once;
 use std::time::Duration;
 
@@ -25,10 +26,11 @@ use futures_util::StreamExt;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::{DockerProviderConfig, ForwardingMode, ServerConfig};
 
 use crate::error::CoreError;
-use crate::provider::{ConfigProvider, ProviderConfig, ProviderEvent, ProviderId};
+use crate::provider::{ConfigProvider, ProviderChange, ProviderConfig, ProviderId};
 
 struct ContainerScan {
     configs: Vec<ProviderConfig>,
@@ -166,7 +168,15 @@ impl DockerProvider {
 
         let config = match container_server_config(&self.config, container_name, labels, &address) {
             Ok(config) => config,
-            Err(DomainsNotAllowed { allowing_line }) => {
+            Err(ContainerRefused::InvalidLabels(error)) => {
+                tracing::warn!(
+                    container = %container_name,
+                    error = %error,
+                    "skipping container: its labels do not make a server config"
+                );
+                return Ok(None);
+            }
+            Err(ContainerRefused::DomainsNotAllowed { allowing_line }) => {
                 self.log_refusal(
                     container_name,
                     format!(
@@ -222,7 +232,7 @@ impl DockerProvider {
     /// Watches Docker events with automatic reconnection.
     async fn watch_with_reconnect(
         &self,
-        sender: &mpsc::Sender<ProviderEvent>,
+        sender: &mpsc::Sender<Vec<ProviderChange>>,
         shutdown: &CancellationToken,
     ) -> Result<(), CoreError> {
         let mut reconnect_delay = self.config.reconnect_delay;
@@ -277,7 +287,7 @@ impl DockerProvider {
     async fn watch_events(
         &self,
         docker: &Docker,
-        sender: &mpsc::Sender<ProviderEvent>,
+        sender: &mpsc::Sender<Vec<ProviderChange>>,
         shutdown: &CancellationToken,
     ) -> Result<(), CoreError> {
         let mut filters = HashMap::new();
@@ -335,7 +345,7 @@ impl DockerProvider {
         &self,
         docker: &Docker,
         event: &bollard::models::EventMessage,
-        sender: &mpsc::Sender<ProviderEvent>,
+        sender: &mpsc::Sender<Vec<ProviderChange>>,
     ) {
         let action = match &event.action {
             Some(a) => a.as_str(),
@@ -370,11 +380,11 @@ impl DockerProvider {
                         known.insert(container_name.clone(), pc.config.clone());
 
                         let event = if is_update {
-                            ProviderEvent::Updated(pc)
+                            ProviderChange::Updated(pc)
                         } else {
-                            ProviderEvent::Added(pc)
+                            ProviderChange::Added(pc)
                         };
-                        let _ = sender.send(event).await;
+                        let _ = sender.send(vec![event]).await;
                     }
                     Ok(None) => {} // Not an infrarust container
                     Err(e) => {
@@ -390,7 +400,9 @@ impl DockerProvider {
                 let mut known = self.known.lock().await;
                 if known.remove(&container_name).is_some() {
                     let _ = sender
-                        .send(ProviderEvent::Removed(ProviderId::docker(&container_name)))
+                        .send(vec![ProviderChange::Removed(ProviderId::docker(
+                            &container_name,
+                        ))])
                         .await;
                 }
             }
@@ -399,7 +411,7 @@ impl DockerProvider {
     }
 
     /// Re-scans all containers and emits diffs against known state.
-    async fn resync_containers(&self, docker: &Docker, sender: &mpsc::Sender<ProviderEvent>) {
+    async fn resync_containers(&self, docker: &Docker, sender: &mpsc::Sender<Vec<ProviderChange>>) {
         let scan = match self.scan_containers(docker).await {
             Ok(scan) => scan,
             Err(e) => {
@@ -409,13 +421,16 @@ impl DockerProvider {
         };
 
         let mut known = self.known.lock().await;
-        for event in reconcile(&mut known, scan) {
-            let _ = sender.send(event).await;
+        for change in reconcile(&mut known, scan) {
+            let _ = sender.send(vec![change]).await;
         }
     }
 }
 
-fn reconcile(known: &mut HashMap<String, ServerConfig>, scan: ContainerScan) -> Vec<ProviderEvent> {
+fn reconcile(
+    known: &mut HashMap<String, ServerConfig>,
+    scan: ContainerScan,
+) -> Vec<ProviderChange> {
     let mut events = Vec::new();
     let mut seen = scan.unreadable;
 
@@ -428,9 +443,9 @@ fn reconcile(known: &mut HashMap<String, ServerConfig>, scan: ContainerScan) -> 
                 let is_update = previous.is_some();
                 known.insert(name, pc.config.clone());
                 events.push(if is_update {
-                    ProviderEvent::Updated(pc)
+                    ProviderChange::Updated(pc)
                 } else {
-                    ProviderEvent::Added(pc)
+                    ProviderChange::Added(pc)
                 });
             }
         }
@@ -439,7 +454,7 @@ fn reconcile(known: &mut HashMap<String, ServerConfig>, scan: ContainerScan) -> 
     known.retain(|name, _| {
         let keep = seen.contains(name);
         if !keep {
-            events.push(ProviderEvent::Removed(ProviderId::docker(name)));
+            events.push(ProviderChange::Removed(ProviderId::docker(name)));
         }
         keep
     });
@@ -452,9 +467,7 @@ impl ConfigProvider for DockerProvider {
         "docker"
     }
 
-    fn load_initial(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>> {
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>> {
         Box::pin(async move {
             let docker = self.connect()?;
             let ContainerScan { configs, .. } = self.scan_containers(&docker).await?;
@@ -475,19 +488,21 @@ impl ConfigProvider for DockerProvider {
 
     fn watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(async move { self.watch_with_reconnect(&sender, &shutdown).await })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     fn config(name: &str, address: &str) -> ServerConfig {
-        labels_to_server_config(name, &HashMap::new(), address)
+        labels_to_server_config(name, &HashMap::new(), address).unwrap()
     }
 
     fn provider_config(name: &str, address: &str) -> ProviderConfig {
@@ -528,7 +543,9 @@ mod tests {
             &mut known,
             scan(vec![provider_config("mc", "10.0.0.1:25565")], &[]),
         );
-        assert!(matches!(events.as_slice(), [ProviderEvent::Added(pc)] if pc.id.unique_id == "mc"));
+        assert!(
+            matches!(events.as_slice(), [ProviderChange::Added(pc)] if pc.id.unique_id == "mc")
+        );
         assert!(known.contains_key("mc"));
     }
 
@@ -538,7 +555,7 @@ mod tests {
         let new = provider_config("mc", "10.0.0.2:25565");
         let events = reconcile(&mut known, scan(vec![new.clone()], &[]));
         assert!(
-            matches!(events.as_slice(), [ProviderEvent::Updated(pc)] if pc.id.unique_id == "mc")
+            matches!(events.as_slice(), [ProviderChange::Updated(pc)] if pc.id.unique_id == "mc")
         );
         assert_eq!(known.get("mc"), Some(&new.config));
     }
@@ -547,7 +564,7 @@ mod tests {
     fn reconcile_removes_containers_no_longer_listed() {
         let mut known = known(&[("mc", "10.0.0.1:25565")]);
         let events = reconcile(&mut known, scan(Vec::new(), &[]));
-        assert!(matches!(events.as_slice(), [ProviderEvent::Removed(id)] if id.unique_id == "mc"));
+        assert!(matches!(events.as_slice(), [ProviderChange::Removed(id)] if id.unique_id == "mc"));
         assert!(known.is_empty());
     }
 

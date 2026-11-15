@@ -13,7 +13,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use crate::error::CoreError;
 use crate::player::PlayerSession;
 use crate::plugin_messaging::channels::{self, MessageIds};
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::backend_bridge::BackendBridge;
 
 fn information_frame(
@@ -101,7 +101,7 @@ pub(super) async fn replay(
     target: &ServerConfig,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
-    let frames = client_state_frames(session, services, target, backend.state, version);
+    let frames = client_state_frames(session, services, target, backend.state(), version);
     if frames.is_empty() {
         return Ok(());
     }

@@ -161,7 +161,6 @@ pub(crate) async fn handle(
     backend.queue_frame(&channels::build(id, channel, &reply, scope.version))
 }
 
-#[allow(clippy::too_many_lines)]
 async fn respond(
     network: &Network<'_>,
     subchannel: &str,

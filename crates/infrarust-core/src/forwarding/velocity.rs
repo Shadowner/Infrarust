@@ -103,6 +103,32 @@ pub fn is_velocity_request(request: &CLoginPluginRequest) -> bool {
     request.channel == VELOCITY_PLAYER_INFO_CHANNEL
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct VelocityForwarding<'a> {
+    pub(crate) data: &'a ForwardingData,
+    pub(crate) secret: &'a [u8],
+}
+
+pub(crate) fn answer_velocity_request(
+    request: &CLoginPluginRequest,
+    forwarding: Option<VelocityForwarding<'_>>,
+) -> ProtocolResult<SLoginPluginResponse> {
+    let Some(VelocityForwarding { data, secret }) = forwarding else {
+        tracing::debug!(
+            "backend requested velocity forwarding but no secret is configured, \
+             responding 'not understood'"
+        );
+        return Ok(SLoginPluginResponse {
+            message_id: request.message_id,
+            successful: false,
+            data: Vec::new(),
+        });
+    };
+    let response = build_velocity_response(request, data, secret)?;
+    tracing::info!("velocity forwarding applied (auto-detected)");
+    Ok(response)
+}
+
 pub fn build_velocity_response(
     request: &CLoginPluginRequest,
     data: &ForwardingData,

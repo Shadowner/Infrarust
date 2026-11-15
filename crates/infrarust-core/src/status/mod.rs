@@ -14,12 +14,14 @@ pub mod cache;
 pub mod favicon;
 pub mod handler;
 pub mod motd;
+pub mod ping_event;
 pub mod relay;
 pub mod relay_gate;
 pub mod response;
 
 pub use cache::StatusCache;
-pub use favicon::{FaviconCache, load_favicon};
-pub use handler::StatusHandler;
+pub use favicon::FaviconCache;
+pub use handler::{StatusDeps, StatusHandler};
 pub use relay::StatusRelayClient;
+#[cfg(feature = "test-support")]
 pub use response::ServerPingResponse;

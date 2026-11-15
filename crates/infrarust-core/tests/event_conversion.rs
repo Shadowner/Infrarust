@@ -4,7 +4,7 @@
 use infrarust_api::events::proxy::PingResponse;
 use infrarust_api::types::{ClickEvent, Component, HoverEvent, NamedColor, ProtocolVersion};
 
-use infrarust_core::event_bus::conversion::{apply_api_to_core, core_to_api_ping_response};
+use infrarust_core::status::ping_event::{apply_api_to_core, core_to_api_ping_response};
 use infrarust_core::status::response::{
     PingPlayerSample, PingPlayers, PingVersion, ServerPingResponse,
 };

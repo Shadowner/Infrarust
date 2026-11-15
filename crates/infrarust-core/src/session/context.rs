@@ -8,14 +8,14 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::{BackendConnector, ConnectionInfo};
 use tokio_util::sync::CancellationToken;
 
-use crate::event_bus::conversion::protocol_state_to_api;
+use crate::api_convert::protocol_state_to_api;
 use crate::filter::codec_chain::CodecFilterChain;
 use crate::forwarding::ForwardingData;
 use crate::pipeline::types::HandshakeData;
 use crate::player::PlayerSession;
 use crate::player::commands::CommandInbox;
 use crate::plugin_messaging::router::Scope;
-use crate::services::ProxyServices;
+use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 
 pub(crate) struct SessionContext<'a> {
@@ -53,9 +53,7 @@ impl SessionContext<'_> {
     }
 
     pub(crate) fn real_ip(&self) -> IpAddr {
-        self.connection_info
-            .real_ip
-            .unwrap_or(self.connection_info.peer_addr.ip())
+        self.connection_info.client_addr().ip()
     }
 
     pub(crate) fn forwarding_data(&self) -> ForwardingData {
@@ -128,8 +126,7 @@ pub(crate) mod test_helpers {
             },
             connection_info: ConnectionInfo {
                 peer_addr,
-                real_ip: None,
-                real_port: None,
+                real_addr: None,
                 local_addr: peer_addr,
                 connected_at: tokio::time::Instant::now(),
             },

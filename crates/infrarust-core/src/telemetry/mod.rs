@@ -3,8 +3,6 @@
 //! All `OTel` code is centralized here. Feature-gated under `telemetry`.
 //! Business code uses only `tracing` — never `opentelemetry::*` directly.
 
-pub mod formatter;
-
 #[cfg(feature = "telemetry")]
 mod metrics;
 #[cfg(feature = "telemetry")]

@@ -1,7 +1,5 @@
 //! Owner-aware store behind [`CodecFilterRegistry`](infrarust_api::filter::CodecFilterRegistry).
 
-use std::collections::HashMap;
-
 use infrarust_api::filter::{CodecFilterFactory, FilterMetadata, FilterRegistryError};
 
 use super::registry_base::{FilterOwner, FilterRegistryBase, HasFilterMetadata};
@@ -37,16 +35,10 @@ impl CodecFilterRegistryImpl {
         &self,
         init: &infrarust_api::filter::CodecSessionInit,
     ) -> Vec<Box<dyn infrarust_api::filter::CodecFilterInstance>> {
-        self.base.with_ordered(|factories, ordered| {
-            let factory_map: HashMap<&str, &dyn CodecFilterFactory> = factories
-                .iter()
-                .map(|entry| (entry.metadata.id.as_str(), entry.item.as_ref()))
-                .collect();
-
+        self.base.with_ordered(|ordered| {
             ordered
                 .iter()
-                .filter_map(|id| factory_map.get(id.as_str()))
-                .map(|f| f.create(init))
+                .map(|entry| entry.item.create(init))
                 .collect()
         })
     }
@@ -62,21 +54,16 @@ impl CodecFilterRegistryImpl {
         Vec<Box<dyn infrarust_api::filter::CodecFilterInstance>>,
         Vec<std::sync::Arc<str>>,
     ) {
-        self.base.with_ordered(|factories, ordered| {
-            let factory_map: HashMap<&str, &dyn CodecFilterFactory> = factories
+        self.base.with_ordered(|ordered| {
+            ordered
                 .iter()
-                .map(|entry| (entry.metadata.id.as_str(), entry.item.as_ref()))
-                .collect();
-
-            let mut instances = Vec::with_capacity(ordered.len());
-            let mut ids = Vec::with_capacity(ordered.len());
-            for id in ordered {
-                if let Some(f) = factory_map.get(id.as_str()) {
-                    instances.push(f.create(init));
-                    ids.push(std::sync::Arc::from(id.as_str()));
-                }
-            }
-            (instances, ids)
+                .map(|entry| {
+                    (
+                        entry.item.create(init),
+                        std::sync::Arc::from(entry.metadata.id.as_str()),
+                    )
+                })
+                .unzip()
         })
     }
 
@@ -176,13 +163,13 @@ mod tests {
     }
 
     fn test_init() -> CodecSessionInit {
-        CodecSessionInit {
-            client_version: infrarust_api::types::ProtocolVersion::new(767),
-            connection_id: 1,
-            remote_addr: "127.0.0.1:12345".parse().unwrap(),
-            real_ip: None,
-            side: ConnectionSide::ClientSide,
-        }
+        CodecSessionInit::new(
+            infrarust_api::types::ProtocolVersion::new(767),
+            1,
+            "127.0.0.1:12345".parse().unwrap(),
+            None,
+            ConnectionSide::ClientSide,
+        )
     }
 
     #[test]

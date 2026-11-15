@@ -1,13 +1,16 @@
 //! Player identity forwarding for Minecraft backend servers.
 
 pub mod bungeeguard;
+pub mod domain_rewrite;
 pub mod error;
 pub mod legacy;
 pub mod secret;
+pub(crate) mod server_override;
 pub mod velocity;
 
 pub use error::ForwardingError;
 
+use std::fmt;
 use std::net::IpAddr;
 
 use infrarust_api::types::ProfileProperty;
@@ -17,7 +20,7 @@ use self::bungeeguard::BungeeGuardForwardingHandler;
 use self::legacy::LegacyForwardingHandler;
 use self::velocity::VelocityForwardingHandler;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub enum ForwardingMode {
     #[default]
     None,
@@ -28,6 +31,23 @@ pub enum ForwardingMode {
     Velocity {
         secret: Vec<u8>,
     },
+}
+
+impl fmt::Debug for ForwardingMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => f.write_str("None"),
+            Self::BungeeCord => f.write_str("BungeeCord"),
+            Self::BungeeGuard { token: _ } => f
+                .debug_struct("BungeeGuard")
+                .field("token", &"<redacted>")
+                .finish(),
+            Self::Velocity { secret: _ } => f
+                .debug_struct("Velocity")
+                .field("secret", &"<redacted>")
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -87,7 +107,7 @@ pub fn build_handshake_for_backend(
 
     use crate::pipeline::types::ConnectionIntent;
 
-    let host = crate::util::domain_rewrite::backend_host(server_config)
+    let host = domain_rewrite::backend_host(server_config)
         .unwrap_or_else(|| handshake_data.domain.clone());
 
     let next_state = match handshake_data.intent {
@@ -126,9 +146,9 @@ mod tests {
     use infrarust_protocol::{Packet, VarInt};
     use serde_json::Value;
 
+    use super::domain_rewrite::rewrite_handshake;
     use super::*;
     use crate::pipeline::types::{ConnectionIntent, HandshakeData};
-    use crate::util::domain_rewrite::rewrite_handshake;
 
     const MARKERS: [&str; 4] = ["\0FML\0", "\0FML2\0", "\0FML3\0", "\0FORGE"];
     const PLAYER_UUID: &str = "069a79f444e94726a5befca90e38aaf5";
@@ -227,6 +247,25 @@ mod tests {
 
     fn count(properties: &[Value], name: &str) -> usize {
         properties.iter().filter(|p| p["name"] == name).count()
+    }
+
+    #[test]
+    fn debug_output_hides_the_forwarding_secrets() {
+        let guard = ForwardingMode::BungeeGuard {
+            token: "hunter2-token".to_string(),
+        };
+        let velocity = ForwardingMode::Velocity {
+            secret: b"hunter2-secret".to_vec(),
+        };
+        assert_eq!(
+            format!("{guard:?}"),
+            "BungeeGuard { token: \"<redacted>\" }"
+        );
+        assert_eq!(
+            format!("{velocity:?}"),
+            "Velocity { secret: \"<redacted>\" }"
+        );
+        assert_eq!(format!("{:?}", ForwardingMode::BungeeCord), "BungeeCord");
     }
 
     #[test]

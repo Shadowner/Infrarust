@@ -1,0 +1,343 @@
+use infrarust_api::events::proxy::PingResponse;
+use infrarust_api::types::{Component, ProtocolVersion};
+use uuid::Uuid;
+
+use crate::status::response::{PingPlayerSample, ServerPingResponse};
+
+/// Converts the core status response into the typed API representation.
+///
+/// The core type stores the MOTD as a `serde_json::Value` (string, object,
+/// or array) while the API type uses a structured [`Component`].
+pub fn core_to_api_ping_response(core: &ServerPingResponse) -> PingResponse {
+    let mut response = PingResponse::new(
+        Component::from_json_value(&core.description),
+        core.players.max,
+        core.players.online,
+        ProtocolVersion::new(core.version.protocol),
+        core.version.name.clone(),
+        core.favicon.clone(),
+    );
+    response.player_sample = core
+        .players
+        .sample
+        .iter()
+        .map(|entry| {
+            (
+                entry.name.clone(),
+                Uuid::parse_str(&entry.id).unwrap_or_default(),
+            )
+        })
+        .collect();
+    response
+}
+
+#[cfg(feature = "test-support")]
+pub fn apply_api_to_core(
+    core: &mut ServerPingResponse,
+    api: &PingResponse,
+    client: ProtocolVersion,
+) {
+    core.description = api.description.to_json_value_for(client);
+    apply_api_scalars_to_core(core, api);
+    apply_api_sample_to_core(core, api);
+}
+
+pub fn apply_api_sample_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
+    core.players.sample = api
+        .player_sample
+        .iter()
+        .map(|(name, id)| PingPlayerSample {
+            name: name.clone(),
+            id: id.to_string(),
+        })
+        .collect();
+}
+
+#[cfg(feature = "test-support")]
+pub fn apply_api_scalars_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
+    core.players.max = api.max_players;
+    core.players.online = api.online_players;
+    core.version.name.clone_from(&api.version_name);
+    core.version.protocol = api.protocol_version.raw();
+    core.favicon.clone_from(&api.favicon);
+}
+
+/// Folds a (possibly plugin-modified) `ProxyPingEvent` result back into the core
+/// response.
+pub fn merge_ping_event(
+    core: &mut ServerPingResponse,
+    sent: &PingResponse,
+    api: PingResponse,
+    client: ProtocolVersion,
+) {
+    if api.description != sent.description {
+        core.description = api.description.to_json_value_for(client);
+    }
+    if api.player_sample != sent.player_sample {
+        apply_api_sample_to_core(core, &api);
+    }
+    core.players.max = api.max_players;
+    core.players.online = api.online_players;
+    core.version.name = api.version_name;
+    core.version.protocol = api.protocol_version.raw();
+    core.favicon = api.favicon;
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    #[test]
+    fn test_core_to_api_full_response() {
+        use crate::status::response::{PingPlayerSample, PingPlayers, PingVersion};
+
+        let core = ServerPingResponse {
+            version: PingVersion {
+                name: "1.21.4".to_string(),
+                protocol: 769,
+            },
+            players: PingPlayers {
+                max: 100,
+                online: 42,
+                sample: vec![PingPlayerSample {
+                    name: "Notch".to_string(),
+                    id: "069a79f4-44e9-4726-a5be-fca90e38aaf5".to_string(),
+                }],
+            },
+            description: serde_json::json!({"text": "A Minecraft Server"}),
+            favicon: Some("data:image/png;base64,abc".to_string()),
+            extra: serde_json::Map::new(),
+        };
+
+        let api = core_to_api_ping_response(&core);
+        assert_eq!(api.description.as_text(), Some("A Minecraft Server"));
+        assert_eq!(api.max_players, 100);
+        assert_eq!(api.online_players, 42);
+        assert_eq!(api.protocol_version.raw(), 769);
+        assert_eq!(api.version_name, "1.21.4");
+        assert_eq!(api.favicon.as_deref(), Some("data:image/png;base64,abc"));
+    }
+
+    fn rich_response() -> ServerPingResponse {
+        use crate::status::response::{PingPlayers, PingVersion};
+        ServerPingResponse {
+            version: PingVersion {
+                name: "1.21.4".to_string(),
+                protocol: 769,
+            },
+            players: PingPlayers {
+                max: 100,
+                online: 42,
+                sample: vec![],
+            },
+            description: serde_json::json!({
+                "text": "Welcome",
+                "color": "gold",
+                "hoverEvent": {"action": "show_text", "value": "tooltip"},
+                "clickEvent": {"action": "open_url", "value": "https://example.com"},
+                "extra": [{"text": "!", "font": "minecraft:uniform"}]
+            }),
+            favicon: None,
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn merge_ping_event_preserves_rich_motd_when_unmodified() {
+        // Regression: with no plugin modification, a rich relayed MOTD must NOT
+        // be degraded through the lossy Component round-trip.
+        let mut core = rich_response();
+        let original = core.description.clone();
+
+        let api = core_to_api_ping_response(&core);
+        let sent = api.clone();
+        // Simulate the event returning the response unmodified.
+        merge_ping_event(
+            &mut core,
+            &sent,
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_21_11,
+        );
+
+        assert_eq!(
+            core.description, original,
+            "rich MOTD must survive untouched"
+        );
+        assert!(core.description.get("hoverEvent").is_some());
+        assert!(core.description.get("clickEvent").is_some());
+    }
+
+    #[test]
+    fn merge_ping_event_applies_modified_description() {
+        let mut core = rich_response();
+
+        let mut api = core_to_api_ping_response(&core);
+        let sent = api.clone();
+        api.description = Component::text("Plugin MOTD");
+
+        merge_ping_event(
+            &mut core,
+            &sent,
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_20_2,
+        );
+        assert_eq!(core.description["text"].as_str().unwrap(), "Plugin MOTD");
+    }
+
+    #[test]
+    fn edited_rich_motd_keeps_events_in_the_client_shape() {
+        let mut api = core_to_api_ping_response(&rich_response());
+        let sent = api.clone();
+        api.description = sent.description.clone().append(Component::text("?"));
+
+        let mut old = rich_response();
+        merge_ping_event(
+            &mut old,
+            &sent,
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_21_4,
+        );
+        assert_eq!(
+            old.description,
+            serde_json::json!({
+                "text": "Welcome",
+                "color": "gold",
+                "hoverEvent": {"action": "show_text", "contents": "tooltip"},
+                "clickEvent": {"action": "open_url", "value": "https://example.com"},
+                "extra": [{"text": "!", "font": "minecraft:uniform"}, "?"]
+            })
+        );
+
+        let mut new = rich_response();
+        merge_ping_event(
+            &mut new,
+            &sent,
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_21_11,
+        );
+        assert_eq!(
+            new.description,
+            serde_json::json!({
+                "text": "Welcome",
+                "color": "gold",
+                "hover_event": {"action": "show_text", "value": "tooltip"},
+                "click_event": {"action": "open_url", "url": "https://example.com"},
+                "extra": [{"text": "!", "font": "minecraft:uniform"}, "?"]
+            })
+        );
+    }
+
+    #[test]
+    fn merge_ping_event_applies_scalar_changes_without_touching_description() {
+        // A plugin changing only player counts must not degrade the description.
+        let mut core = rich_response();
+        let original = core.description.clone();
+
+        let mut api = core_to_api_ping_response(&core);
+        let sent = api.clone();
+        api.max_players = 5;
+        api.online_players = 1;
+
+        merge_ping_event(
+            &mut core,
+            &sent,
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_21_11,
+        );
+        assert_eq!(core.players.max, 5);
+        assert_eq!(core.players.online, 1);
+        assert_eq!(core.description, original, "description must stay opaque");
+    }
+
+    #[test]
+    fn merge_ping_event_rewrites_the_sample_only_when_a_plugin_changed_it() {
+        let mut core = rich_response();
+        core.players.sample = vec![PingPlayerSample {
+            name: "\u{a7}6Welcome".to_string(),
+            id: "not-a-uuid".to_string(),
+        }];
+        let original = serde_json::to_value(&core.players.sample).unwrap();
+
+        let api = core_to_api_ping_response(&core);
+        assert_eq!(
+            api.player_sample,
+            [("\u{a7}6Welcome".to_string(), Uuid::nil())]
+        );
+        merge_ping_event(
+            &mut core,
+            &api.clone(),
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_21_11,
+        );
+        assert_eq!(
+            serde_json::to_value(&core.players.sample).unwrap(),
+            original
+        );
+
+        let sent = core_to_api_ping_response(&core);
+        let mut api = sent.clone();
+        api.player_sample
+            .push(("Notch".to_string(), Uuid::from_u128(1)));
+        merge_ping_event(
+            &mut core,
+            &sent,
+            api.clone(),
+            ProtocolVersion::MINECRAFT_1_21_11,
+        );
+        assert_eq!(
+            serde_json::to_value(&core.players.sample).unwrap(),
+            serde_json::json!([
+                { "name": "\u{a7}6Welcome", "id": "00000000-0000-0000-0000-000000000000" },
+                { "name": "Notch", "id": "00000000-0000-0000-0000-000000000001" },
+            ])
+        );
+    }
+
+    #[test]
+    fn test_apply_api_preserves_extra() {
+        use crate::status::response::{PingPlayers, PingVersion};
+
+        let mut core = ServerPingResponse {
+            version: PingVersion {
+                name: "1.21.4".to_string(),
+                protocol: 769,
+            },
+            players: PingPlayers {
+                max: 100,
+                online: 42,
+                sample: vec![],
+            },
+            description: serde_json::json!({"text": "Original"}),
+            favicon: None,
+            extra: {
+                let mut m = serde_json::Map::new();
+                m.insert(
+                    "forgeData".to_string(),
+                    serde_json::json!({"mods": ["forge"]}),
+                );
+                m
+            },
+        };
+
+        let api = PingResponse::new(
+            Component::text("Modified"),
+            200,
+            99,
+            ProtocolVersion::new(769),
+            "1.21.4".to_string(),
+            Some("data:image/png;base64,new".to_string()),
+        );
+
+        apply_api_to_core(&mut core, &api, ProtocolVersion::MINECRAFT_1_20_2);
+
+        // Modified fields
+        assert_eq!(core.description["text"].as_str().unwrap(), "Modified");
+        assert_eq!(core.players.max, 200);
+        assert_eq!(core.players.online, 99);
+        assert_eq!(core.favicon.as_deref(), Some("data:image/png;base64,new"));
+
+        // Extra fields preserved
+        assert!(core.extra.contains_key("forgeData"));
+    }
+}

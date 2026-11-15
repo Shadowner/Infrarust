@@ -1,8 +1,6 @@
-//! `ProviderRegistry` — orchestrates config providers and feeds the `DomainRouter`.
-
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -13,24 +11,76 @@ use infrarust_config::{ForwardingMode, ServerConfig};
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::routing::DomainRouter;
-use crate::status::{FaviconCache, StatusCache};
 
-use super::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
+use super::{ConfigProvider, ProviderChange, ProviderConfig, ProviderId, RoutesListener};
 
-/// Orchestrates config providers, feeding their events into the `DomainRouter`.
-///
-/// The registry:
-/// 1. Calls `load_initial()` on each provider and populates the router.
-/// 2. Spawns a watch task per provider that sends `ProviderEvent`s into a
-///    unified bounded channel.
-/// 3. Runs an event loop that updates the router, invalidates caches, and
-///    fires `ConfigReloadEvent`.
+pub(super) struct PluginChanges {
+    watch: CancellationToken,
+    pub(super) changes: Vec<ProviderChange>,
+    applied: Option<oneshot::Sender<()>>,
+}
+
+#[derive(Clone)]
+pub struct PluginRoutes {
+    changes: mpsc::Sender<PluginChanges>,
+    unloads: mpsc::UnboundedSender<String>,
+}
+
+pub struct PluginRouteEvents {
+    pub(super) changes: mpsc::Receiver<PluginChanges>,
+    unloads: mpsc::UnboundedReceiver<String>,
+}
+
+impl PluginRoutes {
+    pub fn channel() -> (Self, PluginRouteEvents) {
+        let (changes, changes_rx) = mpsc::channel(256);
+        let (unloads, unloads_rx) = mpsc::unbounded_channel();
+        (
+            Self { changes, unloads },
+            PluginRouteEvents {
+                changes: changes_rx,
+                unloads: unloads_rx,
+            },
+        )
+    }
+
+    pub async fn submit(&self, watch: &CancellationToken, changes: Vec<ProviderChange>) -> bool {
+        self.changes
+            .send(PluginChanges {
+                watch: watch.clone(),
+                changes,
+                applied: None,
+            })
+            .await
+            .is_ok()
+    }
+
+    pub async fn submit_and_wait(&self, watch: &CancellationToken, changes: Vec<ProviderChange>) {
+        let (applied, done) = oneshot::channel();
+        let submitted = PluginChanges {
+            watch: watch.clone(),
+            changes,
+            applied: Some(applied),
+        };
+        if self.changes.send(submitted).await.is_ok() {
+            let _ = done.await;
+        }
+    }
+
+    pub fn unload(&self, plugin_id: &str) {
+        let _ = self.unloads.send(plugin_id.to_owned());
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.changes.is_closed()
+    }
+}
+
 pub struct ProviderRegistry {
     providers: Vec<Box<dyn ConfigProvider>>,
     domain_router: Arc<DomainRouter>,
     event_bus: Arc<EventBusImpl>,
-    status_cache: Arc<StatusCache>,
-    favicon_cache: Arc<FaviconCache>,
+    routes_listener: Arc<dyn RoutesListener>,
     shutdown: CancellationToken,
     default_forwarding: ForwardingMode,
 }
@@ -39,8 +89,7 @@ impl ProviderRegistry {
     pub fn new(
         domain_router: Arc<DomainRouter>,
         event_bus: Arc<EventBusImpl>,
-        status_cache: Arc<StatusCache>,
-        favicon_cache: Arc<FaviconCache>,
+        routes_listener: Arc<dyn RoutesListener>,
         shutdown: CancellationToken,
         default_forwarding: ForwardingMode,
     ) -> Self {
@@ -48,30 +97,19 @@ impl ProviderRegistry {
             providers: Vec::new(),
             domain_router,
             event_bus,
-            status_cache,
-            favicon_cache,
+            routes_listener,
             shutdown,
             default_forwarding,
         }
     }
 
-    /// Registers a provider. Must be called before `start()`.
     pub fn add_provider(&mut self, provider: Box<dyn ConfigProvider>) {
         self.providers.push(provider);
     }
 
-    /// Starts all providers: loads initial configs and spawns watchers.
-    ///
-    /// Consumes `self` to transfer ownership of providers to spawned tasks.
-    /// Returns the `JoinHandle` of the event loop task and a sender that
-    /// can be used to inject events from plugin config providers.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if any provider fails to load initial configs fatally.
-    pub async fn start(self) -> Result<(JoinHandle<()>, mpsc::Sender<ProviderEvent>), CoreError> {
-        let (tx, rx) = mpsc::channel::<ProviderEvent>(256);
+    pub async fn start(self) -> Result<(JoinHandle<()>, PluginRoutes), CoreError> {
+        let (tx, rx) = mpsc::channel::<Vec<ProviderChange>>(256);
 
-        // Phase 1: load initial configs from each provider
         for provider in &self.providers {
             match provider.load_initial().await {
                 Ok(configs) => {
@@ -106,7 +144,6 @@ impl ProviderRegistry {
             }
         }
 
-        // Phase 2: spawn watch tasks
         for provider in self.providers {
             let sender = tx.clone();
             let shutdown = self.shutdown.clone();
@@ -123,63 +160,86 @@ impl ProviderRegistry {
             });
         }
 
-        let plugin_tx = tx.clone();
         drop(tx);
+        let (plugin_routes, plugin_events) = PluginRoutes::channel();
 
-        // Phase 3: spawn the event loop
-        let shutdown_token = self.shutdown.clone();
+        let shutdown = self.shutdown;
+        let event_loop = EventLoop {
+            router: self.domain_router,
+            event_bus: self.event_bus,
+            routes_listener: self.routes_listener,
+            default_forwarding: self.default_forwarding,
+        };
         let handle = tokio::spawn(async move {
-            event_loop(
-                rx,
-                self.domain_router,
-                self.event_bus,
-                self.status_cache,
-                self.favicon_cache,
-                self.shutdown,
-                self.default_forwarding,
-            )
-            .await;
-            if !shutdown_token.is_cancelled() {
+            event_loop.run(rx, plugin_events, &shutdown).await;
+            if !shutdown.is_cancelled() {
                 tracing::error!(
                     "provider event loop exited unexpectedly, configuration hot-reload is no longer active"
                 );
             }
         });
 
-        Ok((handle, plugin_tx))
+        Ok((handle, plugin_routes))
     }
 }
 
-/// Receives `ProviderEvent`s and updates the router + caches.
-async fn event_loop(
-    mut rx: mpsc::Receiver<ProviderEvent>,
+struct EventLoop {
     router: Arc<DomainRouter>,
     event_bus: Arc<EventBusImpl>,
-    status_cache: Arc<StatusCache>,
-    favicon_cache: Arc<FaviconCache>,
-    shutdown: CancellationToken,
+    routes_listener: Arc<dyn RoutesListener>,
     default_forwarding: ForwardingMode,
-) {
-    loop {
-        tokio::select! {
-            biased;
-            () = shutdown.cancelled() => {
-                tracing::debug!("provider registry shutting down");
-                break;
-            }
-            event = rx.recv() => {
-                let Some(event) = event else {
-                    tracing::debug!("all provider senders dropped, event loop exiting");
+}
+
+impl EventLoop {
+    async fn run(
+        self,
+        mut providers: mpsc::Receiver<Vec<ProviderChange>>,
+        mut plugins: PluginRouteEvents,
+        shutdown: &CancellationToken,
+    ) {
+        loop {
+            tokio::select! {
+                biased;
+                () = shutdown.cancelled() => {
+                    tracing::debug!("provider registry shutting down");
                     break;
-                };
-                let reloads = apply(&router, &default_forwarding, event);
-                if !reloads.is_empty() {
-                    on_config_change(&router, &status_cache, &favicon_cache).await;
-                    for reload in reloads {
-                        event_bus.post(reload);
+                }
+                Some(plugin_id) = plugins.unloads.recv() => {
+                    self.apply(self.removal_of(&plugin_id)).await;
+                }
+                Some(submitted) = plugins.changes.recv() => {
+                    if submitted.watch.is_cancelled() {
+                        continue;
+                    }
+                    self.apply(submitted.changes).await;
+                    if let Some(applied) = submitted.applied {
+                        let _ = applied.send(());
                     }
                 }
+                Some(changes) = providers.recv() => {
+                    self.apply(changes).await;
+                }
             }
+        }
+    }
+
+    fn removal_of(&self, plugin_id: &str) -> Vec<ProviderChange> {
+        self.router
+            .list_all()
+            .into_iter()
+            .filter(|(id, _)| id.plugin_owner() == Some(plugin_id))
+            .map(|(id, _)| ProviderChange::Removed(id))
+            .collect()
+    }
+
+    async fn apply(&self, changes: Vec<ProviderChange>) {
+        let reloads = apply(&self.router, &self.default_forwarding, changes);
+        if reloads.is_empty() {
+            return;
+        }
+        self.routes_listener.routes_changed().await;
+        for reload in reloads {
+            self.event_bus.post(reload);
         }
     }
 }
@@ -202,10 +262,8 @@ pub(super) fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode)
 fn apply(
     router: &DomainRouter,
     default_forwarding: &ForwardingMode,
-    event: ProviderEvent,
+    changes: Vec<ProviderChange>,
 ) -> Vec<ConfigReloadEvent> {
-    let changes = event.into_changes();
-
     let mut before: Vec<(ProviderId, Option<Arc<ServerConfig>>)> = Vec::new();
     for change in changes {
         let id = match &change {
@@ -249,12 +307,13 @@ fn apply(
 
     let mut reloads: Vec<ConfigReloadEvent> = Vec::new();
     for (id, previous) in before {
+        let provider = id.source.to_string();
         let position = reloads
             .iter()
-            .position(|reload| reload.provider == id.provider_type)
+            .position(|reload| reload.provider == provider)
             .unwrap_or_else(|| {
                 reloads.push(ConfigReloadEvent::new(
-                    id.provider_type.clone(),
+                    provider,
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
@@ -285,23 +344,6 @@ fn apply(
     reloads
 }
 
-async fn on_config_change(
-    router: &DomainRouter,
-    status_cache: &StatusCache,
-    favicon_cache: &FaviconCache,
-) {
-    status_cache.invalidate_all();
-
-    let favicon_configs: Vec<(String, Arc<ServerConfig>)> = router
-        .list_all()
-        .into_iter()
-        .map(|(_pid, cfg)| (cfg.effective_id(), cfg))
-        .collect();
-    if let Err(e) = favicon_cache.reload(&favicon_configs, None).await {
-        tracing::warn!(error = %e, "failed to reload favicons after config change");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -326,7 +368,7 @@ mod tests {
         let reloads = apply(
             &router,
             &ForwardingMode::Velocity,
-            ProviderEvent::Added(lobby),
+            vec![ProviderChange::Added(lobby)],
         );
 
         assert!(
@@ -343,7 +385,7 @@ mod tests {
             let lobby = passthrough("lobby");
             let id = lobby.id.clone();
 
-            let reloads = apply(&router, &default, ProviderEvent::Added(lobby));
+            let reloads = apply(&router, &default, vec![ProviderChange::Added(lobby)]);
 
             assert!(router.get(&id).is_none(), "{default:?}");
             assert!(reloads.is_empty(), "{default:?}");
@@ -355,14 +397,18 @@ mod tests {
         let router = DomainRouter::new();
         let lobby = passthrough("lobby");
         let id = lobby.id.clone();
-        apply(&router, &ForwardingMode::None, ProviderEvent::Added(lobby));
+        apply(
+            &router,
+            &ForwardingMode::None,
+            vec![ProviderChange::Added(lobby)],
+        );
 
         let mut broken = passthrough("lobby");
         broken.config.forwarding_mode = Some(ForwardingMode::Velocity);
         apply(
             &router,
             &ForwardingMode::None,
-            ProviderEvent::Updated(broken),
+            vec![ProviderChange::Updated(broken)],
         );
 
         let kept = router.get(&id).expect("the previous config stays routed");
@@ -387,19 +433,23 @@ mod tests {
         apply(
             &router,
             &ForwardingMode::None,
-            ProviderEvent::Added(lobby_from(docker.clone())),
+            vec![ProviderChange::Added(lobby_from(docker.clone()))],
         );
 
         let reloads = apply(
             &router,
             &ForwardingMode::None,
-            ProviderEvent::Added(lobby_from(file.clone())),
+            vec![ProviderChange::Added(lobby_from(file.clone()))],
         );
         let docker_reload = reloads.iter().find(|r| r.provider == "docker").unwrap();
         assert_eq!(docker_reload.removed, vec![ServerId::new("lobby")]);
         assert!(router.get(&docker).is_none());
 
-        let reloads = apply(&router, &ForwardingMode::None, ProviderEvent::Removed(file));
+        let reloads = apply(
+            &router,
+            &ForwardingMode::None,
+            vec![ProviderChange::Removed(file)],
+        );
         let docker_reload = reloads.iter().find(|r| r.provider == "docker").unwrap();
         assert_eq!(docker_reload.added, vec![ServerId::new("lobby")]);
         assert!(router.get(&docker).is_some());

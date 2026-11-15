@@ -86,21 +86,40 @@ struct AddressHealth {
     first_failure: Option<Instant>,
     last_failure: Option<Instant>,
     ejections: u32,
-    probe_claimed_at: Option<Instant>,
-    healthy: bool,
-    healthy_since: Option<Instant>,
+    phase: Phase,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Phase {
+    Healthy { since: Option<Instant> },
+    Ejected { probe_claimed_at: Option<Instant> },
 }
 
 impl AddressHealth {
-    const fn fresh(healthy: bool) -> Self {
+    const fn fresh() -> Self {
         Self {
             consecutive_failures: 0,
             first_failure: None,
             last_failure: None,
             ejections: 0,
-            probe_claimed_at: None,
-            healthy,
-            healthy_since: None,
+            phase: Phase::Healthy { since: None },
+        }
+    }
+
+    const fn healthy_since(&self) -> Option<Instant> {
+        match self.phase {
+            Phase::Healthy { since } => since,
+            Phase::Ejected { .. } => None,
+        }
+    }
+
+    fn recover(&mut self, now: Instant) -> Option<BackendState> {
+        match self.phase {
+            Phase::Healthy { .. } => None,
+            Phase::Ejected { .. } => {
+                self.phase = Phase::Healthy { since: Some(now) };
+                Some(self.state(now))
+            }
         }
     }
 
@@ -116,12 +135,10 @@ impl AddressHealth {
     }
 
     fn state(&self, now: Instant) -> BackendState {
-        if self.healthy {
-            BackendState::Healthy
-        } else if self.backoff_elapsed(now) {
-            BackendState::Probing
-        } else {
-            BackendState::Unhealthy
+        match self.phase {
+            Phase::Healthy { .. } => BackendState::Healthy,
+            Phase::Ejected { .. } if self.backoff_elapsed(now) => BackendState::Probing,
+            Phase::Ejected { .. } => BackendState::Unhealthy,
         }
     }
 }
@@ -155,12 +172,6 @@ impl PassiveBackendHealth {
         }
     }
 
-    #[must_use]
-    pub fn with_listener(self, listener: Arc<dyn HealthTransitionListener>) -> Self {
-        self.add_listener(listener);
-        self
-    }
-
     pub fn add_listener(&self, listener: Arc<dyn HealthTransitionListener>) {
         write(&self.listeners).push(listener);
     }
@@ -178,16 +189,11 @@ impl PassiveBackendHealth {
             };
             entry.consecutive_failures = 0;
             entry.first_failure = None;
-            entry.probe_claimed_at = None;
-            if entry.healthy {
-                None
-            } else {
-                let now = Instant::now();
-                entry.healthy = true;
-                entry.healthy_since = Some(now);
+            let recovered = entry.recover(Instant::now());
+            if recovered.is_some() {
                 tracing::info!(address = %addr, "backend address healthy again");
-                Some(entry.state(now))
             }
+            recovered
         };
         if let Some(state) = recovered {
             self.notify(addr, state);
@@ -201,9 +207,12 @@ impl PassiveBackendHealth {
             let mut entry = self
                 .state
                 .entry(addr.clone())
-                .or_insert(AddressHealth::fresh(true));
+                .or_insert(AddressHealth::fresh());
 
-            let was_probing = entry.probe_claimed_at.take().is_some();
+            let was_probing = match &mut entry.phase {
+                Phase::Healthy { .. } => false,
+                Phase::Ejected { probe_claimed_at } => probe_claimed_at.take().is_some(),
+            };
             if entry
                 .first_failure
                 .is_some_and(|at| now.duration_since(at) > FAILURE_WINDOW)
@@ -215,25 +224,31 @@ impl PassiveBackendHealth {
             entry.consecutive_failures += 1;
             entry.last_failure = Some(now);
 
-            if entry.healthy && entry.consecutive_failures >= self.failure_threshold {
-                if entry
-                    .healthy_since
-                    .is_none_or(|since| now.duration_since(since) >= MAX_EJECTION_BACKOFF)
+            match entry.phase {
+                Phase::Healthy { since }
+                    if entry.consecutive_failures >= self.failure_threshold =>
                 {
-                    entry.ejections = 0;
+                    if since.is_none_or(|since| now.duration_since(since) >= MAX_EJECTION_BACKOFF) {
+                        entry.ejections = 0;
+                    }
+                    entry.phase = Phase::Ejected {
+                        probe_claimed_at: None,
+                    };
+                    entry.ejections = entry.ejections.saturating_add(1);
+                    ejected = Some(entry.state(now));
+                    tracing::warn!(
+                        address = %addr,
+                        failures = entry.consecutive_failures,
+                        backoff = ?entry.backoff(),
+                        "backend address marked unhealthy"
+                    );
                 }
-                entry.healthy = false;
-                entry.healthy_since = None;
-                entry.ejections = entry.ejections.saturating_add(1);
-                ejected = Some(entry.state(now));
-                tracing::warn!(
-                    address = %addr,
-                    failures = entry.consecutive_failures,
-                    backoff = ?entry.backoff(),
-                    "backend address marked unhealthy"
-                );
-            } else if !entry.healthy && was_probing {
-                entry.ejections = entry.ejections.saturating_add(1);
+                Phase::Healthy { .. } => {}
+                Phase::Ejected { .. } => {
+                    if was_probing {
+                        entry.ejections = entry.ejections.saturating_add(1);
+                    }
+                }
             }
         }
         if let Some(state) = ejected {
@@ -275,19 +290,11 @@ impl PassiveBackendHealth {
             let Some(mut entry) = self.state.get_mut(addr) else {
                 return;
             };
-            let now = Instant::now();
             entry.consecutive_failures = 0;
             entry.first_failure = None;
             entry.last_failure = None;
             entry.ejections = 0;
-            entry.probe_claimed_at = None;
-            if entry.healthy {
-                None
-            } else {
-                entry.healthy = true;
-                entry.healthy_since = Some(now);
-                Some(entry.state(now))
-            }
+            entry.recover(Instant::now())
         };
         if let Some(state) = transition {
             self.notify(addr, state);
@@ -314,7 +321,7 @@ impl PassiveBackendHealth {
             } else {
                 entry.state(Instant::now())
             },
-            healthy_since: entry.healthy.then_some(entry.healthy_since).flatten(),
+            healthy_since: entry.healthy_since(),
             ejections: entry.ejections,
             last_failure: entry.last_failure,
         }
@@ -329,11 +336,12 @@ impl PassiveBackendHealth {
             return;
         }
         self.inserts_since_prune.store(0, Ordering::Relaxed);
-        self.state.retain(|_, e| {
-            !e.healthy
-                || e.consecutive_failures > 0
-                || e.healthy_since
-                    .is_some_and(|since| since.elapsed() < PRUNE_STABLE_AFTER)
+        self.state.retain(|_, e| match e.phase {
+            Phase::Ejected { .. } => true,
+            Phase::Healthy { since } => {
+                e.consecutive_failures > 0
+                    || since.is_some_and(|since| since.elapsed() < PRUNE_STABLE_AFTER)
+            }
         });
     }
 
@@ -348,7 +356,9 @@ impl PassiveBackendHealth {
             let by = MAX_EJECTION_BACKOFF;
             entry.last_failure = entry.last_failure.map(|at| at - by);
             entry.first_failure = entry.first_failure.map(|at| at - by);
-            entry.probe_claimed_at = entry.probe_claimed_at.map(|at| at - by);
+            if let Phase::Ejected { probe_claimed_at } = &mut entry.phase {
+                *probe_claimed_at = probe_claimed_at.map(|at| at - by);
+            }
         }
     }
 }
@@ -373,10 +383,7 @@ impl BackendHealthView for PassiveBackendHealth {
         let state = entry.state(Instant::now());
         HealthSnapshot {
             state,
-            healthy_since: match state {
-                BackendState::Healthy => entry.healthy_since,
-                BackendState::Probing | BackendState::Unhealthy | BackendState::Draining => None,
-            },
+            healthy_since: entry.healthy_since(),
         }
     }
 
@@ -385,17 +392,15 @@ impl BackendHealthView for PassiveBackendHealth {
             return false;
         };
         let now = Instant::now();
-        if entry.healthy || !entry.backoff_elapsed(now) {
-            return false;
-        }
         let backoff = entry.backoff();
-        if entry
-            .probe_claimed_at
-            .is_some_and(|at| now.duration_since(at) < backoff)
-        {
+        let backoff_elapsed = entry.backoff_elapsed(now);
+        let Phase::Ejected { probe_claimed_at } = &mut entry.phase else {
+            return false;
+        };
+        if !backoff_elapsed || probe_claimed_at.is_some_and(|at| now.duration_since(at) < backoff) {
             return false;
         }
-        entry.probe_claimed_at = Some(now);
+        *probe_claimed_at = Some(now);
         true
     }
 
@@ -404,17 +409,16 @@ impl BackendHealthView for PassiveBackendHealth {
             let mut entry = self
                 .state
                 .entry(addr.clone())
-                .or_insert(AddressHealth::fresh(false));
+                .or_insert(AddressHealth::fresh());
             entry.consecutive_failures = 0;
             entry.first_failure = None;
-            entry.probe_claimed_at = None;
-            let in_ramp = entry.healthy
-                && entry
-                    .healthy_since
-                    .is_some_and(|since| since.elapsed() < ramp_window);
+            let in_ramp = entry
+                .healthy_since()
+                .is_some_and(|since| since.elapsed() < ramp_window);
             if !in_ramp {
-                entry.healthy = true;
-                entry.healthy_since = Some(Instant::now());
+                entry.phase = Phase::Healthy {
+                    since: Some(Instant::now()),
+                };
             }
         }
         self.maybe_prune();
@@ -594,8 +598,9 @@ mod tests {
         assert_eq!(ejections(), 2, "a quick relapse keeps escalating");
 
         health.record_success(&a);
-        health.state.get_mut(&a).expect("tracked").healthy_since =
-            Some(Instant::now() - MAX_EJECTION_BACKOFF);
+        health.state.get_mut(&a).expect("tracked").phase = Phase::Healthy {
+            since: Some(Instant::now() - MAX_EJECTION_BACKOFF),
+        };
         health.record_failure(&a);
         assert_eq!(ejections(), 1, "a long stable period starts over");
     }
@@ -755,8 +760,8 @@ mod tests {
     #[test]
     fn a_drained_address_still_reports_its_health_transitions() {
         let recorder = Arc::new(Recorder::default());
-        let health = PassiveBackendHealth::with_threshold(1)
-            .with_listener(Arc::clone(&recorder) as Arc<dyn HealthTransitionListener>);
+        let health = PassiveBackendHealth::with_threshold(1);
+        health.add_listener(Arc::clone(&recorder) as Arc<dyn HealthTransitionListener>);
         let a = addr("a");
 
         health.set_drained(&a, true);

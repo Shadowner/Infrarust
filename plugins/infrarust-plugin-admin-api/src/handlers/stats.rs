@@ -10,7 +10,8 @@ use crate::dto::stats::StatsResponse;
 use crate::error::ApiError;
 use crate::response::{ApiResponse, ok};
 use crate::state::ApiState;
-use crate::util::{active_ban_count, get_memory_rss, server_state_str};
+use crate::util::{active_ban_count, get_memory_rss};
+use crate::vocab::server_state_str;
 
 pub async fn overview(
     State(state): State<Arc<ApiState>>,

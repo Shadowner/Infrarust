@@ -1,8 +1,10 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::task::{Context, Waker};
+use std::time::Duration;
 
 use infrarust_api::event::ListenerHandle;
 use infrarust_api::permissions::{Capability, CapabilitySet};
@@ -11,6 +13,7 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_config::WasmQuotasConfig;
 use infrarust_plugin_common::guest_panic::bounded_guest_panic;
+use tokio::task::JoinSet;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, UpdateDeadline};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -126,14 +129,18 @@ impl Sandbox {
     }
 }
 
+struct Live {
+    ctx: Arc<dyn PluginContext>,
+    instance: InstanceRef,
+    codec: Option<Arc<CodecInstantiator>>,
+}
+
 struct Guest {
     plugin_id: String,
     generation: u64,
     capabilities: CapabilitySet,
-    ctx: Option<Arc<dyn PluginContext>>,
-    instance: Option<InstanceRef>,
+    live: Option<Live>,
     registrations: Arc<Registrations>,
-    codec: Option<Arc<CodecInstantiator>>,
     host_call_timeout: Duration,
     quotas: WasmQuotasConfig,
 }
@@ -182,6 +189,7 @@ struct HostResources {
     tasks: Arc<LiveTasks>,
     boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
     claim_prefixes: BTreeSet<Vec<u8>>,
+    disconnects: JoinSet<()>,
 }
 
 impl HostResources {
@@ -194,8 +202,16 @@ impl HostResources {
             tasks: Arc::default(),
             boss_bars: HashMap::new(),
             claim_prefixes: BTreeSet::new(),
+            disconnects: JoinSet::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Refused {
+    Command,
+    CodecFilter,
+    PermissionNode,
 }
 
 struct Throttles {
@@ -217,6 +233,14 @@ impl Throttles {
                 DENIED_CALL_LOG_INTERVAL,
                 PERMISSION_NODE_REFUSAL_BURST,
             ),
+        }
+    }
+
+    const fn refusals(&mut self, refused: Refused) -> &mut RateLimit {
+        match refused {
+            Refused::Command => &mut self.command_refusals,
+            Refused::CodecFilter => &mut self.codec_refusals,
+            Refused::PermissionNode => &mut self.permission_node_refusals,
         }
     }
 }
@@ -241,8 +265,16 @@ impl PluginStoreState {
         &self.guest.plugin_id
     }
 
+    fn live(&self) -> HostResult<&Live> {
+        self.guest.live.as_ref().ok_or_else(no_services)
+    }
+
     pub(crate) fn ctx(&self) -> Option<&Arc<dyn PluginContext>> {
-        self.guest.ctx.as_ref()
+        self.guest.live.as_ref().map(|live| &live.ctx)
+    }
+
+    pub(crate) fn services(&self) -> HostResult<Arc<dyn PluginContext>> {
+        Ok(Arc::clone(&self.live()?.ctx))
     }
 
     pub(crate) fn host_call_timeout(&self) -> Duration {
@@ -263,7 +295,7 @@ impl PluginStoreState {
             .denials
             .entry(capability)
             .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
-            .admit(Instant::now())
+            .admit()
         else {
             return;
         };
@@ -296,7 +328,7 @@ impl PluginStoreState {
             .quota_refusals
             .entry(quota)
             .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
-            .admit(Instant::now());
+            .admit();
         if let Some(suppressed) = admitted {
             let (noun, key) = (quota.noun(), quota.key());
             tracing::warn!(plugin = %self.guest.plugin_id, quota = key, limit, suppressed,
@@ -305,40 +337,23 @@ impl PluginStoreState {
         limit_exceeded(quota.noun(), quota.key(), limit)
     }
 
-    pub(crate) fn report_command_refusal(&mut self, name: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.command_refusals.admit(Instant::now()) else {
+    pub(crate) fn report_refusal(&mut self, refused: Refused, subject: &str, reason: &str) {
+        let Some(suppressed) = self.throttles.refusals(refused).admit() else {
             return;
         };
-        tracing::warn!(plugin = %self.guest.plugin_id, command = name, suppressed,
-            "wasm plugin command registration: {reason}");
-    }
-
-    pub(crate) fn report_codec_refusal(&mut self, filter: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.codec_refusals.admit(Instant::now()) else {
-            return;
-        };
-        tracing::warn!(plugin = %self.guest.plugin_id, filter, suppressed,
-            "wasm plugin codec filter registration: {reason}");
-    }
-
-    pub(crate) fn report_permission_node_refusal(&mut self, node: &str, reason: &str) {
-        let Some(suppressed) = self
-            .throttles
-            .permission_node_refusals
-            .admit(Instant::now())
-        else {
-            return;
-        };
-        tracing::warn!(plugin = %self.guest.plugin_id, node, suppressed,
-            "wasm plugin permission node registration: {reason}");
+        let plugin = &self.guest.plugin_id;
+        match refused {
+            Refused::Command => tracing::warn!(%plugin, command = subject, suppressed,
+                "wasm plugin command registration: {reason}"),
+            Refused::CodecFilter => tracing::warn!(%plugin, filter = subject, suppressed,
+                "wasm plugin codec filter registration: {reason}"),
+            Refused::PermissionNode => tracing::warn!(%plugin, node = subject, suppressed,
+                "wasm plugin permission node registration: {reason}"),
+        }
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> HostResult<InstanceRef> {
-        self.guest
-            .instance
-            .as_ref()
-            .map(|instance| instance.for_calls(kind))
-            .ok_or_else(no_services)
+        Ok(self.live()?.instance.for_calls(kind))
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -448,8 +463,22 @@ impl PluginStoreState {
         self.resources.claim_prefixes.len()
     }
 
+    pub(crate) fn run_disconnect(&mut self, disconnect: impl Future<Output = ()> + Send + 'static) {
+        let disconnects = &mut self.resources.disconnects;
+        while disconnects.try_join_next().is_some() {}
+        let mut disconnect = Box::pin(disconnect);
+        if disconnect
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+        {
+            disconnects.spawn(disconnect);
+        }
+    }
+
     pub(crate) fn release_host_resources(&mut self) {
         let resources = &mut self.resources;
+        resources.disconnects.abort_all();
         let prefixes = std::mem::take(&mut resources.claim_prefixes);
         let listeners: Vec<ListenerHandle> =
             resources.listeners.drain().flat_map(|(_, h)| h).collect();
@@ -458,7 +487,7 @@ impl PluginStoreState {
         for (_, bar) in resources.boss_bars.drain() {
             let _ = bar.hide();
         }
-        let Some(ctx) = self.guest.ctx.as_ref() else {
+        let Some(Live { ctx, .. }) = &self.guest.live else {
             return;
         };
         for handle in listeners {
@@ -475,7 +504,7 @@ impl PluginStoreState {
     }
 
     pub(crate) fn codec_instantiator(&self) -> Option<&Arc<CodecInstantiator>> {
-        self.guest.codec.as_ref()
+        self.guest.live.as_ref()?.codec.as_ref()
     }
 
     #[cfg(test)]
@@ -486,13 +515,11 @@ impl PluginStoreState {
 
     #[cfg(test)]
     pub(crate) fn with_ctx(mut self, ctx: Arc<dyn PluginContext>) -> Self {
-        self.guest.ctx = Some(ctx);
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_instance(mut self, instance: InstanceRef) -> Self {
-        self.guest.instance = Some(instance);
+        self.guest.live = Some(Live {
+            ctx,
+            instance: InstanceRef::detached(),
+            codec: None,
+        });
         self
     }
 }
@@ -548,12 +575,26 @@ fn build_wasi_ctx(
     Ok(builder.build())
 }
 
-pub(crate) fn build_load_state(
+async fn wasi_ctx(setup: &PluginSetup) -> Result<WasiCtx, WasmLoaderError> {
+    let data_dir = setup.data_dir.clone();
+    let network = Arc::clone(&setup.network);
+    let mounts = Arc::clone(&setup.mounts);
+    tokio::task::spawn_blocking(move || build_wasi_ctx(&data_dir, &network, &mounts))
+        .await
+        .unwrap_or_else(|e| {
+            Err(WasmLoaderError::WasiSetup {
+                path: setup.data_dir.clone(),
+                source: std::io::Error::other(e),
+            })
+        })
+}
+
+pub(crate) async fn build_load_state(
     setup: &PluginSetup,
     generation: u64,
     instance: InstanceRef,
 ) -> Result<PluginStoreState, WasmLoaderError> {
-    let wasi = build_wasi_ctx(&setup.data_dir, &setup.network, &setup.mounts)?;
+    let wasi = wasi_ctx(setup).await?;
     setup.network.warm_in_background();
     Ok(PluginStoreState {
         sandbox: Sandbox::new(wasi, Arc::clone(&setup.network), &setup.sandbox),
@@ -561,10 +602,12 @@ pub(crate) fn build_load_state(
             plugin_id: setup.plugin_id.clone(),
             generation,
             capabilities: setup.capabilities.clone(),
-            ctx: Some(Arc::clone(&setup.ctx)),
-            instance: Some(instance),
+            live: Some(Live {
+                ctx: Arc::clone(&setup.ctx),
+                instance,
+                codec: setup.codec.clone(),
+            }),
             registrations: Arc::clone(&setup.registrations),
-            codec: setup.codec.clone(),
             host_call_timeout: setup.sandbox.host_call_timeout,
             quotas: setup.sandbox.quotas,
         },
@@ -584,10 +627,8 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
             plugin_id,
             generation: 0,
             capabilities: CapabilitySet::default(),
-            ctx: None,
-            instance: None,
+            live: None,
             registrations: Arc::default(),
-            codec: None,
             host_call_timeout: sandbox.host_call_timeout,
             quotas: sandbox.quotas,
         },

@@ -155,7 +155,7 @@ impl PluginServiceRegistry {
     }
 }
 
-impl infrarust_api::services::service_registry::private::Sealed for PluginServiceRegistry {}
+impl infrarust_api::__sealed::Sealed for PluginServiceRegistry {}
 
 impl ServiceRegistry for PluginServiceRegistry {
     fn provide_erased(

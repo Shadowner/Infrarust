@@ -25,7 +25,7 @@ impl MockPluginRegistry {
     }
 }
 
-impl crate::services::plugin_registry::private::Sealed for MockPluginRegistry {}
+impl crate::__sealed::Sealed for MockPluginRegistry {}
 
 impl PluginRegistry for MockPluginRegistry {
     fn list_plugin_info(&self) -> Vec<PluginInfo> {

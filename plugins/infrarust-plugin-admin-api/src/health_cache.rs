@@ -3,19 +3,9 @@ use std::sync::Mutex;
 
 use crate::dto::server::HealthCheckResponse;
 
-/// In-memory cache of the last health check result per server.
-///
-/// Updated only on demand (when the client requests a health check).
+#[derive(Default)]
 pub struct HealthCache {
     entries: Mutex<HashMap<String, HealthCheckResponse>>,
-}
-
-impl Default for HealthCache {
-    fn default() -> Self {
-        Self {
-            entries: Mutex::new(HashMap::new()),
-        }
-    }
 }
 
 impl HealthCache {

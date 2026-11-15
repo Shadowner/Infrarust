@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use infrarust_api::messaging::{
-    ChannelId, MAX_TO_BACKEND_PAYLOAD, MessagingError, ServerMessenger, private,
+    ChannelId, MAX_TO_BACKEND_PAYLOAD, MessagingError, ServerMessenger,
 };
 use infrarust_api::player::Player;
 use infrarust_api::types::ServerId;
 use infrarust_config::ServerAddress;
 
-use crate::session::connection_registry::ConnectionRegistry;
+use crate::registry::ConnectionRegistry;
 
 pub struct ServerMessengerImpl {
     registry: Arc<ConnectionRegistry>,
@@ -49,7 +49,7 @@ pub(crate) fn send_through_carriers(
     reached.len()
 }
 
-impl private::Sealed for ServerMessengerImpl {}
+impl infrarust_api::__sealed::Sealed for ServerMessengerImpl {}
 
 impl ServerMessenger for ServerMessengerImpl {
     fn send_to_server(

@@ -79,7 +79,7 @@ fn find<'a>(
         })
 }
 
-impl crate::services::load_balancer::private::Sealed for MockLoadBalancerService {}
+impl crate::__sealed::Sealed for MockLoadBalancerService {}
 
 impl LoadBalancerService for MockLoadBalancerService {
     fn strategy(&self, server: &ServerId) -> Option<String> {

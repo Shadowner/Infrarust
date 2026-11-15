@@ -1,12 +1,7 @@
-//! Backend connection management.
-//!
-//! `BackendConnector` handles connecting to backend Minecraft servers
-//! with failover, timeout, and optional proxy protocol v2.
-
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::net::TcpStream;
@@ -21,8 +16,6 @@ use crate::socket::configure_tokio_stream;
 
 const DNS_CACHE_TTL: Duration = Duration::from_secs(15);
 const DNS_CACHE_CAPACITY: usize = 256;
-
-static DNS_CACHE: LazyLock<DnsCache> = LazyLock::new(DnsCache::default);
 
 struct Resolution {
     addrs: Arc<[SocketAddr]>,
@@ -140,10 +133,6 @@ impl Drop for EvictUnlessConnected<'_> {
     }
 }
 
-async fn connect_stream(address: &ServerAddress) -> io::Result<TcpStream> {
-    connect_stream_with(&DNS_CACHE, address, || lookup(address)).await
-}
-
 async fn connect_stream_with<F>(
     cache: &DnsCache,
     address: &ServerAddress,
@@ -182,17 +171,13 @@ pub trait ConnectAttemptObserver: Send + Sync {
     fn on_attempt(&self, attempt: &ConnectAttempt<'_>);
 }
 
-/// Connects to backend servers with failover and timeout.
 #[derive(Clone)]
 pub struct BackendConnector {
-    /// Default connection timeout.
-    pub default_timeout: Duration,
-    /// TCP keepalive configuration for backend connections.
-    pub keepalive: KeepaliveConfig,
-    /// Addresses tried before giving up. `0` means no limit.
+    default_timeout: Duration,
+    keepalive: KeepaliveConfig,
     max_attempts: usize,
-    /// Notified of every connection attempt outcome (per address).
     observer: Option<Arc<dyn ConnectAttemptObserver>>,
+    dns: Arc<DnsCache>,
 }
 
 impl std::fmt::Debug for BackendConnector {
@@ -207,13 +192,18 @@ impl std::fmt::Debug for BackendConnector {
 }
 
 impl BackendConnector {
-    pub const fn new(default_timeout: Duration, keepalive: KeepaliveConfig) -> Self {
+    pub fn new(default_timeout: Duration, keepalive: KeepaliveConfig) -> Self {
         Self {
             default_timeout,
             keepalive,
             max_attempts: 0,
             observer: None,
+            dns: Arc::default(),
         }
+    }
+
+    pub const fn default_timeout(&self) -> Duration {
+        self.default_timeout
     }
 
     #[must_use]
@@ -228,19 +218,6 @@ impl BackendConnector {
         self
     }
 
-    /// Connects to one of the given backend addresses.
-    ///
-    /// Tries each address in order. On the first successful connection,
-    /// configures the socket (`TCP_NODELAY`, keepalive) and optionally
-    /// sends a proxy protocol v2 header.
-    ///
-    /// Returns `AllBackendsFailed` if no address could be reached.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportError::AllBackendsFailed`] if none of the provided
-    /// addresses could be reached, or a connection-specific error from the
-    /// last failed attempt.
     pub async fn connect(
         &self,
         server_id: &str,
@@ -322,7 +299,8 @@ impl BackendConnector {
         send_proxy_protocol: bool,
         client_info: &ConnectionInfo,
     ) -> Result<BackendConnection, TransportError> {
-        let mut stream = tokio::time::timeout(timeout, connect_stream(address))
+        let connecting = connect_stream_with(&self.dns, address, || lookup(address));
+        let mut stream = tokio::time::timeout(timeout, connecting)
             .await
             .map_err(|_| TransportError::ConnectTimeout {
                 addr: address.to_string(),
@@ -349,7 +327,6 @@ impl BackendConnector {
     }
 }
 
-/// An established connection to a backend server.
 #[derive(Debug)]
 pub struct BackendConnection {
     stream: TcpStream,
@@ -359,22 +336,18 @@ pub struct BackendConnection {
 }
 
 impl BackendConnection {
-    /// Consumes the connection and returns the TCP stream.
     pub fn into_stream(self) -> TcpStream {
         self.stream
     }
 
-    /// Returns a reference to the TCP stream.
     pub const fn stream(&self) -> &TcpStream {
         &self.stream
     }
 
-    /// Returns a mutable reference to the TCP stream.
     pub const fn stream_mut(&mut self) -> &mut TcpStream {
         &mut self.stream
     }
 
-    /// Returns the remote backend address.
     pub const fn remote_addr(&self) -> SocketAddr {
         self.remote_addr
     }
@@ -383,7 +356,6 @@ impl BackendConnection {
         &self.server_address
     }
 
-    /// Returns the time when the connection was established.
     pub const fn connected_at(&self) -> Instant {
         self.connected_at
     }
@@ -475,8 +447,14 @@ mod tests {
 
     #[test]
     fn bracketed_ipv6_hosts_are_ip_literals() {
-        assert_eq!(ip_literal("[::1]"), Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])));
-        assert_eq!(ip_literal("::1"), Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])));
+        assert_eq!(
+            ip_literal("[::1]"),
+            Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]))
+        );
+        assert_eq!(
+            ip_literal("::1"),
+            Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]))
+        );
         assert_eq!(ip_literal("10.0.0.7"), Some(IpAddr::from([10, 0, 0, 7])));
         assert_eq!(ip_literal(HOST), None);
         assert_eq!(ip_literal("[backend.test]"), None);
@@ -564,5 +542,50 @@ mod tests {
 
         assert_eq!(connect(&cache, &address, &resolver).await.unwrap(), live);
         assert_eq!(resolver.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn connect_one_sends_the_proxy_header_without_notifying_the_observer() {
+        use crate::proxy_protocol::decode_proxy_protocol;
+
+        struct Counting(AtomicUsize);
+        impl ConnectAttemptObserver for Counting {
+            fn on_attempt(&self, _attempt: &ConnectAttempt<'_>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let (listener, addr) = listening().await;
+        let header = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            decode_proxy_protocol(&mut stream).await.unwrap().0
+        });
+
+        let observer = Arc::new(Counting(AtomicUsize::new(0)));
+        let connector = BackendConnector::new(Duration::from_secs(5), KeepaliveConfig::default())
+            .with_observer(Arc::clone(&observer) as _);
+        let address = ServerAddress {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+        };
+        let info = ConnectionInfo {
+            peer_addr: "127.0.0.1:12345".parse().unwrap(),
+            real_addr: None,
+            local_addr: addr,
+            connected_at: Instant::now(),
+        };
+        let conn = connector
+            .connect_one(&address, Duration::from_secs(5), true, &info)
+            .await
+            .unwrap();
+
+        let header = header
+            .await
+            .unwrap()
+            .expect("a PROXY v2 header was written");
+        assert_eq!(header.source_addr, info.peer_addr);
+        assert_eq!(header.dest_addr, addr);
+        assert_eq!(conn.remote_addr(), addr);
+        assert_eq!(observer.0.load(Ordering::SeqCst), 0);
     }
 }

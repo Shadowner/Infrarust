@@ -53,6 +53,7 @@ pub trait CodecFilterInstance: Send {
 
 /// Information passed to the factory when creating a filter instance.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CodecSessionInit {
     /// The client's protocol version.
     pub client_version: ProtocolVersion,
@@ -64,6 +65,24 @@ pub struct CodecSessionInit {
     pub real_ip: Option<IpAddr>,
     /// Which side of the connection this instance filters.
     pub side: ConnectionSide,
+}
+
+impl CodecSessionInit {
+    pub const fn new(
+        client_version: ProtocolVersion,
+        connection_id: u64,
+        remote_addr: SocketAddr,
+        real_ip: Option<IpAddr>,
+        side: ConnectionSide,
+    ) -> Self {
+        Self {
+            client_version,
+            connection_id,
+            remote_addr,
+            real_ip,
+            side,
+        }
+    }
 }
 
 /// Which side of the proxy connection a filter instance handles.

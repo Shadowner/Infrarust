@@ -1,8 +1,3 @@
-//! KeepAlive state machine for the Limbo loop.
-//!
-//! Tracks sent keepalive IDs, enforces the 15-second timeout, and provides
-//! helpers for detecting and extracting serverbound keepalive responses.
-
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::Instant;
@@ -14,53 +9,37 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
-use crate::player::packets::encode_packet;
+use crate::util::packets::encode_packet;
 
-/// Maximum time (seconds) to wait for a keepalive response before
-/// considering the client timed out.
 const KEEPALIVE_TIMEOUT_SECS: u64 = 15;
 
-/// Outcome of a keepalive interval tick.
 pub(crate) enum KeepAliveTick {
     Send(PacketFrame),
     Idle,
     Timeout,
 }
 
-/// Tracks the keepalive handshake with a single client.
+struct Pending {
+    id: i64,
+    sent_at: Instant,
+}
+
 pub(crate) struct KeepAliveState {
-    last_sent_id: i64,
-    last_sent_at: Instant,
-    awaiting_response: bool,
+    pending: Option<Pending>,
 }
 
 impl KeepAliveState {
-    pub fn new() -> Self {
-        Self {
-            last_sent_id: 0,
-            last_sent_at: Instant::now(),
-            awaiting_response: false,
-        }
+    pub const fn new() -> Self {
+        Self { pending: None }
     }
 
-    /// Advances the keepalive state machine on a periodic interval tick.
-    ///
-    /// - If no keepalive is outstanding, emits a fresh ping ([`KeepAliveTick::Send`]).
-    /// - If a keepalive is outstanding but the grace window has not elapsed,
-    ///   returns [`KeepAliveTick::Idle`] (it deliberately does **not** send another
-    ///   ping, which would reset the timer so the timeout could never fire).
-    /// - If a keepalive is outstanding past the timeout, returns
-    ///   [`KeepAliveTick::Timeout`] so the caller can drop the connection.
-    ///
-    /// This separation is what makes the timeout reachable when the tick interval
-    /// is shorter than `KEEPALIVE_TIMEOUT_SECS`.
     pub fn tick(
         &mut self,
         version: ProtocolVersion,
         registry: &PacketRegistry,
     ) -> Result<KeepAliveTick, CoreError> {
-        if self.awaiting_response {
-            if self.last_sent_at.elapsed() >= Duration::from_secs(KEEPALIVE_TIMEOUT_SECS) {
+        if let Some(pending) = &self.pending {
+            if pending.sent_at.elapsed() >= Duration::from_secs(KEEPALIVE_TIMEOUT_SECS) {
                 return Ok(KeepAliveTick::Timeout);
             }
             return Ok(KeepAliveTick::Idle);
@@ -75,29 +54,21 @@ impl KeepAliveState {
                 .as_millis() as i64
         };
 
-        self.last_sent_id = id;
-        self.last_sent_at = Instant::now();
-        self.awaiting_response = true;
+        self.pending = Some(Pending {
+            id,
+            sent_at: Instant::now(),
+        });
 
         let frame = encode_packet(&CKeepAlive { id }, version, registry)?;
         Ok(KeepAliveTick::Send(frame))
     }
 
-    /// Processes a keepalive response from the client.
-    ///
-    /// Returns the round trip time if the ID matches the last sent keepalive,
-    /// clearing the pending state. Returns `None` on mismatch.
     pub fn on_response(&mut self, id: i64) -> Option<Duration> {
-        if self.awaiting_response && id == self.last_sent_id {
-            self.awaiting_response = false;
-            Some(self.last_sent_at.elapsed())
-        } else {
-            None
-        }
+        let pending = self.pending.take_if(|pending| pending.id == id)?;
+        Some(pending.sent_at.elapsed())
     }
 }
 
-/// Returns `true` if the frame is a serverbound `SKeepAlive` packet.
 pub(crate) fn is_keepalive_response(
     frame: &PacketFrame,
     registry: &PacketRegistry,
@@ -107,9 +78,6 @@ pub(crate) fn is_keepalive_response(
     Some(frame.id) == expected_id
 }
 
-/// Extracts the keepalive ID from a serverbound `SKeepAlive` frame.
-///
-/// Returns `None` if decoding fails.
 pub(crate) fn extract_keepalive_id(frame: &PacketFrame, version: ProtocolVersion) -> Option<i64> {
     let mut data = frame.payload.as_ref();
     SKeepAlive::decode(&mut data, version)
@@ -134,7 +102,7 @@ mod tests {
             matches!(result, KeepAliveTick::Send(_)),
             "first tick should produce a frame"
         );
-        assert!(state.awaiting_response);
+        assert!(state.pending.is_some());
     }
 
     #[test]
@@ -164,7 +132,8 @@ mod tests {
 
         let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         // Advance time past the timeout while still awaiting the response.
-        state.last_sent_at = Instant::now() - Duration::from_secs(KEEPALIVE_TIMEOUT_SECS + 1);
+        state.pending.as_mut().unwrap().sent_at =
+            Instant::now() - Duration::from_secs(KEEPALIVE_TIMEOUT_SECS + 1);
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         assert!(
@@ -179,11 +148,9 @@ mod tests {
         let mut state = KeepAliveState::new();
 
         let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
-        assert!(
-            state.on_response(state.last_sent_id).is_some(),
-            "valid id clears pending"
-        );
-        assert!(!state.awaiting_response);
+        let sent = state.pending.as_ref().unwrap().id;
+        assert!(state.on_response(sent).is_some(), "valid id clears pending");
+        assert!(state.pending.is_none());
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         assert!(
@@ -195,11 +162,13 @@ mod tests {
     #[test]
     fn on_response_correct_id() {
         let mut state = KeepAliveState::new();
-        state.last_sent_id = 42;
-        state.awaiting_response = true;
+        state.pending = Some(Pending {
+            id: 42,
+            sent_at: Instant::now(),
+        });
 
         assert!(state.on_response(42).is_some());
-        assert!(!state.awaiting_response);
+        assert!(state.pending.is_none());
         assert!(
             state.on_response(42).is_none(),
             "a second answer measures nothing"
@@ -209,10 +178,12 @@ mod tests {
     #[test]
     fn on_response_wrong_id() {
         let mut state = KeepAliveState::new();
-        state.last_sent_id = 42;
-        state.awaiting_response = true;
+        state.pending = Some(Pending {
+            id: 42,
+            sent_at: Instant::now(),
+        });
 
         assert!(state.on_response(99).is_none());
-        assert!(state.awaiting_response);
+        assert!(state.pending.is_some());
     }
 }

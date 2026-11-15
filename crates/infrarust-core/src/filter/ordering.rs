@@ -126,11 +126,12 @@ pub fn resolve_filter_order(filters: &[FilterMetadata]) -> Result<Vec<String>, F
     }
 
     if sorted.len() != filters.len() {
-        let remaining: Vec<&str> = in_degree
+        let mut remaining: Vec<&str> = in_degree
             .iter()
             .filter(|(_, deg)| **deg > 0)
             .map(|(id, _)| *id)
             .collect();
+        remaining.sort_unstable();
         return Err(FilterOrderError::CyclicDependency(remaining.join(", ")));
     }
 

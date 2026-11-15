@@ -35,7 +35,6 @@ impl LogBroadcast {
     }
 }
 
-/// A captured log entry.
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
     pub timestamp: String,
@@ -45,8 +44,6 @@ pub struct LogEntry {
     pub fields: HashMap<String, serde_json::Value>,
 }
 
-/// Custom tracing Layer that captures log events into a broadcast channel
-/// and a ring buffer for history.
 pub struct BroadcastLogLayer {
     log_tx: broadcast::Sender<LogEntry>,
     history: Arc<Mutex<VecDeque<LogEntry>>>,
@@ -78,26 +75,17 @@ where
             fields,
         };
 
-        // Push to ring buffer (std::sync::Mutex — held ~100ns)
-        match self.history.lock() {
-            Ok(mut history) => {
-                if history.len() >= self.max_history {
-                    history.pop_front();
-                }
-                history.push_back(entry.clone());
+        if let Ok(mut history) = self.history.lock() {
+            if history.len() >= self.max_history {
+                history.pop_front();
             }
-            Err(_) => {
-                // Lock poisoned — another thread panicked while holding it.
-                // Can't use tracing here (we're inside the tracing layer), so just skip.
-            }
+            history.push_back(entry.clone());
         }
 
-        // Broadcast (no-op if nobody is listening)
         let _ = self.log_tx.send(entry);
     }
 }
 
-/// Visitor that extracts tracing event fields into a JSON map.
 struct JsonFieldVisitor<'a>(&'a mut HashMap<String, serde_json::Value>);
 
 impl Visit for JsonFieldVisitor<'_> {

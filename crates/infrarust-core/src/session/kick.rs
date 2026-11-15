@@ -6,8 +6,10 @@ use infrarust_protocol::codec::McBufReadExt;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
-use crate::error::CoreError;
+use crate::session::backend_login::ConnectError;
 use crate::util::text::{decode_text_component, uses_nbt};
+
+pub(crate) const MAX_KICK_REDIRECTS: usize = 3;
 
 #[derive(Debug, Clone)]
 pub struct BackendKick {
@@ -101,25 +103,22 @@ impl Kick {
         }
     }
 
-    pub(crate) fn failed(server: ServerId, error: CoreError, stranded: bool) -> Self {
+    pub(crate) fn failed(server: ServerId, error: ConnectError, stranded: bool) -> Self {
         let kick = match error {
-            CoreError::BackendKick(packet) => Self::from_packet(server, *packet, true),
-            error
-                if !matches!(error, CoreError::Transport(_)) && error.is_expected_disconnect() =>
-            {
+            ConnectError::Kicked(packet) => Self::from_packet(server, *packet, true),
+            ConnectError::ClientLeft => Self::lost(server, true),
+            ConnectError::Failed(error) if error.is_expected_disconnect() => {
                 Self::lost(server, true)
             }
-            error => Self::unreachable(server, &error),
+            error => Self::unreachable(server, error.to_string()),
         };
         Self { stranded, ..kick }
     }
 
-    fn unreachable(server: ServerId, error: &CoreError) -> Self {
+    fn unreachable(server: ServerId, error: String) -> Self {
         Self {
             server,
-            cause: KickCause::Unreachable {
-                error: error.to_string(),
-            },
+            cause: KickCause::Unreachable { error },
             packet: None,
             during_connect: true,
             stranded: false,
@@ -144,6 +143,7 @@ mod tests {
     use infrarust_protocol::codec::McBufWriteExt;
 
     use super::*;
+    use crate::error::CoreError;
     use crate::util::text::encode_text_component;
 
     fn reason() -> Component {
@@ -205,18 +205,18 @@ mod tests {
         );
         let kick = Kick::failed(
             server.clone(),
-            CoreError::BackendKick(Box::new(refused)),
+            ConnectError::Kicked(Box::new(refused)),
             true,
         );
         assert_eq!(kick.cause, KickCause::LoginRefused);
         assert_eq!(kick.reason(), Some(reason()));
         assert!(kick.during_connect && kick.stranded);
 
-        let lost = Kick::failed(server.clone(), CoreError::ConnectionClosed, false);
+        let lost = Kick::failed(server.clone(), CoreError::ConnectionClosed.into(), false);
         assert_eq!(lost.cause, KickCause::ConnectionLost);
         assert_eq!(lost.reason(), None);
 
-        let timeout = Kick::failed(server, CoreError::Timeout("login".into()), false);
+        let timeout = Kick::failed(server, CoreError::Timeout("login".into()).into(), false);
         assert_eq!(
             timeout.cause,
             KickCause::Unreachable {

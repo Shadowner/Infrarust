@@ -8,8 +8,7 @@ use super::{
 
 #[doc(hidden)]
 pub mod private {
-    /// Sealed trait marker — only the proxy may implement [`EventBus`](super::EventBus).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// A type-erased synchronous event handler.
@@ -55,7 +54,7 @@ impl<E: super::Event> ErasedEvent for E {
 ///     },
 /// );
 /// ```
-pub trait EventBus: Send + Sync + private::Sealed {
+pub trait EventBus: Send + Sync + crate::__sealed::Sealed {
     /// Subscribes a type-erased synchronous handler.
     ///
     /// Prefer the typed [`EventBusExt::subscribe`] method instead.

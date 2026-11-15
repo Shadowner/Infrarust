@@ -1,6 +1,4 @@
-use std::future::Future;
 use std::num::NonZeroU32;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -10,6 +8,7 @@ use governor::state::keyed::DashMapStateStore;
 use governor::{Quota, RateLimiter};
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_api::events::handshake::RejectReason;
 use infrarust_config::RateLimitConfig;
 use infrarust_transport::IpKey;
@@ -17,7 +16,7 @@ use infrarust_transport::IpKey;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, Refused};
+use crate::pipeline::types::ConnectionIntent;
 
 type KeyedLimiter = RateLimiter<IpKey, DashMapStateStore<IpKey>, DefaultClock>;
 
@@ -63,6 +62,7 @@ impl RateLimiterMiddleware {
     }
 
     /// Number of keys held across the login and status limiters.
+    #[cfg(feature = "test-support")]
     pub fn tracked_keys(&self) -> usize {
         self.login_limiter.len() + self.status_limiter.len()
     }
@@ -98,13 +98,13 @@ impl Middleware for RateLimiterMiddleware {
     fn process<'a>(
         &'a self,
         ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
             if !self.enabled {
                 return Ok(MiddlewareResult::Continue);
             }
 
-            let Some(handshake) = ctx.extensions.get::<HandshakeData>() else {
+            let Some(handshake) = ctx.handshake.as_ref() else {
                 return Ok(MiddlewareResult::Continue); // No handshake yet, skip
             };
 
@@ -113,17 +113,17 @@ impl Middleware for RateLimiterMiddleware {
                 ConnectionIntent::Login | ConnectionIntent::Transfer => &self.login_limiter,
             };
 
-            if limiter.check_key(&IpKey::from(ctx.client_ip)).is_ok() {
+            if limiter.check_key(&IpKey::from(ctx.client_ip())).is_ok() {
                 Ok(MiddlewareResult::Continue)
             } else {
                 tracing::debug!(
-                    ip = %ctx.client_ip,
+                    ip = %ctx.client_ip(),
                     intent = ?handshake.intent,
                     "rate limit exceeded"
                 );
                 if !self.warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
-                        key = %IpKey::from(ctx.client_ip),
+                        key = %IpKey::from(ctx.client_ip()),
                         "refusing connections over [rate_limit]; clients behind playit, frp, \
                          ngrok, Docker userland proxy or NAT share one address: send the real \
                          address with receive_proxy_protocol and trusted_proxies, raise \
@@ -131,8 +131,10 @@ impl Middleware for RateLimiterMiddleware {
                          is logged once"
                     );
                 }
-                ctx.extensions.insert(Refused(RejectReason::RateLimit));
-                Ok(MiddlewareResult::Reject("Rate limit exceeded".into()))
+                Ok(MiddlewareResult::Reject {
+                    reason: RejectReason::RateLimit,
+                    message: "Rate limit exceeded".into(),
+                })
             }
         })
     }

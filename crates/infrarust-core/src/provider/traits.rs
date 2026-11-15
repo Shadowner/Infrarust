@@ -1,20 +1,14 @@
-//! Core provider abstractions: trait, events, and configuration wrapper.
-
-use std::future::Future;
-use std::pin::Pin;
-
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::event::BoxFuture;
 use infrarust_config::ServerConfig;
 
 use crate::error::CoreError;
 use crate::provider::ProviderId;
 
-/// A server configuration tagged with its provider origin.
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
-    /// Unique identifier for this config (e.g. `file@survival.toml`).
     pub id: ProviderId,
     pub config: ServerConfig,
 }
@@ -26,63 +20,18 @@ pub enum ProviderChange {
     Removed(ProviderId),
 }
 
-#[derive(Debug)]
-pub enum ProviderEvent {
-    Added(ProviderConfig),
-    Updated(ProviderConfig),
-    Removed(ProviderId),
-    Batch(Vec<ProviderChange>),
-}
-
-impl ProviderEvent {
-    pub fn into_changes(self) -> Vec<ProviderChange> {
-        match self {
-            Self::Added(config) => vec![ProviderChange::Added(config)],
-            Self::Updated(config) => vec![ProviderChange::Updated(config)],
-            Self::Removed(id) => vec![ProviderChange::Removed(id)],
-            Self::Batch(changes) => changes,
-        }
-    }
-}
-
-impl From<ProviderChange> for ProviderEvent {
-    fn from(change: ProviderChange) -> Self {
-        match change {
-            ProviderChange::Added(config) => Self::Added(config),
-            ProviderChange::Updated(config) => Self::Updated(config),
-            ProviderChange::Removed(id) => Self::Removed(id),
-        }
-    }
-}
-
-/// Source of dynamic server configurations.
-///
-/// Implemented by `FileProvider`, `DockerProvider`, and future providers.
-/// Each provider produces `ServerConfig` values tagged with a `ProviderId`
-/// and notifies changes via a bounded channel.
-///
-/// Methods return boxed futures for dyn-compatibility (no `async-trait` crate).
 pub trait ConfigProvider: Send + Sync {
-    /// The provider type name (e.g. `"file"`, `"docker"`).
     fn provider_type(&self) -> &str;
 
-    /// Loads the initial set of server configurations.
-    ///
-    /// Called once at startup. Returns all currently known configs.
-    /// Individual failures (e.g. an unparseable file) should be logged
-    /// and skipped, not propagated as errors.
-    fn load_initial(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<ProviderConfig>, CoreError>> + Send + '_>>;
+    fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>>;
 
-    /// Watches for configuration changes and sends events.
-    ///
-    /// Runs until `shutdown` is cancelled. Events are sent through
-    /// the bounded `sender` channel. Implementations must respect
-    /// the cancellation token and exit cleanly.
     fn watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CoreError>> + Send + '_>>;
+    ) -> BoxFuture<'_, Result<(), CoreError>>;
+}
+
+pub trait RoutesListener: Send + Sync {
+    fn routes_changed(&self) -> BoxFuture<'_, ()>;
 }

@@ -96,13 +96,4 @@ mod tests {
 
         <RawPacketEvent as AmbiguousIfEvent<_>>::probe();
     }
-
-    #[test]
-    fn direction_non_exhaustive() {
-        let dir = PacketDirection::Serverbound;
-        #[allow(unreachable_patterns)]
-        match dir {
-            PacketDirection::Serverbound | PacketDirection::Clientbound | _ => {}
-        }
-    }
 }

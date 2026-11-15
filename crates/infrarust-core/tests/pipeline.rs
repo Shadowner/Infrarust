@@ -1,8 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
+use infrarust_api::event::BoxFuture;
+use infrarust_api::events::handshake::RejectReason;
 use infrarust_core::error::CoreError;
 use infrarust_core::pipeline::Pipeline;
 use infrarust_core::pipeline::context::ConnectionContext;
@@ -21,28 +22,8 @@ async fn make_test_ctx() -> ConnectionContext {
     ConnectionContext::new_for_test(
         client,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 12345),
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
         addr,
     )
-}
-
-/// A middleware that always continues and inserts a marker.
-struct ContinueMiddleware;
-
-impl Middleware for ContinueMiddleware {
-    fn name(&self) -> &'static str {
-        "continue"
-    }
-
-    fn process<'a>(
-        &'a self,
-        ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
-        Box::pin(async move {
-            ctx.extensions.insert(42u32);
-            Ok(MiddlewareResult::Continue)
-        })
-    }
 }
 
 /// A middleware that always rejects.
@@ -56,8 +37,13 @@ impl Middleware for RejectMiddleware {
     fn process<'a>(
         &'a self,
         _ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
-        Box::pin(async move { Ok(MiddlewareResult::Reject("blocked".into())) })
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
+        Box::pin(async move {
+            Ok(MiddlewareResult::Reject {
+                reason: RejectReason::IpFilter,
+                message: "blocked".into(),
+            })
+        })
     }
 }
 
@@ -72,13 +58,14 @@ impl Middleware for ShortCircuitMiddleware {
     fn process<'a>(
         &'a self,
         _ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
-        Box::pin(async move { Ok(MiddlewareResult::ShortCircuit) })
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
+        Box::pin(async move { Ok(MiddlewareResult::Drop(RejectReason::IpBanned)) })
     }
 }
 
-/// A middleware that inserts a string marker, used to detect execution order.
-struct MarkerMiddleware(&'static str);
+type Ran = Arc<Mutex<Vec<&'static str>>>;
+
+struct MarkerMiddleware(&'static str, Ran);
 
 impl Middleware for MarkerMiddleware {
     fn name(&self) -> &'static str {
@@ -87,18 +74,10 @@ impl Middleware for MarkerMiddleware {
 
     fn process<'a>(
         &'a self,
-        ctx: &'a mut ConnectionContext,
-    ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
-        let name = self.0;
+        _ctx: &'a mut ConnectionContext,
+    ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let existing = ctx
-                .extensions
-                .get::<Vec<String>>()
-                .cloned()
-                .unwrap_or_default();
-            let mut order = existing;
-            order.push(name.to_string());
-            ctx.extensions.insert(order);
+            self.1.lock().unwrap().push(self.0);
             Ok(MiddlewareResult::Continue)
         })
     }
@@ -116,51 +95,39 @@ async fn test_empty_pipeline_continues() {
 async fn test_middleware_reject_stops() {
     let mut pipeline = Pipeline::new();
     pipeline.add(Box::new(RejectMiddleware));
-    pipeline.add(Box::new(ContinueMiddleware));
+    let ran = Ran::default();
+    pipeline.add(Box::new(MarkerMiddleware("after", Arc::clone(&ran))));
 
     let mut ctx = make_test_ctx().await;
     let result = pipeline.execute(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::Reject(_)));
-    // ContinueMiddleware should NOT have run
-    assert!(ctx.extensions.get::<u32>().is_none());
+    assert!(matches!(result, MiddlewareResult::Reject { .. }));
+    assert!(ran.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn test_middleware_shortcircuit_stops() {
     let mut pipeline = Pipeline::new();
     pipeline.add(Box::new(ShortCircuitMiddleware));
-    pipeline.add(Box::new(ContinueMiddleware));
+    let ran = Ran::default();
+    pipeline.add(Box::new(MarkerMiddleware("after", Arc::clone(&ran))));
 
     let mut ctx = make_test_ctx().await;
     let result = pipeline.execute(&mut ctx).await.unwrap();
-    assert!(matches!(result, MiddlewareResult::ShortCircuit));
-    assert!(ctx.extensions.get::<u32>().is_none());
+    assert!(matches!(result, MiddlewareResult::Drop(_)));
+    assert!(ran.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn test_middleware_order_matters() {
     let mut pipeline = Pipeline::new();
-    pipeline.add(Box::new(MarkerMiddleware("first")));
-    pipeline.add(Box::new(MarkerMiddleware("second")));
-    pipeline.add(Box::new(MarkerMiddleware("third")));
+    let ran = Ran::default();
+    for name in ["first", "second", "third"] {
+        pipeline.add(Box::new(MarkerMiddleware(name, Arc::clone(&ran))));
+    }
 
     let mut ctx = make_test_ctx().await;
     let result = pipeline.execute(&mut ctx).await.unwrap();
     assert!(matches!(result, MiddlewareResult::Continue));
 
-    let order = ctx.extensions.get::<Vec<String>>().unwrap();
-    assert_eq!(order, &["first", "second", "third"]);
-}
-
-#[tokio::test]
-async fn test_extensions_accumulate() {
-    let mut pipeline = Pipeline::new();
-    pipeline.add(Box::new(ContinueMiddleware)); // inserts u32
-    pipeline.add(Box::new(MarkerMiddleware("after"))); // inserts Vec<String>
-
-    let mut ctx = make_test_ctx().await;
-    pipeline.execute(&mut ctx).await.unwrap();
-
-    assert_eq!(ctx.extensions.get::<u32>(), Some(&42));
-    assert!(ctx.extensions.get::<Vec<String>>().is_some());
+    assert_eq!(*ran.lock().unwrap(), ["first", "second", "third"]);
 }

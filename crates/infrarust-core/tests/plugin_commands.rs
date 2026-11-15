@@ -39,7 +39,7 @@ fn factory(commands: &Arc<CommandManagerImpl>) -> PluginContextFactoryImpl {
         command_manager: Arc::clone(commands),
         ..PluginServices::for_tests()
     };
-    PluginContextFactoryImpl::new(services, HashMap::new())
+    PluginContextFactoryImpl::for_tests(services, HashMap::new())
 }
 
 fn disable(ctx: &Arc<PluginContextImpl>) {

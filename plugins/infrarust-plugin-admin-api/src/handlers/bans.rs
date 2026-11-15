@@ -14,7 +14,8 @@ use crate::response::{
     ApiResponse, MutationResult, PaginatedResponse, PaginationParams, created, mutation_ok, ok,
 };
 use crate::state::{ApiEvent, ApiState};
-use crate::util::{BanTargetKind, BanTargetParts, now_iso8601, parse_ban_target};
+use crate::util::now_iso8601;
+use crate::vocab::{BanTargetKind, BanTargetParts, parse_ban_target};
 
 #[derive(Debug, Deserialize)]
 pub struct BanListQuery {

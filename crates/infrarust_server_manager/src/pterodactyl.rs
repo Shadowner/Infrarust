@@ -2,9 +2,8 @@ use infrarust_config::PterodactylManagerConfig;
 
 use crate::error::ServerManagerError;
 use crate::http::{HTTP_TIMEOUT, check_response};
-use crate::provider::{ProviderStatus, ServerProvider};
+use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
-/// Provider for Pterodactyl panel servers via REST API.
 pub struct PterodactylProvider {
     http_client: reqwest::Client,
     api_url: String,
@@ -22,7 +21,6 @@ impl PterodactylProvider {
         }
     }
 
-    /// Sends a power signal to the server.
     async fn send_power_signal(&self, signal: &str) -> Result<(), ServerManagerError> {
         let url = format!(
             "{}/api/client/servers/{}/power",
@@ -45,29 +43,21 @@ impl PterodactylProvider {
 }
 
 impl ServerProvider for PterodactylProvider {
-    fn start(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             tracing::info!(server_id = %self.server_id, "sending start signal to Pterodactyl");
             self.send_power_signal("start").await
         })
     }
 
-    fn stop(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             tracing::info!(server_id = %self.server_id, "sending stop signal to Pterodactyl");
             self.send_power_signal("stop").await
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
-    > {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let url = format!(
                 "{}/api/client/servers/{}/resources",

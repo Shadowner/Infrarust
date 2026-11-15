@@ -583,7 +583,7 @@ impl Managed {
 async fn manage(dir: &Path, proxy_toml: &str, extra: Vec<Box<dyn PluginLoader>>) -> Managed {
     let mut loaders = extra;
     loaders.push(Box::new(cached_loader_from_toml(proxy_toml, dir)));
-    let mut manager = infrarust_core::plugin::manager::PluginManager::new(loaders);
+    let mut manager = infrarust_core::plugin::manager::PluginManager::for_tests(loaders);
     let _slot = compile_slot().await;
     let discovery = tokio::time::timeout(DISCOVERY_BOUND, manager.discover_all(dir))
         .await
@@ -799,7 +799,8 @@ async fn a_plugin_depending_on_a_config_disabled_plugin_is_not_enabled() {
     add_precompiled_probe(&dir, "base", "id=base\n").await;
     add_precompiled_probe(&dir, "dependent", "id=dependent\ndep=base\n").await;
     let loader = cached_loader(&dir);
-    let mut manager = infrarust_core::plugin::manager::PluginManager::new(vec![Box::new(loader)]);
+    let mut manager =
+        infrarust_core::plugin::manager::PluginManager::for_tests(vec![Box::new(loader)]);
     manager.set_disabled_plugins(std::collections::HashSet::from(["base".to_owned()]));
     let slot = compile_slot().await;
     manager.discover_all(&dir).await.unwrap();

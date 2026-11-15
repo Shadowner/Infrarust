@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::BoxFuture;
 use crate::error::ErrorKind;
-use crate::event::BoxFuture;
 use crate::permissions::PermissionChecker;
 use crate::player::Player;
 use crate::types::{Component, PlayerId};
@@ -338,11 +338,12 @@ impl CommandError {
     }
 }
 
+#[doc(hidden)]
 pub mod private {
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
-pub trait CommandManager: Send + Sync + private::Sealed {
+pub trait CommandManager: Send + Sync + crate::__sealed::Sealed {
     fn register(
         &self,
         spec: CommandSpec,

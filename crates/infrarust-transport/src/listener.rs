@@ -1,9 +1,3 @@
-//! TCP listener with semaphore-bounded accept loop.
-//!
-//! `Listener` wraps a `tokio::net::TcpListener` with connection limits,
-//! graceful shutdown, optional proxy protocol decoding, and socket
-//! configuration on accepted connections.
-
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
@@ -18,28 +12,21 @@ use crate::connection::{ClientConnection, canonicalize_ip};
 use crate::error::TransportError;
 use crate::ip_limit::{IpGuard, IpLimiter};
 use crate::proxy_protocol::decode_proxy_protocol;
-use crate::socket::{configure_listener_socket, configure_tokio_stream, into_tokio_listener};
+use crate::socket::{
+    adopt_listener_socket, configure_listener_socket, configure_tokio_stream, into_tokio_listener,
+};
 
-/// Configuration for the listener.
 #[derive(Debug, Clone)]
 pub struct ListenerConfig {
-    /// Address to bind to.
     pub bind: SocketAddr,
-    /// Maximum concurrent connections (0 = unlimited).
     pub max_connections: u32,
-    /// Maximum concurrent connections per IPv4 address or IPv6 /64 (0 = unlimited).
     pub max_connections_per_ip: u32,
-    /// TCP keepalive configuration for accepted connections.
     pub keepalive: KeepaliveConfig,
-    /// Enable `SO_REUSEPORT` (Linux only).
     pub so_reuseport: bool,
-    /// Decode proxy protocol headers on accepted connections.
     pub receive_proxy_protocol: bool,
-    /// Peers allowed to send a proxy protocol header.
     pub trusted_proxies: Vec<IpNet>,
 }
 
-/// TCP listener with connection limiting and graceful shutdown.
 #[derive(Debug)]
 pub struct Listener {
     inner: TcpListener,
@@ -127,20 +114,15 @@ impl PendingConnection {
     }
 }
 
-/// The share of the global and per-IP limits held by one connection.
-/// Dropping it gives both back.
 #[derive(Debug, Default)]
 pub struct ConnectionSlot {
     _permit: Option<OwnedSemaphorePermit>,
     _ip_guard: Option<IpGuard>,
 }
 
-/// An accepted connection with its slot.
-///
-/// The slot is held for the lifetime of the connection.
+#[derive(Debug)]
 pub struct AcceptedConnection {
-    /// The accepted client connection.
-    pub connection: ClientConnection,
+    connection: ClientConnection,
     slot: ConnectionSlot,
 }
 
@@ -150,28 +132,30 @@ impl AcceptedConnection {
     }
 }
 
-impl std::fmt::Debug for AcceptedConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AcceptedConnection")
-            .field("connection", &self.connection)
-            .field("slot", &self.slot)
-            .finish()
-    }
-}
-
 impl Listener {
-    /// Binds to the configured address and prepares the listener.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportError::Bind`] if the socket cannot be bound, or
-    /// [`TransportError::SocketConfig`] if socket configuration fails.
-    #[allow(clippy::unused_async)] // Kept async for API consistency; callers already await this.
-    pub async fn bind(
+    pub fn bind(
         config: ListenerConfig,
         shutdown: CancellationToken,
     ) -> Result<Self, TransportError> {
         let socket = configure_listener_socket(config.bind, config.so_reuseport)?;
+        Self::listen(socket, config, shutdown)
+    }
+
+    pub fn adopt(
+        inherited: std::net::TcpListener,
+        config: ListenerConfig,
+        shutdown: CancellationToken,
+    ) -> Result<Self, TransportError> {
+        let socket = adopt_listener_socket(inherited)?;
+        tracing::info!(configured_bind = %config.bind, "adopting socket passed by socket activation");
+        Self::listen(socket, config, shutdown)
+    }
+
+    fn listen(
+        socket: socket2::Socket,
+        config: ListenerConfig,
+        shutdown: CancellationToken,
+    ) -> Result<Self, TransportError> {
         let inner = into_tokio_listener(socket)?;
         let local_addr = inner.local_addr().map_err(TransportError::SocketConfig)?;
 
@@ -198,24 +182,9 @@ impl Listener {
         })
     }
 
-    /// Accepts the next connection.
-    ///
-    /// Acquires a semaphore permit (if connection limiting is enabled),
-    /// waits for an incoming connection, and configures the socket.
-    ///
-    /// Transient errors (EMFILE, ENOMEM) are retried with backoff.
-    /// Returns `TransportError::Shutdown` when the shutdown token is cancelled.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportError::Shutdown`] if the shutdown token is
-    /// cancelled, [`TransportError::Accept`] on a non-transient accept
-    /// error, or [`TransportError::SocketConfig`] if socket configuration
-    /// fails.
     pub async fn accept(&self) -> Result<PendingConnection, TransportError> {
         let mut backoff = std::time::Duration::from_millis(100);
         loop {
-            // Acquire permit before accepting
             let permit = if let Some(sem) = &self.semaphore {
                 let permit = tokio::select! {
                     biased;
@@ -231,7 +200,6 @@ impl Listener {
                 None
             };
 
-            // Accept connection
             let (stream, peer_addr) = tokio::select! {
                 biased;
                 () = self.shutdown.cancelled() => {
@@ -242,7 +210,7 @@ impl Listener {
                         Ok((stream, addr)) => (stream, addr),
                         Err(e) if is_transient_error(&e) => {
                             tracing::warn!(error = %e, backoff_ms = backoff.as_millis(), "transient accept error, retrying");
-                            tokio::time::sleep(backoff).await;
+                            sleep_unless_cancelled(backoff, &self.shutdown).await?;
                             backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
                             continue;
                         }
@@ -262,24 +230,62 @@ impl Listener {
         }
     }
 
-    /// Returns the local address the listener is bound to.
-    ///
-    /// # Errors
-    ///
-    /// Never fails: the address is read once at bind time.
-    pub const fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        Ok(self.local_addr)
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 }
 
-/// Checks if an accept error is transient and should be retried.
+async fn sleep_unless_cancelled(
+    delay: std::time::Duration,
+    shutdown: &CancellationToken,
+) -> Result<(), TransportError> {
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => Err(TransportError::Shutdown),
+        () = tokio::time::sleep(delay) => Ok(()),
+    }
+}
+
 fn is_transient_error(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
-        std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset
-    ) || matches!(e.raw_os_error(), Some(24 | 23 | 12 | 105))
-    // 24=EMFILE, 23=ENFILE, 12=ENOMEM, 105=ENOBUFS (Linux values)
+        std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::OutOfMemory
+    ) || e
+        .raw_os_error()
+        .is_some_and(|errno| RESOURCE_EXHAUSTION.contains(&errno))
 }
+
+#[cfg(target_os = "linux")]
+const RESOURCE_EXHAUSTION: [i32; 4] = {
+    use nix::errno::Errno;
+    [
+        Errno::EMFILE as i32,
+        Errno::ENFILE as i32,
+        Errno::ENOMEM as i32,
+        Errno::ENOBUFS as i32,
+    ]
+};
+
+#[cfg(all(unix, not(target_os = "linux")))]
+const RESOURCE_EXHAUSTION: [i32; 4] = {
+    const EMFILE: i32 = 24;
+    const ENFILE: i32 = 23;
+    const ENOMEM: i32 = 12;
+    const ENOBUFS: i32 = 55;
+    [EMFILE, ENFILE, ENOMEM, ENOBUFS]
+};
+
+#[cfg(windows)]
+const RESOURCE_EXHAUSTION: [i32; 2] = {
+    const WSAEMFILE: i32 = 10024;
+    const WSAENOBUFS: i32 = 10055;
+    [WSAEMFILE, WSAENOBUFS]
+};
+
+#[cfg(not(any(unix, windows)))]
+const RESOURCE_EXHAUSTION: [i32; 0] = [];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -329,8 +335,7 @@ mod tests {
 
     #[test]
     fn transient_errors_are_retried() {
-        // EMFILE, ENFILE, ENOMEM, ENOBUFS (Linux values)
-        for errno in [24, 23, 12, 105] {
+        for errno in RESOURCE_EXHAUSTION {
             assert!(
                 is_transient_error(&std::io::Error::from_raw_os_error(errno)),
                 "errno {errno} should be transient"
@@ -342,6 +347,37 @@ mod tests {
         ] {
             assert!(is_transient_error(&std::io::Error::from(kind)));
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_accept_backoff_ends_as_soon_as_shutdown_is_requested() {
+        let shutdown = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let backoff = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move { sleep_unless_cancelled(std::time::Duration::from_secs(5), &shutdown).await }
+        });
+        tokio::task::yield_now().await;
+
+        shutdown.cancel();
+
+        assert!(matches!(
+            backoff.await.unwrap(),
+            Err(TransportError::Shutdown)
+        ));
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_accept_backoff_lasts_its_full_delay_without_shutdown() {
+        let started = tokio::time::Instant::now();
+        let delay = std::time::Duration::from_secs(5);
+
+        sleep_unless_cancelled(delay, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(started.elapsed(), delay);
     }
 
     #[test]

@@ -2,17 +2,17 @@
 //! Tests for the `TelemetryMiddleware` (NOT feature-gated — uses only tracing).
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use infrarust_config::{ProxyMode, TelemetryConfig, TraceClientIp, TracesConfig};
-use infrarust_core::middleware::telemetry::{ConnectionSpan, TelemetryMiddleware};
+use infrarust_core::middleware::telemetry::TelemetryMiddleware;
 use infrarust_core::pipeline::context::ConnectionContext;
 use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
 use infrarust_core::pipeline::types::{
     ConnectionIntent, HandshakeData, LoginData, LoginStartLayout, RoutingData,
 };
-use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_protocol::version::ProtocolVersion;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -39,7 +39,7 @@ async fn make_test_ctx() -> ConnectionContext {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let (_accepted, _) = listener.accept().await.unwrap();
 
-    ConnectionContext::new_for_test(stream, addr, IpAddr::V4(Ipv4Addr::LOCALHOST), addr)
+    ConnectionContext::new_for_test(stream, addr, addr)
 }
 
 #[tokio::test]
@@ -58,10 +58,7 @@ async fn test_middleware_stores_span() {
 
     middleware.process(&mut ctx).await.unwrap();
 
-    assert!(
-        ctx.extensions.contains::<ConnectionSpan>(),
-        "ConnectionSpan should be in extensions after process()"
-    );
+    assert!(ctx.span.is_some(), "the span is stored after process()");
 }
 
 #[tokio::test]
@@ -79,7 +76,7 @@ async fn test_middleware_extracts_handshake_data() {
     let middleware = TelemetryMiddleware::default();
     let mut ctx = make_test_ctx().await;
 
-    ctx.extensions.insert(HandshakeData {
+    ctx.handshake = Some(HandshakeData {
         domain: "mc.example.com".to_string(),
         raw_host: "mc.example.com".to_string(),
         port: 25565,
@@ -91,7 +88,7 @@ async fn test_middleware_extracts_handshake_data() {
     middleware.process(&mut ctx).await.unwrap();
 
     // Span was created (we can't inspect fields, but we can verify it exists)
-    assert!(ctx.extensions.contains::<ConnectionSpan>());
+    assert!(ctx.span.is_some());
 }
 
 #[tokio::test]
@@ -102,7 +99,7 @@ async fn test_middleware_handles_empty_extensions() {
 
     let result = middleware.process(&mut ctx).await;
     assert!(result.is_ok());
-    assert!(ctx.extensions.contains::<ConnectionSpan>());
+    assert!(ctx.span.is_some());
 }
 
 #[tokio::test]
@@ -110,7 +107,7 @@ async fn test_middleware_extracts_login_data() {
     let middleware = TelemetryMiddleware::default();
     let mut ctx = make_test_ctx().await;
 
-    ctx.extensions.insert(LoginData {
+    ctx.login = Some(LoginData {
         username: "Notch".to_string(),
         player_uuid: None,
         profile_key: None,
@@ -118,14 +115,14 @@ async fn test_middleware_extracts_login_data() {
         layout: LoginStartLayout::Declared,
     });
 
-    ctx.extensions.insert(RoutingData {
+    ctx.routing = Some(RoutingData {
         server_config: Arc::new(test_server_config(ProxyMode::Passthrough)),
         config_id: "survival".to_string(),
         load_balancer: Arc::new(infrarust_core::loadbalancer::FirstAvailable),
     });
 
     middleware.process(&mut ctx).await.unwrap();
-    assert!(ctx.extensions.contains::<ConnectionSpan>());
+    assert!(ctx.span.is_some());
 }
 
 #[derive(Clone, Default)]
@@ -162,9 +159,9 @@ async fn span_line(middleware: TelemetryMiddleware, client_ip: &str) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let mut ctx =
-        ConnectionContext::new_for_test(stream, addr, client_ip.parse::<IpAddr>().unwrap(), addr);
-    ctx.extensions.insert(LoginData {
+    let peer = SocketAddr::new(client_ip.parse().unwrap(), addr.port());
+    let mut ctx = ConnectionContext::new_for_test(stream, peer, addr);
+    ctx.login = Some(LoginData {
         username: "Notch".to_string(),
         player_uuid: None,
         profile_key: None,
@@ -173,8 +170,8 @@ async fn span_line(middleware: TelemetryMiddleware, client_ip: &str) -> String {
     });
 
     middleware.process(&mut ctx).await.unwrap();
-    let span = ctx.extensions.remove::<ConnectionSpan>().unwrap();
-    span.0.in_scope(|| tracing::info!("connected"));
+    let span = ctx.span.take().unwrap();
+    span.in_scope(|| tracing::info!("connected"));
 
     let bytes = buffer.0.lock().unwrap().clone();
     String::from_utf8(bytes).unwrap()

@@ -141,7 +141,7 @@ impl FaviconCache {
         Ok(())
     }
 
-    /// Returns the favicon for a server, falling back to the global default.
+    #[cfg(feature = "test-support")]
     pub fn get(&self, server_id: &str) -> Option<Arc<str>> {
         self.server_favicon(server_id)
             .or_else(|| self.default_favicon())

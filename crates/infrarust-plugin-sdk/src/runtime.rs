@@ -22,7 +22,7 @@ use crate::command::{
     CompletionClosure,
 };
 use crate::context::{Context, DisableReason, EnableReason};
-use crate::error::{Error, PluginError};
+use crate::error::{Error, ErrorKind, PluginError};
 use crate::event::{BanSource, EventPriority, GuestEvent};
 use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason};
 use crate::permissions::{PermissionProvider, PermissionSnapshot, PermissionSubject};
@@ -304,6 +304,14 @@ pub fn on_disable(reason: wg::DisableReason) -> Result<(), String> {
     }
 }
 
+fn warn_refused(what: &str, name: &str, error: crate::bindings::types::HostError) {
+    let error = Error::from(error);
+    let host_already_reported = error.kind() == ErrorKind::PermissionDenied;
+    if !host_already_reported {
+        crate::warn!("the proxy refused {what} {name}: {error}");
+    }
+}
+
 pub(crate) fn register_codec_factory(
     notify: bool,
     metadata: CodecFilterMetadata,
@@ -311,9 +319,13 @@ pub(crate) fn register_codec_factory(
 ) {
     let id = take_id(&NEXT_CODEC_FACTORY);
     CODEC_FACTORIES.with(|factories| factories.insert(id, Rc::from(constructor)));
-    if notify && crate::host::register_codec_filter(&metadata, id).is_err() {
+    if !notify {
+        return;
+    }
+    if let Err(error) = crate::host::register_codec_filter(&metadata, id) {
         let refused = CODEC_FACTORIES.with(|factories| factories.remove(id));
         drop(refused);
+        warn_refused("codec filter", &metadata.id, error);
     }
 }
 
@@ -334,9 +346,10 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
 pub(crate) fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
     let id = next_id();
     LIMBO_HANDLERS.with(|handlers| handlers.insert(id, Rc::from(handler)));
-    if crate::host::register_limbo_handler(name, id).is_err() {
+    if let Err(error) = crate::host::register_limbo_handler(name, id) {
         let refused = LIMBO_HANDLERS.with(|handlers| handlers.remove(id));
         drop(refused);
+        warn_refused("limbo handler", name, error);
     }
 }
 

@@ -18,8 +18,8 @@ use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
 };
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::BackendConnector;
 use infrarust_transport::connection::ConnectionInfo;
 
@@ -27,7 +27,7 @@ use super::STATUS_PROTOCOL_VERSION;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::pipeline::preauth_frame::{MAX_STATUS_FRAME, read_preauth_frame};
-use crate::player::packets::packet_id;
+use crate::util::packets::packet_id;
 
 /// Result of a successful status relay.
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub struct RelayResult {
     pub response: ServerPingResponse,
     /// Round-trip latency of the ping/pong exchange.
     pub latency: Duration,
-    /// Address the relay actually reached, which failover may have changed.
+    #[cfg_attr(not(feature = "telemetry"), allow(dead_code))]
     pub address: ServerAddress,
 }
 
@@ -155,27 +155,12 @@ pub(crate) async fn status_exchange(
     let mut decoder = PacketDecoder::new();
 
     let status_frame = read_next_frame(stream, &mut decoder).await?;
-    let status_decoded = registry.decode_frame(
-        &status_frame,
-        ConnectionState::Status,
-        Direction::Clientbound,
-        STATUS_PROTOCOL_VERSION,
-    )?;
-
-    let json_response = match status_decoded {
-        DecodedPacket::Typed { packet, .. } => packet
-            .as_any()
-            .downcast_ref::<CStatusResponse>()
-            .map(|p| p.json_response.clone())
-            .ok_or_else(|| {
-                CoreError::InvalidStatus("unexpected packet type for status response".into())
-            })?,
-        DecodedPacket::Opaque { .. } => {
-            return Err(CoreError::InvalidStatus(
-                "received opaque status response".into(),
-            ));
-        }
-    };
+    let json_response = registry
+        .decode_as::<CStatusResponse>(&status_frame, STATUS_PROTOCOL_VERSION)?
+        .ok_or_else(|| {
+            CoreError::InvalidStatus("unexpected packet type for status response".into())
+        })?
+        .json_response;
 
     let response: ServerPingResponse = serde_json::from_str(&json_response).map_err(|e| {
         CoreError::InvalidStatus(format!("invalid status JSON from '{server_id}': {e}"))
@@ -200,15 +185,7 @@ pub(crate) async fn status_exchange(
     let pong_frame = read_next_frame(stream, &mut decoder).await?;
     let latency = ping_start.elapsed();
 
-    let pong_decoded = registry.decode_frame(
-        &pong_frame,
-        ConnectionState::Status,
-        Direction::Clientbound,
-        STATUS_PROTOCOL_VERSION,
-    )?;
-
-    if let DecodedPacket::Typed { packet, .. } = pong_decoded
-        && let Some(pong) = packet.as_any().downcast_ref::<CPingResponse>()
+    if let Some(pong) = registry.decode_as::<CPingResponse>(&pong_frame, STATUS_PROTOCOL_VERSION)?
         && pong.payload != ping_payload
     {
         tracing::debug!(
@@ -353,20 +330,10 @@ mod tests {
 
                             // Read SPingRequest
                             let ping_frame = read_next_frame(&mut stream, &mut decoder).await.unwrap();
-                            let decoded = registry.decode_frame(
-                                &ping_frame,
-                                ConnectionState::Status,
-                                Direction::Serverbound,
-                                version,
-                            ).unwrap();
-
-                            let payload = match decoded {
-                                DecodedPacket::Typed { packet, .. } => {
-                                    packet.as_any().downcast_ref::<SPingRequest>()
-                                        .map_or(0, |p| p.payload)
-                                }
-                                DecodedPacket::Opaque { .. } => 0,
-                            };
+                            let payload = registry
+                                .decode_as::<SPingRequest>(&ping_frame, version)
+                                .unwrap()
+                                .map_or(0, |ping| ping.payload);
 
                             // Send CPingResponse
                             let pong = CPingResponse { payload };
@@ -412,8 +379,7 @@ mod tests {
     fn make_client_info() -> ConnectionInfo {
         ConnectionInfo {
             peer_addr: "127.0.0.1:12345".parse().unwrap(),
-            real_ip: None,
-            real_port: None,
+            real_addr: None,
             local_addr: "127.0.0.1:25565".parse().unwrap(),
             connected_at: tokio::time::Instant::now(),
         }

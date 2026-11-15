@@ -4,6 +4,7 @@ pub mod context;
 pub mod context_factory;
 pub mod dependency;
 pub mod error;
+pub mod handle;
 pub mod loader;
 pub mod manager;
 pub mod plugin_registry_impl;
@@ -11,8 +12,10 @@ pub mod service_registry;
 pub mod static_loader;
 pub mod tracking;
 
+pub(crate) use context_factory::HostWiring;
 pub use context_factory::{PluginContextFactory, PluginContextFactoryImpl, PluginPermissions};
 pub use error::PluginManagerError;
+pub use handle::{PluginManagerHandle, PluginStatus};
 pub use infrarust_api::plugin::PluginState;
 pub use loader::{LoaderError, PluginLoader};
 pub use plugin_registry_impl::PluginRegistryImpl;

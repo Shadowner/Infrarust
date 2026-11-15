@@ -4,7 +4,7 @@ use crate::codec::VarInt;
 use crate::codec::varint::VarIntDecodeStatus;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::BUFFER_RETENTION_LIMIT;
-use crate::io::compression::{self, ZlibDecompressor};
+use crate::io::compression::Decompressor;
 use crate::io::frame::{PacketFrame, WireFormat};
 use crate::{MAX_PACKET_DATA_SIZE, MAX_PACKET_SIZE};
 
@@ -12,7 +12,7 @@ pub struct PacketDecoder {
     buf: BytesMut,
     held_oversized: bool,
     compression_threshold: Option<i32>,
-    decompressor: Option<Box<dyn ZlibDecompressor + Send + Sync>>,
+    decompressor: Option<Decompressor>,
 }
 
 const fn is_canonical(value: VarInt, encoded: &[u8]) -> bool {
@@ -116,7 +116,7 @@ impl PacketDecoder {
 
             let mut inflated = Vec::with_capacity(data_len);
             self.decompressor
-                .get_or_insert_with(compression::new_decompressor)
+                .get_or_insert_with(Decompressor::new)
                 .decompress(body, &mut inflated, data_len)?;
 
             let (packet_id, id_size) = read_varint(&inflated)?;
