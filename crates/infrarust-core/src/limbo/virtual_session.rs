@@ -1,9 +1,3 @@
-//! [`VirtualSessionCore`] -- shared plumbing for virtual connections.
-//!
-//! Provides the identity and outgoing packet channel that both
-//! [`LimboSessionImpl`](super::session::LimboSessionImpl) and the limbo
-//! engine loop use to communicate with the client.
-
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -13,14 +7,8 @@ use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-/// Channel buffer size for outgoing packets queued by the limbo session.
 const OUTGOING_CHANNEL_SIZE: usize = 64;
 
-/// Shared plumbing for a player in limbo.
-///
-/// Owns the identity data, the protocol version, the packet registry,
-/// and a bounded mpsc channel for outgoing frames. The engine loop
-/// drains `outgoing_rx` and writes the frames to the client bridge.
 pub(crate) struct VirtualSessionCore {
     pub profile: GameProfile,
     pub protocol_version: ProtocolVersion,
@@ -30,7 +18,6 @@ pub(crate) struct VirtualSessionCore {
 }
 
 impl VirtualSessionCore {
-    /// Creates a new virtual session core with a fresh outgoing channel.
     pub fn new(
         profile: GameProfile,
         protocol_version: ProtocolVersion,

@@ -8,34 +8,21 @@ use crate::error::CoreError;
 use context::ConnectionContext;
 use middleware::{Middleware, MiddlewareResult};
 
-/// A sequential pipeline of middlewares executed on each connection.
-///
-/// Middlewares run in insertion order. The pipeline stops at the first
-/// `ShortCircuit` or `Reject` result.
 pub struct Pipeline {
     middlewares: Vec<Box<dyn Middleware>>,
 }
 
 impl Pipeline {
-    /// Creates an empty pipeline.
     pub fn new() -> Self {
         Self {
             middlewares: Vec::new(),
         }
     }
 
-    /// Appends a middleware to the end of the pipeline.
     pub fn add(&mut self, middleware: Box<dyn Middleware>) {
         self.middlewares.push(middleware);
     }
 
-    /// Executes all middlewares sequentially on the given context.
-    ///
-    /// Returns `Continue` if all middlewares passed, or the first
-    /// `ShortCircuit`/`Reject` encountered.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if any middleware returns an error.
     pub async fn execute(
         &self,
         ctx: &mut ConnectionContext,

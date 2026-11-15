@@ -61,21 +61,14 @@ use crate::session::server_join::ServerJoin;
 use crate::util::packets::encode_for_state;
 use crate::util::text::encode_text_component;
 
-/// Result of the proxy loop, determining what happens after the loop ends.
 #[derive(Debug)]
 pub enum ProxyLoopOutcome {
-    /// Client closed its connection — full cleanup.
     ClientDisconnected,
-    /// Backend closed its connection.
-    /// In Phase 2A: cleanup. In Phase 4+: server switch / limbo.
     BackendDisconnected {
         reason: Option<String>,
     },
-    /// Global proxy shutdown.
     Shutdown,
-    /// I/O or protocol error.
     Error(CoreError),
-    /// Server switch requested by plugin/command — handler should perform the switch.
     SwitchRequested {
         target: ServerId,
         cause: ConnectCause,

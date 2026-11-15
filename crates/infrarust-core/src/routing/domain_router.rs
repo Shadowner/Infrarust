@@ -1,9 +1,3 @@
-//! `DomainRouter` — thread-safe, incrementally updatable domain router.
-//!
-//! Replaces the immutable `DomainIndex` + `ArcSwap` pattern with
-//! `DashMap` for lock-free concurrent reads and `RwLock` for the
-//! (rarely-written) wildcard pattern list.
-
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};

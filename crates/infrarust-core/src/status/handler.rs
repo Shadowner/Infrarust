@@ -1,9 +1,3 @@
-//! Refactored status handler with relay, cache, and contextual MOTDs.
-//!
-//! Replaces the Phase 1/2C handler (`handler/status.rs`). Implements the
-//! full decision tree: server manager states → relay → cache → stale
-//! fallback → synthetic MOTDs.
-
 use std::sync::Arc;
 use std::time::Duration;
 

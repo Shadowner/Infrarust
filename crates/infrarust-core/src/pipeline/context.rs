@@ -19,50 +19,40 @@ fn next_connection_id() -> u64 {
     NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Type-erased extension map for storing middleware data.
-///
-/// Inspired by the rama Extensions pattern: a `HashMap<TypeId, Box<dyn Any>>`
-/// allowing middlewares to insert and retrieve typed data without coupling.
 #[derive(Debug, Default)]
 pub struct Extensions {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl Extensions {
-    /// Creates an empty extensions map.
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
         }
     }
 
-    /// Inserts a value of type `T`, returning the previous value if one existed.
     pub fn insert<T: Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
         self.map
             .insert(TypeId::of::<T>(), Box::new(val))
             .and_then(|prev| prev.downcast().ok().map(|b| *b))
     }
 
-    /// Returns a reference to the value of type `T`, if present.
     pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.map
             .get(&TypeId::of::<T>())
             .and_then(|b| b.downcast_ref())
     }
 
-    /// Returns a mutable reference to the value of type `T`, if present.
     pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
         self.map
             .get_mut(&TypeId::of::<T>())
             .and_then(|b| b.downcast_mut())
     }
 
-    /// Returns `true` if a value of type `T` is stored.
     pub fn contains<T: Send + Sync + 'static>(&self) -> bool {
         self.map.contains_key(&TypeId::of::<T>())
     }
 
-    /// Removes and returns the value of type `T`, if present.
     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
         self.map
             .remove(&TypeId::of::<T>())
@@ -70,17 +60,10 @@ impl Extensions {
     }
 }
 
-/// Per-connection context threaded through the middleware pipeline.
-///
-/// Fixed fields are set at accept time. Middlewares enrich the context
-/// by inserting typed data into `extensions`.
 pub struct ConnectionContext {
-    /// Client TCP stream. `Option` so passthrough handler can take ownership.
     stream: Option<TcpStream>,
     info: ConnectionInfo,
-    /// Bytes already read from the stream (proxy protocol header, partial handshake).
     pub buffered_data: BytesMut,
-    /// Type-erased data accumulated by middlewares.
     pub extensions: Extensions,
     pub connection_id: u64,
     transport: Option<TransportSession>,
@@ -88,7 +71,6 @@ pub struct ConnectionContext {
 }
 
 impl ConnectionContext {
-    /// Constructs a context from an accepted transport connection.
     pub fn from_accepted(accepted: AcceptedConnection) -> Self {
         let (connection, slot) = accepted.into_parts();
         Self::from_parts(connection, slot)
@@ -108,13 +90,6 @@ impl ConnectionContext {
         }
     }
 
-    /// Retrieves a required extension, returning an error if missing.
-    ///
-    /// Prefer this over `extensions.get::<T>().expect(...)` in production code
-    /// to avoid panics on pipeline misconfiguration.
-    ///
-    /// # Errors
-    /// Returns `CoreError::MissingExtension` if the extension is not present.
     pub fn require_extension<T: Send + Sync + 'static>(
         &self,
         name: &'static str,
@@ -124,41 +99,25 @@ impl ConnectionContext {
             .ok_or(CoreError::MissingExtension(name))
     }
 
-    /// Returns a reference to the client stream.
-    ///
-    /// # Panics
-    /// Panics if the stream has already been taken.
-    #[allow(clippy::expect_used)] // Intentional panic: taking a stream twice is a programming error
+    #[allow(clippy::expect_used)]
     pub const fn stream(&self) -> &TcpStream {
         self.stream.as_ref().expect("stream already taken")
     }
 
-    /// Returns a mutable reference to the client stream.
-    ///
-    /// # Panics
-    /// Panics if the stream has already been taken.
-    #[allow(clippy::expect_used)] // Intentional panic: taking a stream twice is a programming error
+    #[allow(clippy::expect_used)]
     pub const fn stream_mut(&mut self) -> &mut TcpStream {
         self.stream.as_mut().expect("stream already taken")
     }
 
-    /// Takes ownership of the client stream (for passthrough forwarding).
-    ///
-    /// # Panics
-    /// Panics if the stream has already been taken.
-    #[allow(clippy::expect_used)] // Intentional panic: taking a stream twice is a programming error
+    #[allow(clippy::expect_used)]
     pub const fn take_stream(&mut self) -> TcpStream {
         self.stream.take().expect("stream already taken")
     }
 
-    /// Returns `true` if the stream is still present.
     pub const fn has_stream(&self) -> bool {
         self.stream.is_some()
     }
 
-    /// Creates a context for testing with a pre-existing TCP stream.
-    ///
-    /// This avoids needing an `AcceptedConnection` in tests.
     pub fn new_for_test(stream: TcpStream, peer_addr: SocketAddr, local_addr: SocketAddr) -> Self {
         Self::from_parts(
             ClientConnection::new(stream, peer_addr, local_addr),

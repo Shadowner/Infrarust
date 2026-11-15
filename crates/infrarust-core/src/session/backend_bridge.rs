@@ -1,7 +1,3 @@
-//! Backend-side bridge for intercepted proxy modes.
-//!
-//! Wraps the backend TCP stream with packet codec and optional compression.
-
 use std::io::ErrorKind;
 use std::time::Duration;
 
@@ -34,17 +30,12 @@ const READ_CHUNK: usize = 16 * 1024;
 const ONLINE_BACKEND: &str =
     "the backend is in online mode; intercepted modes need online-mode=false";
 
-/// The backend side of a proxied connection.
-///
-/// Can be replaced during a server switch (Phase 4+).
 pub struct BackendBridge {
     stream: TcpStream,
     writes: WriteGuard,
     decoder: PacketDecoder,
     encoder: PacketEncoder,
-    /// Current protocol state.
     pub state: ConnectionState,
-    /// Protocol version of this connection.
     pub protocol_version: ProtocolVersion,
     server_address: Option<infrarust_config::ServerAddress>,
 }
@@ -72,17 +63,10 @@ impl BackendBridge {
         self.server_address.as_ref()
     }
 
-    /// Sets the token that cuts a stalled write short.
     pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.writes.set_cancel(cancel);
     }
 
-    /// Reads the next packet frame from the backend.
-    ///
-    /// Returns `Ok(None)` on clean disconnect (EOF).
-    ///
-    /// # Errors
-    /// Returns `CoreError` on I/O or protocol decode errors.
     pub async fn read_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         loop {
             if let Some(frame) = self.decoder.try_next_frame()? {
@@ -101,12 +85,6 @@ impl BackendBridge {
         }
     }
 
-    /// Extracts the next frame already buffered in the decoder, without
-    /// reading from the socket. Used to drain a read that carried several
-    /// frames before flushing them as one write.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on protocol decode errors.
     pub fn try_next_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         Ok(self.decoder.try_next_frame()?)
     }
@@ -137,8 +115,6 @@ impl BackendBridge {
         self.write_frame(&frame).await
     }
 
-    /// Activates packet compression with the given threshold, or leaves it
-    /// disabled if `threshold` is negative.
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
@@ -148,7 +124,6 @@ impl BackendBridge {
         self.encoder.compression_threshold()
     }
 
-    /// Changes the protocol state.
     pub const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
     }
@@ -162,25 +137,16 @@ impl BackendBridge {
         CoreError::Auth(ONLINE_BACKEND.to_string())
     }
 
-    /// Sends handshake + login start packets to the backend.
-    ///
-    /// Applies domain rewrite according to the server config.
-    /// Used by `OfflineHandler` where the client's original login is forwarded.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on handshake rewrite or I/O errors.
     pub async fn send_initial_packets(
         &mut self,
         handshake_data: &HandshakeData,
         server_config: &ServerConfig,
     ) -> Result<(), CoreError> {
-        // Write (possibly rewritten) handshake
         let handshake_bytes = rewrite_handshake(handshake_data, server_config)?;
         self.writes
             .write_all(&mut self.stream, &handshake_bytes)
             .await?;
 
-        // Forward remaining raw packets (login start, etc.) as-is
         for raw in handshake_data.raw_packets.iter().skip(1) {
             self.writes.write_all(&mut self.stream, raw).await?;
         }
@@ -216,16 +182,6 @@ impl BackendBridge {
         Ok(())
     }
 
-    /// Consumes the backend's login response without forwarding to the client.
-    ///
-    /// Reads `SetCompression` (activates compression on backend) and `LoginSuccess`
-    /// (consumed without forwarding). Returns error on `LoginDisconnect`.
-    ///
-    /// After this call, the backend is ready for the next phase
-    /// (Config for 1.20.2+, or Play for older versions).
-    ///
-    /// # Errors
-    /// Returns `CoreError` on I/O errors, protocol errors, or backend rejection.
     pub async fn consume_backend_login(
         &mut self,
         registry: &PacketRegistry,

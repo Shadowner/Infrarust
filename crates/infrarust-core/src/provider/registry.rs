@@ -1,5 +1,3 @@
-//! `ProviderRegistry` — orchestrates config providers and feeds the `DomainRouter`.
-
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
@@ -80,14 +78,6 @@ impl PluginRoutes {
     }
 }
 
-/// Orchestrates config providers, feeding their events into the `DomainRouter`.
-///
-/// The registry:
-/// 1. Calls `load_initial()` on each provider and populates the router.
-/// 2. Spawns a watch task per provider that sends `ProviderEvent`s into a
-///    unified bounded channel.
-/// 3. Runs an event loop that updates the router, invalidates caches, and
-///    fires `ConfigReloadEvent`.
 pub struct ProviderRegistry {
     providers: Vec<Box<dyn ConfigProvider>>,
     domain_router: Arc<DomainRouter>,
@@ -115,23 +105,13 @@ impl ProviderRegistry {
         }
     }
 
-    /// Registers a provider. Must be called before `start()`.
     pub fn add_provider(&mut self, provider: Box<dyn ConfigProvider>) {
         self.providers.push(provider);
     }
 
-    /// Starts all providers: loads initial configs and spawns watchers.
-    ///
-    /// Consumes `self` to transfer ownership of providers to spawned tasks.
-    /// Returns the `JoinHandle` of the event loop task and a sender that
-    /// can be used to inject events from plugin config providers.
-    ///
-    /// # Errors
-    /// Returns `CoreError` if any provider fails to load initial configs fatally.
     pub async fn start(self) -> Result<(JoinHandle<()>, PluginRoutes), CoreError> {
         let (tx, rx) = mpsc::channel::<ProviderEvent>(256);
 
-        // Phase 1: load initial configs from each provider
         for provider in &self.providers {
             match provider.load_initial().await {
                 Ok(configs) => {
@@ -166,7 +146,6 @@ impl ProviderRegistry {
             }
         }
 
-        // Phase 2: spawn watch tasks
         for provider in self.providers {
             let sender = tx.clone();
             let shutdown = self.shutdown.clone();
@@ -186,7 +165,6 @@ impl ProviderRegistry {
         drop(tx);
         let (plugin_routes, plugin_events) = PluginRoutes::channel();
 
-        // Phase 3: spawn the event loop
         let shutdown = self.shutdown;
         let event_loop = EventLoop {
             router: self.domain_router,

@@ -1,8 +1,3 @@
-//! KeepAlive state machine for the Limbo loop.
-//!
-//! Tracks sent keepalive IDs, enforces the 15-second timeout, and provides
-//! helpers for detecting and extracting serverbound keepalive responses.
-
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::Instant;
@@ -16,18 +11,14 @@ use infrarust_protocol::version::ProtocolVersion;
 use crate::error::CoreError;
 use crate::util::packets::encode_packet;
 
-/// Maximum time (seconds) to wait for a keepalive response before
-/// considering the client timed out.
 const KEEPALIVE_TIMEOUT_SECS: u64 = 15;
 
-/// Outcome of a keepalive interval tick.
 pub(crate) enum KeepAliveTick {
     Send(PacketFrame),
     Idle,
     Timeout,
 }
 
-/// Tracks the keepalive handshake with a single client.
 pub(crate) struct KeepAliveState {
     last_sent_id: i64,
     last_sent_at: Instant,
@@ -43,17 +34,6 @@ impl KeepAliveState {
         }
     }
 
-    /// Advances the keepalive state machine on a periodic interval tick.
-    ///
-    /// - If no keepalive is outstanding, emits a fresh ping ([`KeepAliveTick::Send`]).
-    /// - If a keepalive is outstanding but the grace window has not elapsed,
-    ///   returns [`KeepAliveTick::Idle`] (it deliberately does **not** send another
-    ///   ping, which would reset the timer so the timeout could never fire).
-    /// - If a keepalive is outstanding past the timeout, returns
-    ///   [`KeepAliveTick::Timeout`] so the caller can drop the connection.
-    ///
-    /// This separation is what makes the timeout reachable when the tick interval
-    /// is shorter than `KEEPALIVE_TIMEOUT_SECS`.
     pub fn tick(
         &mut self,
         version: ProtocolVersion,
@@ -83,10 +63,6 @@ impl KeepAliveState {
         Ok(KeepAliveTick::Send(frame))
     }
 
-    /// Processes a keepalive response from the client.
-    ///
-    /// Returns the round trip time if the ID matches the last sent keepalive,
-    /// clearing the pending state. Returns `None` on mismatch.
     pub fn on_response(&mut self, id: i64) -> Option<Duration> {
         if self.awaiting_response && id == self.last_sent_id {
             self.awaiting_response = false;
@@ -97,7 +73,6 @@ impl KeepAliveState {
     }
 }
 
-/// Returns `true` if the frame is a serverbound `SKeepAlive` packet.
 pub(crate) fn is_keepalive_response(
     frame: &PacketFrame,
     registry: &PacketRegistry,
@@ -107,9 +82,6 @@ pub(crate) fn is_keepalive_response(
     Some(frame.id) == expected_id
 }
 
-/// Extracts the keepalive ID from a serverbound `SKeepAlive` frame.
-///
-/// Returns `None` if decoding fails.
 pub(crate) fn extract_keepalive_id(frame: &PacketFrame, version: ProtocolVersion) -> Option<i64> {
     let mut data = frame.payload.as_ref();
     SKeepAlive::decode(&mut data, version)

@@ -8,7 +8,6 @@ use infrarust_protocol::packets::ProfileKey;
 use smallvec::SmallVec;
 use uuid::Uuid;
 
-/// Intent extracted from the Minecraft handshake packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionIntent {
@@ -17,19 +16,13 @@ pub enum ConnectionIntent {
     Transfer,
 }
 
-/// Data extracted by the handshake parser middleware.
 #[derive(Debug, Clone)]
 pub struct HandshakeData {
-    /// Cleaned domain (FML markers stripped).
     pub domain: String,
     pub raw_host: String,
-    /// Port from handshake.
     pub port: u16,
-    /// Protocol version from handshake.
     pub protocol_version: ProtocolVersion,
-    /// Client intent (status, login, transfer).
     pub intent: ConnectionIntent,
-    /// Raw packet bytes for forwarding to backend in passthrough mode.
     pub raw_packets: Vec<BytesMut>,
 }
 
@@ -39,12 +32,9 @@ impl HandshakeData {
     }
 }
 
-/// Data resolved by the domain router middleware.
 #[derive(Clone)]
 pub struct RoutingData {
-    /// Matched server configuration.
     pub server_config: Arc<ServerConfig>,
-    /// Config identifier (filename stem).
     pub config_id: String,
     pub load_balancer: Arc<dyn crate::loadbalancer::LoadBalancer>,
 }
@@ -59,12 +49,9 @@ impl std::fmt::Debug for RoutingData {
     }
 }
 
-/// Data extracted by the login start parser middleware.
 #[derive(Debug, Clone)]
 pub struct LoginData {
-    /// Player username from `LoginStart` packet.
     pub username: String,
-    /// Player UUID (present in 1.20.2+).
     pub player_uuid: Option<Uuid>,
     pub profile_key: Option<ProfileKey>,
     pub raw_payload: Bytes,
@@ -77,8 +64,6 @@ pub enum LoginStartLayout {
     Mismatched,
 }
 
-/// Hello of a pre-1.7 client, inserted next to its `HandshakeData`. `raw` is the
-/// exact bytes received, first byte included.
 #[derive(Debug, Clone)]
 pub enum LegacyHello {
     Ping {

@@ -1,9 +1,3 @@
-//! Client-side bridge for intercepted proxy modes.
-//!
-//! Wraps the client TCP stream with packet codec, optional encryption
-//! (AES-128-CFB8), and optional compression. Survives backend death
-//! to support future server switch / limbo.
-
 use std::io::ErrorKind;
 
 use bytes::BytesMut;
@@ -31,10 +25,6 @@ use crate::util::text;
 const READ_CHUNK: usize = 16 * 1024;
 const MAX_HELD_BYTES: usize = 1024 * 1024;
 
-/// The client side of a proxied connection.
-///
-/// Handles reading/writing Minecraft packet frames from/to the client,
-/// with optional encryption and compression.
 pub struct ClientBridge {
     stream: TcpStream,
     writes: WriteGuard,
@@ -42,15 +32,12 @@ pub struct ClientBridge {
     encoder: PacketEncoder,
     encrypt_cipher: Option<EncryptCipher>,
     decrypt_cipher: Option<DecryptCipher>,
-    /// The client's protocol version.
     pub protocol_version: ProtocolVersion,
     state: ConnectionState,
     awaiting_config_ack: bool,
 }
 
 impl ClientBridge {
-    /// `buffered_data` contains bytes already read by the pipeline middlewares
-    /// (handshake, login start). These are fed to the decoder first.
     pub fn new(
         stream: TcpStream,
         buffered_data: BytesMut,
@@ -78,18 +65,10 @@ impl ClientBridge {
         &self.stream
     }
 
-    /// Sets the token that cuts a stalled write short.
     pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.writes.set_cancel(cancel);
     }
 
-    /// Reads the next packet frame from the client.
-    ///
-    /// Returns `Ok(None)` on clean disconnect (EOF).
-    /// Handles decryption if encryption is active.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on I/O or protocol decode errors.
     pub async fn read_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         loop {
             if let Some(frame) = self.decoder.try_next_frame()? {
@@ -102,14 +81,6 @@ impl ClientBridge {
         }
     }
 
-    /// Reads the next frame, refusing it as soon as its declared length
-    /// exceeds `limit`.
-    ///
-    /// Returns `Ok(None)` on clean disconnect (EOF).
-    ///
-    /// # Errors
-    /// Returns `CoreError` on I/O or protocol decode errors, or when the
-    /// frame is over `limit`.
     pub(crate) async fn read_preauth_frame(
         &mut self,
         limit: usize,
@@ -145,9 +116,6 @@ impl ClientBridge {
         }
     }
 
-    /// Resolves once the client has left. What it sends in the meantime stays
-    /// in the decoder for the next read, up to `MAX_HELD_BYTES`; past that the
-    /// socket is left alone and this no longer resolves.
     pub(crate) async fn closed(&mut self) -> CoreError {
         while self.decoder.read_buf_mut().len() < MAX_HELD_BYTES {
             match self.fill_decoder().await {
@@ -159,31 +127,14 @@ impl ClientBridge {
         std::future::pending().await
     }
 
-    /// Extracts the next frame already buffered in the decoder, without
-    /// reading from the socket. Used to drain a read that carried several
-    /// frames before flushing them as one write.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on protocol decode errors.
     pub fn try_next_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
         Ok(self.decoder.try_next_frame()?)
     }
 
-    /// Encodes a frame into the send buffer without writing to the socket.
-    /// Queued bytes go out on the next [`flush`](Self::flush) or
-    /// [`write_frame`](Self::write_frame).
-    ///
-    /// # Errors
-    /// Returns `CoreError` on encoding errors.
     pub fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
         Ok(self.encoder.append_frame(frame)?)
     }
 
-    /// Writes all queued bytes to the socket, encrypting once over the
-    /// whole batch. No-op when nothing is queued.
-    ///
-    /// # Errors
-    /// Returns `CoreError` on I/O errors.
     pub async fn flush(&mut self) -> Result<(), CoreError> {
         let mut data = self.encoder.take();
         if data.is_empty() {
@@ -195,23 +146,11 @@ impl ClientBridge {
         self.writes.write_all(&mut self.stream, &data).await
     }
 
-    /// Writes an encoded packet frame to the client (with any queued bytes).
-    ///
-    /// # Errors
-    /// Returns `CoreError` on I/O or encoding errors.
     pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
         self.queue_frame(frame)?;
         self.flush().await
     }
 
-    /// Enables AES-128-CFB8 encryption with the given shared secret.
-    ///
-    /// In Minecraft, the IV equals the key. Both encrypt and decrypt
-    /// ciphers are created from the same 16-byte key.
-    ///
-    /// # Errors
-    /// Returns `CoreError::Auth` if the decoder already holds bytes, since
-    /// they were read before the switch and would never be decrypted.
     pub fn enable_encryption(&mut self, key: &[u8; 16]) -> Result<(), CoreError> {
         if !self.decoder.read_buf_mut().is_empty() {
             return Err(CoreError::Auth(
@@ -223,8 +162,6 @@ impl ClientBridge {
         Ok(())
     }
 
-    /// Activates packet compression with the given threshold, or leaves it
-    /// disabled if `threshold` is negative.
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
@@ -234,7 +171,6 @@ impl ClientBridge {
         self.encoder.compression_threshold()
     }
 
-    /// Changes the protocol state (Login → Config → Play).
     pub const fn set_state(&mut self, state: ConnectionState) {
         self.state = state;
     }
@@ -271,15 +207,6 @@ impl ClientBridge {
         written
     }
 
-    /// Sends a disconnect packet and shuts down the connection.
-    ///
-    /// Uses the correct packet type and encoding for the current state and version:
-    /// - Login: `CLoginDisconnect` (JSON string)
-    /// - Config: `CConfigDisconnect` (JSON for 1.20.2, NBT for 1.20.3+)
-    /// - Play: `CDisconnect` (JSON for <1.20.3, NBT for 1.20.3+)
-    ///
-    /// # Errors
-    /// Returns `CoreError` on encoding or I/O errors.
     pub async fn disconnect(
         &mut self,
         reason: &Component,

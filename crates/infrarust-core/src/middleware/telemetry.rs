@@ -13,9 +13,6 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 
-/// Wrapper for storing a tracing span in `ConnectionContext` extensions.
-///
-/// Extracted in `server.rs` to `.instrument()` the handler call.
 pub struct ConnectionSpan(pub tracing::Span);
 
 /// Middleware that creates a root `"connection"` span with client/server metadata.
