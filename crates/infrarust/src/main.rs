@@ -1,4 +1,4 @@
-#[cfg(target_env = "musl")]
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -6,11 +6,12 @@ use std::future::Future;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
+use tracing_appender::non_blocking::{NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 
 use infrarust_config::ProxyConfig;
@@ -154,9 +155,28 @@ fn main() -> ExitCode {
     }
 }
 
+static LOG_WORKER: Mutex<Option<WorkerGuard>> = Mutex::new(None);
+
+fn flush_logs() {
+    let worker = LOG_WORKER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    drop(worker);
+}
+
+struct LogFlush;
+
+impl Drop for LogFlush {
+    fn drop(&mut self) {
+        flush_logs();
+    }
+}
+
 struct TracingGuard {
     #[cfg(feature = "telemetry")]
     _otel: Option<infrarust_core::telemetry::OtelGuard>,
+    _logs: LogFlush,
 }
 
 fn init_tracing(
@@ -169,9 +189,17 @@ fn init_tracing(
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    let registry = tracing_subscriber::registry()
-        .with(filter)
-        .with(tracing_subscriber::fmt::layer().event_format(InfrarustFormatter::new()));
+    let (stdout, worker) = NonBlockingBuilder::default()
+        .lossy(false)
+        .thread_name("infrarust-log")
+        .finish(std::io::stdout());
+    *LOG_WORKER.lock().unwrap_or_else(PoisonError::into_inner) = Some(worker);
+
+    let registry = tracing_subscriber::registry().with(filter).with(
+        tracing_subscriber::fmt::layer()
+            .event_format(InfrarustFormatter::new())
+            .with_writer(stdout),
+    );
 
     #[cfg(feature = "telemetry")]
     let otel = enabled_telemetry(config).map(infrarust_core::telemetry::init_telemetry);
@@ -194,6 +222,7 @@ fn init_tracing(
             }
             None => None,
         },
+        _logs: LogFlush,
     }
 }
 
@@ -245,7 +274,10 @@ async fn run(
     tokio::spawn(watch_signals(
         OsSignals::install(),
         shutdown.clone(),
-        |code| std::process::exit(code),
+        |code| {
+            flush_logs();
+            std::process::exit(code)
+        },
     ));
 
     let mut web_config = config.web.clone();
@@ -456,7 +488,7 @@ mod tests {
     }
 
     async fn watch(signals: &[StopSignal], shutdown: &CancellationToken) -> Option<i32> {
-        let exited = Arc::new(std::sync::Mutex::new(None));
+        let exited = Arc::new(Mutex::new(None));
         let seen = Arc::clone(&exited);
         watch_signals(
             Scripted(signals.iter().copied().collect()),

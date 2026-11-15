@@ -64,12 +64,21 @@ impl ZlibCompressor for Flate2Compressor {
 }
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
-pub struct Flate2Decompressor;
+fn inflate_failed() -> ProtocolError {
+    ProtocolError::invalid("failed to decompress packet data")
+}
+
+#[cfg_attr(feature = "libdeflater", allow(dead_code))]
+pub struct Flate2Decompressor {
+    inflate: flate2::Decompress,
+}
 
 #[cfg_attr(feature = "libdeflater", allow(dead_code))]
 impl Flate2Decompressor {
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self {
+            inflate: flate2::Decompress::new(true),
+        }
     }
 }
 
@@ -80,21 +89,34 @@ impl ZlibDecompressor for Flate2Decompressor {
         output: &mut Vec<u8>,
         expected_size: usize,
     ) -> ProtocolResult<()> {
-        use std::io::Read;
+        use flate2::{FlushDecompress, Status};
 
         output.clear();
-        output.resize(expected_size, 0);
-        let mut decoder = flate2::read::ZlibDecoder::new(input);
-        decoder
-            .read_exact(output)
-            .map_err(|_| ProtocolError::invalid("failed to decompress packet data"))?;
-        let mut extra = [0u8; 1];
-        let extra_read = decoder
-            .read(&mut extra)
-            .map_err(|_| ProtocolError::invalid("corrupt zlib stream trailer"))?;
-        if extra_read > 0 {
+        output.reserve_exact(expected_size);
+        self.inflate.reset(true);
+        let mut status = self
+            .inflate
+            .decompress_vec(input, output, FlushDecompress::Finish)
+            .map_err(|_| inflate_failed())?;
+
+        if status != Status::StreamEnd && output.len() == expected_size {
+            let rest = usize::try_from(self.inflate.total_in())
+                .ok()
+                .and_then(|consumed| input.get(consumed..))
+                .ok_or_else(inflate_failed)?;
+            let mut overflow = [0u8; 1];
+            status = self
+                .inflate
+                .decompress(rest, &mut overflow, FlushDecompress::Finish)
+                .map_err(|_| inflate_failed())?;
+        }
+
+        if status != Status::StreamEnd {
+            return Err(inflate_failed());
+        }
+        if self.inflate.total_out() != expected_size as u64 {
             return Err(ProtocolError::invalid(
-                "decompressed data larger than expected size",
+                "decompressed data does not match the declared size",
             ));
         }
         Ok(())

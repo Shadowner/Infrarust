@@ -4,8 +4,10 @@
 //! (AES-128-CFB8), and optional compression. Survives backend death
 //! to support future server switch / limbo.
 
+use std::io::ErrorKind;
+
 use bytes::BytesMut;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
@@ -126,14 +128,22 @@ impl ClientBridge {
     }
 
     async fn fill_decoder(&mut self) -> Result<usize, CoreError> {
-        let buf = self.decoder.read_buf_mut();
-        buf.reserve(READ_CHUNK);
-        let old_len = buf.len();
-        let n = self.stream.read_buf(buf).await?;
-        if let Some(cipher) = &mut self.decrypt_cipher {
-            cipher.decrypt(&mut self.decoder.read_buf_mut()[old_len..]);
+        loop {
+            self.stream.readable().await?;
+            let buf = self.decoder.read_buf_mut();
+            buf.reserve(READ_CHUNK);
+            let old_len = buf.len();
+            match self.stream.try_read_buf(buf) {
+                Ok(n) => {
+                    if let Some(cipher) = &mut self.decrypt_cipher {
+                        cipher.decrypt(&mut self.decoder.read_buf_mut()[old_len..]);
+                    }
+                    return Ok(n);
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e.into()),
+            }
         }
-        Ok(n)
     }
 
     /// Resolves once the client has left. What it sends in the meantime stays

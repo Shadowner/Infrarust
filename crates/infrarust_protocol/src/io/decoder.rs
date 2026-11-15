@@ -1,17 +1,18 @@
-use bytes::BytesMut;
+use bytes::{Buf, Bytes, BytesMut};
 
 use crate::codec::VarInt;
 use crate::codec::varint::VarIntDecodeStatus;
 use crate::error::{ProtocolError, ProtocolResult};
+use crate::io::BUFFER_RETENTION_LIMIT;
 use crate::io::compression::{self, ZlibDecompressor};
-use crate::io::frame::{PacketFrame, should_compress};
+use crate::io::frame::{PacketFrame, WireFormat};
 use crate::{MAX_PACKET_DATA_SIZE, MAX_PACKET_SIZE};
 
 pub struct PacketDecoder {
     buf: BytesMut,
+    held_oversized: bool,
     compression_threshold: Option<i32>,
-    decompressor: Box<dyn ZlibDecompressor + Send + Sync>,
-    decompress_buf: Vec<u8>,
+    decompressor: Option<Box<dyn ZlibDecompressor + Send + Sync>>,
 }
 
 const fn is_canonical(value: VarInt, encoded: &[u8]) -> bool {
@@ -24,13 +25,20 @@ const fn is_canonical(value: VarInt, encoded: &[u8]) -> bool {
     }
 }
 
+#[inline]
+fn read_varint(bytes: &[u8]) -> ProtocolResult<(VarInt, usize)> {
+    let mut cursor = bytes;
+    let value = VarInt::decode(&mut cursor)?;
+    Ok((value, bytes.len() - cursor.len()))
+}
+
 impl PacketDecoder {
     pub fn new() -> Self {
         Self {
             buf: BytesMut::new(),
+            held_oversized: false,
             compression_threshold: None,
-            decompressor: compression::new_decompressor(),
-            decompress_buf: Vec::new(),
+            decompressor: None,
         }
     }
 
@@ -65,72 +73,70 @@ impl PacketDecoder {
             return Ok(None);
         }
 
+        self.held_oversized |= self.buf.len() > BUFFER_RETENTION_LIMIT;
         let wire = self.buf.split_to(varint_size + packet_len).freeze();
-        let data = wire.slice(varint_size..);
+        if self.held_oversized && self.buf.is_empty() {
+            self.buf = BytesMut::new();
+            self.held_oversized = false;
+        }
         let canonical_framing = is_canonical(packet_len_varint, &wire[..varint_size]);
 
         if self.compression_threshold.is_none() {
-            let mut cursor = &data[..];
-            let packet_id = VarInt::decode(&mut cursor)?;
-            let id_size = data.len() - cursor.len();
-            let payload = data.slice(id_size..);
-
-            let conforming = canonical_framing && is_canonical(packet_id, &data[..id_size]);
-            Ok(Some(if conforming {
-                PacketFrame::with_raw(packet_id.0, payload, wire, None)
+            let (packet_id, id_size) = read_varint(&wire[varint_size..])?;
+            let conforming = canonical_framing
+                && is_canonical(packet_id, &wire[varint_size..varint_size + id_size]);
+            let payload = wire.slice(varint_size + id_size..);
+            return Ok(Some(if conforming {
+                PacketFrame::with_raw(packet_id.0, payload, wire, WireFormat::Plain)
             } else {
                 PacketFrame::new(packet_id.0, payload)
-            }))
-        } else {
-            let mut cursor = &data[..];
-            let data_len = VarInt::decode(&mut cursor)?;
-            let data_len_varint_size = data.len() - cursor.len();
-            let canonical_framing =
-                canonical_framing && is_canonical(data_len, &data[..data_len_varint_size]);
-            let data = data.slice(data_len_varint_size..);
-
-            if data_len.0 == 0 {
-                let mut cursor = &data[..];
-                let packet_id = VarInt::decode(&mut cursor)?;
-                let id_size = data.len() - cursor.len();
-                let payload = data.slice(id_size..);
-
-                let conforming = canonical_framing
-                    && is_canonical(packet_id, &data[..id_size])
-                    && self
-                        .compression_threshold
-                        .is_some_and(|t| !should_compress(data.len(), t));
-                Ok(Some(if conforming {
-                    PacketFrame::with_raw(packet_id.0, payload, wire, self.compression_threshold)
-                } else {
-                    PacketFrame::new(packet_id.0, payload)
-                }))
-            } else {
-                let data_len = data_len.0 as usize;
-                if data_len > MAX_PACKET_DATA_SIZE {
-                    return Err(ProtocolError::too_large(MAX_PACKET_DATA_SIZE, data_len));
-                }
-
-                self.decompressor
-                    .decompress(&data[..], &mut self.decompress_buf, data_len)?;
-
-                let mut cursor: &[u8] = &self.decompress_buf;
-                let packet_id = VarInt::decode(&mut cursor)?;
-                let id_size = self.decompress_buf.len() - cursor.len();
-                let payload = bytes::Bytes::copy_from_slice(cursor);
-
-                let conforming = canonical_framing
-                    && is_canonical(packet_id, &self.decompress_buf[..id_size])
-                    && self
-                        .compression_threshold
-                        .is_some_and(|t| should_compress(data_len, t));
-                Ok(Some(if conforming {
-                    PacketFrame::with_raw(packet_id.0, payload, wire, self.compression_threshold)
-                } else {
-                    PacketFrame::new(packet_id.0, payload)
-                }))
-            }
+            }));
         }
+
+        let (data_len, data_len_size) = read_varint(&wire[varint_size..])?;
+        let body_start = varint_size + data_len_size;
+        let canonical_framing =
+            canonical_framing && is_canonical(data_len, &wire[varint_size..body_start]);
+        let body = &wire[body_start..];
+
+        let (packet_id, canonical_id, payload, format) = if data_len.0 == 0 {
+            let (packet_id, id_size) = read_varint(body)?;
+            let format = WireFormat::Compressed {
+                deflated: false,
+                uncompressed_len: body.len(),
+            };
+            let canonical_id = is_canonical(packet_id, &body[..id_size]);
+            let payload = wire.slice(body_start + id_size..);
+            (packet_id, canonical_id, payload, format)
+        } else {
+            let data_len = data_len.0 as usize;
+            if data_len > MAX_PACKET_DATA_SIZE {
+                return Err(ProtocolError::too_large(MAX_PACKET_DATA_SIZE, data_len));
+            }
+
+            let mut inflated = Vec::with_capacity(data_len);
+            self.decompressor
+                .get_or_insert_with(compression::new_decompressor)
+                .decompress(body, &mut inflated, data_len)?;
+
+            let (packet_id, id_size) = read_varint(&inflated)?;
+            let format = WireFormat::Compressed {
+                deflated: true,
+                uncompressed_len: data_len,
+            };
+            let canonical_id = is_canonical(packet_id, &inflated[..id_size]);
+            let mut payload = Bytes::from(inflated);
+            payload.advance(id_size);
+            (packet_id, canonical_id, payload, format)
+        };
+
+        let conforming =
+            canonical_framing && canonical_id && format.conforms_to(self.compression_threshold);
+        Ok(Some(if conforming {
+            PacketFrame::with_raw(packet_id.0, payload, wire, format)
+        } else {
+            PacketFrame::new(packet_id.0, payload)
+        }))
     }
 
     pub const fn set_compression(&mut self, threshold: i32) {
@@ -390,33 +396,199 @@ mod tests {
         assert_eq!(forward(&bytes, Some(64), Some(64)), bytes);
     }
 
+    fn decode_one(bytes: &[u8], threshold: Option<i32>) -> PacketFrame {
+        let mut decoder = PacketDecoder::new();
+        if let Some(t) = threshold {
+            decoder.set_compression(t);
+        }
+        decoder.queue_bytes(bytes);
+        let frame = decoder.try_next_frame().unwrap().unwrap();
+        assert!(decoder.try_next_frame().unwrap().is_none());
+        frame
+    }
+
+    fn assert_reencoded(
+        bytes: &[u8],
+        payload: &[u8],
+        decode_t: Option<i32>,
+        encode_t: Option<i32>,
+    ) {
+        assert!(
+            decode_one(bytes, decode_t).raw_wire(encode_t).is_none(),
+            "{decode_t:?} -> {encode_t:?} must not reuse the wire bytes"
+        );
+        let out = forward(bytes, decode_t, encode_t);
+        assert_ne!(out, bytes, "{decode_t:?} -> {encode_t:?}");
+
+        let frame = decode_one(&out, encode_t);
+        assert_eq!(frame.id, 0x03);
+        assert_eq!(&frame.payload[..], payload);
+        assert!(
+            frame.raw_wire(encode_t).is_some(),
+            "{decode_t:?} -> {encode_t:?} must produce conforming framing"
+        );
+    }
+
     #[test]
-    fn test_raw_forward_reencodes_on_threshold_mismatch() {
+    fn test_raw_forward_is_byte_identical_when_valid_for_destination_threshold() {
+        let big = vec![0x42; 512];
+        let deflated = wire_frame(0x03, &big, Some(256));
+        for destination in [0, 64, 256, 512, 513] {
+            assert_eq!(
+                forward(&deflated, Some(256), Some(destination)),
+                deflated,
+                "deflated body of 513 bytes at threshold {destination}"
+            );
+        }
+
+        let stored = wire_frame(0x03, b"tiny", Some(64));
+        for destination in [6, 64, 256, i32::MAX] {
+            assert_eq!(
+                forward(&stored, Some(64), Some(destination)),
+                stored,
+                "stored body of 5 bytes at threshold {destination}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_raw_forward_reencodes_when_invalid_for_destination_threshold() {
         let big = vec![0x42; 512];
 
-        let bytes = wire_frame(0x03, &big, Some(256));
-        let out = forward(&bytes, Some(256), Some(64));
-        let mut check = PacketDecoder::new();
-        check.set_compression(64);
-        check.queue_bytes(&out);
-        let frame = check.try_next_frame().unwrap().unwrap();
-        assert_eq!(frame.id, 0x03);
-        assert_eq!(&frame.payload[..], &big[..]);
+        let deflated = wire_frame(0x03, &big, Some(256));
+        assert_reencoded(&deflated, &big, Some(256), Some(514));
+        assert_reencoded(&deflated, &big, Some(256), Some(4096));
+        assert_reencoded(&deflated, &big, Some(256), None);
 
-        let bytes = wire_frame(0x03, &big, None);
-        let out = forward(&bytes, None, Some(64));
-        let mut check = PacketDecoder::new();
-        check.set_compression(64);
-        check.queue_bytes(&out);
-        let frame = check.try_next_frame().unwrap().unwrap();
-        assert_eq!(&frame.payload[..], &big[..]);
+        let stored = wire_frame(0x03, b"tiny", Some(64));
+        assert_reencoded(&stored, b"tiny", Some(64), Some(5));
+        assert_reencoded(&stored, b"tiny", Some(64), Some(0));
+        assert_reencoded(&stored, b"tiny", Some(64), None);
 
-        let bytes = wire_frame(0x03, &big, Some(64));
-        let out = forward(&bytes, Some(64), None);
-        let mut check = PacketDecoder::new();
-        check.queue_bytes(&out);
-        let frame = check.try_next_frame().unwrap().unwrap();
-        assert_eq!(&frame.payload[..], &big[..]);
+        let plain = wire_frame(0x03, &big, None);
+        assert_reencoded(&plain, &big, None, Some(64));
+        assert_reencoded(&plain, &big, None, Some(4096));
+
+        let plain = wire_frame(0x03, b"tiny", None);
+        assert_reencoded(&plain, b"tiny", None, Some(64));
+        assert_reencoded(&plain, b"tiny", None, Some(0));
+    }
+
+    #[test]
+    fn test_framing_nonconforming_at_capture_is_never_reused() {
+        let payload = vec![0x42; 99];
+
+        let deflated_below_threshold = wire_frame(0x07, &payload, Some(64));
+        let frame = decode_one(&deflated_below_threshold, Some(256));
+        assert_eq!(&frame.payload[..], &payload[..]);
+        for destination in [None, Some(0), Some(64), Some(100), Some(256)] {
+            assert!(frame.raw_wire(destination).is_none(), "{destination:?}");
+        }
+
+        let stored_above_threshold = wire_frame(0x07, &payload, Some(256));
+        let frame = decode_one(&stored_above_threshold, Some(64));
+        assert_eq!(&frame.payload[..], &payload[..]);
+        for destination in [None, Some(0), Some(64), Some(256), Some(4096)] {
+            assert!(frame.raw_wire(destination).is_none(), "{destination:?}");
+        }
+
+        let mut overlong = overlong_varint(0, VarInt::MAX_SIZE);
+        overlong.push(0x07);
+        overlong.extend_from_slice(b"tiny");
+        let mut wire = vec![u8::try_from(overlong.len()).unwrap()];
+        wire.extend_from_slice(&overlong);
+        let frame = decode_one(&wire, Some(64));
+        for destination in [None, Some(64), Some(256)] {
+            assert!(frame.raw_wire(destination).is_none(), "{destination:?}");
+        }
+    }
+
+    fn compressed_frame(declared_len: i32, body: &[u8]) -> Vec<u8> {
+        let mut inner = Vec::new();
+        VarInt(declared_len).encode(&mut inner).unwrap();
+        inner.extend_from_slice(body);
+        let mut wire = Vec::new();
+        VarInt(inner.len() as i32).encode(&mut wire).unwrap();
+        wire.extend_from_slice(&inner);
+        wire
+    }
+
+    #[test]
+    fn test_declared_size_must_match_inflated_size() {
+        let big: Vec<u8> = (0..512).map(|i: u32| (i % 251) as u8).collect();
+        let wire = wire_frame(0x03, &big, Some(64));
+        let (_, len_size) = VarInt::decode_partial(&wire).unwrap();
+        let (data_len, data_len_size) = VarInt::decode_partial(&wire[len_size..]).unwrap();
+        assert_eq!(data_len.0, 513);
+        let body = &wire[len_size + data_len_size..];
+
+        assert_eq!(compressed_frame(513, body), wire);
+        assert_eq!(&decode_one(&wire, Some(64)).payload[..], &big[..]);
+
+        let truncated = &body[..body.len() - 8];
+        for tampered in [
+            compressed_frame(512, body),
+            compressed_frame(514, body),
+            compressed_frame(513, truncated),
+        ] {
+            let mut decoder = PacketDecoder::new();
+            decoder.set_compression(64);
+            decoder.queue_bytes(&tampered);
+            assert!(decoder.try_next_frame().is_err());
+        }
+    }
+
+    #[test]
+    fn test_oversized_read_buffer_is_released_once_drained() {
+        let big = vec![0x42; 4 * BUFFER_RETENTION_LIMIT];
+        let mut bytes = wire_frame(0x03, &big, None);
+        bytes.extend_from_slice(&wire_frame(0x04, b"tiny", None));
+
+        let mut decoder = PacketDecoder::new();
+        decoder.queue_bytes(&bytes);
+        let first = decoder.try_next_frame().unwrap().unwrap();
+        assert_eq!(&first.payload[..], &big[..]);
+        let second = decoder.try_next_frame().unwrap().unwrap();
+        assert_eq!(&second.payload[..], b"tiny");
+        assert_eq!(decoder.buf.capacity(), 0);
+
+        decoder.queue_bytes(&wire_frame(0x04, b"tiny", None));
+        let third = decoder.try_next_frame().unwrap().unwrap();
+        assert_eq!(&third.payload[..], b"tiny");
+    }
+
+    #[test]
+    fn test_read_buffer_that_held_a_backlog_is_released_once_drained() {
+        let frame = wire_frame(0x04, &[0x42; 1024], None);
+        let count = 2 * BUFFER_RETENTION_LIMIT / frame.len();
+
+        let mut decoder = PacketDecoder::new();
+        for _ in 0..count {
+            decoder.queue_bytes(&frame);
+        }
+        for _ in 0..count - 1 {
+            decoder.try_next_frame().unwrap().unwrap();
+        }
+        assert!(decoder.buf.capacity() > 0);
+        decoder.try_next_frame().unwrap().unwrap();
+        assert_eq!(decoder.buf.capacity(), 0);
+
+        decoder.queue_bytes(&frame);
+        decoder.try_next_frame().unwrap().unwrap();
+        assert!(!decoder.held_oversized);
+    }
+
+    #[test]
+    fn test_decompressor_is_created_on_first_inflate() {
+        let mut decoder = PacketDecoder::new();
+        decoder.set_compression(64);
+        decoder.queue_bytes(&wire_frame(0x03, b"tiny", Some(64)));
+        decoder.try_next_frame().unwrap().unwrap();
+        assert!(decoder.decompressor.is_none());
+
+        decoder.queue_bytes(&wire_frame(0x03, &[0x42; 512], Some(64)));
+        decoder.try_next_frame().unwrap().unwrap();
+        assert!(decoder.decompressor.is_some());
     }
 
     #[test]
@@ -581,7 +753,7 @@ mod tests {
         decoder.queue_bytes(&bytes);
         let frame = decoder.try_next_frame().unwrap().unwrap();
 
-        let modified = PacketFrame::new(frame.id, bytes::Bytes::from(vec![0x99; 512]));
+        let modified = PacketFrame::new(frame.id, Bytes::from(vec![0x99; 512]));
         assert!(modified.raw_wire(Some(64)).is_none());
 
         let mut encoder = PacketEncoder::new();
@@ -597,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_wire_is_gated_on_threshold_and_survives_clone() {
+    fn test_raw_wire_is_gated_on_destination_validity_and_survives_clone() {
         let big = vec![0x42; 512];
         let bytes = wire_frame(0x10, &big, Some(64));
         let mut decoder = PacketDecoder::new();
@@ -606,7 +778,8 @@ mod tests {
         let frame = decoder.try_next_frame().unwrap().unwrap();
 
         assert!(frame.raw_wire(Some(64)).is_some());
-        assert!(frame.raw_wire(Some(256)).is_none(), "threshold gate");
+        assert!(frame.raw_wire(Some(256)).is_some());
+        assert!(frame.raw_wire(Some(1024)).is_none(), "threshold gate");
         assert!(frame.raw_wire(None).is_none(), "threshold gate");
         assert!(frame.clone().raw_wire(Some(64)).is_some());
 

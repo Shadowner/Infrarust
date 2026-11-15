@@ -8,7 +8,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use ipnet::IpNet;
-use socket2::Socket;
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -19,7 +18,7 @@ use crate::connection::{ClientConnection, canonicalize_ip};
 use crate::error::TransportError;
 use crate::ip_limit::{IpGuard, IpLimiter};
 use crate::proxy_protocol::decode_proxy_protocol;
-use crate::socket::{configure_listener_socket, configure_stream_socket, into_tokio_listener};
+use crate::socket::{configure_listener_socket, configure_tokio_stream, into_tokio_listener};
 
 /// Configuration for the listener.
 #[derive(Debug, Clone)]
@@ -44,6 +43,7 @@ pub struct ListenerConfig {
 #[derive(Debug)]
 pub struct Listener {
     inner: TcpListener,
+    local_addr: SocketAddr,
     semaphore: Option<Arc<Semaphore>>,
     ip_limiter: Option<Arc<IpLimiter>>,
     config: ListenerConfig,
@@ -190,6 +190,7 @@ impl Listener {
 
         Ok(Self {
             inner,
+            local_addr,
             semaphore,
             ip_limiter: IpLimiter::new(config.max_connections_per_ip),
             config,
@@ -250,24 +251,10 @@ impl Listener {
                 }
             };
 
-            // Configure accepted socket via socket2 round-trip
-            let std_stream = stream.into_std().map_err(TransportError::SocketConfig)?;
-            let socket = Socket::from(std_stream);
-            configure_stream_socket(&socket, &self.config.keepalive)?;
-            socket
-                .set_nonblocking(true)
-                .map_err(TransportError::SocketConfig)?;
-            let std_stream: std::net::TcpStream = socket.into();
-            let stream = tokio::net::TcpStream::from_std(std_stream)
-                .map_err(TransportError::SocketConfig)?;
-
-            let local_addr = self
-                .inner
-                .local_addr()
-                .map_err(TransportError::SocketConfig)?;
+            configure_tokio_stream(&stream, &self.config.keepalive)?;
 
             return Ok(PendingConnection {
-                connection: ClientConnection::new(stream, peer_addr, local_addr),
+                connection: ClientConnection::new(stream, peer_addr, self.local_addr),
                 proxy_header: ProxyHeader::for_peer(&self.config, peer_addr.ip()),
                 ip_limiter: self.ip_limiter.clone(),
                 permit,
@@ -279,12 +266,9 @@ impl Listener {
     ///
     /// # Errors
     ///
-    /// Returns [`TransportError::SocketConfig`] if the address cannot be
-    /// retrieved from the underlying socket.
-    pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.inner
-            .local_addr()
-            .map_err(TransportError::SocketConfig)
+    /// Never fails: the address is read once at bind time.
+    pub const fn local_addr(&self) -> Result<SocketAddr, TransportError> {
+        Ok(self.local_addr)
     }
 }
 

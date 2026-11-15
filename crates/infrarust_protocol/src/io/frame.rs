@@ -10,7 +10,33 @@ pub struct PacketFrame {
 #[derive(Debug, Clone)]
 struct RawWire {
     bytes: Bytes,
-    threshold: Option<i32>,
+    format: WireFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WireFormat {
+    Plain,
+    Compressed {
+        deflated: bool,
+        uncompressed_len: usize,
+    },
+}
+
+impl WireFormat {
+    #[must_use]
+    pub(crate) const fn conforms_to(self, threshold: Option<i32>) -> bool {
+        match (self, threshold) {
+            (Self::Plain, None) => true,
+            (
+                Self::Compressed {
+                    deflated,
+                    uncompressed_len,
+                },
+                Some(threshold),
+            ) => deflated == should_compress(uncompressed_len, threshold),
+            (Self::Plain, Some(_)) | (Self::Compressed { .. }, None) => false,
+        }
+    }
 }
 
 impl PacketFrame {
@@ -23,11 +49,11 @@ impl PacketFrame {
         }
     }
 
-    pub(crate) fn with_raw(id: i32, payload: Bytes, bytes: Bytes, threshold: Option<i32>) -> Self {
+    pub(crate) const fn with_raw(id: i32, payload: Bytes, bytes: Bytes, format: WireFormat) -> Self {
         Self {
             id,
             payload,
-            raw: Some(RawWire { bytes, threshold }),
+            raw: Some(RawWire { bytes, format }),
         }
     }
 
@@ -35,7 +61,7 @@ impl PacketFrame {
     pub fn raw_wire(&self, threshold: Option<i32>) -> Option<&[u8]> {
         self.raw
             .as_ref()
-            .filter(|raw| raw.threshold == threshold)
+            .filter(|raw| raw.format.conforms_to(threshold))
             .map(|raw| raw.bytes.as_ref())
     }
 }

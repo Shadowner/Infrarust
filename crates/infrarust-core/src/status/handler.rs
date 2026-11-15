@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use infrarust_api::events::proxy::ProxyPingEvent;
 use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
@@ -20,10 +21,10 @@ use infrarust_server_manager::{ServerManagerService, ServerState};
 use super::STATUS_PROTOCOL_VERSION;
 
 const STATUS_READ_TIMEOUT: Duration = Duration::from_secs(5);
-use super::cache::StatusCache;
+use super::cache::{FrameSource, StatusCache};
 use super::favicon::FaviconCache;
 use super::motd::{DEFAULT_PROXY_MOTD, state_max_players, state_motd};
-use super::relay::{StatusRelayClient, read_frame_within, send_packet};
+use super::relay::{StatusRelayClient, encode_frame, read_frame_within, send_frame, send_packet};
 use super::relay_gate::{RelayGate, RelayTurn};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
@@ -34,6 +35,16 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::session::connection_registry::ConnectionRegistry;
 use crate::util::text::api_version;
+
+enum Backed {
+    Cached(Arc<ServerPingResponse>),
+    Synthetic(ServerPingResponse),
+}
+
+enum Resolved<'a> {
+    Ready(ServerPingResponse),
+    Cached(Arc<ServerPingResponse>, &'a RoutingData),
+}
 
 /// Handles modern (1.7+) status pings with relay, cache, and contextual MOTDs.
 pub struct StatusHandler {
@@ -108,70 +119,129 @@ impl StatusHandler {
         ctx: &mut ConnectionContext,
         connection_registry: &ConnectionRegistry,
     ) -> Result<(), CoreError> {
-        let routing = ctx.extensions.get::<RoutingData>().cloned();
-        let handshake = ctx.extensions.get::<HandshakeData>().cloned();
-
         let mut decoder = self.read_status_request(ctx).await?;
 
-        let client_version = handshake
-            .as_ref()
-            .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
-        let mut response = self
-            .resolve_response(
-                ctx,
-                routing.as_ref(),
-                handshake.as_ref(),
-                client_version,
-                connection_registry,
-            )
+        let frame = self.status_frame(ctx, connection_registry).await?;
+        send_frame(ctx.stream_mut(), &frame).await?;
+
+        match self.handle_ping_pong(ctx, &mut decoder).await {
+            Err(CoreError::ConnectionClosed) => Ok(()),
+            result => result,
+        }
+    }
+
+    /// Builds the encoded status response frame for this connection.
+    ///
+    /// # Errors
+    /// Returns `CoreError` if the response cannot be serialized or encoded.
+    pub async fn status_frame(
+        &self,
+        ctx: &ConnectionContext,
+        connection_registry: &ConnectionRegistry,
+    ) -> Result<Bytes, CoreError> {
+        let routing = ctx.extensions.get::<RoutingData>();
+        let handshake = ctx.extensions.get::<HandshakeData>();
+        let client_version = handshake.map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
+
+        let resolved = self
+            .resolve_response(ctx, routing, handshake, client_version, connection_registry)
             .await;
-        let sent = core_to_api_ping_response(&response);
+        let listened = self.event_bus.has_listeners::<ProxyPingEvent>();
+
+        let mut response = match resolved {
+            Resolved::Cached(cached, routing) if !listened => {
+                let favicon = self.favicon_cache.server_favicon(&routing.config_id);
+                let source = FrameSource {
+                    config: Arc::clone(&routing.server_config),
+                    favicon: favicon.clone(),
+                };
+                return self.cache.frame(&routing.config_id, &cached, source, || {
+                    self.encode(&self.dress(
+                        ServerPingResponse::clone(&cached),
+                        &routing.server_config,
+                        favicon.as_deref(),
+                    ))
+                });
+            }
+            Resolved::Cached(cached, routing) => self.dress(
+                Arc::unwrap_or_clone(cached),
+                &routing.server_config,
+                self.favicon_cache
+                    .server_favicon(&routing.config_id)
+                    .as_deref(),
+            ),
+            Resolved::Ready(response) => response,
+        };
+        if !listened {
+            return self.encode(&response);
+        }
+
+        let favicon = response.favicon.take();
+        let mut offered = core_to_api_ping_response(&response);
+        let sent = offered.clone();
+        offered.favicon = favicon;
         let event = ProxyPingEvent::new(
             ctx.client_addr(),
-            routing.as_ref().map(|r| ServerId::new(r.config_id.clone())),
-            handshake.as_ref().map(|h| h.domain.clone()),
+            routing.map(|r| ServerId::new(r.config_id.clone())),
+            handshake.map(|h| h.domain.clone()),
             api_version(client_version),
             false,
-            sent.clone(),
+            offered,
         );
         let event = self.event_bus.fire(event).await;
         merge_ping_event(
             &mut response,
             &sent,
-            &event.response,
+            event.response,
             api_version(client_version),
         );
 
-        let json = response.to_json()?;
-        let status_resp = CStatusResponse {
-            json_response: json,
+        self.encode(&response)
+    }
+
+    fn encode(&self, response: &ServerPingResponse) -> Result<Bytes, CoreError> {
+        let status = CStatusResponse {
+            json_response: response.to_json()?,
         };
-        send_packet(
-            &self.registry,
-            ctx.stream_mut(),
-            &status_resp,
-            STATUS_PROTOCOL_VERSION,
-        )
-        .await?;
+        encode_frame(&self.registry, &status, STATUS_PROTOCOL_VERSION)
+    }
 
-        self.handle_ping_pong(ctx, &mut decoder).await?;
+    fn dress(
+        &self,
+        mut response: ServerPingResponse,
+        config: &ServerConfig,
+        server_favicon: Option<&str>,
+    ) -> ServerPingResponse {
+        if let Some(ref online) = config.motd.online {
+            response.apply_overrides(online);
+        }
+        if let Some(favicon) = server_favicon {
+            response.favicon = Some(favicon.to_owned());
+        } else if response.favicon.is_none() {
+            response.favicon = self.default_favicon();
+        }
+        response
+    }
 
-        Ok(())
+    fn default_favicon(&self) -> Option<String> {
+        self.favicon_cache
+            .default_favicon()
+            .map(|favicon| favicon.as_ref().to_owned())
     }
 
     /// Resolves the status response based on the decision tree.
-    async fn resolve_response(
+    async fn resolve_response<'a>(
         &self,
         ctx: &ConnectionContext,
-        routing: Option<&RoutingData>,
+        routing: Option<&'a RoutingData>,
         handshake: Option<&HandshakeData>,
         client_version: ProtocolVersion,
         connection_registry: &ConnectionRegistry,
-    ) -> ServerPingResponse {
+    ) -> Resolved<'a> {
         let Some(routing) = routing else {
             let mut response = self.build_default_motd_response(client_version);
-            response.favicon = self.favicon_cache.default_favicon();
-            return response;
+            response.favicon = self.default_favicon();
+            return Resolved::Ready(response);
         };
 
         let config = &routing.server_config;
@@ -183,26 +253,22 @@ impl StatusHandler {
             match sm.get_state(config_id) {
                 Some(ServerState::Online) | None => {}
                 Some(state) => {
-                    return Self::build_state_motd(config, state, client_version);
+                    return Resolved::Ready(Self::build_state_motd(config, state, client_version));
                 }
             }
         }
 
-        let mut response = self
+        match self
             .relay_or_cache(ctx, routing, handshake, client_version, connection_registry)
-            .await;
-
-        if let Some(ref online) = config.motd.online {
-            response.apply_overrides(online);
-        }
-
-        if response.favicon.is_none()
-            && let Some(fav) = self.favicon_cache.get(config_id)
+            .await
         {
-            response.favicon = Some(fav);
+            Backed::Cached(cached) => Resolved::Cached(cached, routing),
+            Backed::Synthetic(response) => Resolved::Ready(self.dress(
+                response,
+                config,
+                self.favicon_cache.server_favicon(config_id).as_deref(),
+            )),
         }
-
-        response
     }
 
     /// Attempts relay → cache → stale → synthetic fallback.
@@ -216,11 +282,11 @@ impl StatusHandler {
         handshake: Option<&HandshakeData>,
         client_version: ProtocolVersion,
         connection_registry: &ConnectionRegistry,
-    ) -> ServerPingResponse {
+    ) -> Backed {
         let config = &routing.server_config;
         let config_id = routing.config_id.as_str();
         if let Some((response, _latency)) = self.cache.get_fresh(config_id) {
-            return response;
+            return Backed::Cached(response);
         }
 
         let leader = match self.relay_gate.enter(config_id).await {
@@ -237,7 +303,7 @@ impl StatusHandler {
         };
 
         if let Some((response, _latency)) = self.cache.get_fresh(config_id) {
-            return response;
+            return Backed::Cached(response);
         }
 
         let domain = handshake.map_or("localhost", |h| h.domain.as_str());
@@ -269,10 +335,11 @@ impl StatusHandler {
                         &result.address.to_string(),
                     );
                 }
-                self.cache
-                    .put(config_id, result.response.clone(), result.latency, None);
+                let cached = self
+                    .cache
+                    .put(config_id, result.response, result.latency, None);
                 leader.succeeded();
-                return result.response;
+                return Backed::Cached(cached);
             }
             Err(e) => {
                 tracing::debug!(
@@ -359,13 +426,13 @@ impl StatusHandler {
         config_id: &str,
         client_version: ProtocolVersion,
         relay_just_failed: bool,
-    ) -> ServerPingResponse {
+    ) -> Backed {
         if let Some(motd) = &config.motd.unreachable {
-            ServerPingResponse::from_entry(
+            Backed::Synthetic(ServerPingResponse::from_entry(
                 motd,
                 client_version,
                 motd.max_players.map(u32::cast_signed),
-            )
+            ))
         } else if let Some((response, _latency)) = self.cache.get_stale(config_id) {
             if relay_just_failed {
                 tracing::warn!(
@@ -373,9 +440,14 @@ impl StatusHandler {
                     "serving stale cached status (backend unreachable)"
                 );
             }
-            response
+            Backed::Cached(response)
         } else {
-            self.build_unreachable_motd(config, connection_registry, config_id, client_version)
+            Backed::Synthetic(self.build_unreachable_motd(
+                config,
+                connection_registry,
+                config_id,
+                client_version,
+            ))
         }
     }
 

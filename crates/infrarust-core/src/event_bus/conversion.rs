@@ -68,16 +68,20 @@ pub fn apply_api_scalars_to_core(core: &mut ServerPingResponse, api: &PingRespon
 pub fn merge_ping_event(
     core: &mut ServerPingResponse,
     sent: &PingResponse,
-    api: &PingResponse,
+    api: PingResponse,
     client: ProtocolVersion,
 ) {
     if api.description != sent.description {
         core.description = api.description.to_json_value_for(client);
     }
-    apply_api_scalars_to_core(core, api);
     if api.player_sample != sent.player_sample {
-        apply_api_sample_to_core(core, api);
+        apply_api_sample_to_core(core, &api);
     }
+    core.players.max = api.max_players;
+    core.players.online = api.online_players;
+    core.version.name = api.version_name;
+    core.version.protocol = api.protocol_version.raw();
+    core.favicon = api.favicon;
 }
 
 /// Converts `infrarust_server_manager::ServerState` to the API's
@@ -266,7 +270,7 @@ mod tests {
         let api = core_to_api_ping_response(&core);
         let sent = api.clone();
         // Simulate the event returning the response unmodified.
-        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
+        merge_ping_event(&mut core, &sent, api.clone(), ProtocolVersion::MINECRAFT_1_21_11);
 
         assert_eq!(
             core.description, original,
@@ -284,7 +288,7 @@ mod tests {
         let sent = api.clone();
         api.description = Component::text("Plugin MOTD");
 
-        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_20_2);
+        merge_ping_event(&mut core, &sent, api.clone(), ProtocolVersion::MINECRAFT_1_20_2);
         assert_eq!(core.description["text"].as_str().unwrap(), "Plugin MOTD");
     }
 
@@ -295,7 +299,7 @@ mod tests {
         api.description = sent.description.clone().append(Component::text("?"));
 
         let mut old = rich_response();
-        merge_ping_event(&mut old, &sent, &api, ProtocolVersion::MINECRAFT_1_21_4);
+        merge_ping_event(&mut old, &sent, api.clone(), ProtocolVersion::MINECRAFT_1_21_4);
         assert_eq!(
             old.description,
             serde_json::json!({
@@ -308,7 +312,7 @@ mod tests {
         );
 
         let mut new = rich_response();
-        merge_ping_event(&mut new, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
+        merge_ping_event(&mut new, &sent, api.clone(), ProtocolVersion::MINECRAFT_1_21_11);
         assert_eq!(
             new.description,
             serde_json::json!({
@@ -332,7 +336,7 @@ mod tests {
         api.max_players = 5;
         api.online_players = 1;
 
-        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
+        merge_ping_event(&mut core, &sent, api.clone(), ProtocolVersion::MINECRAFT_1_21_11);
         assert_eq!(core.players.max, 5);
         assert_eq!(core.players.online, 1);
         assert_eq!(core.description, original, "description must stay opaque");
@@ -355,7 +359,7 @@ mod tests {
         merge_ping_event(
             &mut core,
             &api.clone(),
-            &api,
+            api.clone(),
             ProtocolVersion::MINECRAFT_1_21_11,
         );
         assert_eq!(
@@ -367,7 +371,7 @@ mod tests {
         let mut api = sent.clone();
         api.player_sample
             .push(("Notch".to_string(), Uuid::from_u128(1)));
-        merge_ping_event(&mut core, &sent, &api, ProtocolVersion::MINECRAFT_1_21_11);
+        merge_ping_event(&mut core, &sent, api.clone(), ProtocolVersion::MINECRAFT_1_21_11);
         assert_eq!(
             serde_json::to_value(&core.players.sample).unwrap(),
             serde_json::json!([

@@ -36,9 +36,14 @@ nix = { workspace = true }
 listenfd = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "rt-multi-thread"] }
 tracing-subscriber = { workspace = true }
+divan = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 command-fds = { workspace = true }
 rusty-fork = { workspace = true }
+
+[[bench]]
+name = "forward_throughput"
+harness = false

@@ -5,6 +5,7 @@ use crate::codec::VarInt;
 use crate::error::{ProtocolError, ProtocolResult};
 use crate::io::compression::{self, ZlibCompressor};
 use crate::io::frame::{PacketFrame, should_compress};
+use crate::io::{BUFFER_RETENTION_LIMIT, release_oversized};
 
 fn write_varint(buf: &mut BytesMut, varint: VarInt) -> ProtocolResult<()> {
     varint.encode(&mut buf.writer())
@@ -15,7 +16,7 @@ pub struct PacketEncoder {
     compression_threshold: Option<i32>,
     compress_buf: Vec<u8>,
     scratch_buf: Vec<u8>,
-    compressor: Box<dyn ZlibCompressor + Send + Sync>,
+    compressor: Option<Box<dyn ZlibCompressor + Send + Sync>>,
 }
 
 impl PacketEncoder {
@@ -25,7 +26,7 @@ impl PacketEncoder {
             compression_threshold: None,
             compress_buf: Vec::new(),
             scratch_buf: Vec::new(),
-            compressor: compression::default_compressor(),
+            compressor: None,
         }
     }
 
@@ -56,6 +57,7 @@ impl PacketEncoder {
                     self.scratch_buf.extend_from_slice(payload);
 
                     self.compressor
+                        .get_or_insert_with(compression::default_compressor)
                         .compress(&self.scratch_buf, &mut self.compress_buf)?;
 
                     let compressed_size = self.compress_buf.len();
@@ -71,6 +73,9 @@ impl PacketEncoder {
                     write_varint(&mut self.buf, packet_len_varint)?;
                     write_varint(&mut self.buf, data_len_varint)?;
                     self.buf.extend_from_slice(&self.compress_buf);
+
+                    release_oversized(&mut self.scratch_buf);
+                    release_oversized(&mut self.compress_buf);
                 } else {
                     let data_len_varint = VarInt(0);
                     let packet_len =
@@ -102,7 +107,11 @@ impl PacketEncoder {
     }
 
     pub fn take(&mut self) -> BytesMut {
-        self.buf.split()
+        let taken = self.buf.split();
+        if taken.len() > BUFFER_RETENTION_LIMIT {
+            self.buf = BytesMut::new();
+        }
+        taken
     }
 
     pub const fn set_compression(&mut self, threshold: i32) {
@@ -185,6 +194,39 @@ mod tests {
         let _ = encoder.take();
         let empty = encoder.take();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_oversized_buffers_are_released_once_drained() {
+        let mut encoder = PacketEncoder::new();
+        encoder.set_compression(64);
+
+        encoder.append_raw(0x00, &[0x42; 512]).unwrap();
+        let _ = encoder.take();
+        encoder.append_raw(0x00, &[0x42; 512]).unwrap();
+        assert!(encoder.scratch_buf.capacity() > 0);
+
+        let big = vec![0x42; 4 * BUFFER_RETENTION_LIMIT];
+        encoder.append_raw(0x00, &big).unwrap();
+        assert_eq!(encoder.scratch_buf.capacity(), 0);
+        assert!(encoder.compress_buf.capacity() <= BUFFER_RETENTION_LIMIT);
+
+        encoder.set_compression(-1);
+        encoder.append_raw(0x00, &big).unwrap();
+        let taken = encoder.take();
+        assert!(taken.len() > big.len());
+        assert_eq!(encoder.buf.capacity(), 0);
+    }
+
+    #[test]
+    fn test_compressor_is_created_on_first_compression() {
+        let mut encoder = PacketEncoder::new();
+        encoder.set_compression(64);
+        encoder.append_raw(0x00, b"tiny").unwrap();
+        assert!(encoder.compressor.is_none());
+
+        encoder.append_raw(0x00, &[0x42; 512]).unwrap();
+        assert!(encoder.compressor.is_some());
     }
 
     #[test]

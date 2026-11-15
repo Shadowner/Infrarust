@@ -58,6 +58,7 @@ anyhow = "1.0.104"
 # Logging / Tracing
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"] }
+tracing-appender = "0.2.5"
 
 # Telemetry (OpenTelemetry)
 opentelemetry = { version = "0.33.0" }

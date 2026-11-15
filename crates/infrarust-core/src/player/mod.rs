@@ -44,6 +44,7 @@ use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
 use crate::util::sync::{lock, read, write};
 
+use crate::session::connection_registry::{Seat, ServerRoster};
 use crate::session::presentation::Presentation;
 use client_state::ClientState;
 use command_queue::CommandQueue;
@@ -129,6 +130,24 @@ struct Routing {
     current: Option<ServerId>,
     previous: Option<ServerId>,
     pending: Option<ServerId>,
+    roster: Option<Arc<ServerRoster>>,
+    seat: Option<Seat>,
+}
+
+impl Routing {
+    fn counted(&self) -> Option<&ServerId> {
+        self.current.as_ref().or(self.pending.as_ref())
+    }
+
+    fn reseat(&mut self, player: PlayerId) {
+        let seated = self.seat.as_ref().map(Seat::server);
+        let wanted = self.roster.as_ref().zip(self.counted());
+        if seated == wanted.map(|(_, server)| server.as_str()) {
+            return;
+        }
+        let seat = wanted.map(|(roster, server)| roster.seat(server, player));
+        self.seat = seat;
+    }
 }
 
 #[derive(Default)]
@@ -299,6 +318,8 @@ impl PlayerSessionBuilder {
                 current: self.current_server,
                 previous: None,
                 pending: None,
+                roster: None,
+                seat: None,
             }),
             connected_address: RwLock::new(None),
             backend_load: self.backend_load,
@@ -420,11 +441,25 @@ impl PlayerSession {
 
     /// Updates the current server (called by the proxy loop on server switch).
     pub fn set_current_server(&self, server: ServerId) {
+        self.reroute(|routing| {
+            if routing.current.as_ref() != Some(&server) {
+                routing.previous = routing.current.replace(server);
+            }
+            routing.pending = None;
+        });
+    }
+
+    fn reroute(&self, change: impl FnOnce(&mut Routing)) {
         let mut routing = write(&self.routing);
-        if routing.current.as_ref() != Some(&server) {
-            routing.previous = routing.current.replace(server);
-        }
-        routing.pending = None;
+        change(&mut routing);
+        routing.reseat(self.player_id);
+    }
+
+    pub(crate) fn enroll(&self, roster: Option<Arc<ServerRoster>>) {
+        self.reroute(|routing| {
+            routing.seat = None;
+            routing.roster = roster;
+        });
     }
 
     pub(crate) fn previous_server(&self) -> Option<ServerId> {
@@ -432,12 +467,11 @@ impl PlayerSession {
     }
 
     pub(crate) fn set_pending_server(&self, server: ServerId) {
-        write(&self.routing).pending = Some(server);
+        self.reroute(|routing| routing.pending = Some(server));
     }
 
     pub(crate) fn counted_server(&self) -> Option<ServerId> {
-        let routing = read(&self.routing);
-        routing.current.clone().or_else(|| routing.pending.clone())
+        read(&self.routing).counted().cloned()
     }
 
     pub fn set_connected_address(&self, address: Option<ServerAddress>) {

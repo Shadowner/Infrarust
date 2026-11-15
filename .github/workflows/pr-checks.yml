@@ -23,6 +23,9 @@ on:
       - '.cargo/**'
       - '.github/workflows/pr-checks.yml'
       - '.github/actions/build-frontend/**'
+  schedule:
+    - cron: '0 4 */3 * *'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,7 +33,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
   lint:
@@ -60,6 +63,8 @@ jobs:
         uses: ./.github/actions/build-frontend
 
       - name: Run clippy
+        env:
+          INFRARUST_WASM_FIXTURES_SKIP: 1
         run: |
           cargo clippy -- -D warnings
           cargo clippy --manifest-path plugins/infrarust-plugin-stats/wasm/Cargo.toml \
@@ -67,6 +72,17 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: wasm
+            args: -p infrarust-loader-wasm --features wasm
+          - suite: workspace
+            args: --workspace --exclude infrarust-loader-wasm
+    name: test (${{ matrix.suite }})
+    env:
+      INFRARUST_WASM_TARGET_DIR: ${{ github.workspace }}/.wasm-fixtures
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -77,17 +93,31 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.9.2
+        with:
+          key: ${{ matrix.suite }}
+
+      - name: WASM fixtures cache
+        if: matrix.suite == 'wasm'
+        uses: actions/cache@v6.1.0
+        with:
+          path: .wasm-fixtures
+          key: wasm-fixtures-${{ runner.os }}-1.99.0-${{ hashFiles('crates/infrarust-loader-wasm/tests/fixtures/Cargo.lock', 'plugins/infrarust-plugin-stats/wasm/Cargo.lock') }}
 
       - name: Build Admin Frontend
+        if: matrix.suite == 'workspace'
         uses: ./.github/actions/build-frontend
 
       - name: Build tests
-        run: cargo test --no-run
+        run: cargo test --no-run ${{ matrix.args }}
 
       - name: Run tests
         run: |
           set -o pipefail
-          cargo test 2>&1 | tee test.log
+          cargo test ${{ matrix.args }} 2>&1 | tee test.log
+
+      - name: Check the WASM tests ran
+        if: matrix.suite == 'wasm'
+        run: |
           grep -q 'test test_stats_count_command \.\.\. ok' test.log \
             || { echo "::error::WASM fixture tests did not run"; exit 1; }
           grep -q 'test pre_login_deny_wasm \.\.\. ok' test.log \

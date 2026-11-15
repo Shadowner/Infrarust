@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use infrarust_config::{DomainRewrite, ServerAddress, ServerConfig};
@@ -244,6 +244,14 @@ pub(super) async fn send_packet<P: Packet>(
     packet: &P,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
+    send_frame(stream, &encode_frame(registry, packet, version)?).await
+}
+
+pub(super) fn encode_frame<P: Packet>(
+    registry: &PacketRegistry,
+    packet: &P,
+    version: ProtocolVersion,
+) -> Result<Bytes, CoreError> {
     let packet_id = packet_id::<P>(registry, version)?;
 
     let mut payload = Vec::new();
@@ -251,9 +259,14 @@ pub(super) async fn send_packet<P: Packet>(
 
     let mut encoder = PacketEncoder::new();
     encoder.append_raw(packet_id, &payload)?;
-    let bytes = encoder.take();
+    Ok(encoder.take().freeze())
+}
 
-    stream.write_all(&bytes).await?;
+pub(super) async fn send_frame(
+    stream: &mut tokio::net::TcpStream,
+    frame: &[u8],
+) -> Result<(), CoreError> {
+    stream.write_all(frame).await?;
     stream.flush().await?;
     Ok(())
 }

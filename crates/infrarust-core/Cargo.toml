@@ -104,3 +104,11 @@ harness = false
 [[bench]]
 name = "event_dispatch"
 harness = false
+
+[[bench]]
+name = "status_ping"
+harness = false
+
+[[bench]]
+name = "event_contention"
+harness = false

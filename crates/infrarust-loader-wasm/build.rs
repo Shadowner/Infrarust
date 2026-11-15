@@ -39,8 +39,11 @@ fn main() -> Result<(), std::env::VarError> {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
 
-    let fixture_target_dir = out_dir.join("fixture-target");
-    let stats_target_dir = out_dir.join("stats-target");
+    println!("cargo:rerun-if-env-changed=INFRARUST_WASM_TARGET_DIR");
+    let wasm_target_root =
+        std::env::var_os("INFRARUST_WASM_TARGET_DIR").map_or(out_dir, PathBuf::from);
+    let fixture_target_dir = wasm_target_root.join("fixture-target");
+    let stats_target_dir = wasm_target_root.join("stats-target");
     let stats_manifest = stats_dir.join("wasm").join("Cargo.toml");
     let fixtures = WasmBuild {
         label: "WASM fixtures",

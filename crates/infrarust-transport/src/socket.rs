@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use listenfd::ListenFd;
-use socket2::{Domain, Protocol, Socket, TcpKeepalive, Type};
+use socket2::{Domain, Protocol, SockRef, Socket, TcpKeepalive, Type};
 use tokio::net::{TcpListener, TcpStream};
 
 use infrarust_config::KeepaliveConfig;
@@ -135,6 +135,19 @@ pub fn configure_stream_socket(
         .map_err(TransportError::SocketConfig)?;
 
     Ok(())
+}
+
+/// Applies [`configure_stream_socket`] to a stream already registered with tokio.
+///
+/// # Errors
+///
+/// Returns [`TransportError::SocketConfig`] if setting `TCP_NODELAY` or
+/// keepalive options fails.
+pub fn configure_tokio_stream(
+    stream: &TcpStream,
+    keepalive: &KeepaliveConfig,
+) -> Result<(), TransportError> {
+    configure_stream_socket(&SockRef::from(stream), keepalive)
 }
 
 /// Converts a `socket2::Socket` into a `tokio::net::TcpListener`.

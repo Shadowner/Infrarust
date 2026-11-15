@@ -1,15 +1,13 @@
 //! `EventBusImpl` — the dispatch engine for Infrarust events.
 //!
-//! Uses a snapshot pattern: handlers are stored in `Arc<Vec<HandlerEntry>>`
-//! behind a `RwLock`. On dispatch, the `Arc` is cloned and the lock is
-//! released before iterating handlers. This ensures async handlers never
-//! hold a lock across `.await` points.
+//! Uses a snapshot pattern: handlers are stored in `Arc<Vec<HandlerEntry>>`.
+//! Dispatch clones the `Arc` and iterates the snapshot, so async handlers
+//! never hold a lock across `.await` points.
 
 use std::any::{Any, TypeId, type_name};
-use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -27,13 +25,14 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 
 use queue::Queued;
+use registry::{Handlers, LockedRegistry};
 
 use super::builtin::is_builtin_event;
 use super::diagnostic::{DiagnosticKind, HandlerDiagnostic, panic_message, short_type_name};
 use super::handler::{HandlerEntry, HandlerKind};
-use crate::util::sync::{read, write};
 
 mod queue;
+mod registry;
 
 pub const CORE_OWNER: &str = "infrarust";
 
@@ -92,11 +91,10 @@ struct PacketKey {
 /// `Arc::make_mut` — the running dispatch continues on the old snapshot.
 pub struct EventBusImpl {
     /// Handlers grouped by event `TypeId`.
-    /// The `Arc<Vec<...>>` enables lock-free dispatch via snapshot cloning.
-    handlers: RwLock<HashMap<TypeId, Arc<Vec<HandlerEntry>>>>,
+    handlers: LockedRegistry<TypeId>,
 
     /// Handlers for specific packet (id, state, direction) combinations.
-    packet_handlers: RwLock<HashMap<PacketKey, Arc<Vec<HandlerEntry>>>>,
+    packet_handlers: LockedRegistry<PacketKey>,
 
     /// Monotonic counter for generating unique `ListenerHandle` values.
     next_handle: AtomicU64,
@@ -117,8 +115,8 @@ impl EventBusImpl {
     pub fn with_config(config: EventBusConfig) -> Self {
         let (queue, undispatched) = mpsc::channel(POSTED_EVENT_CAPACITY);
         Self {
-            handlers: RwLock::new(HashMap::new()),
-            packet_handlers: RwLock::new(HashMap::new()),
+            handlers: LockedRegistry::new(),
+            packet_handlers: LockedRegistry::new(),
             next_handle: AtomicU64::new(1),
             packet_listener_count: AtomicU64::new(0),
             config,
@@ -139,8 +137,8 @@ impl EventBusImpl {
     }
 
     pub fn listener_owners<E: Event>(&self) -> Vec<Arc<str>> {
-        let map = read(&self.handlers);
-        map.get(&TypeId::of::<E>())
+        self.handlers
+            .snapshot(&TypeId::of::<E>())
             .map(|entries| entries.iter().map(|e| Arc::clone(&e.owner)).collect())
             .unwrap_or_default()
     }
@@ -168,7 +166,7 @@ impl EventBusImpl {
         E: ResultedEvent,
         E::Result: Clone + PartialEq,
     {
-        let handlers = snapshot(&self.handlers, &TypeId::of::<E>());
+        let handlers = self.handlers.snapshot(&TypeId::of::<E>());
         let mut decided_by = None;
         let mut last = event.result().clone();
         self.run_handlers(
@@ -192,9 +190,7 @@ impl EventBusImpl {
     }
 
     pub fn has_listeners<E: Event>(&self) -> bool {
-        let map = read(&self.handlers);
-        map.get(&TypeId::of::<E>())
-            .is_some_and(|entries| !entries.is_empty())
+        self.handlers.has(&TypeId::of::<E>())
     }
 
     pub(crate) async fn fire_from(
@@ -224,7 +220,7 @@ impl EventBusImpl {
         event: &mut (dyn Any + Send),
         fired_by: &Arc<str>,
     ) {
-        let handlers = snapshot(&self.handlers, &type_id);
+        let handlers = self.handlers.snapshot(&type_id);
         self.run_handlers(
             handlers,
             event,
@@ -238,7 +234,7 @@ impl EventBusImpl {
 
     async fn run_handlers(
         &self,
-        handlers: Option<Arc<Vec<HandlerEntry>>>,
+        handlers: Option<Handlers>,
         event: &mut (dyn Any + Send),
         event_type: &'static str,
         fired_by: &Arc<str>,
@@ -257,43 +253,6 @@ impl EventBusImpl {
         }
     }
 
-    /// Internal helper: inserts a handler entry into the sorted vec for
-    /// the given event type.
-    #[allow(clippy::significant_drop_tightening)] // map is used for multiple ops on vec_arc
-    fn insert_handler(&self, event_type: TypeId, entry: HandlerEntry) -> ListenerHandle {
-        let handle = entry.handle;
-        {
-            let mut map = write(&self.handlers);
-            let vec_arc = map.entry(event_type).or_default();
-
-            // Copy-on-write: if a dispatch holds the old Arc, this clones the Vec.
-            let vec = Arc::make_mut(vec_arc);
-
-            // Insert sorted by priority ascending (FIRST=0 first, LAST=255 last).
-            // partition_point finds the first index where priority > entry's priority,
-            // ensuring same-priority handlers preserve insertion order.
-            let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
-            vec.insert(pos, entry);
-        }
-        handle
-    }
-
-    /// Internal helper: inserts a handler entry into the sorted vec for
-    /// the given packet key.
-    #[allow(clippy::significant_drop_tightening)]
-    fn insert_packet_handler(&self, key: PacketKey, entry: HandlerEntry) -> ListenerHandle {
-        let handle = entry.handle;
-        {
-            let mut map = write(&self.packet_handlers);
-            let vec_arc = map.entry(key).or_default();
-            let vec = Arc::make_mut(vec_arc);
-            let pos = vec.partition_point(|h| h.priority.value() <= entry.priority.value());
-            vec.insert(pos, entry);
-        }
-        self.packet_listener_count.fetch_add(1, Ordering::Relaxed);
-        handle
-    }
-
     /// Dispatches a packet event to all handlers registered for the given packet.
     ///
     /// Handlers are invoked sequentially in priority order, same as `fire()`.
@@ -309,7 +268,7 @@ impl EventBusImpl {
             state,
             direction,
         };
-        let handlers = snapshot(&self.packet_handlers, &key);
+        let handlers = self.packet_handlers.snapshot(&key);
         self.run_handlers(
             handlers,
             event,
@@ -439,7 +398,9 @@ impl EventBusImpl {
         kind: HandlerKind,
     ) -> ListenerHandle {
         let entry = self.new_entry(owner, priority, kind);
-        self.insert_handler(event_type, entry)
+        let handle = entry.handle;
+        self.handlers.insert(event_type, entry);
+        handle
     }
 
     pub(crate) fn subscribe_packet_owned(
@@ -464,18 +425,17 @@ impl EventBusImpl {
             direction: filter.direction,
         };
         let entry = self.new_entry(owner, priority, kind);
-        self.insert_packet_handler(key, entry)
+        let handle = entry.handle;
+        self.packet_handlers.insert(key, entry);
+        self.packet_listener_count.fetch_add(1, Ordering::Relaxed);
+        handle
     }
 
     pub(crate) fn unsubscribe_owned(&self, owner: &str, handle: ListenerHandle) -> bool {
-        {
-            let mut map = write(&self.handlers);
-            if remove_handler(&mut map, owner, handle) {
-                return true;
-            }
+        if self.handlers.remove(owner, handle) {
+            return true;
         }
-        let mut map = write(&self.packet_handlers);
-        let removed = remove_handler(&mut map, owner, handle);
+        let removed = self.packet_handlers.remove(owner, handle);
         if removed {
             self.packet_listener_count.fetch_sub(1, Ordering::Relaxed);
         }
@@ -583,8 +543,7 @@ impl EventBus for EventBusImpl {
             state,
             direction,
         };
-        let map = read(&self.packet_handlers);
-        map.get(&key).is_some_and(|v| !v.is_empty())
+        self.packet_handlers.has(&key)
     }
 
     fn unsubscribe(&self, handle: ListenerHandle) -> bool {
@@ -597,37 +556,6 @@ impl EventBus for EventBusImpl {
     ) -> BoxFuture<'a, Result<(), FireError>> {
         Box::pin(self.fire_from(&self.core_owner, event))
     }
-}
-
-fn snapshot<K: Eq + std::hash::Hash>(
-    map: &RwLock<HashMap<K, Arc<Vec<HandlerEntry>>>>,
-    key: &K,
-) -> Option<Arc<Vec<HandlerEntry>>> {
-    read(map).get(key).cloned()
-}
-
-fn remove_handler<K: Copy + Eq + std::hash::Hash>(
-    map: &mut HashMap<K, Arc<Vec<HandlerEntry>>>,
-    owner: &str,
-    handle: ListenerHandle,
-) -> bool {
-    let Some((key, pos)) = map.iter().find_map(|(k, v)| {
-        v.iter()
-            .position(|h| h.handle == handle && *h.owner == *owner)
-            .map(|p| (*k, p))
-    }) else {
-        return false;
-    };
-
-    if map.get(&key).is_some_and(|v| v.len() == 1) {
-        if let Some(entries) = map.remove(&key) {
-            entries[pos].alive.store(false, Ordering::Release);
-        }
-    } else if let Some(vec_arc) = map.get_mut(&key) {
-        vec_arc[pos].alive.store(false, Ordering::Release);
-        Arc::make_mut(vec_arc).remove(pos);
-    }
-    true
 }
 
 #[cfg(test)]
@@ -665,10 +593,10 @@ mod tests {
         );
 
         bus.unsubscribe(removed);
-        assert_eq!(bus.handlers.read().unwrap().len(), 1);
+        assert_eq!(bus.handlers.len(), 1);
 
         bus.unsubscribe(keep);
-        assert!(bus.handlers.read().unwrap().is_empty());
+        assert_eq!(bus.handlers.len(), 0);
     }
 
     #[test]
@@ -677,7 +605,7 @@ mod tests {
         let handle = bus.subscribe_packet(packet_filter(), EventPriority::NORMAL, noop_handler());
 
         bus.unsubscribe(handle);
-        assert!(bus.packet_handlers.read().unwrap().is_empty());
+        assert_eq!(bus.packet_handlers.len(), 0);
         assert_eq!(bus.packet_listener_count.load(Ordering::Relaxed), 0);
     }
 
@@ -701,7 +629,7 @@ mod tests {
         );
 
         let mut seen = Vec::new();
-        let handlers = snapshot(&bus.handlers, &TypeId::of::<TestEvent>());
+        let handlers = bus.handlers.snapshot(&TypeId::of::<TestEvent>());
         bus.run_handlers(
             handlers,
             &mut TestEvent,
@@ -725,7 +653,7 @@ mod tests {
         );
 
         assert!(!bus.unsubscribe(ListenerHandle::from_raw(9999)));
-        assert_eq!(bus.handlers.read().unwrap().len(), 1);
+        assert_eq!(bus.handlers.len(), 1);
     }
 
     #[test]

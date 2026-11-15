@@ -96,9 +96,6 @@ impl ServerPingResponse {
     /// when present (`Some`).
     pub fn apply_overrides(&mut self, motd: &MotdEntry) {
         self.description = serde_json::json!({"text": &motd.text});
-        if let Some(ref fav) = motd.favicon {
-            self.favicon = Some(fav.clone());
-        }
         if let Some(ref name) = motd.version_name {
             self.version.name.clone_from(name);
         }
@@ -274,17 +271,16 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_overrides_favicon() {
+    fn overrides_leave_the_favicon_to_the_favicon_cache() {
         let mut resp: ServerPingResponse = serde_json::from_str(VANILLA_JSON).unwrap();
-        assert!(resp.favicon.is_none());
         let entry = MotdEntry {
             text: "X".to_string(),
-            favicon: Some("data:image/png;base64,abc".to_string()),
+            favicon: Some("icons/survival.png".to_string()),
             version_name: None,
             version_protocol: None,
             max_players: None,
         };
         resp.apply_overrides(&entry);
-        assert_eq!(resp.favicon.as_deref(), Some("data:image/png;base64,abc"));
+        assert!(resp.favicon.is_none());
     }
 }

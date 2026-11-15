@@ -4,13 +4,34 @@
 //! semantics. Fresh entries are served immediately; stale entries act as
 //! fallback when the backend is unreachable.
 
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use dashmap::DashMap;
+use infrarust_config::ServerConfig;
 use infrarust_protocol::LegacyPingResponse;
 use infrarust_protocol::legacy::LegacyPingVariant;
 
 use super::response::ServerPingResponse;
+use crate::util::sync::{read, write};
+
+/// What an encoded status frame was built from, besides the cached response.
+pub struct FrameSource {
+    pub config: Arc<ServerConfig>,
+    pub favicon: Option<Arc<str>>,
+}
+
+impl PartialEq for FrameSource {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.config, &other.config)
+            && match (&self.favicon, &other.favicon) {
+                (Some(own), Some(theirs)) => Arc::ptr_eq(own, theirs),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
 
 /// Cache of status responses keyed by server id.
 ///
@@ -28,10 +49,23 @@ struct CachedLegacy {
 }
 
 struct CachedStatus {
-    response: ServerPingResponse,
+    response: Arc<ServerPingResponse>,
     latency: Duration,
     fetched_at: Instant,
     ttl: Duration,
+    frame: RwLock<Option<(FrameSource, Bytes)>>,
+}
+
+impl CachedStatus {
+    fn frame(&self, response: &Arc<ServerPingResponse>, source: &FrameSource) -> Option<Bytes> {
+        if !Arc::ptr_eq(&self.response, response) {
+            return None;
+        }
+        read(&self.frame)
+            .as_ref()
+            .filter(|(built_from, _)| built_from == source)
+            .map(|(_, frame)| frame.clone())
+    }
 }
 
 impl StatusCache {
@@ -45,19 +79,19 @@ impl StatusCache {
     }
 
     /// Returns the cached response if the TTL has not expired.
-    pub fn get_fresh(&self, server_id: &str) -> Option<(ServerPingResponse, Duration)> {
+    pub fn get_fresh(&self, server_id: &str) -> Option<(Arc<ServerPingResponse>, Duration)> {
         let entry = self.entries.get(server_id)?;
         if entry.fetched_at.elapsed() < entry.ttl {
-            Some((entry.response.clone(), entry.latency))
+            Some((Arc::clone(&entry.response), entry.latency))
         } else {
             None
         }
     }
 
     /// Returns the cached response regardless of TTL (stale fallback).
-    pub fn get_stale(&self, server_id: &str) -> Option<(ServerPingResponse, Duration)> {
+    pub fn get_stale(&self, server_id: &str) -> Option<(Arc<ServerPingResponse>, Duration)> {
         let entry = self.entries.get(server_id)?;
-        Some((entry.response.clone(), entry.latency))
+        Some((Arc::clone(&entry.response), entry.latency))
     }
 
     /// Inserts or replaces a cache entry.
@@ -69,16 +103,47 @@ impl StatusCache {
         response: ServerPingResponse,
         latency: Duration,
         ttl: Option<Duration>,
-    ) {
+    ) -> Arc<ServerPingResponse> {
+        let response = Arc::new(response);
         self.entries.insert(
             server_id.to_string(),
             CachedStatus {
-                response,
+                response: Arc::clone(&response),
                 latency,
                 fetched_at: Instant::now(),
                 ttl: ttl.unwrap_or(self.default_ttl),
+                frame: RwLock::new(None),
             },
         );
+        response
+    }
+
+    /// Returns the encoded status frame of a cached response, encoding it once
+    /// per `source`.
+    ///
+    /// # Errors
+    /// Returns whatever `encode` returns.
+    pub fn frame<E>(
+        &self,
+        server_id: &str,
+        response: &Arc<ServerPingResponse>,
+        source: FrameSource,
+        encode: impl FnOnce() -> Result<Bytes, E>,
+    ) -> Result<Bytes, E> {
+        let cached = self
+            .entries
+            .get(server_id)
+            .and_then(|entry| entry.frame(response, &source));
+        if let Some(frame) = cached {
+            return Ok(frame);
+        }
+        let frame = encode()?;
+        if let Some(entry) = self.entries.get(server_id)
+            && Arc::ptr_eq(&entry.response, response)
+        {
+            *write(&entry.frame) = Some((source, frame.clone()));
+        }
+        Ok(frame)
     }
 
     /// Returns the reply a backend gave to a legacy ping if the TTL has not expired.
@@ -236,6 +301,76 @@ mod tests {
                 .get_fresh_legacy("other", LegacyPingVariant::V1_6)
                 .is_some()
         );
+    }
+
+    fn server_config() -> Arc<ServerConfig> {
+        Arc::new(toml::from_str("domains = [\"srv.test\"]\naddresses = [\"127.0.0.1:25566\"]\n").unwrap())
+    }
+
+    fn source(config: &Arc<ServerConfig>, favicon: Option<&Arc<str>>) -> FrameSource {
+        FrameSource {
+            config: Arc::clone(config),
+            favicon: favicon.map(Arc::clone),
+        }
+    }
+
+    fn frame_built(
+        cache: &StatusCache,
+        response: &Arc<ServerPingResponse>,
+        source: FrameSource,
+    ) -> bool {
+        let mut built = false;
+        cache
+            .frame("srv", response, source, || {
+                built = true;
+                Ok::<_, std::convert::Infallible>(Bytes::from_static(b"frame"))
+            })
+            .unwrap();
+        built
+    }
+
+    #[test]
+    fn a_frame_is_encoded_once_per_entry_config_and_favicon() {
+        let cache = StatusCache::new(Duration::from_secs(60));
+        let config = server_config();
+        let favicon: Arc<str> = Arc::from("data:image/png;base64,abc");
+        let response = cache.put("srv", sample_response(), Duration::ZERO, None);
+
+        assert!(frame_built(&cache, &response, source(&config, Some(&favicon))));
+        assert!(!frame_built(&cache, &response, source(&config, Some(&favicon))));
+
+        let reloaded_favicon: Arc<str> = Arc::from("data:image/png;base64,abc");
+        assert!(frame_built(&cache, &response, source(&config, Some(&reloaded_favicon))));
+        assert!(frame_built(&cache, &response, source(&config, None)));
+        let reloaded_config = server_config();
+        assert!(frame_built(&cache, &response, source(&reloaded_config, None)));
+        assert!(!frame_built(&cache, &response, source(&reloaded_config, None)));
+
+        let refreshed = cache.put("srv", sample_response(), Duration::ZERO, None);
+        assert!(frame_built(&cache, &response, source(&reloaded_config, None)));
+        assert!(frame_built(&cache, &response, source(&reloaded_config, None)));
+        assert!(frame_built(&cache, &refreshed, source(&reloaded_config, None)));
+        assert!(!frame_built(&cache, &refreshed, source(&reloaded_config, None)));
+
+        cache.invalidate_all();
+        assert!(frame_built(&cache, &refreshed, source(&reloaded_config, None)));
+        assert!(frame_built(&cache, &refreshed, source(&reloaded_config, None)));
+    }
+
+    #[test]
+    fn a_failed_encode_is_not_cached_and_is_retried() {
+        let cache = StatusCache::new(Duration::from_secs(60));
+        let config = server_config();
+        let response = cache.put("srv", sample_response(), Duration::ZERO, None);
+
+        for _ in 0..2 {
+            let failed = cache.frame("srv", &response, source(&config, None), || {
+                Err::<Bytes, _>("too large")
+            });
+            assert_eq!(failed, Err("too large"));
+        }
+        assert!(frame_built(&cache, &response, source(&config, None)));
+        assert!(!frame_built(&cache, &response, source(&config, None)));
     }
 
     #[test]
