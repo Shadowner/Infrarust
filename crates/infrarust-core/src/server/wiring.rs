@@ -68,15 +68,17 @@ impl ProxyServer {
         let backend_health = crate::loadbalancer::PassiveBackendHealth::new();
         #[cfg(feature = "telemetry")]
         let backend_health = backend_health.with_listener(Arc::new(
-            crate::loadbalancer::HealthTransitionMetrics(Arc::clone(&proxy_metrics)),
+            super::health_observer::HealthTransitionMetrics(Arc::clone(&proxy_metrics)),
         ));
         let backend_health = Arc::new(backend_health);
-        backend_health.add_listener(Arc::new(crate::loadbalancer::HealthTransitionEvents::new(
-            Arc::clone(&domain_router),
-            Arc::clone(&event_bus),
-        )));
+        backend_health.add_listener(Arc::new(
+            super::health_observer::HealthTransitionEvents::new(
+                Arc::clone(&domain_router),
+                Arc::clone(&event_bus),
+            ),
+        ));
 
-        let backend_observer = Arc::new(crate::loadbalancer::BackendAttemptObserver::new(
+        let backend_observer = Arc::new(super::health_observer::BackendAttemptObserver::new(
             Arc::clone(&backend_health),
             #[cfg(feature = "telemetry")]
             Arc::clone(&proxy_metrics),

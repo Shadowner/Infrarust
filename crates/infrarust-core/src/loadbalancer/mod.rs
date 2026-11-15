@@ -6,9 +6,7 @@ mod first_available;
 mod health;
 mod least_conn;
 mod load;
-mod observer;
 mod pending;
-mod prober;
 mod round_robin;
 mod selection;
 mod slow_start;
@@ -21,11 +19,7 @@ pub use health::{
 };
 pub use least_conn::LeastConnections;
 pub use load::BackendLoad;
-#[cfg(feature = "telemetry")]
-pub use observer::HealthTransitionMetrics;
-pub use observer::{BackendAttemptObserver, HealthTransitionEvents};
 pub use pending::{PendingRegistry, PendingTicket, reservation_ttl};
-pub use prober::ActiveHealthProber;
 pub use round_robin::RoundRobin;
 pub use selection::{peek_backend_addresses, select_backend_addresses};
 pub use slow_start::SlowStartConfig;

@@ -6,8 +6,8 @@ use infrarust_api::events::proxy::BackendHealthEvent;
 use infrarust_api::types::{ServerAddress as ApiServerAddress, ServerId};
 use infrarust_transport::{ConnectAttempt, ConnectAttemptObserver};
 
-use super::{BackendState, HealthTransitionListener, PassiveBackendHealth};
 use crate::event_bus::EventBusImpl;
+use crate::loadbalancer::{BackendState, HealthTransitionListener, PassiveBackendHealth};
 use crate::routing::DomainRouter;
 
 pub struct BackendAttemptObserver {

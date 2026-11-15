@@ -12,7 +12,7 @@ use infrarust_config::{ActiveHealthConfig, ProbeKind, ProxyConfig, ServerAddress
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_transport::{BackendConnector, ConnectionInfo};
 
-use super::{BackendHealthView, BackendState, PassiveBackendHealth};
+use crate::loadbalancer::{BackendHealthView, BackendState, PassiveBackendHealth};
 use crate::routing::DomainRouter;
 use crate::status::STATUS_PROTOCOL_VERSION;
 

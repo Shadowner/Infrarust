@@ -71,7 +71,7 @@ impl ProxyServer {
 
         let _rate_limit_purge_handle = self.rate_limiter.start_purge_task(self.background.clone());
 
-        let _prober_handle = Arc::new(crate::loadbalancer::ActiveHealthProber::new(
+        let _prober_handle = Arc::new(super::health_prober::ActiveHealthProber::new(
             Arc::clone(&self.services.domain_router),
             Arc::clone(&self.backend_health),
             Arc::clone(&self.services.packet_registry),

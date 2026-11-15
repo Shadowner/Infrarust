@@ -1,4 +1,6 @@
 mod accept;
+mod health_observer;
+mod health_prober;
 mod wiring;
 
 use std::sync::Arc;
