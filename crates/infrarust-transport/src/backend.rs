@@ -3,11 +3,12 @@
 //! `BackendConnector` handles connecting to backend Minecraft servers
 //! with failover, timeout, and optional proxy protocol v2.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
-use socket2::Socket;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
@@ -16,7 +17,153 @@ use infrarust_config::{KeepaliveConfig, ServerAddress};
 use crate::connection::ConnectionInfo;
 use crate::error::TransportError;
 use crate::proxy_protocol::encode_proxy_protocol_v2;
-use crate::socket::configure_stream_socket;
+use crate::socket::configure_tokio_stream;
+
+const DNS_CACHE_TTL: Duration = Duration::from_secs(15);
+const DNS_CACHE_CAPACITY: usize = 256;
+
+static DNS_CACHE: LazyLock<DnsCache> = LazyLock::new(DnsCache::default);
+
+struct Resolution {
+    addrs: Arc<[SocketAddr]>,
+    resolved_at: Instant,
+}
+
+impl Resolution {
+    fn is_fresh(&self) -> bool {
+        self.resolved_at.elapsed() < DNS_CACHE_TTL
+    }
+}
+
+#[derive(Default)]
+struct DnsCache {
+    entries: Mutex<HashMap<ServerAddress, Resolution>>,
+}
+
+impl DnsCache {
+    fn entries(&self) -> std::sync::MutexGuard<'_, HashMap<ServerAddress, Resolution>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn get(&self, address: &ServerAddress) -> Option<Arc<[SocketAddr]>> {
+        self.entries()
+            .get(address)
+            .filter(|resolution| resolution.is_fresh())
+            .map(|resolution| Arc::clone(&resolution.addrs))
+    }
+
+    fn insert(&self, address: &ServerAddress, addrs: Arc<[SocketAddr]>) {
+        let mut entries = self.entries();
+        if entries.len() >= DNS_CACHE_CAPACITY && !entries.contains_key(address) {
+            entries.retain(|_, resolution| resolution.is_fresh());
+            if entries.len() >= DNS_CACHE_CAPACITY {
+                entries.clear();
+            }
+        }
+        entries.insert(
+            address.clone(),
+            Resolution {
+                addrs,
+                resolved_at: Instant::now(),
+            },
+        );
+    }
+
+    fn evict(&self, address: &ServerAddress) {
+        self.entries().remove(address);
+    }
+}
+
+fn ip_literal(host: &str) -> Option<IpAddr> {
+    host.strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host)
+        .parse()
+        .ok()
+}
+
+async fn connect_any(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
+    let mut last_error = None;
+    for addr in addrs {
+        match TcpStream::connect(addr).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last_error = Some(e),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "could not resolve to any address",
+        )
+    }))
+}
+
+async fn lookup(address: &ServerAddress) -> io::Result<Arc<[SocketAddr]>> {
+    Ok(
+        tokio::net::lookup_host((address.host.as_str(), address.port))
+            .await?
+            .collect(),
+    )
+}
+
+async fn connect_resolved<F>(
+    cache: &DnsCache,
+    address: &ServerAddress,
+    resolve: impl FnOnce() -> F,
+) -> io::Result<TcpStream>
+where
+    F: Future<Output = io::Result<Arc<[SocketAddr]>>>,
+{
+    if let Some(addrs) = cache.get(address)
+        && let Ok(stream) = connect_any(&addrs).await
+    {
+        return Ok(stream);
+    }
+
+    let addrs = resolve().await?;
+    let stream = connect_any(&addrs).await?;
+    cache.insert(address, addrs);
+    Ok(stream)
+}
+
+struct EvictUnlessConnected<'a> {
+    cache: &'a DnsCache,
+    address: &'a ServerAddress,
+    connected: bool,
+}
+
+impl Drop for EvictUnlessConnected<'_> {
+    fn drop(&mut self) {
+        if !self.connected {
+            self.cache.evict(self.address);
+        }
+    }
+}
+
+async fn connect_stream(address: &ServerAddress) -> io::Result<TcpStream> {
+    connect_stream_with(&DNS_CACHE, address, || lookup(address)).await
+}
+
+async fn connect_stream_with<F>(
+    cache: &DnsCache,
+    address: &ServerAddress,
+    resolve: impl FnOnce() -> F,
+) -> io::Result<TcpStream>
+where
+    F: Future<Output = io::Result<Arc<[SocketAddr]>>>,
+{
+    if let Some(ip) = ip_literal(&address.host) {
+        return TcpStream::connect(SocketAddr::new(ip, address.port)).await;
+    }
+    let mut guard = EvictUnlessConnected {
+        cache,
+        address,
+        connected: false,
+    };
+    let stream = connect_resolved(cache, address, resolve).await?;
+    guard.connected = true;
+    Ok(stream)
+}
 
 pub struct ConnectAttempt<'a> {
     pub server_id: &'a str,
@@ -175,30 +322,19 @@ impl BackendConnector {
         send_proxy_protocol: bool,
         client_info: &ConnectionInfo,
     ) -> Result<BackendConnection, TransportError> {
-        let connect_addr = format!("{}:{}", address.host, address.port);
-
-        let mut stream = tokio::time::timeout(timeout, TcpStream::connect(&connect_addr))
+        let mut stream = tokio::time::timeout(timeout, connect_stream(address))
             .await
             .map_err(|_| TransportError::ConnectTimeout {
-                addr: connect_addr.clone(),
+                addr: address.to_string(),
                 timeout,
             })?
             .map_err(|source| TransportError::BackendConnect {
-                addr: connect_addr,
+                addr: address.to_string(),
                 source,
             })?;
 
         let remote_addr = stream.peer_addr().map_err(TransportError::SocketConfig)?;
-
-        // Configure socket via socket2 round-trip
-        let std_stream = stream.into_std().map_err(TransportError::SocketConfig)?;
-        let socket = Socket::from(std_stream);
-        configure_stream_socket(&socket, &self.keepalive)?;
-        socket
-            .set_nonblocking(true)
-            .map_err(TransportError::SocketConfig)?;
-        let std_stream: std::net::TcpStream = socket.into();
-        stream = TcpStream::from_std(std_stream).map_err(TransportError::SocketConfig)?;
+        configure_tokio_stream(&stream, &self.keepalive)?;
 
         if send_proxy_protocol {
             encode_proxy_protocol_v2(&mut stream, client_info).await?;
@@ -250,5 +386,183 @@ impl BackendConnection {
     /// Returns the time when the connection was established.
     pub const fn connected_at(&self) -> Instant {
         self.connected_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    const HOST: &str = "backend.test";
+
+    async fn listening() -> (TcpListener, SocketAddr) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        (listener, addr)
+    }
+
+    async fn refusing() -> SocketAddr {
+        listening().await.1
+    }
+
+    fn hostname(port: u16) -> ServerAddress {
+        ServerAddress {
+            host: HOST.to_string(),
+            port,
+        }
+    }
+
+    struct Resolver {
+        addrs: Arc<[SocketAddr]>,
+        calls: AtomicUsize,
+    }
+
+    impl Resolver {
+        fn to(addrs: &[SocketAddr]) -> Self {
+            Self {
+                addrs: addrs.into(),
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        async fn resolve(&self) -> io::Result<Arc<[SocketAddr]>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok(Arc::clone(&self.addrs))
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::Relaxed)
+        }
+    }
+
+    async fn connect(
+        cache: &DnsCache,
+        address: &ServerAddress,
+        resolver: &Resolver,
+    ) -> io::Result<SocketAddr> {
+        connect_stream_with(cache, address, || resolver.resolve())
+            .await?
+            .peer_addr()
+    }
+
+    #[tokio::test]
+    async fn an_ip_literal_bypasses_the_resolver_and_the_cache() {
+        let (_listener, live) = listening().await;
+        let cache = DnsCache::default();
+        let resolver = Resolver::to(&[]);
+
+        let address = ServerAddress {
+            host: live.ip().to_string(),
+            port: live.port(),
+        };
+        assert_eq!(connect(&cache, &address, &resolver).await.unwrap(), live);
+
+        let dead = refusing().await;
+        let address = ServerAddress {
+            host: dead.ip().to_string(),
+            port: dead.port(),
+        };
+        connect(&cache, &address, &resolver).await.unwrap_err();
+
+        assert_eq!(resolver.calls(), 0);
+        assert!(cache.entries().is_empty());
+    }
+
+    #[test]
+    fn bracketed_ipv6_hosts_are_ip_literals() {
+        assert_eq!(ip_literal("[::1]"), Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])));
+        assert_eq!(ip_literal("::1"), Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])));
+        assert_eq!(ip_literal("10.0.0.7"), Some(IpAddr::from([10, 0, 0, 7])));
+        assert_eq!(ip_literal(HOST), None);
+        assert_eq!(ip_literal("[backend.test]"), None);
+    }
+
+    #[tokio::test]
+    async fn a_hostname_is_resolved_once_within_the_ttl() {
+        let (_listener, live) = listening().await;
+        let cache = DnsCache::default();
+        let resolver = Resolver::to(&[live]);
+        let address = hostname(live.port());
+
+        for _ in 0..3 {
+            assert_eq!(connect(&cache, &address, &resolver).await.unwrap(), live);
+        }
+
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(cache.get(&address).as_deref(), Some(&[live][..]));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hostname_is_resolved_again_once_the_ttl_has_elapsed() {
+        let (_listener, live) = listening().await;
+        let cache = DnsCache::default();
+        let resolver = Resolver::to(&[live]);
+        let address = hostname(live.port());
+
+        connect(&cache, &address, &resolver).await.unwrap();
+        tokio::time::advance(DNS_CACHE_TTL - Duration::from_millis(1)).await;
+        connect(&cache, &address, &resolver).await.unwrap();
+        assert_eq!(resolver.calls(), 1);
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(cache.get(&address).is_none());
+        connect(&cache, &address, &resolver).await.unwrap();
+        assert_eq!(resolver.calls(), 2);
+        assert!(cache.get(&address).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_failed_connect_evicts_the_hostname() {
+        let dead = refusing().await;
+        let cache = DnsCache::default();
+        let resolver = Resolver::to(&[dead]);
+        let address = hostname(dead.port());
+        let other = hostname(dead.port().wrapping_add(1));
+        cache.insert(&address, [dead].into());
+        cache.insert(&other, [dead].into());
+
+        connect(&cache, &address, &resolver).await.unwrap_err();
+
+        assert_eq!(resolver.calls(), 1);
+        assert!(cache.get(&address).is_none());
+        assert!(cache.get(&other).is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_connect_evicts_the_hostname() {
+        let dead = refusing().await;
+        let cache = DnsCache::default();
+        let address = hostname(dead.port());
+        cache.insert(&address, [dead].into());
+
+        let attempt = connect_stream_with(&cache, &address, std::future::pending);
+        tokio::time::timeout(Duration::from_secs(1), attempt)
+            .await
+            .unwrap_err();
+
+        assert!(cache.get(&address).is_none());
+    }
+
+    #[tokio::test]
+    async fn failing_cached_addresses_fall_back_to_a_fresh_resolve() {
+        let dead = refusing().await;
+        let (_listener, live) = listening().await;
+        let cache = DnsCache::default();
+        let resolver = Resolver::to(&[dead, live]);
+        let address = hostname(live.port());
+        cache.insert(&address, [dead].into());
+
+        assert_eq!(connect(&cache, &address, &resolver).await.unwrap(), live);
+
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(cache.get(&address).as_deref(), Some(&[dead, live][..]));
+
+        assert_eq!(connect(&cache, &address, &resolver).await.unwrap(), live);
+        assert_eq!(resolver.calls(), 1);
     }
 }

@@ -216,21 +216,29 @@ mod splice_impl {
     }
 
     impl KernelPipe {
-        fn new(size: usize) -> std::io::Result<Self> {
-            let (read_fd, write_fd) = nix::unistd::pipe().map_err(std::io::Error::other)?;
+        fn new(requested: usize) -> std::io::Result<Self> {
+            use nix::fcntl::{FcntlArg, OFlag, fcntl};
 
-            // Set nonblocking
-            for fd in [&read_fd, &write_fd] {
-                nix::fcntl::fcntl(
-                    fd,
-                    nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
-                )
-                .map_err(std::io::Error::other)?;
+            static UNDERSIZED: std::sync::Once = std::sync::Once::new();
+
+            let (read_fd, write_fd) = nix::unistd::pipe2(OFlag::O_NONBLOCK | OFlag::O_CLOEXEC)
+                .map_err(nix_to_io_error)?;
+
+            let _ = fcntl(
+                &write_fd,
+                FcntlArg::F_SETPIPE_SZ(i32::try_from(requested).unwrap_or(i32::MAX)),
+            );
+            let size = fcntl(&write_fd, FcntlArg::F_GETPIPE_SZ).map_err(nix_to_io_error)?;
+            let size = usize::try_from(size).map_err(std::io::Error::other)?;
+            if size < requested {
+                UNDERSIZED.call_once(|| {
+                    tracing::warn!(
+                        requested,
+                        actual = size,
+                        "splice pipe is smaller than requested"
+                    );
+                });
             }
-
-            // Try to set pipe size
-            // Pipe size is always a reasonable value (e.g. 64 KiB), safe to truncate to i32.
-            let _ = nix::fcntl::fcntl(&write_fd, nix::fcntl::FcntlArg::F_SETPIPE_SZ(size as i32));
 
             Ok(Self {
                 read_fd,
@@ -265,12 +273,14 @@ mod splice_impl {
         let mut total: u64 = 0;
         let flags = SpliceFFlags::SPLICE_F_NONBLOCK | SpliceFFlags::SPLICE_F_MOVE;
         let mut eof_received = false;
+        let cancelled = shutdown.cancelled();
+        tokio::pin!(cancelled);
 
         loop {
             // Drain: source → pipe
             let drained = tokio::select! {
                 biased;
-                () = shutdown.cancelled() => break,
+                () = &mut cancelled => break,
                 result = src.ready(Interest::READABLE) => {
                     let _ = result?;
                     // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
@@ -301,7 +311,7 @@ mod splice_impl {
             while pumped < drained {
                 tokio::select! {
                     biased;
-                    () = shutdown.cancelled() => {
+                    () = &mut cancelled => {
                         return Ok(None);
                     }
                     result = dst.ready(Interest::WRITABLE) => {
@@ -376,8 +386,8 @@ mod splice_impl {
                 let c2b = splice_one_direction(&client, &backend, &pipe_c2b, shutdown.clone());
                 let b2c = splice_one_direction(&backend, &client, &pipe_b2c, shutdown.clone());
 
-                tokio::pin!(c2b);
-                tokio::pin!(b2c);
+                let cancelled = shutdown.cancelled();
+                tokio::pin!(c2b, b2c, cancelled);
 
                 let mut first = None;
                 let mut c2b_end = None;
@@ -385,7 +395,7 @@ mod splice_impl {
                 while c2b_end.is_none() || b2c_end.is_none() {
                     let (side, ended) = tokio::select! {
                         biased;
-                        () = shutdown.cancelled() => break,
+                        () = &mut cancelled => break,
                         ended = &mut c2b, if c2b_end.is_none() => (Side::Client, ended),
                         ended = &mut b2c, if b2c_end.is_none() => (Side::Backend, ended),
                     };
