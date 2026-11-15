@@ -19,6 +19,7 @@ use crate::dto::server::{
     HealthCheckResponse, ServerDetailResponse, ServerResponse, ValidationResponse,
 };
 use crate::error::ApiError;
+use crate::health_checker;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::server_dir::{Committed, DocumentId, Ownership, to_document_text};
 use crate::state::ApiState;
@@ -520,7 +521,7 @@ pub async fn health_check(
         .get_server_config(&server_id)
         .ok_or_else(|| ApiError::server_not_found(&id))?;
 
-    let result = state.health_checker.check(&config).await;
+    let result = health_checker::check(&config).await;
     state.health_cache.set(&id, result.clone());
 
     Ok(ok(result))

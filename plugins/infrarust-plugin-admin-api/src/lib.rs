@@ -37,7 +37,6 @@ use crate::api_provider::ApiConfigProvider;
 use crate::config::ApiConfig;
 use crate::drain_store::DrainStore;
 use crate::health_cache::HealthCache;
-use crate::health_checker::HealthChecker;
 use crate::log_layer::LogBroadcast;
 use crate::rate_limit::RateLimiter;
 use crate::router::build_router;
@@ -248,8 +247,7 @@ impl Plugin for AdminApiPlugin {
                 logs: self.logs.clone(),
                 server_dir,
                 provider_sender,
-                health_cache: Arc::new(HealthCache::new()),
-                health_checker: Arc::new(HealthChecker::new()),
+                health_cache: HealthCache::new(),
                 recent_events: Arc::new(Mutex::new(VecDeque::new())),
                 drain_store,
             });
