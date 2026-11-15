@@ -82,3 +82,7 @@ pub trait ConfigProvider: Send + Sync {
         shutdown: CancellationToken,
     ) -> BoxFuture<'_, Result<(), CoreError>>;
 }
+
+pub trait RoutesListener: Send + Sync {
+    fn routes_changed(&self) -> BoxFuture<'_, ()>;
+}

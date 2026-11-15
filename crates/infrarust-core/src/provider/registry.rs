@@ -13,9 +13,10 @@ use infrarust_config::{ForwardingMode, ServerConfig};
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::routing::DomainRouter;
-use crate::status::{FaviconCache, StatusCache};
 
-use super::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
+use super::{
+    ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId, RoutesListener,
+};
 
 pub(super) struct PluginChanges {
     watch: CancellationToken,
@@ -91,8 +92,7 @@ pub struct ProviderRegistry {
     providers: Vec<Box<dyn ConfigProvider>>,
     domain_router: Arc<DomainRouter>,
     event_bus: Arc<EventBusImpl>,
-    status_cache: Arc<StatusCache>,
-    favicon_cache: Arc<FaviconCache>,
+    routes_listener: Arc<dyn RoutesListener>,
     shutdown: CancellationToken,
     default_forwarding: ForwardingMode,
 }
@@ -101,8 +101,7 @@ impl ProviderRegistry {
     pub fn new(
         domain_router: Arc<DomainRouter>,
         event_bus: Arc<EventBusImpl>,
-        status_cache: Arc<StatusCache>,
-        favicon_cache: Arc<FaviconCache>,
+        routes_listener: Arc<dyn RoutesListener>,
         shutdown: CancellationToken,
         default_forwarding: ForwardingMode,
     ) -> Self {
@@ -110,8 +109,7 @@ impl ProviderRegistry {
             providers: Vec::new(),
             domain_router,
             event_bus,
-            status_cache,
-            favicon_cache,
+            routes_listener,
             shutdown,
             default_forwarding,
         }
@@ -193,8 +191,7 @@ impl ProviderRegistry {
         let event_loop = EventLoop {
             router: self.domain_router,
             event_bus: self.event_bus,
-            status_cache: self.status_cache,
-            favicon_cache: self.favicon_cache,
+            routes_listener: self.routes_listener,
             default_forwarding: self.default_forwarding,
         };
         let handle = tokio::spawn(async move {
@@ -213,8 +210,7 @@ impl ProviderRegistry {
 struct EventLoop {
     router: Arc<DomainRouter>,
     event_bus: Arc<EventBusImpl>,
-    status_cache: Arc<StatusCache>,
-    favicon_cache: Arc<FaviconCache>,
+    routes_listener: Arc<dyn RoutesListener>,
     default_forwarding: ForwardingMode,
 }
 
@@ -265,7 +261,7 @@ impl EventLoop {
         if reloads.is_empty() {
             return;
         }
-        on_config_change(&self.router, &self.status_cache, &self.favicon_cache).await;
+        self.routes_listener.routes_changed().await;
         for reload in reloads {
             self.event_bus.post(reload);
         }
@@ -369,23 +365,6 @@ fn apply(
         }
     }
     reloads
-}
-
-async fn on_config_change(
-    router: &DomainRouter,
-    status_cache: &StatusCache,
-    favicon_cache: &FaviconCache,
-) {
-    status_cache.invalidate_all();
-
-    let favicon_configs: Vec<(String, Arc<ServerConfig>)> = router
-        .list_all()
-        .into_iter()
-        .map(|(_pid, cfg)| (cfg.effective_id(), cfg))
-        .collect();
-    if let Err(e) = favicon_cache.reload(&favicon_configs, None).await {
-        tracing::warn!(error = %e, "failed to reload favicons after config change");
-    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use infrarust_server_manager::ServerManagerService;
 use infrarust_transport::BackendConnector;
 
 use super::ProxyServer;
+use super::status_refresh::StatusCacheRefresh;
 use crate::api_convert::convert_server_state;
 use crate::auth::mojang::MojangAuth;
 use crate::ban::manager::BanManager;
@@ -110,8 +111,11 @@ impl ProxyServer {
         let mut provider_registry = ProviderRegistry::new(
             Arc::clone(&domain_router),
             Arc::clone(&event_bus),
-            Arc::clone(&status_cache),
-            Arc::clone(&favicon_cache),
+            Arc::new(StatusCacheRefresh {
+                router: Arc::clone(&domain_router),
+                status_cache: Arc::clone(&status_cache),
+                favicon_cache: Arc::clone(&favicon_cache),
+            }),
             background.clone(),
             proxy_wide_forwarding.clone(),
         );

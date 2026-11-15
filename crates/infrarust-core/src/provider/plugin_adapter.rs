@@ -224,7 +224,14 @@ mod tests {
     use crate::event_bus::EventBusImpl;
     use crate::provider::registry::{PluginRouteEvents, ProviderRegistry};
     use crate::routing::DomainRouter;
-    use crate::status::{FaviconCache, StatusCache};
+
+    struct NoListener;
+
+    impl crate::provider::RoutesListener for NoListener {
+        fn routes_changed(&self) -> BoxFuture<'_, ()> {
+            Box::pin(async {})
+        }
+    }
 
     fn document(id: &str, toml: &str) -> ServerDocument {
         ServerDocument {
@@ -429,8 +436,7 @@ mod tests {
             let registry = ProviderRegistry::new(
                 Arc::clone(&router),
                 Arc::new(EventBusImpl::new()),
-                Arc::new(StatusCache::new(Duration::from_secs(1))),
-                Arc::new(FaviconCache::load_from_configs(&[], None).await.unwrap()),
+                Arc::new(NoListener),
                 shutdown.clone(),
                 default_forwarding,
             );
