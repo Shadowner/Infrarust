@@ -38,7 +38,7 @@ impl Middleware for BanIpCheckMiddleware {
                 return Ok(MiddlewareResult::Continue);
             }
 
-            let mut attempt = LoginAttempt::status(ctx.client_ip);
+            let mut attempt = LoginAttempt::status(ctx.client_ip());
             if let Some(host) = admission::virtual_host(ctx) {
                 attempt = attempt.virtual_host(host);
             }

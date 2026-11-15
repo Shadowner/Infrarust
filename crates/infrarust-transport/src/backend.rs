@@ -475,8 +475,14 @@ mod tests {
 
     #[test]
     fn bracketed_ipv6_hosts_are_ip_literals() {
-        assert_eq!(ip_literal("[::1]"), Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])));
-        assert_eq!(ip_literal("::1"), Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1])));
+        assert_eq!(
+            ip_literal("[::1]"),
+            Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]))
+        );
+        assert_eq!(
+            ip_literal("::1"),
+            Some(IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]))
+        );
         assert_eq!(ip_literal("10.0.0.7"), Some(IpAddr::from([10, 0, 0, 7])));
         assert_eq!(ip_literal(HOST), None);
         assert_eq!(ip_literal("[backend.test]"), None);

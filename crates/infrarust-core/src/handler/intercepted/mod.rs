@@ -106,9 +106,9 @@ impl InterceptedHandler {
 
         let version = handshake.protocol_version;
         let api_version = infrarust_api::types::ProtocolVersion::new(version.0);
-        let peer_addr = conn.peer_addr;
+        let peer_addr = conn.peer_addr();
         let remote_addr = conn.client_addr();
-        let connection_info = conn.connection_info();
+        let connection_info = conn.connection_info().clone();
         let registry = &self.services.packet_registry;
 
         let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
@@ -163,7 +163,7 @@ impl InterceptedHandler {
             api_version,
             player.id().as_u64(),
             peer_addr,
-            Some(conn.client_ip),
+            Some(conn.client_ip()),
         );
         let mut io = SessionIo {
             client,

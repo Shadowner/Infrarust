@@ -91,7 +91,7 @@ pub(crate) async fn admit(
     let profile = request.profile;
 
     let attempt = LoginAttempt::post_auth(
-        ctx.client_ip,
+        ctx.client_ip(),
         profile.username.clone(),
         profile.uuid,
         online_mode,
@@ -166,7 +166,7 @@ mod tests {
         let peer = TcpStream::connect(addr).await.unwrap();
         let (stream, _) = listener.accept().await.unwrap();
         let peer_addr = "203.0.113.9:40000".parse().unwrap();
-        let ctx = ConnectionContext::new_for_test(stream, peer_addr, peer_addr.ip(), addr);
+        let ctx = ConnectionContext::new_for_test(stream, peer_addr, addr);
         (ctx, peer)
     }
 

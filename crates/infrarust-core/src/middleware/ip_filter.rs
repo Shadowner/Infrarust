@@ -32,13 +32,13 @@ impl Middleware for IpFilterMiddleware {
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
             if let Some(ref filter) = self.global_filter
-                && !filter.is_allowed(&ctx.client_ip)
+                && !filter.is_allowed(&ctx.client_ip())
             {
-                tracing::debug!(ip = %ctx.client_ip, "ip blocked by global filter");
+                tracing::debug!(ip = %ctx.client_ip(), "ip blocked by global filter");
                 ctx.extensions.insert(Refused(RejectReason::IpFilter));
                 return Ok(MiddlewareResult::Reject(format!(
                     "IP {} is not allowed",
-                    ctx.client_ip
+                    ctx.client_ip()
                 )));
             }
             Ok(MiddlewareResult::Continue)

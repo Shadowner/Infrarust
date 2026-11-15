@@ -2,7 +2,7 @@
 //! Tests for the `TelemetryMiddleware` (NOT feature-gated — uses only tracing).
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use infrarust_config::{ProxyMode, TelemetryConfig, TraceClientIp, TracesConfig};
@@ -39,7 +39,7 @@ async fn make_test_ctx() -> ConnectionContext {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let (_accepted, _) = listener.accept().await.unwrap();
 
-    ConnectionContext::new_for_test(stream, addr, IpAddr::V4(Ipv4Addr::LOCALHOST), addr)
+    ConnectionContext::new_for_test(stream, addr, addr)
 }
 
 #[tokio::test]
@@ -162,8 +162,8 @@ async fn span_line(middleware: TelemetryMiddleware, client_ip: &str) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-    let mut ctx =
-        ConnectionContext::new_for_test(stream, addr, client_ip.parse::<IpAddr>().unwrap(), addr);
+    let peer = SocketAddr::new(client_ip.parse().unwrap(), addr.port());
+    let mut ctx = ConnectionContext::new_for_test(stream, peer, addr);
     ctx.extensions.insert(LoginData {
         username: "Notch".to_string(),
         player_uuid: None,

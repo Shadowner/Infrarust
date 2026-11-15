@@ -113,17 +113,17 @@ impl Middleware for RateLimiterMiddleware {
                 ConnectionIntent::Login | ConnectionIntent::Transfer => &self.login_limiter,
             };
 
-            if limiter.check_key(&IpKey::from(ctx.client_ip)).is_ok() {
+            if limiter.check_key(&IpKey::from(ctx.client_ip())).is_ok() {
                 Ok(MiddlewareResult::Continue)
             } else {
                 tracing::debug!(
-                    ip = %ctx.client_ip,
+                    ip = %ctx.client_ip(),
                     intent = ?handshake.intent,
                     "rate limit exceeded"
                 );
                 if !self.warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
-                        key = %IpKey::from(ctx.client_ip),
+                        key = %IpKey::from(ctx.client_ip()),
                         "refusing connections over [rate_limit]; clients behind playit, frp, \
                          ngrok, Docker userland proxy or NAT share one address: send the real \
                          address with receive_proxy_protocol and trusted_proxies, raise \

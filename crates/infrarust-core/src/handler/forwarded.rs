@@ -442,7 +442,7 @@ impl ForwardedLogin<'_> {
                 &route.addresses,
                 config.timeouts.as_ref().map(|t| t.connect),
                 config.send_proxy_protocol,
-                &ctx.connection_info(),
+                ctx.connection_info(),
             )
             .await?;
         admitted
@@ -452,7 +452,7 @@ impl ForwardedLogin<'_> {
             Opening::Modern(handshake) => {
                 let profile = admitted.session.profile();
                 let data = ForwardingData {
-                    real_ip: ctx.client_ip,
+                    real_ip: ctx.client_ip(),
                     uuid: profile.uuid,
                     username: profile.username.clone(),
                     properties: profile.properties.clone(),

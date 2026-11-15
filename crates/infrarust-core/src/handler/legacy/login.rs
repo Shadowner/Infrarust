@@ -26,7 +26,7 @@ impl LegacyHandler {
             .clone();
         let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
 
-        let attempt = LoginAttempt::pre_auth(ctx.client_ip, request.username.clone())
+        let attempt = LoginAttempt::pre_auth(ctx.client_ip(), request.username.clone())
             .virtual_host(domain.clone())
             .server(ServerId::new(routing.config_id.clone()));
         if let Some(refusal) = self.services.ban_manager.refuse(&attempt).await {
@@ -101,7 +101,6 @@ impl LegacyHandler {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
 
     use infrarust_config::ServerAddress;
@@ -139,8 +138,7 @@ mod tests {
     async fn test_ctx(stream: TcpStream) -> ConnectionContext {
         let peer = stream.local_addr().unwrap();
         let local = stream.peer_addr().unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(stream, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+        let mut ctx = ConnectionContext::new_for_test(stream, peer, local);
         ctx.buffered_data.extend_from_slice(&[0x02]);
         ctx
     }

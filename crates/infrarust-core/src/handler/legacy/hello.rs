@@ -176,8 +176,6 @@ async fn read_string_into(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use std::net::{IpAddr, Ipv4Addr};
-
     use infrarust_protocol::legacy::{LegacyPingRequest, LegacyPingVariant};
     use tokio::io::AsyncWriteExt;
     use tokio::net::{TcpListener, TcpStream};
@@ -209,8 +207,7 @@ mod tests {
         let local = listener.local_addr().unwrap();
         let mut client = TcpStream::connect(local).await.unwrap();
         let (stream, peer) = listener.accept().await.unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(stream, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+        let mut ctx = ConnectionContext::new_for_test(stream, peer, local);
         ctx.buffered_data.extend_from_slice(&sent[..read_ahead]);
         client.write_all(&sent[read_ahead..]).await.unwrap();
         (ctx, client)

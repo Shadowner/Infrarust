@@ -62,7 +62,7 @@ pub fn reject_refused(bus: &EventBusImpl, ctx: &ConnectionContext) {
 }
 
 pub fn handoff_attempt(ctx: &ConnectionContext) -> LoginAttempt {
-    let mut attempt = LoginAttempt::status(ctx.client_ip);
+    let mut attempt = LoginAttempt::status(ctx.client_ip());
     attempt.stage = LoginStage::PreAuth;
     attempt.username = ctx
         .extensions

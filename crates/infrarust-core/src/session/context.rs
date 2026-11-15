@@ -53,9 +53,7 @@ impl SessionContext<'_> {
     }
 
     pub(crate) fn real_ip(&self) -> IpAddr {
-        self.connection_info
-            .real_ip
-            .unwrap_or(self.connection_info.peer_addr.ip())
+        self.connection_info.client_addr().ip()
     }
 
     pub(crate) fn forwarding_data(&self) -> ForwardingData {
@@ -128,8 +126,7 @@ pub(crate) mod test_helpers {
             },
             connection_info: ConnectionInfo {
                 peer_addr,
-                real_ip: None,
-                real_port: None,
+                real_addr: None,
                 local_addr: peer_addr,
                 connected_at: tokio::time::Instant::now(),
             },

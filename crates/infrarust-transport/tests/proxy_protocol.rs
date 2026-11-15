@@ -90,8 +90,7 @@ async fn test_encode_v2_tcp4() {
 
     let info = infrarust_transport::ConnectionInfo {
         peer_addr: "192.168.1.1:12345".parse().unwrap(),
-        real_ip: None,
-        real_port: None,
+        real_addr: None,
         local_addr: "10.0.0.1:25565".parse().unwrap(),
         connected_at: tokio::time::Instant::now(),
     };
@@ -104,6 +103,30 @@ async fn test_encode_v2_tcp4() {
     assert_eq!(decoded.version, ProxyProtocolVersion::V2);
     assert_eq!(decoded.source_addr, "192.168.1.1:12345".parse().unwrap());
     assert!(leftover.is_empty());
+}
+
+#[tokio::test]
+async fn test_encode_v2_uses_the_real_client_address_and_port() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut server_stream, _) = listener.accept().await.unwrap();
+
+    let info = infrarust_transport::ConnectionInfo {
+        peer_addr: "192.168.1.1:12345".parse().unwrap(),
+        real_addr: Some("203.0.113.7:40123".parse().unwrap()),
+        local_addr: "10.0.0.1:25565".parse().unwrap(),
+        connected_at: tokio::time::Instant::now(),
+    };
+
+    encode_proxy_protocol_v2(&mut client, &info).await.unwrap();
+
+    let (decoded, _) = decode_proxy_protocol(&mut server_stream).await.unwrap();
+    assert_eq!(
+        decoded.unwrap().source_addr,
+        "203.0.113.7:40123".parse().unwrap()
+    );
 }
 
 #[tokio::test]
@@ -243,8 +266,7 @@ async fn test_encode_v2_mixed_v4_source_v6_dest() {
 
     let info = infrarust_transport::ConnectionInfo {
         peer_addr: "192.168.1.1:12345".parse().unwrap(),
-        real_ip: None,
-        real_port: None,
+        real_addr: None,
         local_addr: "[2001:db8::1]:25565".parse().unwrap(),
         connected_at: tokio::time::Instant::now(),
     };

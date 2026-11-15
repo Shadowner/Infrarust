@@ -236,13 +236,7 @@ pub async fn encode_proxy_protocol_v2(
     stream: &mut TcpStream,
     client_info: &ConnectionInfo,
 ) -> Result<(), TransportError> {
-    let source_ip = client_info
-        .real_ip
-        .unwrap_or_else(|| client_info.peer_addr.ip());
-    let source_port = client_info
-        .real_port
-        .unwrap_or_else(|| client_info.peer_addr.port());
-    let source_addr = SocketAddr::new(source_ip, source_port);
+    let source_addr = client_info.client_addr();
     let dest_addr = client_info.local_addr;
 
     let addresses: ppp::v2::Addresses = match (source_addr, dest_addr) {

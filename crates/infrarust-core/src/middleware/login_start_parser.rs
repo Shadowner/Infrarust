@@ -179,8 +179,6 @@ fn decode_login_start(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use std::net::{IpAddr, Ipv4Addr};
-
     use bytes::BytesMut;
     use infrarust_api::event::EventPriority;
     use infrarust_api::event::bus::{EventBus, EventBusExt};
@@ -237,8 +235,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let client = TcpStream::connect(addr).await.unwrap();
         let (server, peer) = listener.accept().await.unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(server, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), addr);
+        let mut ctx = ConnectionContext::new_for_test(server, peer, addr);
         ctx.buffered_data.extend_from_slice(wire);
         ctx.extensions.insert(HandshakeData {
             domain: "lobby.test".to_string(),

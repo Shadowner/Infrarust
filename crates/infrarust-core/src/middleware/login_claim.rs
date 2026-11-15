@@ -136,8 +136,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let client = TcpStream::connect(addr).await.unwrap();
         let (server, peer) = listener.accept().await.unwrap();
-        let mut ctx =
-            ConnectionContext::new_for_test(server, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), addr);
+        let mut ctx = ConnectionContext::new_for_test(server, peer, addr);
         ctx.extensions.insert(HandshakeData {
             domain: "lobby.test".to_string(),
             raw_host: "Lobby.Test\0FML3\0".to_string(),

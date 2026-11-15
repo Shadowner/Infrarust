@@ -39,8 +39,7 @@ async fn observer_records_failover_outcomes() {
 
     let info = ConnectionInfo {
         peer_addr: "127.0.0.1:1".parse().unwrap(),
-        real_ip: None,
-        real_port: None,
+        real_addr: None,
         local_addr: "127.0.0.1:1".parse().unwrap(),
         connected_at: tokio::time::Instant::now(),
     };
@@ -76,8 +75,7 @@ async fn max_attempts_bounds_the_failover_walk() {
     let peer = "127.0.0.1:1".parse().unwrap();
     let info = ConnectionInfo {
         peer_addr: peer,
-        real_ip: None,
-        real_port: None,
+        real_addr: None,
         local_addr: peer,
         connected_at: tokio::time::Instant::now(),
     };

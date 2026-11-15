@@ -13,7 +13,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr};
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
@@ -138,8 +137,7 @@ fn fixture(listeners: usize) -> Fixture {
         let (server, peer) = listener.accept().await.unwrap();
         (server, client, peer, local)
     });
-    let mut ctx =
-        ConnectionContext::new_for_test(server, peer, IpAddr::V4(Ipv4Addr::LOCALHOST), local);
+    let mut ctx = ConnectionContext::new_for_test(server, peer, local);
 
     let config: Arc<ServerConfig> = Arc::new(
         toml::from_str("domains = [\"play.example.net\"]\naddresses = [\"127.0.0.1:25566\"]\n")
@@ -178,7 +176,12 @@ fn poll_ready<F: Future>(future: F) -> F::Output {
 }
 
 fn status_frame(fixture: &Fixture) -> Bytes {
-    poll_ready(fixture.handler.status_frame(&fixture.ctx, &fixture.sessions)).unwrap()
+    poll_ready(
+        fixture
+            .handler
+            .status_frame(&fixture.ctx, &fixture.sessions),
+    )
+    .unwrap()
 }
 
 #[divan::bench(args = [0, 1])]

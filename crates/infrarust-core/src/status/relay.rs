@@ -412,8 +412,7 @@ mod tests {
     fn make_client_info() -> ConnectionInfo {
         ConnectionInfo {
             peer_addr: "127.0.0.1:12345".parse().unwrap(),
-            real_ip: None,
-            real_port: None,
+            real_addr: None,
             local_addr: "127.0.0.1:25565".parse().unwrap(),
             connected_at: tokio::time::Instant::now(),
         }

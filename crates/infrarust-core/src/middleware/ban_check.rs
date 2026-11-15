@@ -33,7 +33,7 @@ impl Middleware for BanCheckMiddleware {
         Box::pin(async move {
             let login = ctx.require_extension::<LoginData>("LoginData")?;
 
-            let mut attempt = LoginAttempt::pre_auth(ctx.client_ip, login.username.clone())
+            let mut attempt = LoginAttempt::pre_auth(ctx.client_ip(), login.username.clone())
                 .claimed_uuid(login.player_uuid);
             if let Some(handshake) = ctx.extensions.get::<HandshakeData>() {
                 attempt = attempt.virtual_host(handshake.domain.clone());

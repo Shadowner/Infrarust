@@ -182,8 +182,7 @@ impl ActiveHealthProber {
         let connect_addr = format!("{}:{}", target.address.host, target.address.port);
         let prober_info = ConnectionInfo {
             peer_addr: self.bind,
-            real_ip: None,
-            real_port: None,
+            real_addr: None,
             local_addr: self.bind,
             connected_at: tokio::time::Instant::now(),
         };

@@ -322,7 +322,7 @@ impl StatusHandler {
                 ),
                 domain,
                 client_version,
-                &client_info,
+                client_info,
             )
             .await
         {

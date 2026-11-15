@@ -17,8 +17,7 @@ async fn admits(limiter: &RateLimiterMiddleware, ip: &str) -> bool {
     let addr = listener.local_addr().unwrap();
     let stream = TcpStream::connect(addr).await.unwrap();
     let client_ip: IpAddr = ip.parse().unwrap();
-    let mut ctx =
-        ConnectionContext::new_for_test(stream, SocketAddr::new(client_ip, 50001), client_ip, addr);
+    let mut ctx = ConnectionContext::new_for_test(stream, SocketAddr::new(client_ip, 50001), addr);
     ctx.extensions.insert(HandshakeData {
         domain: "lobby.test".into(),
         raw_host: "lobby.test".into(),

@@ -309,7 +309,7 @@ impl HandoffRelay {
                     &resolved.addresses,
                     Some(resolved.timeout),
                     resolved.proxy_protocol,
-                    &info,
+                    info,
                 )
                 .await?);
         }
@@ -317,7 +317,7 @@ impl HandoffRelay {
         for address in &resolved.addresses {
             match self
                 .connector
-                .connect_one(address, resolved.timeout, resolved.proxy_protocol, &info)
+                .connect_one(address, resolved.timeout, resolved.proxy_protocol, info)
                 .await
             {
                 Ok(backend) => return Ok(backend),
@@ -411,7 +411,7 @@ mod tests {
         let local = listener.local_addr().unwrap();
         let _peer = TcpStream::connect(local).await.unwrap();
         let (stream, remote) = listener.accept().await.unwrap();
-        let mut ctx = ConnectionContext::new_for_test(stream, remote, remote.ip(), local);
+        let mut ctx = ConnectionContext::new_for_test(stream, remote, local);
         let (server_config, load_balancer) = services
             .domain_router
             .find_route_by_server_id("modded")

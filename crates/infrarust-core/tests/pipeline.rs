@@ -21,7 +21,6 @@ async fn make_test_ctx() -> ConnectionContext {
     ConnectionContext::new_for_test(
         client,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 12345),
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
         addr,
     )
 }

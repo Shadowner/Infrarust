@@ -41,7 +41,7 @@ async fn client() -> Client {
     let local = listener.local_addr().unwrap();
     let peer = TcpStream::connect(local).await.unwrap();
     let (stream, remote) = listener.accept().await.unwrap();
-    let ctx = ConnectionContext::new_for_test(stream, remote, remote.ip(), local);
+    let ctx = ConnectionContext::new_for_test(stream, remote, local);
     Client { peer, ctx }
 }
 
@@ -563,7 +563,7 @@ async fn small_buffered_client() -> Client {
     peer.set_recv_buffer_size(4096).unwrap();
     let peer = peer.connect(local).await.unwrap();
     let (stream, remote) = listener.accept().await.unwrap();
-    let ctx = ConnectionContext::new_for_test(stream, remote, remote.ip(), local);
+    let ctx = ConnectionContext::new_for_test(stream, remote, local);
     Client { peer, ctx }
 }
 

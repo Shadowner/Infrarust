@@ -60,17 +60,17 @@ impl Middleware for DomainRouterMiddleware {
 
             // Check per-server IP filter
             if let Some(ref ip_filter) = server_config.ip_filter
-                && !ip_filter.is_allowed(&ctx.client_ip)
+                && !ip_filter.is_allowed(&ctx.client_ip())
             {
                 tracing::debug!(
-                    ip = %ctx.client_ip,
+                    ip = %ctx.client_ip(),
                     server = %config_id,
                     "ip blocked by server filter"
                 );
                 ctx.extensions.insert(Refused(RejectReason::IpFilter));
                 return Ok(MiddlewareResult::Reject(format!(
                     "IP {} is not allowed on this server",
-                    ctx.client_ip
+                    ctx.client_ip()
                 )));
             }
 

@@ -8,7 +8,7 @@ use bytes::BytesMut;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
-use infrarust_transport::{AcceptedConnection, ConnectionInfo, ConnectionSlot};
+use infrarust_transport::{AcceptedConnection, ClientConnection, ConnectionInfo, ConnectionSlot};
 
 use crate::error::CoreError;
 use crate::filter::transport_chain::TransportSession;
@@ -77,21 +77,12 @@ impl Extensions {
 pub struct ConnectionContext {
     /// Client TCP stream. `Option` so passthrough handler can take ownership.
     stream: Option<TcpStream>,
-    /// Peer socket address (may be load balancer address).
-    pub peer_addr: SocketAddr,
-    /// Effective client IP (after proxy protocol resolution).
-    pub client_ip: IpAddr,
-    client_port: u16,
-    /// Local listener address.
-    pub local_addr: SocketAddr,
-    /// Timestamp when the connection was accepted.
-    pub connected_at: Instant,
+    info: ConnectionInfo,
     /// Bytes already read from the stream (proxy protocol header, partial handshake).
     pub buffered_data: BytesMut,
     /// Type-erased data accumulated by middlewares.
     pub extensions: Extensions,
     pub connection_id: u64,
-    pub real_ip: Option<IpAddr>,
     transport: Option<TransportSession>,
     _slot: ConnectionSlot,
 }
@@ -99,25 +90,19 @@ pub struct ConnectionContext {
 impl ConnectionContext {
     /// Constructs a context from an accepted transport connection.
     pub fn from_accepted(accepted: AcceptedConnection) -> Self {
-        let peer_addr = accepted.connection.peer_addr();
-        let client_ip = accepted.connection.client_addr();
-        let real_ip = accepted.connection.real_ip().map(|_| client_ip);
-        let local_addr = accepted.connection.local_addr();
-        let connected_at = accepted.connection.connected_at();
         let (connection, slot) = accepted.into_parts();
+        Self::from_parts(connection, slot)
+    }
+
+    fn from_parts(connection: ClientConnection, slot: ConnectionSlot) -> Self {
         let (stream, buffered_data, info) = connection.into_parts();
 
         Self {
             stream: Some(stream),
-            peer_addr,
-            client_ip,
-            client_port: info.real_port.unwrap_or(peer_addr.port()),
-            local_addr,
-            connected_at,
+            info,
             buffered_data,
             extensions: Extensions::new(),
             connection_id: next_connection_id(),
-            real_ip,
             transport: None,
             _slot: slot,
         }
@@ -174,56 +159,94 @@ impl ConnectionContext {
     /// Creates a context for testing with a pre-existing TCP stream.
     ///
     /// This avoids needing an `AcceptedConnection` in tests.
-    pub fn new_for_test(
-        stream: TcpStream,
-        peer_addr: SocketAddr,
-        client_ip: IpAddr,
-        local_addr: SocketAddr,
-    ) -> Self {
-        Self {
-            stream: Some(stream),
-            peer_addr,
-            client_ip,
-            client_port: peer_addr.port(),
-            local_addr,
-            connected_at: Instant::now(),
-            buffered_data: BytesMut::new(),
-            extensions: Extensions::new(),
-            connection_id: next_connection_id(),
-            real_ip: None,
-            transport: None,
-            _slot: ConnectionSlot::default(),
-        }
+    pub fn new_for_test(stream: TcpStream, peer_addr: SocketAddr, local_addr: SocketAddr) -> Self {
+        Self::from_parts(
+            ClientConnection::new(stream, peer_addr, local_addr),
+            ConnectionSlot::default(),
+        )
     }
 
     pub fn attach_transport(&mut self, session: TransportSession) {
         self.transport = Some(session);
     }
 
-    pub const fn client_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.client_ip, self.client_port)
+    pub fn client_addr(&self) -> SocketAddr {
+        self.info.client_addr()
+    }
+
+    pub fn client_ip(&self) -> IpAddr {
+        self.client_addr().ip()
+    }
+
+    pub fn real_ip(&self) -> Option<IpAddr> {
+        self.info.real_addr.map(|_| self.client_ip())
+    }
+
+    pub const fn peer_addr(&self) -> SocketAddr {
+        self.info.peer_addr
+    }
+
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.info.local_addr
+    }
+
+    pub const fn connected_at(&self) -> Instant {
+        self.info.connected_at
     }
 
     pub fn connection_duration(&self) -> Duration {
-        self.connected_at.elapsed()
+        self.info.connected_at.elapsed()
     }
 
-    /// Builds a `ConnectionInfo` for passing to `BackendConnector`.
-    pub const fn connection_info(&self) -> ConnectionInfo {
-        ConnectionInfo {
-            peer_addr: self.peer_addr,
-            real_ip: Some(self.client_ip),
-            real_port: None,
-            local_addr: self.local_addr,
-            connected_at: self.connected_at,
-        }
+    pub const fn connection_info(&self) -> &ConnectionInfo {
+        &self.info
     }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use infrarust_transport::{ProxyProtocolInfo, ProxyProtocolVersion};
+
     use super::*;
+
+    #[tokio::test]
+    async fn the_proxy_protocol_source_port_reaches_the_backend_connection_info() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(local).await.unwrap();
+        let (stream, peer) = listener.accept().await.unwrap();
+        let source: SocketAddr = "[::ffff:203.0.113.7]:40123".parse().unwrap();
+        let header = ProxyProtocolInfo {
+            source_addr: source,
+            dest_addr: local,
+            version: ProxyProtocolVersion::V2,
+        };
+
+        let ctx = ConnectionContext::from_parts(
+            ClientConnection::new(stream, peer, local).with_proxy_protocol(&header),
+            ConnectionSlot::default(),
+        );
+
+        let client: SocketAddr = "203.0.113.7:40123".parse().unwrap();
+        assert_eq!(ctx.client_addr(), client);
+        assert_eq!(ctx.connection_info().client_addr(), client);
+        assert_eq!(ctx.real_ip(), Some(client.ip()));
+        assert_eq!(ctx.peer_addr(), peer);
+    }
+
+    #[tokio::test]
+    async fn a_direct_connection_has_no_real_ip() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(local).await.unwrap();
+        let (stream, peer) = listener.accept().await.unwrap();
+
+        let ctx = ConnectionContext::new_for_test(stream, peer, local);
+
+        assert_eq!(ctx.client_addr(), peer);
+        assert_eq!(ctx.real_ip(), None);
+    }
 
     #[test]
     fn extensions_insert_and_get() {

@@ -104,7 +104,7 @@ pub async fn claim_raw(
         let event = RawConnectionEvent::new(
             ctx.connection_id,
             ctx.client_addr(),
-            ctx.local_addr,
+            ctx.local_addr(),
             prefix.clone(),
             Bytes::copy_from_slice(&ctx.buffered_data),
         );
@@ -164,7 +164,7 @@ fn filtered(services: &ProxyServices, ctx: &ConnectionContext) -> bool {
         .config
         .ip_filter
         .as_ref()
-        .is_some_and(|filter| !filter.is_allowed(&ctx.client_ip))
+        .is_some_and(|filter| !filter.is_allowed(&ctx.client_ip()))
 }
 
 async fn read_more(
@@ -237,7 +237,7 @@ mod tests {
         client.write_all(sent).await.unwrap();
         Peer {
             client,
-            ctx: ConnectionContext::new_for_test(stream, remote, remote.ip(), local),
+            ctx: ConnectionContext::new_for_test(stream, remote, local),
         }
     }
 
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].connection_id, peer.ctx.connection_id);
         assert_eq!(seen[0].remote_addr, peer.ctx.client_addr());
-        assert_eq!(seen[0].local_addr, peer.ctx.local_addr);
+        assert_eq!(seen[0].local_addr, peer.ctx.local_addr());
         assert_eq!(seen[0].prefix, Bytes::from_static(b"XFER"));
         assert_eq!(seen[0].data, Bytes::from_static(b"XFER\x00\x01data"));
     }

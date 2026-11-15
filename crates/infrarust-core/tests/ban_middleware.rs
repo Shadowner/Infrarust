@@ -49,7 +49,7 @@ async fn loopback(ip: IpAddr) -> ConnectionContext {
 
     let peer: SocketAddr = SocketAddr::new(ip, 12345);
     let local: SocketAddr = "0.0.0.0:25565".parse().unwrap();
-    ConnectionContext::new_for_test(stream, peer, ip, local)
+    ConnectionContext::new_for_test(stream, peer, local)
 }
 
 async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContext {

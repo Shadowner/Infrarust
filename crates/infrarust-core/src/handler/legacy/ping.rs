@@ -161,7 +161,7 @@ impl LegacyHandler {
                 addresses,
                 config.timeouts.as_ref().map(|t| t.connect),
                 false,
-                &ctx.connection_info(),
+                ctx.connection_info(),
             )
             .await?;
 

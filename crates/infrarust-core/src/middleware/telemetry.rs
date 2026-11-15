@@ -72,7 +72,7 @@ impl Middleware for TelemetryMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let client_ip = traced_ip(self.client_ip, ctx.client_ip);
+            let client_ip = traced_ip(self.client_ip, ctx.client_ip());
 
             let domain = ctx
                 .extensions
