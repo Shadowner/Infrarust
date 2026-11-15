@@ -14,12 +14,12 @@ use infrarust_transport::{Listener, PendingConnection, TransportError};
 
 use super::ProxyServer;
 use crate::error::CoreError;
+use crate::handoff::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::handoff::{HandoffError, HandoffLevel};
 use crate::middleware::telemetry::ConnectionSpan;
 use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
-use crate::pipeline::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::pipeline::types::{
     ClaimedLogin, ConnectionIntent, HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain,
 };

@@ -2,7 +2,6 @@ pub mod admission;
 pub mod context;
 pub mod middleware;
 pub mod preauth_frame;
-pub mod raw_claim;
 pub mod types;
 
 use crate::error::CoreError;

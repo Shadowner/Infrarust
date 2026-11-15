@@ -1,4 +1,5 @@
 mod claims;
+pub mod raw_claim;
 mod relay;
 
 pub use claims::{ClaimMatch, ConnectionClaims, PluginConnectionClaims};
