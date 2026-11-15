@@ -63,8 +63,8 @@ fn is_file_path(value: &str) -> bool {
 ///
 /// Keyed by server id, with a global default fallback.
 pub struct FaviconCache {
-    by_server: DashMap<String, String>,
-    default: Option<String>,
+    by_server: DashMap<String, Arc<str>>,
+    default: Option<Arc<str>>,
 }
 
 impl FaviconCache {
@@ -83,7 +83,7 @@ impl FaviconCache {
             if let Some(favicon_value) = cfg.motd.online.as_ref().and_then(|m| m.favicon.as_ref()) {
                 match load_favicon(favicon_value).await {
                     Ok(data_uri) => {
-                        by_server.insert(id.clone(), data_uri);
+                        by_server.insert(id.clone(), Arc::from(data_uri));
                     }
                     Err(e) => {
                         tracing::warn!(server = %id, error = %e, "failed to load favicon");
@@ -97,7 +97,7 @@ impl FaviconCache {
             .and_then(|e| e.favicon.as_ref())
         {
             Some(val) => match load_favicon(val).await {
-                Ok(data_uri) => Some(data_uri),
+                Ok(data_uri) => Some(Arc::from(data_uri)),
                 Err(e) => {
                     tracing::warn!(error = %e, "failed to load default favicon");
                     None
@@ -125,7 +125,7 @@ impl FaviconCache {
             if let Some(favicon_value) = cfg.motd.online.as_ref().and_then(|m| m.favicon.as_ref()) {
                 match load_favicon(favicon_value).await {
                     Ok(data_uri) => {
-                        self.by_server.insert(id.clone(), data_uri);
+                        self.by_server.insert(id.clone(), Arc::from(data_uri));
                     }
                     Err(e) => {
                         tracing::warn!(server = %id, error = %e, "failed to load favicon on reload");
@@ -142,14 +142,18 @@ impl FaviconCache {
     }
 
     /// Returns the favicon for a server, falling back to the global default.
-    pub fn get(&self, server_id: &str) -> Option<String> {
-        if let Some(entry) = self.by_server.get(server_id) {
-            return Some(entry.value().clone());
-        }
-        self.default.clone()
+    pub fn get(&self, server_id: &str) -> Option<Arc<str>> {
+        self.server_favicon(server_id)
+            .or_else(|| self.default_favicon())
     }
 
-    pub fn default_favicon(&self) -> Option<String> {
+    pub fn server_favicon(&self, server_id: &str) -> Option<Arc<str>> {
+        self.by_server
+            .get(server_id)
+            .map(|entry| Arc::clone(entry.value()))
+    }
+
+    pub fn default_favicon(&self) -> Option<Arc<str>> {
         self.default.clone()
     }
 }
@@ -211,11 +215,11 @@ mod tests {
     async fn test_favicon_cache_by_server() {
         let cache = FaviconCache {
             by_server: DashMap::new(),
-            default: Some("default_fav".to_string()),
+            default: Some(Arc::from("default_fav")),
         };
         cache
             .by_server
-            .insert("survival".to_string(), "survival_fav".to_string());
+            .insert("survival".to_string(), Arc::from("survival_fav"));
 
         assert_eq!(cache.get("survival").as_deref(), Some("survival_fav"));
     }
@@ -224,7 +228,7 @@ mod tests {
     async fn test_favicon_cache_default_fallback() {
         let cache = FaviconCache {
             by_server: DashMap::new(),
-            default: Some("default_fav".to_string()),
+            default: Some(Arc::from("default_fav")),
         };
 
         assert_eq!(cache.get("unknown").as_deref(), Some("default_fav"));
