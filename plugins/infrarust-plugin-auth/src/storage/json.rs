@@ -56,6 +56,28 @@ impl JsonFileStorage {
     fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Relaxed);
     }
+
+    async fn write_to_disk(&self) -> Result<(), AuthStorageError> {
+        let accounts: Vec<AuthAccount> = self
+            .accounts
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+
+        let json = serde_json::to_string_pretty(&accounts)
+            .map_err(|e| AuthStorageError::Serialization(e.to_string()))?;
+
+        let tmp_path = self.file_path.with_extension("json.tmp");
+        tokio::fs::write(&tmp_path, json.as_bytes()).await?;
+        tokio::fs::rename(&tmp_path, &self.file_path).await?;
+
+        tracing::debug!(
+            count = accounts.len(),
+            path = %self.file_path.display(),
+            "Flushed auth accounts to disk"
+        );
+        Ok(())
+    }
 }
 
 impl AuthStorage for JsonFileStorage {
@@ -151,26 +173,9 @@ impl AuthStorage for JsonFileStorage {
             if !self.dirty.swap(false, Ordering::Relaxed) {
                 return Ok(());
             }
-
-            let accounts: Vec<AuthAccount> = self
-                .accounts
-                .iter()
-                .map(|entry| entry.value().clone())
-                .collect();
-
-            let json = serde_json::to_string_pretty(&accounts)
-                .map_err(|e| AuthStorageError::Serialization(e.to_string()))?;
-
-            let tmp_path = self.file_path.with_extension("json.tmp");
-            tokio::fs::write(&tmp_path, json.as_bytes()).await?;
-            tokio::fs::rename(&tmp_path, &self.file_path).await?;
-
-            tracing::debug!(
-                count = accounts.len(),
-                path = %self.file_path.display(),
-                "Flushed auth accounts to disk"
-            );
-            Ok(())
+            self.write_to_disk()
+                .await
+                .inspect_err(|_| self.mark_dirty())
         })
     }
 
@@ -293,6 +298,30 @@ mod tests {
                 .unwrap();
             assert!(storage.has_account(&Username::new("persistent")));
         }
+    }
+
+    #[tokio::test]
+    async fn failed_flush_is_retried_by_the_next_one() {
+        let dir = TempDir::new().unwrap();
+        let storage = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
+            .await
+            .unwrap();
+        storage
+            .create_account(&test_account("Persistent"))
+            .await
+            .unwrap();
+
+        let blocker = dir.path().join("accounts.json.tmp");
+        std::fs::create_dir(&blocker).unwrap();
+        assert!(storage.flush().await.is_err());
+
+        std::fs::remove_dir(&blocker).unwrap();
+        storage.flush().await.unwrap();
+
+        let reloaded = JsonFileStorage::load_or_create(dir.path(), "accounts.json")
+            .await
+            .unwrap();
+        assert!(reloaded.has_account(&Username::new("persistent")));
     }
 
     #[tokio::test]
