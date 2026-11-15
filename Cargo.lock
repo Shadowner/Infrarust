@@ -2173,6 +2173,7 @@ name = "infrarust-stress-test"
 version = "2.0.0-beta.4"
 dependencies = [
  "clap",
+ "infrarust_protocol",
  "tokio",
 ]
 

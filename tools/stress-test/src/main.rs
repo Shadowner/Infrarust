@@ -1,4 +1,6 @@
 use clap::{Parser, Subcommand};
+use infrarust_protocol::codec::VarInt;
+use infrarust_protocol::codec::varint::VarIntDecodeStatus;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,36 +10,24 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 fn write_varint(value: i32) -> Vec<u8> {
-    let mut val = value as u32;
-    let mut buf = Vec::with_capacity(5);
-    loop {
-        if (val & !0x7F) == 0 {
-            buf.push(val as u8);
-            break;
-        }
-        buf.push((val & 0x7F | 0x80) as u8);
-        val >>= 7;
-    }
+    let mut buf = Vec::with_capacity(VarInt::MAX_SIZE);
+    VarInt(value)
+        .encode(&mut buf)
+        .expect("writing to a Vec cannot fail");
     buf
 }
 
 async fn read_varint(stream: &mut TcpStream) -> io::Result<i32> {
-    let mut result: i32 = 0;
-    let mut shift = 0u32;
-    loop {
-        let mut byte = [0u8; 1];
-        stream.read_exact(&mut byte).await?;
-        let b = byte[0];
-        result |= ((b & 0x7F) as i32) << shift;
-        if b & 0x80 == 0 {
-            break;
-        }
-        shift += 7;
-        if shift >= 35 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "VarInt too big"));
+    let mut buf = [0u8; VarInt::MAX_SIZE];
+    for len in 1..=VarInt::MAX_SIZE {
+        stream.read_exact(&mut buf[len - 1..len]).await?;
+        match VarInt::decode_partial(&buf[..len]) {
+            Ok((value, _)) => return Ok(value.0),
+            Err(VarIntDecodeStatus::Incomplete) => {}
+            Err(VarIntDecodeStatus::TooLarge) => break,
         }
     }
-    Ok(result)
+    Err(io::Error::new(io::ErrorKind::InvalidData, "VarInt too big"))
 }
 
 fn build_packet(packet_id: i32, data: &[u8]) -> Vec<u8> {
