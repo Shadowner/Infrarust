@@ -243,7 +243,7 @@ impl Listener {
                         Ok((stream, addr)) => (stream, addr),
                         Err(e) if is_transient_error(&e) => {
                             tracing::warn!(error = %e, backoff_ms = backoff.as_millis(), "transient accept error, retrying");
-                            tokio::time::sleep(backoff).await;
+                            sleep_unless_cancelled(backoff, &self.shutdown).await?;
                             backoff = (backoff * 2).min(std::time::Duration::from_secs(5));
                             continue;
                         }
@@ -268,14 +268,57 @@ impl Listener {
     }
 }
 
-/// Checks if an accept error is transient and should be retried.
+async fn sleep_unless_cancelled(
+    delay: std::time::Duration,
+    shutdown: &CancellationToken,
+) -> Result<(), TransportError> {
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => Err(TransportError::Shutdown),
+        () = tokio::time::sleep(delay) => Ok(()),
+    }
+}
+
 fn is_transient_error(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),
-        std::io::ErrorKind::ConnectionAborted | std::io::ErrorKind::ConnectionReset
-    ) || matches!(e.raw_os_error(), Some(24 | 23 | 12 | 105))
-    // 24=EMFILE, 23=ENFILE, 12=ENOMEM, 105=ENOBUFS (Linux values)
+        std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::OutOfMemory
+    ) || e
+        .raw_os_error()
+        .is_some_and(|errno| RESOURCE_EXHAUSTION.contains(&errno))
 }
+
+#[cfg(target_os = "linux")]
+const RESOURCE_EXHAUSTION: [i32; 4] = {
+    use nix::errno::Errno;
+    [
+        Errno::EMFILE as i32,
+        Errno::ENFILE as i32,
+        Errno::ENOMEM as i32,
+        Errno::ENOBUFS as i32,
+    ]
+};
+
+#[cfg(target_os = "macos")]
+const RESOURCE_EXHAUSTION: [i32; 4] = {
+    const EMFILE: i32 = 24;
+    const ENFILE: i32 = 23;
+    const ENOMEM: i32 = 12;
+    const ENOBUFS: i32 = 55;
+    [EMFILE, ENFILE, ENOMEM, ENOBUFS]
+};
+
+#[cfg(windows)]
+const RESOURCE_EXHAUSTION: [i32; 2] = {
+    const WSAEMFILE: i32 = 10024;
+    const WSAENOBUFS: i32 = 10055;
+    [WSAEMFILE, WSAENOBUFS]
+};
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+const RESOURCE_EXHAUSTION: [i32; 0] = [];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -325,8 +368,7 @@ mod tests {
 
     #[test]
     fn transient_errors_are_retried() {
-        // EMFILE, ENFILE, ENOMEM, ENOBUFS (Linux values)
-        for errno in [24, 23, 12, 105] {
+        for errno in RESOURCE_EXHAUSTION {
             assert!(
                 is_transient_error(&std::io::Error::from_raw_os_error(errno)),
                 "errno {errno} should be transient"
@@ -338,6 +380,37 @@ mod tests {
         ] {
             assert!(is_transient_error(&std::io::Error::from(kind)));
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_accept_backoff_ends_as_soon_as_shutdown_is_requested() {
+        let shutdown = CancellationToken::new();
+        let started = tokio::time::Instant::now();
+        let backoff = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move { sleep_unless_cancelled(std::time::Duration::from_secs(5), &shutdown).await }
+        });
+        tokio::task::yield_now().await;
+
+        shutdown.cancel();
+
+        assert!(matches!(
+            backoff.await.unwrap(),
+            Err(TransportError::Shutdown)
+        ));
+        assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_accept_backoff_lasts_its_full_delay_without_shutdown() {
+        let started = tokio::time::Instant::now();
+        let delay = std::time::Duration::from_secs(5);
+
+        sleep_unless_cancelled(delay, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(started.elapsed(), delay);
     }
 
     #[test]
