@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -6,7 +5,6 @@ use tokio::time::Instant;
 use infrarust_api::types::ServerId;
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
-use infrarust_protocol::codec::McBufReadExt;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::cookie::{CLoginCookieRequest, SLoginCookieResponse};
 use infrarust_protocol::packets::login::{
@@ -94,16 +92,15 @@ pub(crate) async fn bridge_login(
         version: ctx.version(),
         velocity,
         ids: LoginIds::resolve(ctx.registry(), ctx.version()),
-        plugin_requests: HashSet::new(),
         cookie_requests: 0,
         messages: LoginMessages::new(ctx, ServerId::new(server)),
     };
     relay
         .run(ctx, &mut io.client, backend, LoginClock::start(idle))
         .await?;
-    if !relay.plugin_requests.is_empty() {
+    if relay.messages.awaits_client() {
         tracing::warn!(
-            unanswered = relay.plugin_requests.len(),
+            unanswered = relay.messages.unanswered(),
             "the backend finished the login with login plugin requests still unanswered"
         );
     }
@@ -159,14 +156,13 @@ struct Relay<'a> {
     version: ProtocolVersion,
     velocity: Option<VelocityForwarding<'a>>,
     ids: LoginIds,
-    plugin_requests: HashSet<i32>,
     cookie_requests: usize,
     messages: LoginMessages<'a>,
 }
 
 impl Relay<'_> {
     fn waiting_on_client(&self) -> bool {
-        !self.plugin_requests.is_empty() || self.cookie_requests > 0
+        self.messages.awaits_client() || self.cookie_requests > 0
     }
 
     async fn run(
@@ -256,7 +252,6 @@ impl Relay<'_> {
                         .write_frame(replaced.as_ref().unwrap_or(&frame))
                         .await
                         .map_err(client_gone)?;
-                    self.plugin_requests.insert(request.message_id.0);
                     tracing::debug!(
                         channel = %request.channel,
                         message_id = request.message_id.0,
@@ -282,21 +277,10 @@ impl Relay<'_> {
     ) -> Result<(), CoreError> {
         let id = Some(frame.id);
         if id == self.ids.plugin_response {
-            let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
-                tracing::debug!("dropping a malformed login plugin response from the client");
-                return Ok(());
-            };
-            if !self.plugin_requests.remove(&message_id.0) {
-                tracing::debug!(
-                    message_id = message_id.0,
-                    "dropping a login plugin response the backend did not ask for"
-                );
-                return Ok(());
+            match self.messages.client_answer(frame).await {
+                Some(answer) => backend.write_frame(&answer).await,
+                None => Ok(()),
             }
-            let replaced = self.messages.response(&frame).await;
-            backend
-                .write_frame(replaced.as_ref().unwrap_or(&frame))
-                .await
         } else if id == self.ids.cookie_response {
             if self.cookie_requests == 0 {
                 tracing::debug!("dropping a login cookie response the backend did not ask for");

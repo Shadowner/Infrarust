@@ -8,7 +8,7 @@
 //! Codec filters are applied to every packet BEFORE the EventBus.
 
 use std::any::Any;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use infrarust_api::command::{CommandSource, Suggestion};
@@ -19,7 +19,6 @@ use infrarust_api::types::{Component, ProtocolVersion as ApiVersion, RawPacket, 
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use infrarust_protocol::codec::McBufReadExt;
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, SAcknowledgeFinishConfig,
@@ -305,7 +304,6 @@ pub async fn proxy_loop(
         codec_closed: None,
         login: LoginMessages::new(ctx, server.clone()),
         login_clock,
-        relayed: HashSet::new(),
     }
     .run()
     .await
@@ -362,7 +360,6 @@ struct Loop<'a> {
     codec_closed: Option<String>,
     login: LoginMessages<'a>,
     login_clock: Option<LoginClock>,
-    relayed: HashSet<i32>,
 }
 
 impl Loop<'_> {
@@ -831,25 +828,14 @@ impl Loop<'_> {
         Ok(())
     }
 
-    async fn on_login_answer(&mut self, mut frame: PacketFrame) -> Result<(), CoreError> {
-        let Ok(message_id) = frame.payload.as_ref().read_var_int() else {
-            tracing::debug!("dropping a malformed login plugin response from the client");
+    async fn on_login_answer(&mut self, frame: PacketFrame) -> Result<(), CoreError> {
+        let Some(answer) = self.login.client_answer(frame).await else {
             return Ok(());
         };
-        if !self.relayed.remove(&message_id.0) {
-            tracing::debug!(
-                message_id = message_id.0,
-                "dropping a login plugin response to a request the client was never sent"
-            );
-            return Ok(());
-        }
         if let Some(clock) = self.login_clock.as_mut() {
-            clock.client_answered(!self.relayed.is_empty());
+            clock.client_answered(self.login.awaits_client());
         }
-        if let Some(replaced) = self.login.response(&frame).await {
-            frame = replaced;
-        }
-        self.backend.queue_frame(&frame)
+        self.backend.queue_frame(&answer)
     }
 
     async fn on_backend(&mut self, frame: PacketFrame) -> Result<Step, CoreError> {
@@ -863,7 +849,7 @@ impl Loop<'_> {
             .milestone(&frame, self.backend, self.join.is_some());
         let action = self.forward_backend(frame).await?;
         if let Some(clock) = self.login_clock.as_mut() {
-            clock.backend_spoke(!self.relayed.is_empty());
+            clock.backend_spoke(self.login.awaits_client());
         }
         self.in_game |= joins;
         self.in_game &= !self.state.reconfiguring;
@@ -1039,7 +1025,6 @@ impl Loop<'_> {
                             self.io
                                 .client
                                 .queue_frame(replaced.as_ref().unwrap_or(&frame))?;
-                            self.relayed.insert(request.message_id.0);
                         }
                         Routed::Backend(answer) => {
                             let answer = encode_for_state(
