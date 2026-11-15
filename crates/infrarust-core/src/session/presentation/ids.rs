@@ -20,9 +20,9 @@ use infrarust_protocol::packets::resource_pack::{
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
+use crate::api_convert::pack_result_to_api;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::conversion::pack_result_to_api;
 use crate::player::PlayerSession;
 use crate::player::packets::{
     boss_bar_added, boss_bar_removed, build_header_footer, encode_packet,

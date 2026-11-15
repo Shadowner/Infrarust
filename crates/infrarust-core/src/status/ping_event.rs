@@ -1,6 +1,3 @@
-//! Conversion between core `ServerPingResponse` (`serde_json–based`) and
-//! API `PingResponse` (typed fields) for the `ProxyPingEvent`.
-
 use infrarust_api::events::proxy::PingResponse;
 use infrarust_api::types::{Component, ProtocolVersion};
 use uuid::Uuid;
@@ -84,126 +81,10 @@ pub fn merge_ping_event(
     core.favicon = api.favicon;
 }
 
-/// Converts `infrarust_server_manager::ServerState` to the API's
-/// `infrarust_api::services::server_manager::ServerState`.
-pub const fn convert_server_state(
-    sm: infrarust_server_manager::ServerState,
-) -> infrarust_api::services::server_manager::ServerState {
-    use infrarust_api::services::server_manager::ServerState as ApiState;
-    use infrarust_server_manager::ServerState as SmState;
-
-    match sm {
-        SmState::Online => ApiState::Online,
-        SmState::Sleeping => ApiState::Sleeping,
-        SmState::Starting => ApiState::Starting,
-        SmState::Stopping => ApiState::Stopping,
-        SmState::Crashed => ApiState::Crashed,
-        _ => ApiState::Offline,
-    }
-}
-
-/// Converts protocol `ConnectionState` to API `ConnectionState`.
-pub fn protocol_state_to_api(
-    state: infrarust_protocol::version::ConnectionState,
-) -> infrarust_api::event::ConnectionState {
-    match state {
-        infrarust_protocol::version::ConnectionState::Handshake => {
-            infrarust_api::event::ConnectionState::Handshake
-        }
-        infrarust_protocol::version::ConnectionState::Status => {
-            infrarust_api::event::ConnectionState::Status
-        }
-        infrarust_protocol::version::ConnectionState::Login => {
-            infrarust_api::event::ConnectionState::Login
-        }
-        infrarust_protocol::version::ConnectionState::Config => {
-            infrarust_api::event::ConnectionState::Configuration
-        }
-        infrarust_protocol::version::ConnectionState::Play => {
-            infrarust_api::event::ConnectionState::Play
-        }
-    }
-}
-
-/// Converts protocol `Direction` to API `PacketDirection`.
-pub fn protocol_direction_to_api(
-    direction: infrarust_protocol::version::Direction,
-) -> infrarust_api::events::packet::PacketDirection {
-    match direction {
-        infrarust_protocol::version::Direction::Serverbound => {
-            infrarust_api::events::packet::PacketDirection::Serverbound
-        }
-        infrarust_protocol::version::Direction::Clientbound => {
-            infrarust_api::events::packet::PacketDirection::Clientbound
-        }
-    }
-}
-
-pub fn pack_result_to_api(
-    result: infrarust_protocol::packets::resource_pack::ResourcePackResult,
-) -> infrarust_api::player::ResourcePackStatus {
-    use infrarust_api::player::ResourcePackStatus as Api;
-    use infrarust_protocol::packets::resource_pack::ResourcePackResult as Protocol;
-
-    match result {
-        Protocol::SuccessfullyLoaded => Api::SuccessfullyLoaded,
-        Protocol::Declined => Api::Declined,
-        Protocol::FailedDownload => Api::FailedDownload,
-        Protocol::Accepted => Api::Accepted,
-        Protocol::Downloaded => Api::Downloaded,
-        Protocol::InvalidUrl => Api::InvalidUrl,
-        Protocol::FailedReload => Api::FailedReload,
-        Protocol::Discarded => Api::Discarded,
-        Protocol::Unknown(id) => Api::Unknown(id),
-    }
-}
-
-pub fn pack_status_to_protocol(
-    status: infrarust_api::player::ResourcePackStatus,
-) -> infrarust_protocol::packets::resource_pack::ResourcePackResult {
-    use infrarust_api::player::ResourcePackStatus as Api;
-    use infrarust_protocol::packets::resource_pack::ResourcePackResult as Protocol;
-
-    match status {
-        Api::SuccessfullyLoaded => Protocol::SuccessfullyLoaded,
-        Api::Declined => Protocol::Declined,
-        Api::FailedDownload => Protocol::FailedDownload,
-        Api::Accepted => Protocol::Accepted,
-        Api::Downloaded => Protocol::Downloaded,
-        Api::InvalidUrl => Protocol::InvalidUrl,
-        Api::FailedReload => Protocol::FailedReload,
-        Api::Discarded => Protocol::Discarded,
-        Api::Unknown(id) => Protocol::Unknown(id),
-        _ => Protocol::Unknown(status.id()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-
-    #[test]
-    fn resource_pack_results_round_trip_through_the_api_status() {
-        use infrarust_api::player::ResourcePackStatus;
-        use infrarust_protocol::packets::resource_pack::ResourcePackResult;
-
-        for id in 0..8 {
-            let result = ResourcePackResult::from_id(id);
-            let status = pack_result_to_api(result);
-            assert_eq!(status.id(), id);
-            assert_eq!(status.is_final(), result.is_final());
-            assert_eq!(pack_status_to_protocol(status), result);
-        }
-        assert_eq!(
-            pack_result_to_api(ResourcePackResult::Unknown(42)),
-            ResourcePackStatus::Unknown(42)
-        );
-        assert_eq!(
-            pack_status_to_protocol(ResourcePackStatus::Unknown(42)),
-            ResourcePackResult::Unknown(42)
-        );
-    }
 
     #[test]
     fn test_core_to_api_full_response() {

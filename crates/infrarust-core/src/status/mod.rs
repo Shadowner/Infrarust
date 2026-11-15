@@ -14,6 +14,7 @@ pub mod cache;
 pub mod favicon;
 pub mod handler;
 pub mod motd;
+pub mod ping_event;
 pub mod relay;
 pub mod relay_gate;
 pub mod response;

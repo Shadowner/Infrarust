@@ -12,10 +12,10 @@ use infrarust_server_manager::ServerManagerService;
 use infrarust_transport::BackendConnector;
 
 use super::ProxyServer;
+use crate::api_convert::convert_server_state;
 use crate::auth::mojang::MojangAuth;
 use crate::ban::manager::BanManager;
 use crate::error::CoreError;
-use crate::event_bus::conversion::convert_server_state;
 use crate::event_bus::{EventBusConfig, EventBusImpl};
 use crate::forwarding::ForwardingMode;
 use crate::forwarding::secret::load_or_generate_secret;

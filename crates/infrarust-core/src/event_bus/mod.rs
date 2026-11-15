@@ -6,7 +6,6 @@
 
 pub mod builtin;
 pub mod bus;
-pub mod conversion;
 pub mod diagnostic;
 pub(crate) mod handler;
 

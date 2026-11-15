@@ -29,11 +29,11 @@ use super::relay_gate::{RelayGate, RelayTurn};
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
-use crate::event_bus::conversion::{core_to_api_ping_response, merge_ping_event};
 use crate::loadbalancer::{AddressConnectionCount, BackendHealthView, peek_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::session::connection_registry::ConnectionRegistry;
+use crate::status::ping_event::{core_to_api_ping_response, merge_ping_event};
 use crate::util::text::api_version;
 
 enum Backed {

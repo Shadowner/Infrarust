@@ -8,7 +8,7 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use infrarust_transport::{BackendConnector, ConnectionInfo};
 use tokio_util::sync::CancellationToken;
 
-use crate::event_bus::conversion::protocol_state_to_api;
+use crate::api_convert::protocol_state_to_api;
 use crate::filter::codec_chain::CodecFilterChain;
 use crate::forwarding::ForwardingData;
 use crate::pipeline::types::HandshakeData;

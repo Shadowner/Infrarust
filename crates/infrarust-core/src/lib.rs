@@ -4,6 +4,7 @@
 //! configuration providers (file, docker), server routing, status handling, authentication,
 //! ban management, and the event bus system.
 
+pub(crate) mod api_convert;
 pub mod auth;
 pub mod ban;
 pub mod commands;
