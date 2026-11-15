@@ -1,6 +1,10 @@
+use std::time::Duration;
+
 use infrarust_api::types::ServerId;
 use infrarust_config::ServerConfig;
 use infrarust_server_manager::{ServerManagerError, ServerState};
+use tokio::io::Interest;
+use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::services::ProxyServices;
@@ -9,6 +13,7 @@ use crate::session::kick::Kick;
 const STOPPING_MESSAGE: &str = "Server is shutting down, please try again later.";
 const START_TIMEOUT_MESSAGE: &str = "Server failed to start in time. Please try again.";
 const UNAVAILABLE_MESSAGE: &str = "Server is unavailable. Please try again later.";
+const CLIENT_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub(crate) struct Unavailable {
@@ -29,11 +34,27 @@ impl Unavailable {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum WakeFailure {
+    Unavailable(Unavailable),
+    ClientLeft,
+}
+
+async fn client_left(client: &TcpStream) {
+    while matches!(
+        client.ready(Interest::READABLE).await,
+        Ok(ready) if !ready.is_read_closed()
+    ) {
+        tokio::time::sleep(CLIENT_PROBE_INTERVAL).await;
+    }
+}
+
 pub(crate) async fn wake(
     services: &ProxyServices,
     config: &ServerConfig,
     cancel: &CancellationToken,
-) -> Result<bool, Unavailable> {
+    client: &TcpStream,
+) -> Result<bool, WakeFailure> {
     let Some(manager) = services.server_manager.as_ref() else {
         return Ok(false);
     };
@@ -45,16 +66,20 @@ pub(crate) async fn wake(
         return Ok(false);
     };
     match state {
-        ServerState::Stopping => Err(Unavailable::new(STOPPING_MESSAGE, "the server is stopping")),
+        ServerState::Stopping => Err(WakeFailure::Unavailable(Unavailable::new(
+            STOPPING_MESSAGE,
+            "the server is stopping",
+        ))),
         ServerState::Sleeping | ServerState::Crashed | ServerState::Starting => {
             let started = tokio::select! {
                 biased;
                 () = cancel.cancelled() => {
-                    return Err(Unavailable::new(
+                    return Err(WakeFailure::Unavailable(Unavailable::new(
                         UNAVAILABLE_MESSAGE,
                         "the session ended while the server was starting",
-                    ));
+                    )));
                 }
+                () = client_left(client) => return Err(WakeFailure::ClientLeft),
                 started = manager.ensure_started(&managed_id) => started,
             };
             match started {
@@ -68,11 +93,23 @@ pub(crate) async fn wake(
                     Ok(true)
                 }
                 Err(error @ ServerManagerError::StartTimeout { .. }) => {
-                    Err(Unavailable::new(START_TIMEOUT_MESSAGE, error.to_string()))
+                    Err(WakeFailure::Unavailable(Unavailable::new(
+                        START_TIMEOUT_MESSAGE,
+                        error.to_string(),
+                    )))
+                }
+                Err(error @ ServerManagerError::StartThrottled { .. }) => {
+                    Err(WakeFailure::Unavailable(Unavailable::new(
+                        UNAVAILABLE_MESSAGE,
+                        error.to_string(),
+                    )))
                 }
                 Err(error) => {
                     tracing::error!(server = %managed_id, "server manager error: {error}");
-                    Err(Unavailable::new(UNAVAILABLE_MESSAGE, error.to_string()))
+                    Err(WakeFailure::Unavailable(Unavailable::new(
+                        UNAVAILABLE_MESSAGE,
+                        error.to_string(),
+                    )))
                 }
             }
         }

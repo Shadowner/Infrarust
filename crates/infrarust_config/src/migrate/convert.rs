@@ -673,6 +673,16 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         .and_then(|pp| pp.receive_enabled)
         .unwrap_or(false);
 
+    if receive_proxy_protocol {
+        warnings.push(MigrationWarning {
+            severity: MigrationSeverity::Warning,
+            file: file.clone(),
+            message: "receive_proxy_protocol now requires trusted_proxies: add the addresses \
+                      of your load balancers to the generated file or the proxy will not start"
+                .to_string(),
+        });
+    }
+
     if let Some(pp) = &v1.proxy_protocol
         && (pp.receive_timeout_secs.is_some() || pp.receive_allowed_versions.is_some())
     {
@@ -734,6 +744,8 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
             .map(Duration::from_secs)
             .unwrap_or_else(crate::defaults::docker_poll_interval),
         reconnect_delay: crate::defaults::docker_reconnect_delay(),
+        allowed_domains: Vec::new(),
+        inherit_forwarding: false,
     });
 
     let config = ProxyConfig {
@@ -743,9 +755,11 @@ pub fn convert_v1_proxy_config(v1: &V1InfrarustConfig) -> ProxyMigrationResult {
         plugin_messaging: Default::default(),
         wasm: Default::default(),
         max_connections: 0,
+        max_connections_per_ip: crate::defaults::max_connections_per_ip(),
         connect_timeout: crate::defaults::connect_timeout(),
         connect_max_attempts: crate::defaults::connect_max_attempts(),
         receive_proxy_protocol,
+        trusted_proxies: Vec::new(),
         servers_dir,
         plugins_dir: crate::defaults::plugins_dir(),
         worker_threads: 0,

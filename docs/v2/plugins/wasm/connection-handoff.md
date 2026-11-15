@@ -31,7 +31,7 @@ connection accepted, PROXY protocol header read
   → ConnectionHandshakeEvent ─── Handoff ──▶ IP bans ──▶ relayed
   → server list ping: ProxyPingEvent
   → login: Login Start read
-      → LoginClaimEvent, only while someone listens ─ Handoff ──▶ IP bans ──▶ relayed
+      → LoginClaimEvent, only while someone listens ─ Handoff ──▶ IP and name bans ──▶ relayed
       → name and IP bans, PreLoginEvent and the rest of the login
 ```
 
@@ -97,7 +97,7 @@ With `replay` off the target only gets `prefix` and then whatever the client sen
 
 ### Bans
 
-A handoff skips the login, so the proxy checks the client's address against the IP and range bans before it relays one, at every level. It asks the ban provider at the `PreAuth` stage with the address only (no name, no UUID: name and UUID bans do not apply to a handoff), and a provider that cannot answer refuses the handoff, as it refuses a login. A refused connection posts a `ConnectionRejectedEvent` with the reason `ip_banned`, or `banned` when the provider could not answer, and the virtual host once the handshake was read. What the client gets mirrors the normal path:
+A handoff skips the login, so the proxy checks the client's address against the IP and range bans before it relays one, at every level. A login claim also has the name from the Login Start, which is checked against the name bans. The proxy asks the ban provider at the `PreAuth` stage with the address, and the name for a login claim (never a UUID: UUID bans do not apply to a handoff), and a provider that cannot answer refuses the handoff, as it refuses a login. A refused connection posts a `ConnectionRejectedEvent` with the reason `ip_banned`, or `banned` for a name ban or when the provider could not answer, and the virtual host once the handshake was read. What the client gets mirrors the normal path:
 
 | Level | Checked | A refused client gets |
 | --- | --- | --- |
@@ -198,7 +198,7 @@ ctx.on::<ConnectionHandshakeEvent>(EventPriority::NORMAL, |event| {
 | `login_start` | `Vec<u8>` | The Login Start payload as sent, without its length and packet id |
 | `layout_matches` | `bool` | `false` when the payload does not match the layout of the client's protocol and only a lenient decode read the name |
 
-`pass()` keeps the normal login, `handoff(h)` relays the connection. The event fires on every route, whatever its proxy mode, for a login and for a transfer. A claimed login skips the name ban check, `PreLoginEvent`, admission, the telemetry login span and the proxy mode's login: it never becomes a player, and the target gets the handshake, the Login Start as the client sent it, and every byte the client sent after it. Its address is still checked against the IP bans before the relay, and a banned one is disconnected like a banned login, see [Bans](#bans). A WASM listener that does not answer leaves `Pass`: a claim bypasses authentication, so the safe default is no claim.
+`pass()` keeps the normal login, `handoff(h)` relays the connection. The event fires on every route, whatever its proxy mode, for a login and for a transfer. A claimed login skips the UUID ban check, `PreLoginEvent`, admission, the telemetry login span and the proxy mode's login: it never becomes a player, and the target gets the handshake, the Login Start as the client sent it, and every byte the client sent after it. Its address and name are still checked against the IP and name bans before the relay, and a banned one is disconnected like a banned login, see [Bans](#bans). A WASM listener that does not answer leaves `Pass`: a claim bypasses authentication, so the safe default is no claim.
 
 Some modded clients send a Login Start that does not match their declared protocol. While someone listens to `LoginClaimEvent`, the proxy reads such a packet with a lenient decode on every route so the plugin can claim it, with `layout_matches` set to `false`. A connection the plugin leaves alone is then refused on an `offline` or `client_only` route with exactly the protocol error it gets without a listener, before any ban check or `PreLoginEvent`; on a forwarding route it is forwarded unchanged, as without a listener. A Login Start that even the lenient decode cannot read is refused on every route before the event.
 
@@ -208,7 +208,7 @@ For a WASM plugin, the host checks an `Address` target against `[plugins.<id>.wa
 
 ## Security
 
-A handoff skips authentication. The proxy does not check a claimed login against Mojang, checks no name or UUID ban (only the IP bans) and sends no forwarding data (no Velocity or BungeeCord identity): the target sees an unauthenticated client. Only hand a connection to a target that takes it over itself, such as a file server, or a backend that authenticates its own players. Never hand a login off to a backend that trusts the proxy to have authenticated it.
+A handoff skips authentication. The proxy does not check a claimed login against Mojang, checks no UUID ban (only the IP bans, and the name bans for a claimed login) and sends no forwarding data (no Velocity or BungeeCord identity): the target sees an unauthenticated client. Only hand a connection to a target that takes it over itself, such as a file server, or a backend that authenticates its own players. Never hand a login off to a backend that trusts the proxy to have authenticated it.
 
 `reply` goes to a client nobody authenticated, and a raw claim runs before the rate limiter: keep what the plugin does on these events cheap and bounded.
 

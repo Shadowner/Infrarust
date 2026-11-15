@@ -90,7 +90,7 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, C
         }
     }
 
-    validate_server_forwarding(config, ForwardingMode::None)?;
+    reject_velocity_on_forwarding(config, &ForwardingMode::None)?;
 
     if config.addresses.is_empty() {
         return Err(ConfigError::NoAddresses { id });
@@ -133,8 +133,68 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<ConfigWarnings, C
 pub fn validate_server_forwarding(
     config: &ServerConfig,
     default_mode: ForwardingMode,
+) -> Result<ConfigWarnings, ConfigError> {
+    reject_velocity_on_forwarding(config, &default_mode)?;
+
+    let forwarding = config.proxy_mode.is_forwarding();
+    match (&config.forwarding_mode, &default_mode) {
+        (None, ForwardingMode::BungeeCord | ForwardingMode::BungeeGuard) if forwarding => {
+            Err(server_error(
+                &config.effective_id(),
+                ServerValidationError::InheritedForwardingUnverified {
+                    proxy_mode: config.proxy_mode,
+                    mode: forwarding_key(&default_mode),
+                },
+            ))
+        }
+        (Some(explicit @ ForwardingMode::BungeeCord), _)
+        | (Some(explicit @ ForwardingMode::BungeeGuard), ForwardingMode::BungeeGuard)
+            if forwarding =>
+        {
+            Ok(ConfigWarnings(vec![format!(
+                "{:?} mode does not verify players, so forwarding_mode = \"{}\" hands this \
+                 backend the identity each client claims: any client can impersonate any \
+                 player there",
+                config.proxy_mode,
+                forwarding_key(explicit)
+            )]))
+        }
+        (None | Some(ForwardingMode::None | ForwardingMode::BungeeCord), _)
+        | (Some(ForwardingMode::BungeeGuard), ForwardingMode::BungeeGuard)
+        | (Some(ForwardingMode::Velocity), ForwardingMode::Velocity) => {
+            Ok(ConfigWarnings::default())
+        }
+        (
+            Some(requested @ ForwardingMode::BungeeGuard),
+            ForwardingMode::None | ForwardingMode::BungeeCord | ForwardingMode::Velocity,
+        )
+        | (
+            Some(requested @ ForwardingMode::Velocity),
+            ForwardingMode::None | ForwardingMode::BungeeCord | ForwardingMode::BungeeGuard,
+        ) => Err(server_error(
+            &config.effective_id(),
+            ServerValidationError::ForwardingSecretMismatch {
+                requested: forwarding_key(requested),
+                global: forwarding_key(&default_mode),
+            },
+        )),
+    }
+}
+
+const fn forwarding_key(mode: &ForwardingMode) -> &'static str {
+    match mode {
+        ForwardingMode::None => "none",
+        ForwardingMode::BungeeCord => "bungee_cord",
+        ForwardingMode::BungeeGuard => "bungee_guard",
+        ForwardingMode::Velocity => "velocity",
+    }
+}
+
+fn reject_velocity_on_forwarding(
+    config: &ServerConfig,
+    default_mode: &ForwardingMode,
 ) -> Result<(), ConfigError> {
-    let mode = config.forwarding_mode.as_ref().unwrap_or(&default_mode);
+    let mode = config.forwarding_mode.as_ref().unwrap_or(default_mode);
     if config.proxy_mode.is_forwarding() && *mode == ForwardingMode::Velocity {
         let source = if config.forwarding_mode.is_some() {
             "its forwarding_mode"
@@ -332,6 +392,12 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
             ProxyValidationError::CompressionThreshold {
                 value: config.compression_threshold,
             },
+        ));
+    }
+
+    if config.receive_proxy_protocol && config.trusted_proxies.is_empty() {
+        return Err(ConfigError::Proxy(
+            ProxyValidationError::ProxyProtocolWithoutTrustedProxies,
         ));
     }
 

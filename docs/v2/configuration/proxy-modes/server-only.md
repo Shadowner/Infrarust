@@ -29,9 +29,12 @@ With Docker labels:
 
 ```yaml
 labels:
+  infrarust.enable: "true"
   infrarust.domains: "mc.example.com"
   infrarust.proxy_mode: "server_only"
 ```
+
+The domain must match an entry of [`allowed_domains`](../providers/docker.md#domain-allowlist) under `[docker]`.
 
 ### Config options
 
@@ -56,7 +59,7 @@ Duration values use human-readable format: `"5s"`, `"30s"`, `"2m"`, `"1h"`.
 
 Server-only uses the same `PassthroughHandler` as passthrough and zero-copy modes. The steps are identical:
 
-1. The proxy reads the client's handshake and login start packets.
+1. The proxy reads the client's handshake and login start packets. A login name that contains a control character is refused.
 2. It fires the login events (`PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `LoginEvent`) and checks bans. A plugin can refuse the player there, before any backend is contacted.
 3. It registers a player session with `active: false` (passthrough sessions can't inject packets) and fires `PostLoginEvent`.
 4. It fires `PlayerChooseInitialServerEvent` and `ServerPreConnectEvent`. Plugins can deny the connection or send the player to another server in a forwarding mode. Limbo results disconnect the player, because limbo needs an intercepted mode.

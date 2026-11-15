@@ -229,7 +229,7 @@ impl Servers {
 }
 ```
 
-`ServerState` is one of `Online`, `Offline`, `Starting`, `Stopping`, `Sleeping`, `Crashed`. `ServerStatus` pairs a `server` with its `state`. `start` and `stop` run under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines).
+`ServerState` is one of `Online`, `Offline`, `Starting`, `Stopping`, `Sleeping`, `Crashed`. `ServerStatus` pairs a `server` with its `state`. `start` and `stop` run under the host timeout and the handler's deadline, see [Slow services and deadlines](#slow-services-and-deadlines). As with the native `start`, the [start throttle](../../guide/server-management#start-throttle) that limits starts for joining players does not apply to `start`.
 
 ```rust
 let survival = ServerId::from("survival");

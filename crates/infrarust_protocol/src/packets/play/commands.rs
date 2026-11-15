@@ -16,6 +16,8 @@ const FLAG_REDIRECT: u8 = 0x08;
 const FLAG_SUGGESTIONS: u8 = 0x10;
 const FLAG_RESTRICTED: u8 = 0x20;
 
+pub const MAX_COMMAND_NODES: usize = 32_768;
+
 #[derive(Debug, Clone)]
 pub struct CCommands {
     pub nodes: Vec<CommandNode>,
@@ -377,6 +379,11 @@ impl Packet for CCommands {
 
     fn decode(r: &mut &[u8], version: ProtocolVersion) -> ProtocolResult<Self> {
         let count = r.read_count("node count")?;
+        if count > MAX_COMMAND_NODES {
+            return Err(ProtocolError::invalid(format!(
+                "command tree of {count} nodes exceeds the limit of {MAX_COMMAND_NODES}"
+            )));
+        }
         let mut nodes = Vec::with_capacity(count.min(1024));
         for _ in 0..count {
             nodes.push(decode_node(r, version)?);
@@ -769,5 +776,29 @@ mod tests {
         let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.nodes[2].redirect_node, Some(1));
         assert_eq!(decoded.nodes[2].name(), Some("alias"));
+    }
+
+    fn flat_tree(nodes: usize) -> CCommands {
+        CCommands {
+            nodes: vec![CommandNode::root(); nodes],
+            root_index: 0,
+        }
+    }
+
+    #[test]
+    fn a_tree_at_the_node_limit_decodes() {
+        let tree = flat_tree(MAX_COMMAND_NODES);
+        let decoded = round_trip(&tree, ProtocolVersion::V1_21);
+        assert_eq!(decoded.nodes.len(), MAX_COMMAND_NODES);
+    }
+
+    #[test]
+    fn a_tree_above_the_node_limit_is_refused_and_names_its_size() {
+        let mut buf = Vec::new();
+        flat_tree(MAX_COMMAND_NODES + 1)
+            .encode(&mut buf, ProtocolVersion::V1_21)
+            .unwrap();
+        let error = CCommands::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap_err();
+        assert!(error.to_string().contains("32769 nodes"), "{error}");
     }
 }

@@ -33,13 +33,15 @@ pub use ip_filter::IpFilterConfig;
 pub use network::{KeepaliveConfig, TimeoutConfig};
 pub use permissions::{PermissionProviderSelection, PermissionsConfig};
 pub use plugin_messaging::PluginMessagingConfig;
-pub use proxy_mode::ProxyMode;
+pub use proxy_mode::{IdentityCheck, ProxyMode};
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{
     CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
-pub use telemetry::{MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TracesConfig};
+pub use telemetry::{
+    MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TraceClientIp, TracesConfig,
+};
 pub use wasm::{
     PluginWasmCodecQuarantineConfig, PluginWasmConfig, PluginWasmQuotasConfig,
     PluginWasmRecoveryConfig, WasmCodecQuarantineConfig, WasmConfig, WasmLimits, WasmQuotasConfig,

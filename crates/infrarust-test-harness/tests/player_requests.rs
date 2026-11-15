@@ -772,7 +772,7 @@ async fn a_backends_configuration_requests_are_not_replayed_to_limbo_players() {
     proxy.shutdown().await.unwrap();
 }
 
-async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVersion) {
+async fn no_backend_configuration_reaches_a_limbo_player(version: ProtocolVersion) {
     let backend = FakeBackend::builder().hold_config().spawn().await.unwrap();
     let holder = ScriptedPlugin::new("holder").on_enable(|ctx| {
         ctx.register_limbo_handler(Box::new(Hold)).unwrap();
@@ -792,7 +792,7 @@ async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVer
     let first = proxy.client_for("lobby", version).unwrap();
     let login = tokio::spawn(async move { first.login("Alex").await });
     let mut conn = backend.next_connection(T).await.unwrap();
-    let kept = [
+    let sent = [
         wire::encode(
             &CFeatureFlags {
                 data: b"alex flags".to_vec(),
@@ -821,7 +821,7 @@ async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVer
     })
     .await
     .unwrap();
-    for frame in &kept {
+    for frame in &sent {
         conn.send_frame(frame).await.unwrap();
     }
     let player_specific = version.no_less_than(ProtocolVersion::V1_21);
@@ -865,12 +865,12 @@ async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVer
         leaked.is_empty(),
         "another player's configuration reached a limbo player: {leaked:?}"
     );
-    for frame in &kept {
+    for frame in &sent {
         assert!(
-            replayed
+            !replayed
                 .iter()
                 .any(|seen| seen.id == frame.id && seen.payload == frame.payload),
-            "limbo lost the captured 0x{:02X}: {replayed:?}",
+            "limbo replayed the backend's 0x{:02X}",
             frame.id
         );
     }
@@ -878,4 +878,4 @@ async fn only_what_limbo_needs_is_replayed_to_other_players(version: ProtocolVer
     proxy.shutdown().await.unwrap();
 }
 
-version_matrix!(only_what_limbo_needs_is_replayed_to_other_players; p764 = 764, p766 = 766, p777 = 777);
+version_matrix!(no_backend_configuration_reaches_a_limbo_player; p764 = 764, p766 = 766, p777 = 777);

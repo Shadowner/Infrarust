@@ -133,7 +133,7 @@ impl ClientConnection {
 /// form. Clients reaching a dual-stack listener over IPv6 appear as mapped
 /// addresses; without this, an IPv4 ban or CIDR filter would silently fail to
 /// match them. Native IPv6 and plain IPv4 addresses pass through unchanged.
-fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+pub(crate) fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
             Some(v4) => IpAddr::V4(v4),

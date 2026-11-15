@@ -9,28 +9,31 @@ mod replay;
 mod switch_packets;
 pub(crate) mod validation;
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use infrarust_api::event::ResultedEvent;
 use infrarust_api::events::connection::{ConnectCause, ServerPreConnectResult};
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handler::LimboHandler;
 use infrarust_api::types::{Component, ServerId};
-use infrarust_protocol::packets::play::disconnect::CDisconnect;
+use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::CoreError;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::{Login, connect_backend};
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
-use crate::session::kick::{BackendKick, Kick};
+use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
-use crate::session::wake::wake;
+use crate::session::wake::{WakeFailure, wake};
 
 use config_phase::PhaseError;
 
-const SWITCH_CONFIG_PHASE_TIMEOUT_SECS: u64 = 30;
+const SWITCH_PHASE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Successful server switch result.
 pub struct SwitchSuccess {
@@ -64,6 +67,20 @@ impl SwitchTarget {
     }
 }
 
+async fn guarded(
+    token: &CancellationToken,
+    phase: impl Future<Output = Result<PacketFrame, PhaseError>>,
+) -> Result<PacketFrame, PhaseError> {
+    tokio::select! {
+        () = token.cancelled() => Err(PhaseError::Client(CoreError::ConnectionClosed)),
+        phase = tokio::time::timeout(SWITCH_PHASE_TIMEOUT, phase) => phase.unwrap_or_else(|_| {
+            Err(PhaseError::Backend(CoreError::Timeout(
+                "server switch timed out waiting for the backend".into(),
+            )))
+        }),
+    }
+}
+
 pub(crate) async fn perform_switch(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,
@@ -93,6 +110,16 @@ pub(crate) async fn perform_switch(
 
     validation::validate_switch_allowed(&current_config, &server_config)
         .map_err(|e| CoreError::Rejected(e.to_string()))?;
+
+    if let SwitchTarget::Unapproved { cause, .. } = &target
+        && !validation::switch_in_scope(*cause, &current_config, &server_config)
+    {
+        return Err(CoreError::Rejected(format!(
+            "server '{}' is outside the scope of '{}'",
+            requested.as_str(),
+            current_server.as_str()
+        )));
+    }
 
     let effective_target = match target {
         SwitchTarget::Approved(server) => server,
@@ -152,10 +179,34 @@ pub(crate) async fn perform_switch(
             })?
     };
 
-    if let Err(unavailable) = wake(services, &server_config, session.shutdown_token()).await {
-        return Ok(SwitchResult::Failed(
-            unavailable.into_kick(effective_target),
-        ));
+    if effective_target != *current_server
+        && !validation::admits_session(session.kind(), &server_config)
+    {
+        tracing::info!(
+            username = %session.game_profile().username,
+            target = %effective_target,
+            "refusing to switch an unverified player to a server that requires verification"
+        );
+        return Ok(SwitchResult::Denied(Component::text(
+            validation::UNVERIFIED_REFUSED,
+        )));
+    }
+
+    match wake(
+        services,
+        &server_config,
+        session.shutdown_token(),
+        client.stream(),
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(WakeFailure::Unavailable(unavailable)) => {
+            return Ok(SwitchResult::Failed(
+                unavailable.into_kick(effective_target),
+            ));
+        }
+        Err(WakeFailure::ClientLeft) => return Err(CoreError::ClientLeft),
     }
 
     // Same strategy + unhealthy-last ordering as the login pipeline.
@@ -189,20 +240,22 @@ pub(crate) async fn perform_switch(
     join.connected(&services.event_bus).await;
 
     let mut stranded = client.state() != ConnectionState::Play;
-    let join_game_frame = if version.no_less_than(ProtocolVersion::V1_20_2) {
-        if let Err(e) =
+    let session_token = session.shutdown_token();
+    let config_phase = version.no_less_than(ProtocolVersion::V1_20_2);
+    if config_phase
+        && let Err(e) =
             replay::replay(&mut new_backend, session, services, &server_config, version).await
-        {
-            return Ok(SwitchResult::Failed(Kick::failed(
-                effective_target,
-                e,
-                stranded,
-            )));
-        }
-        let session_token = session.shutdown_token().clone();
+    {
+        return Ok(SwitchResult::Failed(Kick::failed(
+            effective_target,
+            e,
+            stranded,
+        )));
+    }
+    let first_frame = if config_phase {
         let chain = FrameChain::new(ctx, &effective_target);
-        let config_phase = tokio::time::timeout(
-            std::time::Duration::from_secs(SWITCH_CONFIG_PHASE_TIMEOUT_SECS),
+        guarded(
+            session_token,
             config_phase::handle_config_phase_switch(
                 ctx,
                 client,
@@ -210,74 +263,36 @@ pub(crate) async fn perform_switch(
                 &chain,
                 &mut stranded,
             ),
-        );
-        let phase = tokio::select! {
-            () = session_token.cancelled() => return Err(CoreError::ConnectionClosed),
-            phase = config_phase => phase,
-        };
-        match phase {
-            Ok(Ok(frame)) => frame,
-            Ok(Err(PhaseError::Client(e))) => return Err(e),
-            Ok(Err(PhaseError::Backend(e))) => {
-                return Ok(SwitchResult::Failed(Kick::failed(
-                    effective_target,
-                    e,
-                    stranded,
-                )));
-            }
-            Err(_) => {
-                return Ok(SwitchResult::Failed(Kick::failed(
-                    effective_target,
-                    CoreError::Timeout("server switch config phase timed out".into()),
-                    stranded,
-                )));
-            }
-        }
+        )
+        .await
     } else {
-        let read = new_backend.read_frame().await;
-        match read {
-            Ok(Some(frame))
-                if services
-                    .packet_registry
-                    .get_packet_id::<CDisconnect>(version)
-                    == Some(frame.id) =>
-            {
-                let kick = BackendKick::new(frame, ConnectionState::Play, version);
-                return Ok(SwitchResult::Failed(Kick::failed(
-                    effective_target,
-                    CoreError::BackendKick(Box::new(kick)),
-                    stranded,
-                )));
-            }
-            Ok(Some(frame)) => {
-                if let Err(e) =
-                    replay::replay(&mut new_backend, session, services, &server_config, version)
-                        .await
-                {
-                    return Ok(SwitchResult::Failed(Kick::failed(
-                        effective_target,
-                        e,
-                        stranded,
-                    )));
-                }
-                frame
-            }
-            Ok(None) => {
-                return Ok(SwitchResult::Failed(Kick::failed(
-                    effective_target,
-                    CoreError::ConnectionClosed,
-                    stranded,
-                )));
-            }
-            Err(e) => {
-                return Ok(SwitchResult::Failed(Kick::failed(
-                    effective_target,
-                    e,
-                    stranded,
-                )));
-            }
+        guarded(
+            session_token,
+            config_phase::first_play_frame(ctx, client, &mut new_backend),
+        )
+        .await
+    };
+    let join_game_frame = match first_frame {
+        Ok(frame) => frame,
+        Err(PhaseError::Client(e)) => return Err(e),
+        Err(PhaseError::Backend(e)) => {
+            return Ok(SwitchResult::Failed(Kick::failed(
+                effective_target,
+                e,
+                stranded,
+            )));
         }
     };
+    if !config_phase
+        && let Err(e) =
+            replay::replay(&mut new_backend, session, services, &server_config, version).await
+    {
+        return Ok(SwitchResult::Failed(Kick::failed(
+            effective_target,
+            e,
+            stranded,
+        )));
+    }
 
     switch_packets::send_switch_packets(
         client,

@@ -72,11 +72,21 @@ pub struct SLoginStart {
 const LOGIN_NAME_MAX_CHARS: usize = 16;
 const UUID_LEN: usize = 16;
 
+pub fn check_login_name(name: &str) -> ProtocolResult<()> {
+    if name.contains(char::is_control) {
+        return Err(ProtocolError::invalid(
+            "control character in a login username",
+        ));
+    }
+    Ok(())
+}
+
 fn read_login_name(r: &mut &[u8]) -> ProtocolResult<String> {
     let name = r.read_string_bounded(LOGIN_NAME_MAX_CHARS)?;
     if name.is_empty() {
         return Err(ProtocolError::invalid("empty username in SLoginStart"));
     }
+    check_login_name(&name)?;
     Ok(name)
 }
 

@@ -9,14 +9,15 @@ use infrarust_api::events::messaging::PluginMessageEvent;
 use infrarust_api::messaging::{ChannelId, Endpoint};
 use infrarust_api::types::ServerId;
 use toml::{Table, Value};
+use uuid::Uuid;
 
 use infrarust_test_harness::plugin_message::{
     backend_message, bungee_channel, client_message, parse_register, register_channel,
     send_to_client, serverbound,
 };
 use infrarust_test_harness::{
-    BackendConn, ClientSession, ConnectionState, DEFAULT_TIMEOUT, FakeBackend, ProtocolVersion,
-    ScriptedPlugin, ServerSpec, TestProxy, TestProxyBuilder, version_matrix,
+    BackendConn, ClientSession, ConnectionState, DEFAULT_TIMEOUT, FakeBackend, FakeSessionServer,
+    ProtocolVersion, ScriptedPlugin, ServerSpec, TestProxy, TestProxyBuilder, version_matrix,
 };
 
 const T: Duration = DEFAULT_TIMEOUT;
@@ -55,6 +56,8 @@ fn bungeecord(permissions: &[(&str, bool)]) -> impl FnOnce(&mut Table) + Send + 
 
 const EVERYTHING: &[(&str, bool)] = &[
     ("connect_other", true),
+    ("ip_other", true),
+    ("server_ip", true),
     ("message", true),
     ("message_raw", true),
     ("kick_player", true),
@@ -174,7 +177,11 @@ version_matrix!(the_channel_is_off_by_default; p47 = 47, p777 = 777);
 
 async fn requests_get_golden_responses(version: ProtocolVersion) {
     let network = Network::spawn().await;
-    let proxy = network.proxy(&[]).start().await.unwrap();
+    let proxy = network
+        .proxy(&[("ip_other", true), ("server_ip", true)])
+        .start()
+        .await
+        .unwrap();
 
     let _session = join(&proxy, "lobby", "Steve", version).await;
     let mut conn = network.lobby.next_connection(T).await.unwrap();
@@ -319,6 +326,148 @@ async fn requests_stay_in_the_network(version: ProtocolVersion) {
 }
 
 version_matrix!(requests_stay_in_the_network; p47 = 47, p777 = 777);
+
+async fn a_server_without_a_network_is_its_own_scope(version: ProtocolVersion) {
+    let lobby = FakeBackend::builder().spawn().await.unwrap();
+    let game = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(opted_in(ServerSpec::offline("lobby").backend(lobby.addr())))
+        .server(ServerSpec::offline("game").backend(game.addr()))
+        .patch_config(bungeecord(EVERYTHING))
+        .start()
+        .await
+        .unwrap();
+
+    let _steve = join(&proxy, "lobby", "Steve", version).await;
+    let mut lobby_conn = lobby.next_connection(T).await.unwrap();
+    let alex = join(&proxy, "game", "Alex", version).await;
+    let mut game_conn = game.next_connection(T).await.unwrap();
+
+    for refused in [
+        fields(&["IPOther", "Alex"]),
+        fields(&["ServerIP", "game"]),
+        fields(&["PlayerCount", "game"]),
+        fields(&["PlayerList", "game"]),
+        fields(&["UUIDOther", "Alex"]),
+        fields(&["GetPlayerServer", "Alex"]),
+        fields(&["Connect", "game"]),
+        fields(&["ConnectOther", "Alex", "lobby"]),
+        fields(&["KickPlayer", "Alex", "gone"]),
+        fields(&["Message", "Alex", "psst"]),
+        [fields(&["Forward", "ALL", "chan"]), vec![0, 1, 7]].concat(),
+        [fields(&["Forward", "game", "chan"]), vec![0, 1, 7]].concat(),
+        [fields(&["ForwardToPlayer", "Alex", "chan"]), vec![0, 1, 7]].concat(),
+    ] {
+        request(&mut lobby_conn, refused).await;
+    }
+    request(&mut lobby_conn, fields(&["GetServers"])).await;
+    assert_eq!(
+        response(&mut lobby_conn).await,
+        fields(&["GetServers", "lobby"])
+    );
+    request(&mut lobby_conn, fields(&["PlayerCount", "ALL"])).await;
+    assert_eq!(
+        response(&mut lobby_conn).await,
+        with_int(fields(&["PlayerCount", "ALL"]), 1)
+    );
+    request(&mut lobby_conn, fields(&["PlayerList", "ALL"])).await;
+    assert_eq!(
+        response(&mut lobby_conn).await,
+        fields(&["PlayerList", "ALL", "Steve"])
+    );
+
+    alex.chat("still here").await.unwrap();
+    game_conn.chat_until("still here", T).await.unwrap();
+    let forwarded = game_conn.received().iter().any(|frame| {
+        serverbound(frame, ConnectionState::Play, version)
+            .unwrap()
+            .is_some_and(|message| message.channel == bungee_channel(version))
+    });
+    assert!(!forwarded);
+    let steve = proxy.wait_for_player("Steve", T).await.unwrap();
+    assert_eq!(steve.current_server(), Some(ServerId::new("lobby")));
+    let alex_player = proxy.wait_for_player("Alex", T).await.unwrap();
+    assert_eq!(alex_player.current_server(), Some(ServerId::new("game")));
+
+    steve.switch_server(ServerId::new("game")).await.unwrap();
+    let _moved = game.next_connection(T).await.unwrap();
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_server_without_a_network_is_its_own_scope; p47 = 47, p777 = 777);
+
+async fn ip_other_and_server_ip_are_off_by_default(version: ProtocolVersion) {
+    let network = Network::spawn().await;
+    let proxy = network.proxy(&[]).start().await.unwrap();
+
+    let _steve = join(&proxy, "lobby", "Steve", version).await;
+    let mut conn = network.lobby.next_connection(T).await.unwrap();
+
+    request(&mut conn, fields(&["IPOther", "Steve"])).await;
+    request(&mut conn, fields(&["ServerIP", "game"])).await;
+    request(&mut conn, fields(&["GetServer"])).await;
+    assert_eq!(response(&mut conn).await, fields(&["GetServer", "lobby"]));
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(ip_other_and_server_ip_are_off_by_default; p777 = 777);
+
+async fn a_name_resolves_to_the_session_in_scope(version: ProtocolVersion) {
+    let network = Network::spawn().await;
+    let sessions = FakeSessionServer::spawn().await.unwrap();
+    let verified = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = network
+        .proxy(EVERYTHING)
+        .server(
+            ServerSpec::client_only("verified")
+                .backend(verified.addr())
+                .network("other"),
+        )
+        .session_server(&sessions)
+        .patch_config(|table| {
+            table
+                .get_mut("auth")
+                .and_then(Value::as_table_mut)
+                .unwrap()
+                .insert("offline_uuid".into(), Value::String("client".into()));
+        })
+        .start()
+        .await
+        .unwrap();
+
+    let local_uuid = Uuid::new_v4();
+    let _local = proxy
+        .client_for("lobby", version)
+        .unwrap()
+        .claimed_uuid(local_uuid)
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let mut conn = network.lobby.next_connection(T).await.unwrap();
+    let _remote = proxy
+        .client_for("verified", version)
+        .unwrap()
+        .login("Steve")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _remote_conn = verified.next_connection(T).await.unwrap();
+
+    request(&mut conn, fields(&["UUIDOther", "Steve"])).await;
+    assert_eq!(
+        response(&mut conn).await,
+        fields(&["UUIDOther", "Steve", &local_uuid.simple().to_string()])
+    );
+
+    proxy.shutdown().await.unwrap();
+}
+
+version_matrix!(a_name_resolves_to_the_session_in_scope; p777 = 777);
 
 async fn connect_goes_through_the_connection_events(version: ProtocolVersion) {
     let network = Network::spawn().await;

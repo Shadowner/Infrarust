@@ -96,7 +96,7 @@ Forwarding proxy modes (`passthrough`, `zero_copy`, `server_only`) require at le
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `proxy_mode` | string | `"passthrough"` | How the proxy handles traffic. See below. |
-| `forwarding_mode` | string | `"none"` | Per-server override of the player info forwarding format sent to the backend: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Omit to use the global `[forwarding]` mode. |
+| `forwarding_mode` | string | global mode | Per-server override of the player info forwarding format sent to the backend: `none`, `bungee_cord` (alias `legacy`), `bungee_guard`, `velocity` (alias `modern`). Omit to use the global `[forwarding]` mode. `velocity` and `bungee_guard` are accepted only when the global mode is the same, and forwarding proxy modes have further limits: see [per-server override](./proxy-forwarding#per-server-override). |
 | `send_proxy_protocol` | bool | `false` | Send HAProxy proxy protocol v1/v2 headers to the backend. |
 | `domain_rewrite` | string | `"none"` | Rewrite the domain in the Minecraft handshake before forwarding. |
 | `max_players` | integer | `0` | Maximum players allowed on this server. `0` means unlimited. |

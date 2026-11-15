@@ -24,5 +24,6 @@ mod plugin;
 mod plugin_context;
 mod services;
 
+pub use crate::session::client_bridge::ClientBridge;
 pub use plugin::TestPlugin;
 pub use plugin_context::{MockPluginContext, MockPluginContextFactory};

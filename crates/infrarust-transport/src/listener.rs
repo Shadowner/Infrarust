@@ -4,9 +4,10 @@
 //! graceful shutdown, optional proxy protocol decoding, and socket
 //! configuration on accepted connections.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
+use ipnet::IpNet;
 use socket2::Socket;
 use tokio::net::TcpListener;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -14,8 +15,9 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_config::KeepaliveConfig;
 
-use crate::connection::ClientConnection;
+use crate::connection::{ClientConnection, canonicalize_ip};
 use crate::error::TransportError;
+use crate::ip_limit::{IpGuard, IpLimiter};
 use crate::proxy_protocol::decode_proxy_protocol;
 use crate::socket::{configure_listener_socket, configure_stream_socket, into_tokio_listener};
 
@@ -26,12 +28,16 @@ pub struct ListenerConfig {
     pub bind: SocketAddr,
     /// Maximum concurrent connections (0 = unlimited).
     pub max_connections: u32,
+    /// Maximum concurrent connections per IPv4 address or IPv6 /64 (0 = unlimited).
+    pub max_connections_per_ip: u32,
     /// TCP keepalive configuration for accepted connections.
     pub keepalive: KeepaliveConfig,
     /// Enable `SO_REUSEPORT` (Linux only).
     pub so_reuseport: bool,
     /// Decode proxy protocol headers on accepted connections.
     pub receive_proxy_protocol: bool,
+    /// Peers allowed to send a proxy protocol header.
+    pub trusted_proxies: Vec<IpNet>,
 }
 
 /// TCP listener with connection limiting and graceful shutdown.
@@ -39,14 +45,37 @@ pub struct ListenerConfig {
 pub struct Listener {
     inner: TcpListener,
     semaphore: Option<Arc<Semaphore>>,
+    ip_limiter: Option<Arc<IpLimiter>>,
     config: ListenerConfig,
     shutdown: CancellationToken,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ProxyHeader {
+    NotExpected,
+    Expected,
+    UntrustedPeer,
+}
+
+impl ProxyHeader {
+    fn for_peer(config: &ListenerConfig, peer: IpAddr) -> Self {
+        if !config.receive_proxy_protocol {
+            return Self::NotExpected;
+        }
+        let peer = canonicalize_ip(peer);
+        if config.trusted_proxies.iter().any(|net| net.contains(&peer)) {
+            Self::Expected
+        } else {
+            Self::UntrustedPeer
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct PendingConnection {
     connection: ClientConnection,
-    receive_proxy_protocol: bool,
+    proxy_header: ProxyHeader,
+    ip_limiter: Option<Arc<IpLimiter>>,
     permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -58,34 +87,66 @@ impl PendingConnection {
     pub async fn resolve(self) -> Result<AcceptedConnection, TransportError> {
         let Self {
             mut connection,
-            receive_proxy_protocol,
+            proxy_header,
+            ip_limiter,
             permit,
         } = self;
-        if receive_proxy_protocol {
-            let (info, leftover) = decode_proxy_protocol(connection.stream_mut()).await?;
-            if let Some(info) = info {
-                connection = connection.with_proxy_protocol(&info);
+        match proxy_header {
+            ProxyHeader::NotExpected => {}
+            ProxyHeader::UntrustedPeer => {
+                return Err(TransportError::UntrustedProxyPeer {
+                    peer: canonicalize_ip(connection.peer_addr().ip()),
+                });
             }
-            connection.inject_buffered_data(&leftover);
+            ProxyHeader::Expected => {
+                let (info, leftover) = decode_proxy_protocol(connection.stream_mut()).await?;
+                if let Some(info) = info {
+                    connection = connection.with_proxy_protocol(&info);
+                }
+                connection.inject_buffered_data(&leftover);
+            }
         }
-        Ok(AcceptedConnection { connection, permit })
+        let ip_guard = match ip_limiter {
+            Some(limiter) => {
+                let ip = connection.client_addr();
+                Some(
+                    limiter
+                        .try_acquire(ip)
+                        .ok_or(TransportError::IpLimitReached { ip })?,
+                )
+            }
+            None => None,
+        };
+        Ok(AcceptedConnection {
+            connection,
+            slot: ConnectionSlot {
+                _permit: permit,
+                _ip_guard: ip_guard,
+            },
+        })
     }
 }
 
-/// An accepted connection with its semaphore permit.
+/// The share of the global and per-IP limits held by one connection.
+/// Dropping it gives both back.
+#[derive(Debug, Default)]
+pub struct ConnectionSlot {
+    _permit: Option<OwnedSemaphorePermit>,
+    _ip_guard: Option<IpGuard>,
+}
+
+/// An accepted connection with its slot.
 ///
-/// The permit is held for the lifetime of the connection.
-/// When dropped, the permit is released, allowing new connections.
+/// The slot is held for the lifetime of the connection.
 pub struct AcceptedConnection {
     /// The accepted client connection.
     pub connection: ClientConnection,
-    /// Semaphore permit (released on drop).
-    permit: Option<OwnedSemaphorePermit>,
+    slot: ConnectionSlot,
 }
 
 impl AcceptedConnection {
-    pub fn into_parts(self) -> (ClientConnection, Option<OwnedSemaphorePermit>) {
-        (self.connection, self.permit)
+    pub fn into_parts(self) -> (ClientConnection, ConnectionSlot) {
+        (self.connection, self.slot)
     }
 }
 
@@ -93,7 +154,7 @@ impl std::fmt::Debug for AcceptedConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AcceptedConnection")
             .field("connection", &self.connection)
-            .field("haspermit", &self.permit.is_some())
+            .field("slot", &self.slot)
             .finish()
     }
 }
@@ -120,11 +181,17 @@ impl Listener {
             None
         };
 
-        tracing::info!(bind = %local_addr, max_connections = config.max_connections, "listener bound");
+        tracing::info!(
+            bind = %local_addr,
+            max_connections = config.max_connections,
+            max_connections_per_ip = config.max_connections_per_ip,
+            "listener bound"
+        );
 
         Ok(Self {
             inner,
             semaphore,
+            ip_limiter: IpLimiter::new(config.max_connections_per_ip),
             config,
             shutdown,
         })
@@ -201,7 +268,8 @@ impl Listener {
 
             return Ok(PendingConnection {
                 connection: ClientConnection::new(stream, peer_addr, local_addr),
-                receive_proxy_protocol: self.config.receive_proxy_protocol,
+                proxy_header: ProxyHeader::for_peer(&self.config, peer_addr.ip()),
+                ip_limiter: self.ip_limiter.clone(),
                 permit,
             });
         }
@@ -230,8 +298,50 @@ fn is_transient_error(e: &std::io::Error) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn proxy_config(trusted: &[&str]) -> ListenerConfig {
+        ListenerConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            max_connections: 0,
+            max_connections_per_ip: 0,
+            keepalive: KeepaliveConfig::default(),
+            so_reuseport: false,
+            receive_proxy_protocol: true,
+            trusted_proxies: trusted.iter().map(|net| net.parse().unwrap()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_ipv4_mapped_peer_matches_ipv4_trusted_networks() {
+        let config = proxy_config(&["10.0.0.0/8"]);
+        let mapped: IpAddr = "::ffff:10.1.2.3".parse().unwrap();
+        assert!(matches!(
+            ProxyHeader::for_peer(&config, mapped),
+            ProxyHeader::Expected
+        ));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_peer_does_not_match_ipv6_networks() {
+        let config = proxy_config(&["::/0"]);
+        let mapped: IpAddr = "::ffff:10.1.2.3".parse().unwrap();
+        assert!(matches!(
+            ProxyHeader::for_peer(&config, mapped),
+            ProxyHeader::UntrustedPeer
+        ));
+    }
+
+    #[test]
+    fn an_empty_trust_list_refuses_every_peer() {
+        let config = proxy_config(&[]);
+        assert!(matches!(
+            ProxyHeader::for_peer(&config, "127.0.0.1".parse().unwrap()),
+            ProxyHeader::UntrustedPeer
+        ));
+    }
 
     #[test]
     fn transient_errors_are_retried() {

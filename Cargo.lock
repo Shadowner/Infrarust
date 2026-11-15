@@ -2196,7 +2196,9 @@ version = "2.0.0-beta.4"
 dependencies = [
  "bytes",
  "command-fds",
+ "dashmap",
  "infrarust_config",
+ "ipnet",
  "listenfd",
  "nix",
  "ppp",
@@ -2206,6 +2208,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2216,6 +2219,7 @@ dependencies = [
  "humantime-serde",
  "ipnet",
  "serde",
+ "serde_json",
  "serde_yml",
  "tempfile",
  "thiserror 2.0.21",

@@ -17,6 +17,7 @@ use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
 use crate::handoff::HandoffRelay;
+use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::pipeline::Pipeline;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
@@ -28,6 +29,7 @@ pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct ProxyServer {
     common_pipeline: Pipeline,
     login_pipeline: Pipeline,
+    rate_limiter: RateLimiterMiddleware,
     status_handler: StatusHandler,
     legacy_handler: LegacyHandler,
     passthrough_handler: PassthroughHandler,
@@ -64,9 +66,11 @@ impl ProxyServer {
         let listener_config = ListenerConfig {
             bind: config.bind,
             max_connections: config.max_connections,
+            max_connections_per_ip: config.max_connections_per_ip,
             keepalive: config.keepalive.clone(),
             so_reuseport: config.so_reuseport,
             receive_proxy_protocol: config.receive_proxy_protocol,
+            trusted_proxies: config.trusted_proxies.clone(),
         };
 
         let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;

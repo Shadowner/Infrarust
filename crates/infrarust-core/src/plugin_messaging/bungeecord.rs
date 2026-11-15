@@ -15,7 +15,7 @@ use super::router::Scope;
 use crate::error::CoreError;
 use crate::player::PlayerSession;
 use crate::session::backend_bridge::BackendBridge;
-use crate::session::server_switch::validation::validate_switch_allowed;
+use crate::session::server_switch::validation::backend_scope_contains;
 
 const ALL: &str = "ALL";
 const ONLINE: &str = "ONLINE";
@@ -27,7 +27,7 @@ struct Network<'a> {
 
 impl Network<'_> {
     fn contains(&self, config: &ServerConfig) -> bool {
-        validate_switch_allowed(self.origin, config).is_ok()
+        backend_scope_contains(self.origin, config)
     }
 
     fn server(&self, name: &str) -> Option<Arc<ServerConfig>> {
@@ -63,8 +63,9 @@ impl Network<'_> {
         self.scope
             .services
             .connection_registry
-            .find_by_username(name)
-            .filter(|session| self.holds(session))
+            .find_all_by_username(name)
+            .into_iter()
+            .find(|session| self.holds(session))
     }
 
     fn players(&self) -> Vec<Arc<PlayerSession>> {

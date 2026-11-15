@@ -8,7 +8,7 @@ use infrarust_api::handoff::Handoff;
 use infrarust_api::types::{Component, Extensions};
 use infrarust_config::{ProxyMode, UnknownDomainBehavior};
 use infrarust_protocol::version::ProtocolVersion;
-use infrarust_transport::{Listener, PendingConnection};
+use infrarust_transport::{Listener, PendingConnection, TransportError};
 
 use super::ProxyServer;
 use crate::error::CoreError;
@@ -19,8 +19,7 @@ use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::pipeline::types::{
-    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyDetected, Refused, RoutingData,
-    UnknownDomain,
+    ClaimedLogin, ConnectionIntent, HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain,
 };
 use crate::player::SHUTDOWN_REASON;
 
@@ -40,6 +39,8 @@ impl ProxyServer {
             .services
             .ban_manager
             .start_purge_task(config.ban.purge_interval, self.background.clone());
+
+        let _rate_limit_purge_handle = self.rate_limiter.start_purge_task(self.background.clone());
 
         let _prober_handle = Arc::new(crate::loadbalancer::ActiveHealthProber::new(
             Arc::clone(&self.services.domain_router),
@@ -90,7 +91,18 @@ impl ProxyServer {
         let accepted = tokio::select! {
             biased;
             () = shutdown.cancelled() => return Ok(()),
-            accepted = pending.resolve() => accepted?,
+            accepted = pending.resolve() => match accepted {
+                Ok(accepted) => accepted,
+                Err(TransportError::IpLimitReached { ip }) => {
+                    tracing::debug!(%ip, "closing connection over the per-IP limit");
+                    return Ok(());
+                }
+                Err(TransportError::UntrustedProxyPeer { peer }) => {
+                    tracing::debug!(%peer, "closing connection from a peer outside trusted_proxies");
+                    return Ok(());
+                }
+                Err(e) => return Err(e.into()),
+            },
         };
         let mut ctx = ConnectionContext::from_accepted(accepted);
         if !self.open_transport(&mut ctx, &shutdown).await {
@@ -125,9 +137,6 @@ impl ProxyServer {
         match common {
             MiddlewareResult::Continue => {}
             MiddlewareResult::ShortCircuit => {
-                if ctx.extensions.contains::<LegacyDetected>() {
-                    return self.legacy_handler.handle(&mut ctx).await;
-                }
                 admission::reject_refused(&self.services.event_bus, &ctx);
                 return Ok(());
             }
@@ -172,6 +181,10 @@ impl ProxyServer {
                 return Ok(());
             }
             Admission::Dropped => return Ok(()),
+            Admission::Handoff(_) if ctx.extensions.contains::<LegacyHello>() => {
+                tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
+                return Ok(());
+            }
             Admission::Handoff(handoff) => {
                 let refused = tokio::select! {
                     biased;
@@ -190,6 +203,21 @@ impl ProxyServer {
                     .await;
                 return Ok(());
             }
+        }
+
+        if let Some(hello) = ctx.extensions.get::<LegacyHello>().cloned() {
+            return match hello {
+                LegacyHello::Ping { request, raw } => {
+                    self.legacy_handler
+                        .handle_ping(&mut ctx, &request, &raw)
+                        .await
+                }
+                LegacyHello::Login { request, raw } => {
+                    self.legacy_handler
+                        .handle_login(&mut ctx, &request, &raw)
+                        .await
+                }
+            };
         }
 
         match intent {
@@ -356,6 +384,9 @@ impl ProxyServer {
         ctx: &mut ConnectionContext,
         reason: &Component,
     ) -> Result<(), CoreError> {
+        if ctx.extensions.contains::<LegacyHello>() {
+            return crate::handler::helpers::send_legacy_kick(ctx.stream_mut(), reason).await;
+        }
         let version = ctx
             .extensions
             .get::<HandshakeData>()

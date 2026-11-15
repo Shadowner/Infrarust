@@ -43,6 +43,12 @@ pub enum ServerManagerError {
     #[error("server {server_id} went back to sleep before coming online")]
     WentToSleep { server_id: String },
 
+    #[error("server {server_id} is not being started again for another {retry_after:?}")]
+    StartThrottled {
+        server_id: String,
+        retry_after: std::time::Duration,
+    },
+
     #[error("shutdown in progress")]
     Shutdown,
 }

@@ -6,6 +6,7 @@ use super::output::{
     Block, CommandOutput, Failure, Fields, Hint, Line, Node, OutputLine, Span, Table,
 };
 use crate::terminal::{self, Tone};
+use crate::util::text::escape_control;
 
 const COLUMN_GAP: usize = 3;
 const MIN_COLUMN: usize = 8;
@@ -87,11 +88,11 @@ impl Renderer {
     }
 
     fn paint(&self, tone: Tone, text: &str) -> String {
-        tone.paint(text, self.colored).to_string()
+        tone.paint(escape_control(text), self.colored).to_string()
     }
 
     fn status(&self, tone: Tone, glyph: &str, message: &str) -> String {
-        format!("{} {message}", self.paint(tone, glyph))
+        format!("{} {}", self.paint(tone, glyph), escape_control(message))
     }
 
     fn output_line(&self, line: &OutputLine) -> String {
@@ -244,10 +245,11 @@ impl Renderer {
     }
 
     fn span_text(&self, span: &Span) -> String {
+        let text = escape_control(&span.text);
         match span.mark {
-            Some(mark) if self.colored && span.text.is_empty() => mark.glyph().to_string(),
-            Some(mark) if self.colored => format!("{} {}", mark.glyph(), span.text),
-            _ => span.text.clone(),
+            Some(mark) if self.colored && text.is_empty() => mark.glyph().to_string(),
+            Some(mark) if self.colored => format!("{} {text}", mark.glyph()),
+            _ => text.into_owned(),
         }
     }
 

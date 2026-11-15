@@ -42,3 +42,49 @@ async fn a_client_that_never_sends_its_proxy_header_does_not_hold_up_the_next_on
 
     proxy.shutdown().await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_proxy_header_from_an_untrusted_peer_is_refused() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .patch_config(|table| {
+            table.insert("receive_proxy_protocol".into(), Value::Boolean(true));
+            table.insert(
+                "trusted_proxies".into(),
+                Value::Array(vec![Value::String("192.0.2.0/24".into())]),
+            );
+        })
+        .start()
+        .await
+        .unwrap();
+    let source: SocketAddr = "203.0.113.7:50001".parse().unwrap();
+
+    let refused = proxy
+        .client(VERSION)
+        .proxy_protocol(source)
+        .timeout(PROMPTLY)
+        .status()
+        .await;
+    assert!(
+        refused.is_err(),
+        "the connection is closed, got {refused:?}"
+    );
+    assert_eq!(backend.accepted_connections(), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn proxy_protocol_without_trusted_proxies_does_not_start() {
+    let backend = FakeBackend::builder().spawn().await.unwrap();
+    let started = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend.addr()))
+        .patch_config(|table| {
+            table.insert("receive_proxy_protocol".into(), Value::Boolean(true));
+            table.remove("trusted_proxies");
+        })
+        .start()
+        .await;
+    assert!(started.is_err());
+}

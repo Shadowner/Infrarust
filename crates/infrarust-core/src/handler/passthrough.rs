@@ -46,10 +46,15 @@ impl PassthroughHandler {
             .require_extension::<HandshakeData>("HandshakeData")?
             .clone();
         let login_data = ctx.extensions.get::<LoginData>().cloned();
-        let addresses = BackendTargets::addresses_or_config(
-            ctx.extensions.get::<BackendTargets>(),
-            &routing.server_config,
-        );
+        let origin = Route::forwarding(routing, |routing| {
+            BackendTargets::addresses_or_config(
+                ctx.extensions.get::<BackendTargets>(),
+                &routing.server_config,
+            )
+        })
+        .ok_or(CoreError::InvalidState(
+            "a server where the proxy runs the login reached the passthrough handler",
+        ))?;
 
         let arrival = Arrival {
             username: login_data
@@ -69,12 +74,7 @@ impl PassthroughHandler {
             wire: Wire::Modern(handshake.protocol_version),
         };
         let Some(ready) = login
-            .open(
-                &mut ctx,
-                arrival,
-                Route { routing, addresses },
-                Opening::Modern(&handshake),
-            )
+            .open(&mut ctx, arrival, origin, Opening::Modern(&handshake))
             .await?
         else {
             return Ok(());

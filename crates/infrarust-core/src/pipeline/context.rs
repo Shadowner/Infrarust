@@ -6,10 +6,9 @@ use std::time::Duration;
 
 use bytes::BytesMut;
 use tokio::net::TcpStream;
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::Instant;
 
-use infrarust_transport::{AcceptedConnection, ConnectionInfo};
+use infrarust_transport::{AcceptedConnection, ConnectionInfo, ConnectionSlot};
 
 use crate::error::CoreError;
 use crate::filter::transport_chain::TransportSession;
@@ -94,7 +93,7 @@ pub struct ConnectionContext {
     pub connection_id: u64,
     pub real_ip: Option<IpAddr>,
     transport: Option<TransportSession>,
-    _permit: Option<OwnedSemaphorePermit>,
+    _slot: ConnectionSlot,
 }
 
 impl ConnectionContext {
@@ -105,7 +104,7 @@ impl ConnectionContext {
         let real_ip = accepted.connection.real_ip().map(|_| client_ip);
         let local_addr = accepted.connection.local_addr();
         let connected_at = accepted.connection.connected_at();
-        let (connection, permit) = accepted.into_parts();
+        let (connection, slot) = accepted.into_parts();
         let (stream, buffered_data, info) = connection.into_parts();
 
         Self {
@@ -120,7 +119,7 @@ impl ConnectionContext {
             connection_id: next_connection_id(),
             real_ip,
             transport: None,
-            _permit: permit,
+            _slot: slot,
         }
     }
 
@@ -193,7 +192,7 @@ impl ConnectionContext {
             connection_id: next_connection_id(),
             real_ip: None,
             transport: None,
-            _permit: None,
+            _slot: ConnectionSlot::default(),
         }
     }
 

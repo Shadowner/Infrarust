@@ -24,11 +24,19 @@ pub fn plugins_dir() -> PathBuf {
     PathBuf::from("./plugins")
 }
 
+pub const fn max_connections() -> u32 {
+    10_000
+}
+
+pub const fn max_connections_per_ip() -> u32 {
+    32
+}
+
 pub const fn rate_limit_enabled() -> bool {
-    false
+    true
 }
 pub const fn rate_limit_max() -> u32 {
-    3
+    10
 }
 pub const fn rate_limit_window() -> Duration {
     Duration::from_secs(10)

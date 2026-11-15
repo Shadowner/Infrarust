@@ -154,7 +154,10 @@ Add a `[docker]` section to your `infrarust.toml`:
 servers_dir = "/app/config/servers"
 
 [docker]
+allowed_domains = ["survival.example.com"]
 ```
+
+`allowed_domains` lists the domains containers may claim with the `infrarust.domains` label. A container that claims a domain outside the list is not routed.
 
 Then label your Minecraft containers:
 
@@ -228,9 +231,10 @@ Tell Infrarust which Docker network to prefer for address resolution:
 ```toml
 [docker]
 network = "minecraft"
+allowed_domains = ["survival.example.com"]
 ```
 
-Without this setting, Infrarust picks the first available network IP from each container. If your containers are on multiple networks, set `network` to avoid resolving to the wrong IP.
+Without the `network` setting, Infrarust picks the first available network IP from each container. If your containers are on multiple networks, set `network` to avoid resolving to the wrong IP.
 
 ## Building the image yourself
 

@@ -38,6 +38,7 @@ pub(crate) async fn connect_backend(
     let address = connection.server_address().clone();
     let mut backend =
         BackendBridge::new(connection.into_stream(), version).with_server_address(address);
+    backend.set_cancel(ctx.token.clone());
 
     match login {
         Login::Relay => {
@@ -69,7 +70,7 @@ async fn start_login(
     config: &ServerConfig,
     backend: &mut BackendBridge,
 ) -> Result<ForwardingHandler, CoreError> {
-    let handler = ctx.services.resolve_forwarding_handler(config);
+    let handler = ctx.services.resolve_forwarding_handler(config)?;
     if handler.modifies_handshake() {
         let mut handshake = build_handshake_for_backend(&ctx.handshake, config);
         handler.apply_handshake(&mut handshake, &ctx.forwarding_data());

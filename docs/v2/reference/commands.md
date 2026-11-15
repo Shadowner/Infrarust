@@ -56,6 +56,8 @@ Prints the proxy version, the current online player count, and the proxy uptime.
 
 Lists all configured backend servers with a player count for each. If the server manager is active, a state indicator is shown (online `●`, sleeping `○`, crashed `✗`). Servers not tracked by the server manager show a `-`.
 
+The count is a count of sessions. Two sessions can share a name when the newer login could not replace the older one, see [two logins with the same identity](../guide/authentication#two-logins-with-the-same-identity).
+
 ### find
 
 ```
@@ -85,6 +87,10 @@ With no argument, shows the server you are currently connected to. With a server
 ```
 
 Transfers the named online player to the named backend server. Both arguments are required. Errors if either the player is not online or the server ID is not in the configuration. Tab-completes player names for the first argument and server IDs for the second.
+
+A player who was not verified by the session server (an `offline` login) cannot be sent to a `client_only` server. The switch is refused with "This server requires a verified Minecraft account": a player on a backend stays there and gets the message in chat, a player held in limbo is disconnected with it. The same applies to `/ir server`.
+
+When several sessions match the name, `send`, `kick` and `find` pick the one with the exact spelling you typed, then the most trusted one. See [two logins with the same identity](../guide/authentication#two-logins-with-the-same-identity).
 
 ### broadcast
 

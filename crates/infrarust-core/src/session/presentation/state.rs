@@ -17,6 +17,7 @@ use crate::util::sync::lock;
 const MAX_TRACKED_COOKIE_KEYS: usize = 256;
 const MAX_TRACKED_REQUESTS_PER_KEY: usize = 16;
 const MAX_TRACKED_LEGACY_PACKS: usize = 16;
+const MAX_TRACKED_BACKEND_BOSS_BARS: usize = 256;
 
 type CookieReply = oneshot::Sender<Option<Bytes>>;
 
@@ -98,10 +99,13 @@ impl Presentation {
 
     pub(crate) fn backend_bar(&self, id: Uuid, shown: bool) {
         let mut screen = lock(&self.screen);
-        if shown {
-            screen.backend_boss_bars.insert(id);
+        let tracked = &mut screen.backend_boss_bars;
+        if !shown {
+            tracked.remove(&id);
+        } else if tracked.len() < MAX_TRACKED_BACKEND_BOSS_BARS || tracked.contains(&id) {
+            tracked.insert(id);
         } else {
-            screen.backend_boss_bars.remove(&id);
+            tracing::debug!(%id, "too many backend boss bars; not tracking this one");
         }
     }
 

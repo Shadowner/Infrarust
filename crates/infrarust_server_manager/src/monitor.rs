@@ -42,13 +42,6 @@ pub async fn monitor_server(
             () = tokio::time::sleep(interval) => {}
         }
 
-        // Skip polling if server is Crashed (wait for ensure_started)
-        if let Some(state) = service.get_state(&server_id)
-            && state == ServerState::Crashed
-        {
-            continue;
-        }
-
         // 1. Poll provider status, capturing the generation first so a
         //    transition during the poll invalidates the result
         let Some(generation) = service.generation(&server_id) else {

@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime};
 use infrarust_api::services::ban_service::{
     BanEntry, BanRequest, BanService, BanSource, BanTarget, IpNet, UnbanRequest,
 };
+use infrarust_config::IdentityCheck;
 
 use crate::console::ConsoleServices;
 use crate::console::commands::{args, usage};
@@ -298,13 +299,57 @@ async fn issue_ban(
     );
 
     let banned = ban_summary(label, duration, reason.as_deref());
-    if issued.kicked == 0 {
+    let warnings = unverified_identity_warnings(
+        &issued.entry.target,
+        services.config_service.identity_checks(),
+    );
+    if issued.kicked == 0 && warnings.is_empty() {
         return CommandOutput::Success(banned);
     }
-    CommandOutput::Lines(vec![
-        OutputLine::Success(banned),
-        OutputLine::Success(format!("Kicked {} player(s){kicked_scope}", issued.kicked)),
-    ])
+    let mut lines = vec![OutputLine::Success(banned)];
+    if issued.kicked > 0 {
+        lines.push(OutputLine::Success(format!(
+            "Kicked {} player(s){kicked_scope}",
+            issued.kicked
+        )));
+    }
+    lines.extend(warnings.into_iter().map(OutputLine::Warning));
+    CommandOutput::Lines(lines)
+}
+
+fn unverified_identity_warnings(
+    target: &BanTarget,
+    servers: Vec<(String, IdentityCheck)>,
+) -> Vec<String> {
+    if matches!(target, BanTarget::Ip(_) | BanTarget::IpRange(_)) {
+        return Vec::new();
+    }
+    let mut left_to_backend = Vec::new();
+    let mut offline = Vec::new();
+    for (id, check) in servers {
+        match check {
+            IdentityCheck::Proxy => {}
+            IdentityCheck::Backend => left_to_backend.push(id),
+            IdentityCheck::Nobody => offline.push(id),
+        }
+    }
+    left_to_backend.sort_unstable();
+    offline.sort_unstable();
+
+    let mut warnings = Vec::new();
+    if !left_to_backend.is_empty() {
+        warnings.push(format!(
+            "The proxy does not authenticate players on {}: this ban is checked against an identity it has not verified, so it can be evaded there. Add an IP ban or ban the player on the backend.",
+            left_to_backend.join(", ")
+        ));
+    }
+    if !offline.is_empty() {
+        warnings.push(format!(
+            "Nobody authenticates players on {}: this ban only blocks the name or UUID a client presents there, so the player gets back in under another name. Add an IP ban.",
+            offline.join(", ")
+        ));
+    }
+    warnings
 }
 
 fn ban_summary(label: &str, duration: Option<Duration>, reason: Option<&str>) -> String {

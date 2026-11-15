@@ -131,11 +131,33 @@ pub enum ServerValidationError {
     #[error(
         "{proxy_mode:?} mode does not parse the login, but {mode_source} is velocity: \
          velocity forwarding needs offline or client_only, or set \
-         forwarding_mode = \"none\", \"bungeecord\" or \"bungeeguard\" on the server"
+         forwarding_mode = \"none\" on the server"
     )]
     VelocityOnForwardingServer {
         proxy_mode: ProxyMode,
         mode_source: &'static str,
+    },
+
+    #[error(
+        "forwarding_mode = \"{requested}\" needs its own secret, but the proxy-wide \
+         [forwarding] mode is \"{global}\": set [forwarding] mode = \"{requested}\" or \
+         change forwarding_mode on the server; a velocity secret is never reused as a \
+         bungee_guard token, which travels in clear text"
+    )]
+    ForwardingSecretMismatch {
+        requested: &'static str,
+        global: &'static str,
+    },
+
+    #[error(
+        "{proxy_mode:?} mode does not verify players, but the proxy-wide [forwarding] mode \
+         \"{mode}\" would hand this backend the identity each client claims: set \
+         forwarding_mode = \"none\" on the server, or write forwarding_mode = \"{mode}\" \
+         to accept that any client can impersonate any player there"
+    )]
+    InheritedForwardingUnverified {
+        proxy_mode: ProxyMode,
+        mode: &'static str,
     },
 
     #[error("domains must not contain an empty entry")]
@@ -175,6 +197,12 @@ pub enum ProxyValidationError {
 
     #[error("{0}")]
     WebApiKey(String),
+
+    #[error(
+        "receive_proxy_protocol requires trusted_proxies: list the addresses of your \
+         load balancers, or [\"0.0.0.0/0\", \"::/0\"] to trust every peer"
+    )]
+    ProxyProtocolWithoutTrustedProxies,
 
     #[error("web.bind '{bind}' is not a valid bind address (expected host:port)")]
     WebBindNotHostPort { bind: String },

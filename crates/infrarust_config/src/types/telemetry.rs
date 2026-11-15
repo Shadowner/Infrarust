@@ -14,6 +14,17 @@ pub enum OtlpProtocol {
     Http,
 }
 
+/// How much of the client address a connection span records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TraceClientIp {
+    Full,
+    /// Keeps the /24 of an IPv4 address and the /48 of an IPv6 address.
+    #[default]
+    Truncated,
+    Off,
+}
+
 /// Sub-sections: `[telemetry.metrics]`, `[telemetry.traces]`, `[telemetry.resource]`.
 /// Absent from the TOML file means `None` in `ProxyConfig` (no telemetry).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -77,6 +88,13 @@ pub struct TracesConfig {
     #[serde(default = "defaults::sampling_ratio")]
     #[serde(deserialize_with = "deserialize_sampling_ratio")]
     pub sampling_ratio: f64,
+
+    #[serde(default)]
+    pub client_ip: TraceClientIp,
+
+    /// Records the player's username on connection spans.
+    #[serde(default = "defaults::true_val")]
+    pub username: bool,
 }
 
 impl Default for TracesConfig {
@@ -84,6 +102,8 @@ impl Default for TracesConfig {
         Self {
             enabled: defaults::true_val(),
             sampling_ratio: defaults::sampling_ratio(),
+            client_ip: TraceClientIp::default(),
+            username: defaults::true_val(),
         }
     }
 }

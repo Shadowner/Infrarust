@@ -556,6 +556,44 @@ async fn a_login_claim_from_a_banned_address_is_refused_like_a_banned_login() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_login_claim_under_a_banned_name_is_refused_like_a_banned_login() {
+    let (backend, backend_addr) = listener().await;
+    let (plugin, claims) = login_bridge(Some(HandoffTarget::Route));
+    let recorder = Recorder::new();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::offline("lobby").backend(backend_addr))
+        .plugin(plugin)
+        .plugin(recorder.plugin())
+        .start()
+        .await
+        .unwrap();
+    proxy
+        .services()
+        .ban_manager
+        .issue(BanRequest::new(BanTarget::Username("xferSteve".into())).reason("griefing"))
+        .await
+        .unwrap();
+
+    let mut sent = handshake("lobby.test", CURRENT, ConnectionState::Login);
+    sent.extend(frame(&declared_login_start("xferSteve", CURRENT)));
+    let mut client = TcpStream::connect(proxy.addr()).await.unwrap();
+    client.write_all(&sent).await.unwrap();
+
+    let reason = login_disconnect(client).await;
+    assert!(reason.contains("griefing"), "{reason}");
+    nothing_accepted(&backend).await;
+    assert_eq!(claims.lock().unwrap().len(), 1);
+
+    settle(&proxy).await;
+    let rejected = rejections(&recorder);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+    assert_eq!(rejected[0]["reason"], "banned");
+    assert_eq!(recorder.count(EventKind::PreLogin), 0);
+
+    proxy.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_handshake_handoff_from_a_banned_address_is_refused_like_a_banned_login() {
     let (backend, backend_addr) = listener().await;
     let recorder = Recorder::new();

@@ -3,7 +3,7 @@
 //! Used when `ServerPreConnectResult::SendToLimbo` is returned at initial
 //! connect in client_only mode. At that point, LoginSuccess + LoginAcknowledged
 //! have already been handled by the auth flow, and the client is in Config state.
-//! This module sends registry data (from cache or embedded) and transitions to Play.
+//! This module sends the embedded registry data and transitions to Play.
 
 use std::time::Duration;
 
@@ -21,10 +21,6 @@ use crate::session::frame_chain::FrameChain;
 const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 
 /// Completes the configuration phase for a client entering limbo.
-///
-/// Uses the [`RegistryCodecCache`] which provides:
-/// - captured frames (if a player already connected to a backend of this version)
-/// - embedded data (if available for this version)
 ///
 /// Works for both initial connect AND server switch to limbo.
 ///

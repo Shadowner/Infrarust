@@ -13,7 +13,7 @@ Forwarding modes (passthrough, zero_copy, server_only) work with every Minecraft
 
 Intercepted modes (client_only, offline) parse and re-encode game packets, so they depend on Infrarust's protocol implementation. The protocol crate names 37 versions, from 1.7.2 (protocol 4) through 26.3 (protocol 777), but it does not need a client's exact protocol number to be one of them: packet mappings are resolved by *band*, so a number that falls between two named versions uses the mapping in force at that point. A patch release Mojang ships between two named versions therefore works without any change here. The limbo system handles version-specific spawn sequences for clients as old as pre-1.16.
 
-Legacy clients (Beta 1.8 through 1.6) are detected during the handshake and handled separately. They receive a legacy ping response but cannot log in through the proxy.
+Legacy clients (Beta 1.8 through 1.6) are detected during the handshake and then go through the same checks as modern clients (IP filter, bans, rate limit, domain routing). They receive a legacy ping response. A legacy login is forwarded to the backend when the server uses a forwarding mode (passthrough, zero_copy, server_only). On a client_only or offline server the proxy cannot run the login for these clients, so they are kicked.
 
 ::: tip
 If you're unsure, use passthrough mode. It works with any Minecraft version and adds the least overhead.
@@ -21,12 +21,15 @@ If you're unsure, use passthrough mode. It works with any Minecraft version and 
 
 ## Is there a maximum player count?
 
-No hard-coded limit. The `max_players` field in a server config controls per-server caps, and `max_connections` in `infrarust.toml` sets a global connection limit. Both default to 0 (unlimited).
+No hard-coded limit. The `max_players` field in a server config controls per-server caps and defaults to 0 (unlimited). `max_connections` in `infrarust.toml` sets a global connection limit and defaults to 10000; set it to 0 for no limit. `max_connections_per_ip` limits how many connections one client address holds at once and defaults to 32.
 
 ```toml
 # infrarust.toml: global limit
 max_connections = 500
+max_connections_per_ip = 32
 ```
+
+If all your players arrive from one address (a tunnel such as playit or frp, or a load balancer without PROXY protocol), the per-IP limit applies to all of them together. See [players behind a shared address](./common-issues.md#players-behind-a-shared-address-are-refused).
 
 ```toml
 # servers/survival.toml: per-server limit

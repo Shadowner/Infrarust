@@ -87,6 +87,7 @@ struct BackendConfig {
     login: LoginBehavior,
     status: Option<Value>,
     hold_config: bool,
+    hold_join: bool,
     require_proxy_protocol: bool,
 }
 
@@ -121,6 +122,12 @@ impl FakeBackendBuilder {
     #[must_use]
     pub const fn hold_config(mut self) -> Self {
         self.config.hold_config = true;
+        self
+    }
+
+    #[must_use]
+    pub const fn hold_join(mut self) -> Self {
+        self.config.hold_join = true;
         self
     }
 
@@ -169,6 +176,7 @@ impl FakeBackend {
                 login: LoginBehavior::Accept,
                 status: None,
                 hold_config: false,
+                hold_join: false,
                 require_proxy_protocol: false,
             },
         }
@@ -399,6 +407,9 @@ async fn serve_login(
     }
 
     setup.state = ConnectionState::Play;
+    if config.hold_join {
+        return Ok(BackendConn::start(conn, setup));
+    }
     conn.write_frame(&infrarust_core::test_support::join_game_frame(version)?)
         .await?;
     Ok(BackendConn::start(conn, setup))

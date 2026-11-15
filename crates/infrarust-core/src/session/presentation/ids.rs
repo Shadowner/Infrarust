@@ -245,7 +245,8 @@ impl PresentationIds {
             .ok()
             .and_then(|(host, port)| Some((host, u16::try_from(port).ok()?)))
         else {
-            return Some(frame);
+            tracing::debug!("dropping a backend transfer with an unreadable target");
+            return None;
         };
         let event = bus
             .fire(PreTransferEvent::new(
@@ -284,11 +285,12 @@ impl PresentationIds {
                     Ok(()) => Some(PacketFrame::new(frame.id, Bytes::from(payload))),
                     Err(e) => {
                         tracing::warn!("could not redirect a backend transfer: {e}");
-                        Some(frame)
+                        None
                     }
                 }
             }
-            _ => Some(frame),
+            PreTransferResult::Allowed => Some(frame),
+            _ => None,
         }
     }
 }

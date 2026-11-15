@@ -10,6 +10,16 @@ use crate::error::CoreError;
 
 const PLUGIN_PROVIDER_PREFIX: &str = "plugin:";
 
+/// How far a provider's configs are trusted when they compete for a domain
+/// or a server id. Configured outranks Discovered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProviderTrust {
+    /// Derived from what a workload declares about itself, like Docker labels.
+    Discovered,
+    /// Written or installed by the operator: config files and plugins.
+    Configured,
+}
+
 /// Identifies the source of a `ServerConfig`.
 ///
 /// Each config in the system is tagged with a `ProviderId` that tells
@@ -56,6 +66,14 @@ impl ProviderId {
                 .split_once(':')
                 .map_or(owned, |(plugin_id, _)| plugin_id),
         )
+    }
+
+    pub fn trust(&self) -> ProviderTrust {
+        if self.provider_type == "file" || self.plugin_owner().is_some() {
+            ProviderTrust::Configured
+        } else {
+            ProviderTrust::Discovered
+        }
     }
 }
 

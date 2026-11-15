@@ -7,6 +7,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::services::server_manager::{ServerManager, ServerState};
 use infrarust_api::types::ServerId;
 
+use infrarust_server_manager::ServerManagerError;
 use infrarust_server_manager::service::ServerManagerService;
 use infrarust_server_manager::state::ServerState as CoreServerState;
 
@@ -35,6 +36,18 @@ impl ServerManager for ServerManagerBridge {
                 .start_server(&server_id)
                 .await
                 .map_err(|e| ServiceError::OperationFailed(e.to_string()))
+        })
+    }
+
+    fn wake(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
+        let server_id = server.as_str().to_string();
+        Box::pin(async move {
+            self.service.wake(&server_id).await.map_err(|e| match e {
+                ServerManagerError::StartThrottled { .. } => {
+                    ServiceError::Unavailable(e.to_string())
+                }
+                e => ServiceError::OperationFailed(e.to_string()),
+            })
         })
     }
 
@@ -70,6 +83,10 @@ impl ServerManager for NoopServerManager {
     fn start(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
         let id = server.as_str().to_string();
         Box::pin(async move { Err(ServiceError::NotFound(id)) })
+    }
+
+    fn wake(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {
+        self.start(server)
     }
 
     fn stop(&self, server: &ServerId) -> BoxFuture<'_, Result<(), ServiceError>> {

@@ -4,7 +4,10 @@
 //! When no `OTel` subscriber is installed, the span is a no-op (~2ns overhead).
 
 use std::future::Future;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
+
+use infrarust_config::{TraceClientIp, TracesConfig};
 
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
@@ -23,7 +26,41 @@ pub struct ConnectionSpan(pub tracing::Span);
 ///
 /// **Reads**: `HandshakeData`, `RoutingData`, `LoginData` (all optional, degrades gracefully)
 /// **Inserts**: `ConnectionSpan` (tracing span for the connection)
-pub struct TelemetryMiddleware;
+pub struct TelemetryMiddleware {
+    client_ip: TraceClientIp,
+    username: bool,
+}
+
+impl TelemetryMiddleware {
+    pub const fn new(traces: &TracesConfig) -> Self {
+        Self {
+            client_ip: traces.client_ip,
+            username: traces.username,
+        }
+    }
+}
+
+impl Default for TelemetryMiddleware {
+    fn default() -> Self {
+        Self::new(&TracesConfig::default())
+    }
+}
+
+const TRUNCATED_V4_MASK: u32 = !0 << (32 - 24);
+const TRUNCATED_V6_MASK: u128 = !0 << (128 - 48);
+
+fn traced_ip(mode: TraceClientIp, ip: IpAddr) -> Option<String> {
+    match (mode, ip.to_canonical()) {
+        (TraceClientIp::Off, _) => None,
+        (TraceClientIp::Full, _) => Some(ip.to_string()),
+        (TraceClientIp::Truncated, IpAddr::V4(ip)) => {
+            Some(Ipv4Addr::from_bits(ip.to_bits() & TRUNCATED_V4_MASK).to_string())
+        }
+        (TraceClientIp::Truncated, IpAddr::V6(ip)) => {
+            Some(Ipv6Addr::from_bits(ip.to_bits() & TRUNCATED_V6_MASK).to_string())
+        }
+    }
+}
 
 impl Middleware for TelemetryMiddleware {
     fn name(&self) -> &'static str {
@@ -35,7 +72,7 @@ impl Middleware for TelemetryMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
-            let client_ip = ctx.client_ip.to_string();
+            let client_ip = traced_ip(self.client_ip, ctx.client_ip);
 
             let domain = ctx
                 .extensions
@@ -55,11 +92,12 @@ impl Middleware for TelemetryMiddleware {
                 .map(|r| format!("{:?}", r.server_config.proxy_mode))
                 .unwrap_or_default();
 
-            let username = ctx
-                .extensions
-                .get::<LoginData>()
-                .map(|l| l.username.clone())
-                .unwrap_or_default();
+            let username = self.username.then(|| {
+                ctx.extensions
+                    .get::<LoginData>()
+                    .map(|l| l.username.clone())
+                    .unwrap_or_default()
+            });
 
             let protocol_version = ctx
                 .extensions
@@ -68,11 +106,11 @@ impl Middleware for TelemetryMiddleware {
 
             let span = tracing::info_span!(
                 "connection",
-                client.ip = %client_ip,
+                client.ip = client_ip.as_deref(),
                 server.domain = %domain,
                 server.id = %server_id,
                 proxy.mode = %proxy_mode,
-                player.username = %username,
+                player.username = username.as_deref(),
                 protocol.version = protocol_version,
             );
 

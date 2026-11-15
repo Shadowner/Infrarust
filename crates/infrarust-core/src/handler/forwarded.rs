@@ -8,7 +8,7 @@ use infrarust_api::events::connection::{
 };
 use infrarust_api::events::lifecycle::{DisconnectCause, PreLoginResult};
 use infrarust_api::player::Player;
-use infrarust_api::types::{Component, GameProfile, ServerId};
+use infrarust_api::types::{Component, ServerId};
 use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
 use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::helpers::{MAX_KICK_REDIRECTS, cancelled_cause};
-use crate::auth::game_profile::offline_profile_uuid;
+use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
@@ -35,7 +35,7 @@ use crate::services::ProxyServices;
 use crate::session::admission::{self, Admission, Admitted, PreLogin, pre_login};
 use crate::session::kick::Kick;
 use crate::session::server_join::pre_connect;
-use crate::session::wake::wake;
+use crate::session::wake::{WakeFailure, wake};
 use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
@@ -62,8 +62,22 @@ pub(crate) struct Arrival {
 
 #[derive(Clone)]
 pub(crate) struct Route {
-    pub(crate) routing: RoutingData,
-    pub(crate) addresses: Vec<ServerAddress>,
+    routing: RoutingData,
+    addresses: Vec<ServerAddress>,
+}
+
+impl Route {
+    /// Only a forwarding server yields a route, and `select` only runs for one.
+    pub(crate) fn forwarding(
+        routing: RoutingData,
+        select: impl FnOnce(&RoutingData) -> Vec<ServerAddress>,
+    ) -> Option<Self> {
+        if !routing.server_config.proxy_mode.is_forwarding() {
+            return None;
+        }
+        let addresses = select(&routing);
+        Some(Self { routing, addresses })
+    }
 }
 
 pub(crate) struct ForwardedLogin<'a> {
@@ -117,15 +131,11 @@ impl ForwardedLogin<'_> {
     ) -> Result<Option<Ready>, CoreError> {
         let services = self.services;
         let remote_addr = ctx.client_addr();
-        let profile = GameProfile {
-            uuid: offline_profile_uuid(
-                services.config.auth.offline_uuid,
-                &arrival.username,
-                arrival.claimed_uuid,
-            ),
-            username: arrival.username,
-            properties: vec![],
-        };
+        let profile = offline_profile(
+            services.config.auth.offline_uuid,
+            &arrival.username,
+            arrival.claimed_uuid,
+        )?;
         match pre_login(
             services,
             profile.clone(),
@@ -262,7 +272,13 @@ impl ForwardedLogin<'_> {
                 }
             };
 
-            let woken = wake(self.services, &route.routing.server_config, &admitted.token).await;
+            let woken = wake(
+                self.services,
+                &route.routing.server_config,
+                &admitted.token,
+                ctx.stream(),
+            )
+            .await;
             if let Some(ended) = self.interrupted(ctx, &mut admitted).await {
                 admitted.lifecycle.end(ended).await;
                 return Ok(None);
@@ -301,7 +317,11 @@ impl ForwardedLogin<'_> {
                         }
                     }
                 }
-                Err(unavailable) => {
+                Err(WakeFailure::ClientLeft) => {
+                    admitted.lifecycle.end(DisconnectCause::ClientQuit).await;
+                    return Ok(None);
+                }
+                Err(WakeFailure::Unavailable(unavailable)) => {
                     tracing::info!(
                         server = %server,
                         reason = ?unavailable,
@@ -370,28 +390,28 @@ impl ForwardedLogin<'_> {
             );
             return Err(UNKNOWN_SERVER);
         };
-        if matches!(
-            server_config.proxy_mode,
-            ProxyMode::Offline | ProxyMode::ClientOnly
-        ) {
-            tracing::warn!(
-                from = %origin.routing.config_id,
-                to = %server,
-                mode = ?server_config.proxy_mode,
-                "plugin redirected a forwarded connection to a server where the proxy runs the login, which a forwarded connection cannot do; disconnecting the player"
-            );
-            return Err(PROXY_LOGIN_SERVER);
-        }
+        let mode = server_config.proxy_mode;
         let routing = RoutingData {
             server_config,
             config_id: server.to_string(),
             load_balancer,
         };
-        let addresses = self.select(ctx, &routing);
-        Ok(Route { routing, addresses })
+        Route::forwarding(routing, |routing| self.select(ctx, routing)).ok_or_else(|| {
+            tracing::warn!(
+                from = %origin.routing.config_id,
+                to = %server,
+                ?mode,
+                "plugin redirected a forwarded connection to a server where the proxy runs the login, which a forwarded connection cannot do; disconnecting the player"
+            );
+            PROXY_LOGIN_SERVER
+        })
     }
 
-    fn select(&self, ctx: &mut ConnectionContext, routing: &RoutingData) -> Vec<ServerAddress> {
+    pub(crate) fn select(
+        &self,
+        ctx: &mut ConnectionContext,
+        routing: &RoutingData,
+    ) -> Vec<ServerAddress> {
         let services = self.services;
         let addresses = select_backend_addresses(
             &routing.server_config,
@@ -548,7 +568,7 @@ async fn send_initial_packets(
     data: &ForwardingData,
     pipelined: &[u8],
 ) -> Result<(), CoreError> {
-    let handler = services.resolve_forwarding_handler(server_config);
+    let handler = services.resolve_forwarding_handler(server_config)?;
 
     if matches!(handler, ForwardingHandler::Velocity(_)) {
         tracing::error!(
@@ -602,4 +622,46 @@ async fn send_with_forwarding(
     backend.write_all(&encoder.take()).await?;
     send_packets(backend, handshake.raw_packets.get(1..).unwrap_or_default()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::cell::Cell;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::loadbalancer::FirstAvailable;
+
+    fn routing(mode: ProxyMode) -> RoutingData {
+        let mut config: ServerConfig =
+            toml::from_str("domains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25565\"]\n")
+                .unwrap();
+        config.proxy_mode = mode;
+        RoutingData {
+            server_config: Arc::new(config),
+            config_id: "lobby".to_string(),
+            load_balancer: Arc::new(FirstAvailable),
+        }
+    }
+
+    #[test]
+    fn only_a_forwarding_mode_yields_a_route() {
+        for (mode, routed) in [
+            (ProxyMode::Passthrough, true),
+            (ProxyMode::ZeroCopy, true),
+            (ProxyMode::ServerOnly, true),
+            (ProxyMode::Offline, false),
+            (ProxyMode::ClientOnly, false),
+            (ProxyMode::Full, false),
+        ] {
+            let selected = Cell::new(false);
+            let route = Route::forwarding(routing(mode), |_| {
+                selected.set(true);
+                Vec::new()
+            });
+            assert_eq!(route.is_some(), routed, "{mode:?}");
+            assert_eq!(selected.get(), routed, "{mode:?}");
+        }
+    }
 }

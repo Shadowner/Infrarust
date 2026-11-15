@@ -3,6 +3,7 @@ use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use dashmap::mapref::one::RefMut;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -15,6 +16,81 @@ use crate::local::LocalProvider;
 use crate::provider::{ProviderStatus, ServerProvider};
 use crate::pterodactyl::PterodactylProvider;
 use crate::state::ServerState;
+
+const MIN_START_INTERVAL: Duration = Duration::from_secs(30);
+const FIRST_CRASH_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_CRASH_BACKOFF: Duration = Duration::from_secs(10 * 60);
+const STABLE_UPTIME: Duration = MAX_CRASH_BACKOFF;
+
+/// Limits how often player logins can start a server.
+pub(crate) struct StartThrottle {
+    last_start: Option<Instant>,
+    blocked_until: Option<Instant>,
+    next_backoff: Duration,
+    stop_requested: bool,
+}
+
+impl StartThrottle {
+    const fn new() -> Self {
+        Self {
+            last_start: None,
+            blocked_until: None,
+            next_backoff: FIRST_CRASH_BACKOFF,
+            stop_requested: false,
+        }
+    }
+
+    fn started(&mut self, now: Instant) {
+        self.last_start = Some(now);
+        self.blocked_until = None;
+        self.stop_requested = false;
+    }
+
+    fn ran_stably(&self, now: Instant) -> bool {
+        self.last_start
+            .is_none_or(|start| now.saturating_duration_since(start) >= STABLE_UPTIME)
+    }
+
+    fn stop_requested(&mut self, now: Instant) {
+        self.stop_requested = true;
+        if self.ran_stably(now) {
+            self.next_backoff = FIRST_CRASH_BACKOFF;
+        }
+    }
+
+    const fn stop_confirmed(&mut self) {
+        self.stop_requested = false;
+    }
+
+    fn crashed(&mut self, now: Instant) {
+        if self.ran_stably(now) {
+            self.next_backoff = FIRST_CRASH_BACKOFF;
+        }
+        self.blocked_until = Some(now + self.next_backoff);
+        self.next_backoff = (self.next_backoff * 2).min(MAX_CRASH_BACKOFF);
+    }
+
+    fn exited(&mut self, now: Instant) {
+        let requested = std::mem::take(&mut self.stop_requested);
+        if self.ran_stably(now) {
+            self.next_backoff = FIRST_CRASH_BACKOFF;
+        } else if !requested {
+            self.crashed(now);
+        }
+    }
+
+    fn running(&mut self) {
+        self.blocked_until = None;
+    }
+
+    fn retry_after(&self, now: Instant) -> Option<Duration> {
+        let next_start = self.last_start.map(|start| start + MIN_START_INTERVAL);
+        next_start
+            .max(self.blocked_until)?
+            .checked_duration_since(now)
+            .filter(|remaining| !remaining.is_zero())
+    }
+}
 
 /// Trait for counting players on a server.
 ///
@@ -59,11 +135,15 @@ pub(crate) struct ServerEntry {
     /// Set by a start request until the provider reports it starting or running:
     /// before this deadline a `Stopped` poll means the panel has not caught up yet.
     pub(crate) unconfirmed_start_until: Option<Instant>,
+    throttle: StartThrottle,
 }
 
 impl ServerEntry {
     /// Sole mutation point for `state`: keeps the generation in sync.
     pub(crate) fn set_state(&mut self, new_state: ServerState) {
+        if new_state == ServerState::Crashed && self.state != ServerState::Crashed {
+            self.throttle.crashed(Instant::now());
+        }
         self.generation += 1;
         self.state = new_state;
         self.unconfirmed_start_until = None;
@@ -71,7 +151,9 @@ impl ServerEntry {
 
     pub(crate) fn begin_start(&mut self) {
         self.set_state(ServerState::Starting);
-        self.unconfirmed_start_until = Some(Instant::now() + self.start_timeout);
+        let now = Instant::now();
+        self.throttle.started(now);
+        self.unconfirmed_start_until = Some(now + self.start_timeout);
     }
 
     fn is_unconfirmed_start(&self) -> bool {
@@ -131,6 +213,7 @@ impl ServerManagerService {
                     last_player_seen: None,
                     waiters: Vec::new(),
                     unconfirmed_start_until: None,
+                    throttle: StartThrottle::new(),
                 },
             );
 
@@ -165,6 +248,7 @@ impl ServerManagerService {
                 last_player_seen: None,
                 waiters: Vec::new(),
                 unconfirmed_start_until: None,
+                throttle: StartThrottle::new(),
             },
         );
     }
@@ -264,7 +348,7 @@ impl ServerManagerService {
     /// Ensures the server is started and ready for connections.
     ///
     /// - `Online` → returns Ok immediately
-    /// - `Sleeping`/`Crashed` → triggers start, then waits for Online
+    /// - `Sleeping`/`Crashed` → triggers start unless throttled, then waits for Online
     /// - `Starting` → waits for Online (joins existing waiters)
     /// - `Stopping` → returns an error
     ///
@@ -272,9 +356,13 @@ impl ServerManagerService {
     ///
     /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
     /// [`ServerManagerError::InvalidState`] if the server is stopping,
+    /// [`ServerManagerError::StartThrottled`] if it was started or crashed too recently,
     /// [`ServerManagerError::StartTimeout`] if the server doesn't start in time,
     /// or [`ServerManagerError::Provider`] if the provider fails.
-    pub async fn ensure_started(&self, server_id: &str) -> Result<(), ServerManagerError> {
+    pub async fn ensure_started(
+        self: &Arc<Self>,
+        server_id: &str,
+    ) -> Result<(), ServerManagerError> {
         let (rx, start_timeout) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
                 ServerManagerError::ServerNotFound {
@@ -294,35 +382,14 @@ impl ServerManagerService {
                 ServerState::Starting => {
                     let (tx, rx) = oneshot::channel();
                     let start_timeout = entry.start_timeout;
+                    entry.waiters.retain(|waiter| !waiter.is_closed());
                     entry.waiters.push(tx);
                     (rx, start_timeout)
                 }
                 ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
-                    let provider = Arc::clone(&entry.provider);
-                    let old_state = entry.state;
-                    entry.begin_start();
                     let start_timeout = entry.start_timeout;
                     let (tx, rx) = oneshot::channel();
-                    entry.waiters.push(tx);
-                    drop(entry);
-
-                    self.fire_state_change(server_id, old_state, ServerState::Starting);
-
-                    if let Err(e) = provider.start().await {
-                        tracing::error!(server = %server_id, "provider start failed: {e}");
-                        if let Some(mut entry) = self.entries.get_mut(server_id) {
-                            entry.set_state(ServerState::Crashed);
-                            drop(entry);
-                            self.fire_state_change(
-                                server_id,
-                                ServerState::Starting,
-                                ServerState::Crashed,
-                            );
-                        }
-                        self.notify_waiters(server_id, &Err(e.clone()));
-                        return Err(e);
-                    }
-
+                    drop(self.start_unless_throttled(entry, server_id, Some(tx))?);
                     (rx, start_timeout)
                 }
             }
@@ -345,7 +412,92 @@ impl ServerManagerService {
         }
     }
 
-    /// Starts a server manually.
+    /// Starts a server for a player who is not kept waiting on this call.
+    ///
+    /// Obeys the same throttle as [`ensure_started`](Self::ensure_started). A server
+    /// that is already online or starting is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerManagerError::ServerNotFound`] if the server ID is unknown,
+    /// [`ServerManagerError::InvalidState`] if the server is stopping,
+    /// [`ServerManagerError::StartThrottled`] if it was started or crashed too recently,
+    /// or a provider-specific error if the start command fails.
+    pub async fn wake(self: &Arc<Self>, server_id: &str) -> Result<(), ServerManagerError> {
+        let entry =
+            self.entries
+                .get_mut(server_id)
+                .ok_or_else(|| ServerManagerError::ServerNotFound {
+                    server_id: server_id.to_string(),
+                })?;
+        let start = match entry.state {
+            ServerState::Online | ServerState::Starting => return Ok(()),
+            ServerState::Stopping => {
+                return Err(ServerManagerError::InvalidState {
+                    server_id: server_id.to_string(),
+                    state: ServerState::Stopping,
+                    action: "start".to_string(),
+                });
+            }
+            ServerState::Sleeping | ServerState::Crashed | ServerState::Unknown => {
+                self.start_unless_throttled(entry, server_id, None)?
+            }
+        };
+        start.await.unwrap_or_else(|e| {
+            Err(ServerManagerError::Provider {
+                server_id: server_id.to_string(),
+                message: format!("start task failed: {e}"),
+            })
+        })
+    }
+
+    fn start_unless_throttled(
+        self: &Arc<Self>,
+        mut entry: RefMut<'_, String, ServerEntry>,
+        server_id: &str,
+        waiter: Option<oneshot::Sender<Result<(), ServerManagerError>>>,
+    ) -> Result<JoinHandle<Result<(), ServerManagerError>>, ServerManagerError> {
+        if let Some(retry_after) = entry.throttle.retry_after(Instant::now()) {
+            return Err(ServerManagerError::StartThrottled {
+                server_id: server_id.to_string(),
+                retry_after,
+            });
+        }
+        let provider = Arc::clone(&entry.provider);
+        let old_state = entry.state;
+        entry.begin_start();
+        let attempt = entry.generation;
+        entry.waiters.extend(waiter);
+        drop(entry);
+
+        self.fire_state_change(server_id, old_state, ServerState::Starting);
+
+        let service = Arc::clone(self);
+        let server_id = server_id.to_string();
+        Ok(tokio::spawn(async move {
+            let started = provider.start().await;
+            if let Err(e) = &started {
+                service.record_failed_start(&server_id, attempt, e.clone());
+            }
+            started
+        }))
+    }
+
+    fn record_failed_start(&self, server_id: &str, attempt: u64, error: ServerManagerError) {
+        tracing::error!(server = %server_id, "provider start failed: {error}");
+        let Some(mut entry) = self.entries.get_mut(server_id) else {
+            return;
+        };
+        if entry.generation != attempt {
+            return;
+        }
+        entry.set_state(ServerState::Crashed);
+        drop(entry);
+        self.fire_state_change(server_id, ServerState::Starting, ServerState::Crashed);
+        self.notify_waiters(server_id, &Err(error));
+    }
+
+    /// Starts a server manually, regardless of the throttle on player logins.
     ///
     /// # Errors
     ///
@@ -409,6 +561,7 @@ impl ServerManagerService {
         if let Some(mut entry) = self.entries.get_mut(server_id) {
             entry.set_state(ServerState::Sleeping);
             entry.last_player_seen = None;
+            entry.throttle.stop_requested(Instant::now());
         }
 
         self.fire_state_change(server_id, ServerState::Stopping, ServerState::Sleeping);
@@ -485,10 +638,16 @@ impl ServerManagerService {
             }
 
             match new_status {
-                ProviderStatus::Starting | ProviderStatus::Running => {
+                ProviderStatus::Running => {
                     entry.unconfirmed_start_until = None;
+                    entry.throttle.running();
                 }
+                ProviderStatus::Starting => entry.unconfirmed_start_until = None,
                 ProviderStatus::Stopped if entry.is_unconfirmed_start() => return None,
+                ProviderStatus::Stopped if entry.state == ServerState::Sleeping => {
+                    entry.throttle.stop_confirmed();
+                }
+                _ if entry.state == ServerState::Crashed => return None,
                 _ => {}
             }
 
@@ -506,6 +665,11 @@ impl ServerManagerService {
                 "state transition"
             );
 
+            if new_status == ProviderStatus::Stopped
+                && matches!(old_state, ServerState::Starting | ServerState::Online)
+            {
+                entry.throttle.exited(Instant::now());
+            }
             entry.set_state(new_state);
             drop(entry);
             (old_state, new_state)
@@ -594,6 +758,14 @@ mod tests {
         service
     }
 
+    fn blocked_for(service: &ServerManagerService, server_id: &str) -> Duration {
+        let entry = service.entries.get(server_id).unwrap();
+        entry
+            .throttle
+            .retry_after(Instant::now())
+            .unwrap_or_default()
+    }
+
     /// A poll captured before `stop_server` must not resurrect the server,
     /// even when the manual op fully completes (Stopping → Sleeping) before
     /// the stale result lands.
@@ -626,6 +798,193 @@ mod tests {
         let generation = service.generation("s").unwrap();
         let applied = service.update_state("s", ProviderStatus::Crashed, generation);
         assert_eq!(applied, Some((ServerState::Online, ServerState::Crashed)));
+    }
+
+    #[tokio::test]
+    async fn crashed_only_ends_when_the_provider_reports_it_alive() {
+        let service = Arc::new(service_with_online_server("s"));
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Crashed, generation);
+        for status in [
+            ProviderStatus::Stopped,
+            ProviderStatus::Stopping,
+            ProviderStatus::Unknown,
+            ProviderStatus::Crashed,
+        ] {
+            let generation = service.generation("s").unwrap();
+            assert_eq!(service.update_state("s", status, generation), None);
+        }
+        assert_eq!(service.get_state("s"), Some(ServerState::Crashed));
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Running, generation),
+            Some((ServerState::Crashed, ServerState::Online))
+        );
+        service.ensure_started("s").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovering_from_a_crash_lifts_the_crash_backoff() {
+        let service = service_with_online_server("s");
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Crashed, generation);
+        assert!(blocked_for(&service, "s") > Duration::ZERO);
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    fn rewind_last_start(service: &ServerManagerService, server_id: &str, by: Duration) {
+        let mut entry = service.entries.get_mut(server_id).unwrap();
+        entry.throttle.last_start = Some(Instant::now() - by);
+    }
+
+    fn boot_and_fall_back_to_stopped(service: &ServerManagerService, server_id: &str) {
+        let mut entry = service.entries.get_mut(server_id).unwrap();
+        entry.begin_start();
+        drop(entry);
+        rewind_last_start(
+            service,
+            server_id,
+            MIN_START_INTERVAL + Duration::from_secs(1),
+        );
+
+        let generation = service.generation(server_id).unwrap();
+        service.update_state(server_id, ProviderStatus::Starting, generation);
+        let applied = service.update_state(server_id, ProviderStatus::Stopped, generation);
+        assert_eq!(
+            applied,
+            Some((ServerState::Starting, ServerState::Sleeping))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_boot_that_falls_back_to_stopped_backs_off() {
+        let service = service_with_online_server("s");
+
+        boot_and_fall_back_to_stopped(&service, "s");
+        let first = blocked_for(&service, "s");
+        assert!(
+            first > Duration::ZERO && first <= FIRST_CRASH_BACKOFF,
+            "{first:?}"
+        );
+
+        boot_and_fall_back_to_stopped(&service, "s");
+        let second = blocked_for(&service, "s");
+        assert!(second > FIRST_CRASH_BACKOFF, "{second:?}");
+    }
+
+    #[tokio::test]
+    async fn a_server_dying_soon_after_its_start_backs_off() {
+        let service = service_with_online_server("s");
+        service.entries.get_mut("s").unwrap().begin_start();
+        rewind_last_start(&service, "s", MIN_START_INTERVAL + Duration::from_secs(1));
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert!(blocked_for(&service, "s") > Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn a_stable_server_seen_stopped_is_not_blocked() {
+        let service = service_with_online_server("s");
+        service.entries.get_mut("s").unwrap().begin_start();
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        rewind_last_start(&service, "s", STABLE_UPTIME + Duration::from_secs(1));
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_poll_of_a_server_nobody_started_is_not_blocked() {
+        let service = service_with_online_server("s");
+
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    fn crash_repeatedly_then_run(
+        service: &ServerManagerService,
+        server_id: &str,
+        uptime: Duration,
+    ) {
+        let mut entry = service.entries.get_mut(server_id).unwrap();
+        for _ in 0..3 {
+            entry.begin_start();
+            entry.set_state(ServerState::Crashed);
+        }
+        assert!(entry.throttle.next_backoff > FIRST_CRASH_BACKOFF);
+        entry.begin_start();
+        entry.set_state(ServerState::Online);
+        drop(entry);
+        rewind_last_start(service, server_id, uptime);
+    }
+
+    fn next_backoff(service: &ServerManagerService, server_id: &str) -> Duration {
+        service
+            .entries
+            .get(server_id)
+            .unwrap()
+            .throttle
+            .next_backoff
+    }
+
+    #[tokio::test]
+    async fn a_requested_stop_after_a_stable_run_resets_the_crash_backoff() {
+        let service = service_with_online_server("s");
+        crash_repeatedly_then_run(&service, "s", STABLE_UPTIME + Duration::from_secs(1));
+
+        service.stop_server("s").await.unwrap();
+
+        assert_eq!(next_backoff(&service, "s"), FIRST_CRASH_BACKOFF);
+    }
+
+    #[tokio::test]
+    async fn a_requested_stop_after_a_short_run_keeps_the_crash_backoff() {
+        let service = service_with_online_server("s");
+        crash_repeatedly_then_run(&service, "s", MIN_START_INTERVAL + Duration::from_secs(1));
+        let before = next_backoff(&service, "s");
+
+        service.stop_server("s").await.unwrap();
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Running, generation);
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert_eq!(next_backoff(&service, "s"), before);
+        assert_eq!(blocked_for(&service, "s"), Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn a_stop_the_panel_confirmed_does_not_excuse_a_later_exit() {
+        let service = service_with_online_server("s");
+        service.entries.get_mut("s").unwrap().begin_start();
+        rewind_last_start(&service, "s", MIN_START_INTERVAL + Duration::from_secs(1));
+        service.stop_server("s").await.unwrap();
+
+        let generation = service.generation("s").unwrap();
+        assert_eq!(
+            service.update_state("s", ProviderStatus::Stopped, generation),
+            None
+        );
+        service.update_state("s", ProviderStatus::Running, generation);
+        let generation = service.generation("s").unwrap();
+        service.update_state("s", ProviderStatus::Stopped, generation);
+
+        assert!(blocked_for(&service, "s") > Duration::ZERO);
     }
 
     #[tokio::test]
@@ -667,5 +1026,86 @@ mod tests {
             service.update_state("s", ProviderStatus::Stopped, generation),
             Some((ServerState::Starting, ServerState::Sleeping))
         );
+    }
+
+    #[test]
+    fn a_server_never_started_is_not_throttled() {
+        assert_eq!(StartThrottle::new().retry_after(Instant::now()), None);
+    }
+
+    #[test]
+    fn two_starts_are_kept_apart_by_the_minimum_interval() {
+        let now = Instant::now();
+        let mut throttle = StartThrottle::new();
+        throttle.started(now);
+
+        let later = now + Duration::from_secs(10);
+        assert_eq!(throttle.retry_after(later), Some(Duration::from_secs(20)));
+        assert_eq!(throttle.retry_after(now + MIN_START_INTERVAL), None);
+    }
+
+    #[test]
+    fn crash_backoff_doubles_up_to_the_maximum() {
+        let mut now = Instant::now();
+        let mut throttle = StartThrottle::new();
+
+        for expected in [30, 60, 120, 240, 480, 600, 600] {
+            throttle.started(now);
+            now += Duration::from_secs(1);
+            throttle.crashed(now);
+            assert_eq!(
+                throttle.retry_after(now),
+                Some(Duration::from_secs(expected))
+            );
+            now += Duration::from_secs(expected);
+            assert_eq!(throttle.retry_after(now), None);
+        }
+    }
+
+    #[test]
+    fn crash_backoff_starts_over_after_a_stable_run() {
+        let mut now = Instant::now();
+        let mut throttle = StartThrottle::new();
+        for _ in 0..3 {
+            throttle.started(now);
+            throttle.crashed(now);
+        }
+
+        throttle.started(now);
+        now += STABLE_UPTIME;
+        throttle.crashed(now);
+
+        assert_eq!(throttle.retry_after(now), Some(FIRST_CRASH_BACKOFF));
+    }
+
+    #[test]
+    fn a_manual_start_clears_the_crash_backoff() {
+        let mut now = Instant::now();
+        let mut throttle = StartThrottle::new();
+        for _ in 0..3 {
+            throttle.started(now);
+            throttle.crashed(now);
+        }
+
+        now += Duration::from_secs(1);
+        throttle.started(now);
+
+        assert_eq!(
+            throttle.retry_after(now + MIN_START_INTERVAL),
+            None,
+            "only the minimum interval applies once the operator restarted the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn only_entering_the_crashed_state_counts_as_a_crash() {
+        let service = service_with_online_server("s");
+        let mut entry = service.entries.get_mut("s").unwrap();
+        entry.set_state(ServerState::Crashed);
+        let backoff = entry.throttle.next_backoff;
+
+        entry.set_state(ServerState::Crashed);
+
+        assert_eq!(entry.throttle.next_backoff, backoff);
     }
 }

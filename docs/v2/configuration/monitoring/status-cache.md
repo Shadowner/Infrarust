@@ -31,12 +31,23 @@ The `ttl` controls how often Infrarust actually connects to your backend for sta
 The status handler follows this decision tree for each incoming status ping:
 
 1. If the server has a fresh cache entry (within TTL), return it immediately.
-2. If no fresh entry exists, acquire a per-server lock, then check fresh again (another request may have just populated it).
-3. If the cache is still empty, relay the ping to the backend and store the response.
-4. If the relay fails, fall back to a stale cache entry (expired but still stored).
-5. If no stale entry exists either, return a synthetic "Server unreachable" MOTD.
+2. If no fresh entry exists, wait for the server's relay slot. Only one relay runs per server at a time, and a request waits at most 1.5 seconds for its turn.
+3. If the wait runs out, or the last relay to this server failed less than 3 seconds ago, answer with the fallback below without contacting the backend.
+4. Otherwise check fresh again (another request may have just populated the cache), then relay the ping to the backend and store the response.
+5. If the relay fails, remember the failure for 3 seconds and answer with the fallback.
 
-The per-server lock prevents cache stampede: when 50 clients ping at the same moment and the cache has expired, only one relay runs. The other 49 wait for that relay to finish, then all read from cache.
+The fallback is the first of these that exists:
+
+1. The server's `[motd.unreachable]` entry.
+2. A stale cache entry (expired but still stored).
+3. The `unreachable` entry of the global `default_motd`.
+4. A synthetic "Server unreachable" MOTD.
+
+The relay slot prevents cache stampede: when 50 clients ping at the same moment and the cache has expired, only one relay runs. The other 49 wait for it. If it succeeds within 1.5 seconds they read its result from cache. If it fails, they get the fallback. If it is still running after 1.5 seconds, they get the fallback and the relay goes on for the next requests.
+
+The slot also keeps pings from queueing behind a backend that accepts connections and never answers. One ping waits for the backend, the others give up after 1.5 seconds, and once the relay has failed no ping contacts that backend for the next 3 seconds.
+
+Legacy pings (Beta to 1.6) share the same slot and the same failure memory as modern pings, so a server gets one relay at a time across both. A legacy ping that falls back is answered with a MOTD built from the configuration; it does not use the stale entry.
 
 ## DDoS and ping floods
 

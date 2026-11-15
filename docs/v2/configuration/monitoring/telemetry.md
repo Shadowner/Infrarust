@@ -29,6 +29,8 @@ protocol = "grpc"                        # "grpc" (default) or "http"
 [telemetry.traces]
 enabled = true
 sampling_ratio = 0.1                     # sample 10% of status pings
+client_ip = "truncated"                  # "full", "truncated" (default) or "off"
+username = true                          # record usernames on connection spans
 
 [telemetry.metrics]
 enabled = true
@@ -55,6 +57,8 @@ service_version = "2.0.0-beta.4"        # defaults to Infrarust's crate version
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Enable trace export. |
 | `sampling_ratio` | float | `0.1` | Sampling ratio for status pings (0.0 to 1.0). Login connections are always traced at 100%. |
+| `client_ip` | string | `"truncated"` | How much of the client address a `connection` span records. `"full"` records the whole address, `"truncated"` keeps the /24 of an IPv4 address and the /48 of an IPv6 address, `"off"` records nothing. |
+| `username` | bool | `true` | Record the player's username on `connection` spans. |
 
 ### `[telemetry.metrics]`
 
@@ -93,12 +97,20 @@ Infrarust creates two root span types:
 
 | Attribute | Description |
 |-----------|-------------|
-| `client.ip` | Player's IP address |
+| `client.ip` | Player's IP address, as set by `client_ip`: truncated by default, absent with `"off"` |
 | `server.domain` | Domain the player connected to |
 | `server.id` | Matched server config ID |
 | `proxy.mode` | Proxy mode (Passthrough, ClientOnly, etc.) |
-| `player.username` | Player's username |
+| `player.username` | Player's username, absent with `username = false` |
 | `protocol.version` | Minecraft protocol version number |
+
+With the default `client_ip = "truncated"`, the rest of the address is zeroed: `203.0.113.57` is recorded as `203.0.113.0`, and `2001:db8:1234:5678::1` as `2001:db8:1234::`. Set `client_ip = "full"` if you need whole addresses in your traces, or `"off"` together with `username = false` to keep both out of the collector:
+
+```toml
+[telemetry.traces]
+client_ip = "off"
+username = false
+```
 
 `status.ping` spans cover server list ping requests.
 

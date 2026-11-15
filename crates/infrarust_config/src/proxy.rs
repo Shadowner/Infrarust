@@ -1,11 +1,12 @@
 //! Global proxy configuration (`infrarust.toml`).
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use ipnet::IpNet;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::defaults;
 use crate::types::{
@@ -23,6 +24,26 @@ pub enum UnknownDomainBehavior {
     Drop,
 }
 
+fn deserialize_trusted_proxies<'de, D>(deserializer: D) -> Result<Vec<IpNet>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer)?
+        .into_iter()
+        .map(|entry| {
+            entry
+                .parse::<IpNet>()
+                .or_else(|_| entry.parse::<IpAddr>().map(IpNet::from))
+                .map_err(|_| {
+                    serde::de::Error::custom(format_args!(
+                        "invalid trusted_proxies entry {entry:?}: expected an IP address such \
+                         as 192.168.1.10 or a CIDR range such as 10.0.0.0/8"
+                    ))
+                })
+        })
+        .collect()
+}
+
 /// Corresponds to the `infrarust.toml` file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,8 +53,12 @@ pub struct ProxyConfig {
     pub bind: SocketAddr,
 
     /// Maximum number of simultaneous connections (0 = unlimited)
-    #[serde(default)]
+    #[serde(default = "defaults::max_connections")]
     pub max_connections: u32,
+
+    /// Maximum simultaneous connections per IPv4 address or IPv6 /64 (0 = unlimited)
+    #[serde(default = "defaults::max_connections_per_ip")]
+    pub max_connections_per_ip: u32,
 
     /// Backend connection timeout
     #[serde(default = "defaults::connect_timeout")]
@@ -48,6 +73,11 @@ pub struct ProxyConfig {
     /// Enables receiving proxy protocol (`HAProxy` v1/v2)
     #[serde(default)]
     pub receive_proxy_protocol: bool,
+
+    /// Peers allowed to send a proxy protocol header. Any other peer is closed
+    /// without reading. Required when `receive_proxy_protocol` is enabled.
+    #[serde(default, deserialize_with = "deserialize_trusted_proxies")]
+    pub trusted_proxies: Vec<IpNet>,
 
     /// Path to the server configuration directory
     #[serde(default = "defaults::servers_dir")]

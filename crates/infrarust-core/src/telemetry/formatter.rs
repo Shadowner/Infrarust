@@ -8,6 +8,7 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, FormattedFi
 use tracing_subscriber::registry::LookupSpan;
 
 use crate::terminal::{Tone, color};
+use crate::util::text::escape_control;
 
 const LEVEL_WIDTH: usize = 5;
 const FIELD_GAP: &str = "  ";
@@ -77,7 +78,7 @@ impl InfrarustFormatter {
             level_tone(record.level)
                 .paint(level_label(record.level), self.colored)
                 .bold(),
-            message_tone(record.level).paint(record.message, self.colored),
+            message_tone(record.level).paint(escape_control(record.message), self.colored),
         );
         Rendered {
             width: console::measure_text_width(&text),
@@ -244,18 +245,18 @@ impl Field {
     }
 
     fn render(&self, colored: bool) -> Rendered {
+        let key = escape_control(&self.key);
         let Some(value) = &self.value else {
             return Rendered {
-                width: console::measure_text_width(&self.key),
-                text: self.key.clone(),
+                width: console::measure_text_width(&key),
+                text: key.into_owned(),
             };
         };
         let value = quote(value);
-        let width =
-            console::measure_text_width(&self.key) + 1 + console::measure_text_width(&value);
+        let width = console::measure_text_width(&key) + 1 + console::measure_text_width(&value);
         let text = format!(
             "{}{}{value}",
-            Tone::Muted.paint(&self.key, colored),
+            Tone::Muted.paint(&key, colored),
             Tone::Muted.paint("=", colored),
         );
         Rendered { width, text }
@@ -275,7 +276,7 @@ fn quote(value: &str) -> String {
     if needs_quotes {
         format!("{value:?}")
     } else {
-        value.to_string()
+        escape_control(value).into_owned()
     }
 }
 

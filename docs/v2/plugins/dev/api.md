@@ -512,6 +512,8 @@ for (id, state) in manager.get_all_servers() {
 
 ```
 
+Like a start from the console, `start` is not subject to the [start throttle](../../guide/server-management#start-throttle) and clears any crash wait. To start a server for a player who is trying to join it, call `wake` instead, as the `server-wake` plugin does. `wake` obeys the throttle and returns `ServiceError::Unavailable` while the server was started or crashed too recently. It leaves a server that is already online or starting as it is, and returns once the provider has run its start command, without waiting for the server to come online. If that command fails, the server becomes `Crashed`.
+
 To react to state changes, subscribe to `ServerStateChangeEvent` on the event bus. Like every listener, it is removed automatically when your plugin is disabled:
 
 ```rust

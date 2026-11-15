@@ -271,14 +271,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_the_address_is_checked_before_a_claim_is_handed_off() {
+    async fn a_claim_under_a_banned_name_is_kicked_like_a_banned_login() {
         let dir = tempfile::tempdir().unwrap();
         let bans = bans(&dir, BanTarget::Username("probe".into())).await;
         let (result, ctx) = claimed_by(bans).await;
 
-        assert!(matches!(result.unwrap(), MiddlewareResult::ShortCircuit));
-        assert!(ctx.extensions.contains::<ClaimedLogin>());
-        assert!(!ctx.extensions.contains::<Refused>());
+        match result.unwrap() {
+            MiddlewareResult::Kick(message) => {
+                assert!(message.to_plain().contains("griefing"), "{message:?}");
+            }
+            other => panic!("a banned name must not be handed off, got {other:?}"),
+        }
+        assert_eq!(
+            ctx.extensions.get::<Refused>(),
+            Some(&Refused(RejectReason::Banned))
+        );
+        assert!(!ctx.extensions.contains::<ClaimedLogin>());
     }
 
     #[tokio::test]

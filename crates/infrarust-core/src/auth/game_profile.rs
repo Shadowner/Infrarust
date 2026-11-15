@@ -1,6 +1,7 @@
 //! Game profile types for Mojang authentication.
 
 use infrarust_config::OfflineUuidPolicy;
+use infrarust_protocol::packets::login::check_login_name;
 use md5::{Digest, Md5};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -51,6 +52,21 @@ pub fn offline_profile_uuid(
         (OfflineUuidPolicy::Client, Some(claimed)) => claimed,
         _ => offline_uuid(username),
     }
+}
+
+/// # Errors
+/// Returns `CoreError::Protocol` if the username holds a control character.
+pub fn offline_profile(
+    policy: OfflineUuidPolicy,
+    username: &str,
+    claimed: Option<Uuid>,
+) -> Result<infrarust_api::types::GameProfile, CoreError> {
+    check_login_name(username)?;
+    Ok(infrarust_api::types::GameProfile {
+        uuid: offline_profile_uuid(policy, username, claimed),
+        username: username.to_string(),
+        properties: vec![],
+    })
 }
 
 #[cfg(test)]

@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -272,6 +274,7 @@ impl LegacyBackendConn {
 pub struct FakeLegacyBackend {
     addr: SocketAddr,
     connections: tokio::sync::Mutex<mpsc::UnboundedReceiver<LegacyBackendConn>>,
+    accepted: Arc<AtomicUsize>,
     accept_task: JoinHandle<()>,
 }
 
@@ -288,8 +291,11 @@ impl FakeLegacyBackend {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
         let (conn_tx, conn_rx) = mpsc::unbounded_channel();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&accepted);
         let accept_task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
                 let conn_tx = conn_tx.clone();
                 let ping = ping.clone();
                 tokio::spawn(async move {
@@ -302,12 +308,17 @@ impl FakeLegacyBackend {
         Ok(Self {
             addr,
             connections: tokio::sync::Mutex::new(conn_rx),
+            accepted,
             accept_task,
         })
     }
 
     pub const fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    pub fn accepted_connections(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
     }
 
     pub async fn next_connection(&self, timeout: Duration) -> HarnessResult<LegacyBackendConn> {

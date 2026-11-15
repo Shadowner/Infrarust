@@ -40,6 +40,7 @@ use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::session::connection_registry::ConnectionRegistry;
+use crate::status::relay_gate::RelayGate;
 use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
 
 impl ProxyServer {
@@ -99,17 +100,18 @@ impl ProxyServer {
         let favicon_cache =
             Arc::new(FaviconCache::load_from_configs(&[], config.default_motd.as_ref()).await?);
 
+        let proxy_wide_forwarding = config
+            .forwarding
+            .as_ref()
+            .map(|forwarding| forwarding.mode.clone())
+            .unwrap_or_default();
         let mut provider_registry = ProviderRegistry::new(
             Arc::clone(&domain_router),
             Arc::clone(&event_bus),
             Arc::clone(&status_cache),
             Arc::clone(&favicon_cache),
             background.clone(),
-            config
-                .forwarding
-                .as_ref()
-                .map(|forwarding| forwarding.mode.clone())
-                .unwrap_or_default(),
+            proxy_wide_forwarding.clone(),
         );
 
         provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
@@ -118,6 +120,7 @@ impl ProxyServer {
         if let Some(ref docker_config) = config.docker {
             provider_registry.add_provider(Box::new(crate::provider::docker::DockerProvider::new(
                 docker_config,
+                proxy_wide_forwarding,
             )));
         }
 
@@ -189,6 +192,7 @@ impl ProxyServer {
             Duration::from_secs(5),
         );
 
+        let relay_gate = Arc::new(RelayGate::default());
         let status_handler = StatusHandler::new(
             relay_client,
             Arc::clone(&status_cache),
@@ -199,6 +203,7 @@ impl ProxyServer {
             Arc::clone(&event_bus),
             Arc::clone(&backend_load) as _,
             Arc::clone(&backend_health) as _,
+            Arc::clone(&relay_gate),
         );
 
         #[cfg(feature = "telemetry")]
@@ -268,7 +273,8 @@ impl ProxyServer {
         common_pipeline.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(
             &ban_manager,
         ))));
-        common_pipeline.add(Box::new(RateLimiterMiddleware::new(&config.rate_limit)));
+        let rate_limiter = RateLimiterMiddleware::new(&config.rate_limit);
+        common_pipeline.add(Box::new(rate_limiter.clone()));
         common_pipeline.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
             &domain_router,
         ))));
@@ -282,7 +288,14 @@ impl ProxyServer {
             Arc::clone(&ban_manager),
         )));
         login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
-        login_pipeline.add(Box::new(TelemetryMiddleware));
+        login_pipeline.add(Box::new(
+            config
+                .telemetry
+                .as_ref()
+                .map_or_else(TelemetryMiddleware::default, |telemetry| {
+                    TelemetryMiddleware::new(&telemetry.traces)
+                }),
+        ));
         login_pipeline.add(Box::new(
             BackendSelectionMiddleware::new(
                 Arc::clone(&backend_load) as _,
@@ -300,6 +313,8 @@ impl ProxyServer {
             services.clone(),
             Arc::clone(&backend_connector),
             sessions.clone(),
+            Arc::clone(&status_cache),
+            relay_gate,
         );
 
         let passthrough_handler =
@@ -327,6 +342,7 @@ impl ProxyServer {
         Ok(Self {
             common_pipeline,
             login_pipeline,
+            rate_limiter,
             status_handler,
             legacy_handler,
             passthrough_handler,

@@ -15,6 +15,7 @@ pub mod favicon;
 pub mod handler;
 pub mod motd;
 pub mod relay;
+pub mod relay_gate;
 pub mod response;
 
 pub use cache::StatusCache;

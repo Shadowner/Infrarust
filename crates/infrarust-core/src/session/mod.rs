@@ -1,6 +1,7 @@
 pub(crate) mod admission;
 pub(crate) mod backend_bridge;
 pub(crate) mod backend_login;
+pub(crate) mod bounded_write;
 pub(crate) mod chat_intercept;
 pub(crate) mod chat_utils;
 pub(crate) mod client_bridge;

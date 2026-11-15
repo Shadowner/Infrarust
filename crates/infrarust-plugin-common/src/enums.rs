@@ -30,6 +30,14 @@ impl ProxyMode {
             Self::ServerOnly => "server_only",
         }
     }
+
+    #[must_use]
+    pub const fn is_forwarding(self) -> bool {
+        match self {
+            Self::Passthrough | Self::ZeroCopy | Self::ServerOnly => true,
+            Self::ClientOnly | Self::Offline => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -362,6 +370,15 @@ mod tests {
         assert_eq!(ProxyMode::ClientOnly.as_str(), "client_only");
         assert_eq!(ProxyMode::Offline.as_str(), "offline");
         assert_eq!(ProxyMode::ServerOnly.as_str(), "server_only");
+    }
+
+    #[test]
+    fn only_the_raw_relay_modes_are_forwarding() {
+        assert!(ProxyMode::Passthrough.is_forwarding());
+        assert!(ProxyMode::ZeroCopy.is_forwarding());
+        assert!(ProxyMode::ServerOnly.is_forwarding());
+        assert!(!ProxyMode::ClientOnly.is_forwarding());
+        assert!(!ProxyMode::Offline.is_forwarding());
     }
 
     #[test]

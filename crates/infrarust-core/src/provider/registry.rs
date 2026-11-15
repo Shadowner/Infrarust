@@ -184,9 +184,14 @@ async fn event_loop(
     }
 }
 
-fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
+pub(super) fn accepted(pc: &ProviderConfig, default_forwarding: &ForwardingMode) -> bool {
     match infrarust_config::validate_server_forwarding(&pc.config, default_forwarding.clone()) {
-        Ok(()) => true,
+        Ok(warnings) => {
+            for warning in warnings {
+                tracing::warn!(id = %pc.id, "{warning}");
+            }
+            true
+        }
         Err(error) => {
             tracing::error!(id = %pc.id, %error, "server config rejected");
             false
@@ -216,18 +221,28 @@ fn apply(
             let previous = router.get(&id);
             before.push((id, previous));
         }
-        match change {
+        let routing = match change {
             ProviderChange::Added(pc) => {
                 tracing::info!(id = %pc.id, "config added by provider");
-                router.add(pc.id, pc.config);
+                router.add(pc.id, pc.config)
             }
             ProviderChange::Updated(pc) => {
                 tracing::info!(id = %pc.id, "config updated by provider");
-                router.update(pc.id, pc.config);
+                router.update(pc.id, pc.config)
             }
             ProviderChange::Removed(id) => {
                 tracing::info!(id = %id, "config removed by provider");
-                router.remove(&id);
+                router.remove(&id)
+            }
+        };
+        for (id, was) in routing.left {
+            if !before.iter().any(|(seen, _)| *seen == id) {
+                before.push((id, Some(was)));
+            }
+        }
+        for id in routing.entered {
+            if !before.iter().any(|(seen, _)| *seen == id) {
+                before.push((id, None));
             }
         }
     }
@@ -322,6 +337,20 @@ mod tests {
     }
 
     #[test]
+    fn a_forwarding_server_inheriting_a_bungee_default_is_not_published() {
+        for default in [ForwardingMode::BungeeCord, ForwardingMode::BungeeGuard] {
+            let router = DomainRouter::new();
+            let lobby = passthrough("lobby");
+            let id = lobby.id.clone();
+
+            let reloads = apply(&router, &default, ProviderEvent::Added(lobby));
+
+            assert!(router.get(&id).is_none(), "{default:?}");
+            assert!(reloads.is_empty(), "{default:?}");
+        }
+    }
+
+    #[test]
     fn a_rejected_update_keeps_the_previous_config() {
         let router = DomainRouter::new();
         let lobby = passthrough("lobby");
@@ -338,5 +367,41 @@ mod tests {
 
         let kept = router.get(&id).expect("the previous config stays routed");
         assert_eq!(kept.forwarding_mode, None);
+    }
+
+    fn lobby_from(id: ProviderId) -> ProviderConfig {
+        ProviderConfig {
+            id,
+            config: toml::from_str(
+                "name = \"lobby\"\ndomains = [\"lobby.test\"]\naddresses = [\"10.0.0.1:25565\"]\n",
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_held_config_is_reported_when_it_leaves_and_reenters_routing() {
+        let router = DomainRouter::new();
+        let file = ProviderId::file("lobby.toml");
+        let docker = ProviderId::docker("lobby");
+        apply(
+            &router,
+            &ForwardingMode::None,
+            ProviderEvent::Added(lobby_from(docker.clone())),
+        );
+
+        let reloads = apply(
+            &router,
+            &ForwardingMode::None,
+            ProviderEvent::Added(lobby_from(file.clone())),
+        );
+        let docker_reload = reloads.iter().find(|r| r.provider == "docker").unwrap();
+        assert_eq!(docker_reload.removed, vec![ServerId::new("lobby")]);
+        assert!(router.get(&docker).is_none());
+
+        let reloads = apply(&router, &ForwardingMode::None, ProviderEvent::Removed(file));
+        let docker_reload = reloads.iter().find(|r| r.provider == "docker").unwrap();
+        assert_eq!(docker_reload.added, vec![ServerId::new("lobby")]);
+        assert!(router.get(&docker).is_some());
     }
 }

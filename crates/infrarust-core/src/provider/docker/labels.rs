@@ -6,8 +6,11 @@
 use std::collections::HashMap;
 
 use bollard::models::ContainerInspectResponse;
+use wildmatch::WildMatch;
 
-use infrarust_config::{ProxyMode, ServerAddress, ServerConfig};
+use infrarust_config::{
+    DockerProviderConfig, ForwardingMode, ProxyMode, ServerAddress, ServerConfig,
+};
 
 /// Default Minecraft port.
 /// Converts Docker container labels to a `ServerConfig`.
@@ -116,17 +119,97 @@ pub fn labels_to_server_config(
     })
 }
 
+/// A container whose labels claim domains the `[docker]` section does not allow.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DomainsNotAllowed {
+    /// The complete `allowed_domains` line that would admit this container.
+    pub allowing_line: String,
+}
+
+/// Builds the config of a container under the `[docker]` policy.
+pub fn container_server_config(
+    policy: &DockerProviderConfig,
+    container_name: &str,
+    labels: &HashMap<String, String>,
+    address: &str,
+) -> Result<ServerConfig, DomainsNotAllowed> {
+    let mut config = labels_to_server_config(container_name, labels, address);
+
+    let own_domain = format!("{container_name}.docker.local").to_lowercase();
+    let allowed: Vec<String> = policy
+        .allowed_domains
+        .iter()
+        .map(|domain| domain.to_lowercase())
+        .collect();
+    let mut refused: Vec<String> = config
+        .domains
+        .iter()
+        .map(|domain| domain.to_lowercase())
+        .filter(|domain| *domain != own_domain && !domain_allowed(&allowed, domain))
+        .collect();
+    if !refused.is_empty() {
+        refused.dedup();
+        return Err(DomainsNotAllowed {
+            allowing_line: format!("allowed_domains = {:?}", [allowed, refused].concat()),
+        });
+    }
+
+    if !(policy.inherit_forwarding && config.proxy_mode.is_intercepted()) {
+        config.forwarding_mode = Some(ForwardingMode::None);
+    }
+    Ok(config)
+}
+
+/// The warning owed when a container does not get the proxy-wide forwarding
+/// mode its operator may expect it to have.
+pub fn withheld_forwarding_warning(
+    policy: &DockerProviderConfig,
+    proxy_wide: &ForwardingMode,
+    container_name: &str,
+    config: &ServerConfig,
+) -> Option<String> {
+    if *proxy_wide == ForwardingMode::None {
+        return None;
+    }
+    match (
+        policy.inherit_forwarding,
+        config.proxy_mode.is_intercepted(),
+    ) {
+        (false, true) => Some(format!(
+            "container {container_name} and any other container on an intercepted proxy mode \
+             get no player forwarding, although [forwarding] selects {proxy_wide:?}: a backend \
+             that expects it rejects every player. To hand containers the mode and its secret, \
+             set inherit_forwarding = true in [docker]"
+        )),
+        (true, false) => Some(format!(
+            "container {container_name} and any other container on {:?} or another proxy mode \
+             that relays logins untouched get no player forwarding, although [docker] sets \
+             inherit_forwarding = true and [forwarding] selects {proxy_wide:?}: the proxy \
+             cannot vouch for a player it does not log in. Only containers labelled \
+             infrarust.proxy_mode=client_only or offline inherit the mode",
+            config.proxy_mode
+        )),
+        (false, false) | (true, true) => None,
+    }
+}
+
+fn domain_allowed(allowed: &[String], domain: &str) -> bool {
+    let is_pattern = domain.contains(['*', '?']);
+    allowed
+        .iter()
+        .any(|entry| entry == domain || (!is_pattern && WildMatch::new(entry).matches(domain)))
+}
+
 /// Resolves the best address for a Docker container.
 ///
 /// Priority:
 /// 1. Network IP from the preferred network (or first available)
-/// 2. Port bindings → `host_ip:host_port`
-/// 3. Container name as hostname
+/// 2. Ports the daemon published → `host_ip:host_port`
 pub fn resolve_container_address(
     info: &ContainerInspectResponse,
     preferred_network: Option<&str>,
     port: u16,
-) -> String {
+) -> Option<String> {
     // 1. Network IP
     if let Some(networks) = info
         .network_settings
@@ -139,7 +222,7 @@ pub fn resolve_container_address(
             && let Some(ip) = &net.ip_address
             && !ip.is_empty()
         {
-            return format!("{ip}:{port}");
+            return Some(format!("{ip}:{port}"));
         }
         let first_by_name = networks
             .iter()
@@ -149,36 +232,30 @@ pub fn resolve_container_address(
             })
             .min();
         if let Some((_, ip)) = first_by_name {
-            return format!("{ip}:{port}");
+            return Some(format!("{ip}:{port}"));
         }
     }
 
-    // 2. Port bindings
-    if let Some(bindings) = info
-        .host_config
+    // 2. Published ports
+    if let Some(ports) = info
+        .network_settings
         .as_ref()
-        .and_then(|hc| hc.port_bindings.as_ref())
+        .and_then(|ns| ns.ports.as_ref())
     {
         let key = format!("{port}/tcp");
-        if let Some(Some(binding_list)) = bindings.get(&key)
+        if let Some(Some(binding_list)) = ports.get(&key)
             && let Some(binding) = binding_list.first()
+            && let Some(host_port) = binding.host_port.as_deref()
         {
-            let host_port = binding.host_port.as_deref().unwrap_or("25565");
             let host_ip = binding.host_ip.as_deref().unwrap_or("0.0.0.0");
             let actual_ip = if host_ip == "0.0.0.0" {
                 "127.0.0.1"
             } else {
                 host_ip
             };
-            return format!("{actual_ip}:{host_port}");
+            return Some(format!("{actual_ip}:{host_port}"));
         }
     }
 
-    // 3. Container name
-    let name = info
-        .name
-        .as_deref()
-        .unwrap_or("unknown")
-        .trim_start_matches('/');
-    format!("{name}:{port}")
+    None
 }

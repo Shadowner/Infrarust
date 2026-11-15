@@ -77,6 +77,30 @@ Velocity's modern forwarding does not touch the handshake. Instead, during login
 The forwarding secret is what stops an attacker who can reach your backend port from impersonating any player. Keep the backend unreachable from the public internet, use `bungee_guard` or `velocity` rather than plain `bungee_cord`, and treat `forwarding.secret` like a password. An empty secret file is rejected at startup rather than silently accepted.
 :::
 
+There is one secret, and it belongs to the proxy-wide mode. A server can set its own `forwarding_mode`, but `velocity` and `bungee_guard` are accepted there only when the proxy-wide mode is the same: a Velocity secret is never sent as a BungeeGuard token, which travels in clear text. A server in a forwarding proxy mode cannot use `velocity`, which is negotiated inside the login those modes do not parse, and does not inherit `bungee_cord` or `bungee_guard`, because the proxy has not verified the identity it would forward. See [per-server override](../configuration/proxy-forwarding#per-server-override).
+
+## Two logins with the same identity
+
+The proxy trusts a session according to how its player logged in:
+
+- verified: a `client_only` login checked with the session server, or an `offline` login a plugin sent through that check with `ForceOnline`,
+- unverified: an `offline` login, or a `client_only` login a plugin let in without the check,
+- forwarded: a login on a forwarding-mode server, which the proxy relays without taking part.
+
+When a login arrives with a UUID that already has a session, the older session is closed only if the new one can outrank it:
+
+| New login | Closes an older session that is |
+|-----------|---------------------------------|
+| Verified | Verified or unverified |
+| Unverified | Unverified |
+| Forwarded | None |
+
+A forwarded session is never closed by another login either, since the backend owns it. An unverified login can therefore not kick a verified player by claiming their UUID, and a client on a passthrough server cannot kick anyone. The cost is that two sessions can be online with the same name, and both then appear in the console's `list`.
+
+Lookups by name (`/ir kick`, `/ir find`, `/ir send`, the plugin API) pick the session whose name has the exact spelling asked for, then the most trusted one: verified, then unverified, then forwarded.
+
+An unverified player cannot be moved to a `client_only` server, whether by a command, a plugin or a redirect. The move is refused with "This server requires a verified Minecraft account".
+
 ## Putting it together
 
 A typical online-mode network runs `client_only` so the proxy authenticates once, with `velocity` forwarding so each backend learns the verified identity over a signed channel:

@@ -55,7 +55,7 @@ impl Player for PlayerSession {
     }
 
     fn is_active(&self) -> bool {
-        self.active
+        self.kind.active()
     }
 
     fn disconnect(&self, reason: Component) -> BoxFuture<'_, ()> {
@@ -94,7 +94,7 @@ impl Player for PlayerSession {
     }
 
     fn is_online_mode(&self) -> bool {
-        self.online_mode
+        self.kind.online_mode()
     }
 
     fn has_permission(&self, permission: &str) -> bool {
@@ -151,7 +151,7 @@ impl Player for PlayerSession {
         channel: &ChannelId,
         data: Bytes,
     ) -> Result<(), PlayerError> {
-        if self.active && self.connected_address().is_none() {
+        if self.kind.active() && self.connected_address().is_none() {
             return Err(PlayerError::NoBackend);
         }
         self.send_message_to(

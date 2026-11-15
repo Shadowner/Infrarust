@@ -68,7 +68,7 @@ pub struct BungeeCordChannelPermissions {
     pub connect_other: bool,
     #[serde(default = "defaults::true_val", alias = "IP")]
     pub ip: bool,
-    #[serde(default = "defaults::true_val", alias = "IPOther")]
+    #[serde(default, alias = "IPOther")]
     pub ip_other: bool,
     #[serde(default = "defaults::true_val", alias = "PlayerCount")]
     pub player_count: bool,
@@ -88,7 +88,7 @@ pub struct BungeeCordChannelPermissions {
     pub uuid: bool,
     #[serde(default = "defaults::true_val", alias = "UUIDOther")]
     pub uuid_other: bool,
-    #[serde(default = "defaults::true_val", alias = "ServerIP")]
+    #[serde(default, alias = "ServerIP")]
     pub server_ip: bool,
     #[serde(default, alias = "Message")]
     pub message: bool,
@@ -106,7 +106,7 @@ impl Default for BungeeCordChannelPermissions {
             connect: true,
             connect_other: false,
             ip: true,
-            ip_other: true,
+            ip_other: false,
             player_count: true,
             player_list: true,
             get_servers: true,
@@ -116,7 +116,7 @@ impl Default for BungeeCordChannelPermissions {
             forward_to_player: true,
             uuid: true,
             uuid_other: true,
-            server_ip: true,
+            server_ip: false,
             message: false,
             message_raw: false,
             kick_player: false,

@@ -76,9 +76,12 @@ fn test_proxy_defaults_minimal_config() {
 
     assert_eq!(config.bind, "0.0.0.0:25565".parse().unwrap());
     assert_eq!(config.connect_timeout, Duration::from_secs(5));
-    assert_eq!(config.max_connections, 0);
+    assert_eq!(config.max_connections, 10_000);
+    assert_eq!(config.max_connections_per_ip, 32);
     assert!(!config.receive_proxy_protocol);
-    assert_eq!(config.rate_limit.max_connections, 3);
+    assert!(config.rate_limit.enabled);
+    assert_eq!(config.rate_limit.max_connections, 10);
+    assert_eq!(config.rate_limit.window, Duration::from_secs(10));
     assert_eq!(config.status_cache.ttl, Duration::from_secs(5));
     assert!(config.default_motd.is_none());
     assert_eq!(config.compression_threshold, 256);
@@ -141,4 +144,61 @@ fn test_parse_proxy_events_rejects_unknown_keys() {
     );
 
     assert!(parsed.is_err());
+}
+
+fn trusted_proxies(toml_str: &str) -> Result<Vec<String>, String> {
+    toml::from_str::<ProxyConfig>(toml_str)
+        .map(|config| {
+            config
+                .trusted_proxies
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn trusted_proxies_accept_bare_addresses_as_single_hosts() {
+    assert_eq!(
+        trusted_proxies(r#"trusted_proxies = ["10.0.0.5", "2001:db8::1", "192.168.0.0/16"]"#)
+            .unwrap(),
+        ["10.0.0.5/32", "2001:db8::1/128", "192.168.0.0/16"]
+    );
+}
+
+#[test]
+fn trusted_proxies_accept_bare_addresses_in_json() {
+    let config: ProxyConfig =
+        serde_json::from_str(r#"{"trusted_proxies": ["10.0.0.5", "fd00::/8"]}"#).unwrap();
+    assert_eq!(
+        config.trusted_proxies,
+        ["10.0.0.5/32".parse().unwrap(), "fd00::/8".parse().unwrap()]
+    );
+}
+
+#[test]
+fn trusted_proxies_serialize_as_cidr_and_parse_back() {
+    let config: ProxyConfig = toml::from_str(r#"trusted_proxies = ["10.0.0.5"]"#).unwrap();
+    let serialized = toml::to_string(&config).unwrap();
+    assert!(
+        serialized.contains(r#"trusted_proxies = ["10.0.0.5/32"]"#),
+        "{serialized}"
+    );
+    let reparsed: ProxyConfig = toml::from_str(&serialized).unwrap();
+    assert_eq!(reparsed.trusted_proxies, config.trusted_proxies);
+}
+
+#[test]
+fn an_invalid_trusted_proxies_entry_is_named_in_the_error() {
+    let error = serde_json::from_str::<ProxyConfig>(r#"{"trusted_proxies": ["lb.internal"]}"#)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(
+            "invalid trusted_proxies entry \"lb.internal\": expected an IP address such as \
+             192.168.1.10 or a CIDR range such as 10.0.0.0/8"
+        ),
+        "{error}"
+    );
 }

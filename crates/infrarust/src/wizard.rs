@@ -76,7 +76,7 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
 
     let max_connections: u32 = Input::new()
         .with_prompt("Maximum simultaneous connections (0 = unlimited)")
-        .default(0u32)
+        .default(infrarust_config::defaults::max_connections())
         .interact_text()?;
 
     let web_enabled = Confirm::new()
