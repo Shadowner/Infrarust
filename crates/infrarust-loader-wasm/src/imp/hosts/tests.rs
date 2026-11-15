@@ -43,7 +43,6 @@ use infrarust_plugin_common::capability::gates::{GATES, SUBSCRIBE_GATES};
 
 use wasmtime::component::{Resource, ResourceTableError};
 
-use crate::actor::InstanceRef;
 use crate::bindings::infrarust::plugin::events::EventKind;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::{
@@ -86,7 +85,6 @@ fn state_with(capabilities: CapabilitySet, players: Vec<Arc<dyn Player>>) -> Plu
     build_probe_state("test".to_owned(), &SandboxLimits::default())
         .with_capabilities(capabilities)
         .with_ctx(context(players))
-        .with_instance(InstanceRef::detached())
 }
 
 fn text_of(message: &str) -> wt::Component {
@@ -1332,7 +1330,6 @@ fn routed_state(capabilities: CapabilitySet) -> PluginStoreState {
     build_probe_state("test".to_owned(), &SandboxLimits::default())
         .with_capabilities(capabilities)
         .with_ctx(PluginContextFactoryImpl::new(services, HashMap::new()).create_context("test"))
-        .with_instance(InstanceRef::detached())
 }
 
 async fn server_for(state: &mut PluginStoreState, domain: &str) -> Option<String> {
@@ -1564,7 +1561,6 @@ fn quota_state(quotas: WasmQuotasConfig, grants: &[Capability]) -> PluginStoreSt
     build_probe_state("test".to_owned(), &sandbox)
         .with_capabilities(capabilities)
         .with_ctx(factory.create_context("test"))
-        .with_instance(InstanceRef::detached())
 }
 
 fn quotas(adjust: impl FnOnce(&mut WasmQuotasConfig)) -> WasmQuotasConfig {
@@ -1701,7 +1697,6 @@ fn command_state(factory: &PluginContextFactoryImpl, plugin_id: &str) -> PluginS
     build_probe_state(plugin_id.to_owned(), &SandboxLimits::default())
         .with_capabilities(CapabilitySet::baseline())
         .with_ctx(factory.create_context(plugin_id))
-        .with_instance(InstanceRef::detached())
 }
 
 fn spec_with_aliases(name: &str, aliases: &[&str]) -> command_manager::CommandSpec {
@@ -1987,7 +1982,6 @@ impl NodeHost {
         build_probe_state(plugin_id.to_owned(), &sandbox)
             .with_capabilities(CapabilitySet::default())
             .with_ctx(self.factory.create_context(plugin_id))
-            .with_instance(InstanceRef::detached())
     }
 
     fn native(&self, plugin_id: &str, name: &str, default: PermissionDefault) {

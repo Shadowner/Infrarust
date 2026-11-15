@@ -37,7 +37,6 @@ use std::sync::Arc;
 use infrarust_api::error::ServiceError;
 use infrarust_api::permissions::Capability;
 use infrarust_api::player::Player;
-use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::{Component, PlayerId};
 use infrarust_plugin_common::capability::gates::{is_known, required};
 
@@ -45,8 +44,7 @@ use crate::bindings::infrarust::plugin::types as wt;
 use crate::component;
 use crate::deadline::HostCallLimit;
 use crate::host_error::{
-    HostResult, invalid_component, missing_capability, no_services, player_gone, service_error,
-    timed_out,
+    HostResult, invalid_component, missing_capability, player_gone, service_error, timed_out,
 };
 use crate::store_state::PluginStoreState;
 
@@ -116,10 +114,6 @@ impl PluginStoreState {
 
     pub(crate) fn lacks(&mut self, gate: Gate) -> bool {
         self.check(gate).is_err()
-    }
-
-    pub(crate) fn services(&self) -> HostResult<Arc<dyn PluginContext>> {
-        self.ctx().cloned().ok_or_else(no_services)
     }
 
     pub(crate) fn online_player(&self, id: u64) -> HostResult<Arc<dyn Player>> {

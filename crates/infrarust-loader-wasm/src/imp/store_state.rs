@@ -129,14 +129,18 @@ impl Sandbox {
     }
 }
 
+struct Live {
+    ctx: Arc<dyn PluginContext>,
+    instance: InstanceRef,
+    codec: Option<Arc<CodecInstantiator>>,
+}
+
 struct Guest {
     plugin_id: String,
     generation: u64,
     capabilities: CapabilitySet,
-    ctx: Option<Arc<dyn PluginContext>>,
-    instance: Option<InstanceRef>,
+    live: Option<Live>,
     registrations: Arc<Registrations>,
-    codec: Option<Arc<CodecInstantiator>>,
     host_call_timeout: Duration,
     quotas: WasmQuotasConfig,
 }
@@ -246,8 +250,16 @@ impl PluginStoreState {
         &self.guest.plugin_id
     }
 
+    fn live(&self) -> HostResult<&Live> {
+        self.guest.live.as_ref().ok_or_else(no_services)
+    }
+
     pub(crate) fn ctx(&self) -> Option<&Arc<dyn PluginContext>> {
-        self.guest.ctx.as_ref()
+        self.guest.live.as_ref().map(|live| &live.ctx)
+    }
+
+    pub(crate) fn services(&self) -> HostResult<Arc<dyn PluginContext>> {
+        Ok(Arc::clone(&self.live()?.ctx))
     }
 
     pub(crate) fn host_call_timeout(&self) -> Duration {
@@ -335,11 +347,7 @@ impl PluginStoreState {
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> HostResult<InstanceRef> {
-        self.guest
-            .instance
-            .as_ref()
-            .map(|instance| instance.for_calls(kind))
-            .ok_or_else(no_services)
+        Ok(self.live()?.instance.for_calls(kind))
     }
 
     pub(crate) fn generation(&self) -> u64 {
@@ -473,7 +481,7 @@ impl PluginStoreState {
         for (_, bar) in resources.boss_bars.drain() {
             let _ = bar.hide();
         }
-        let Some(ctx) = self.guest.ctx.as_ref() else {
+        let Some(Live { ctx, .. }) = &self.guest.live else {
             return;
         };
         for handle in listeners {
@@ -490,7 +498,7 @@ impl PluginStoreState {
     }
 
     pub(crate) fn codec_instantiator(&self) -> Option<&Arc<CodecInstantiator>> {
-        self.guest.codec.as_ref()
+        self.guest.live.as_ref()?.codec.as_ref()
     }
 
     #[cfg(test)]
@@ -501,13 +509,11 @@ impl PluginStoreState {
 
     #[cfg(test)]
     pub(crate) fn with_ctx(mut self, ctx: Arc<dyn PluginContext>) -> Self {
-        self.guest.ctx = Some(ctx);
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_instance(mut self, instance: InstanceRef) -> Self {
-        self.guest.instance = Some(instance);
+        self.guest.live = Some(Live {
+            ctx,
+            instance: InstanceRef::detached(),
+            codec: None,
+        });
         self
     }
 }
@@ -590,10 +596,12 @@ pub(crate) async fn build_load_state(
             plugin_id: setup.plugin_id.clone(),
             generation,
             capabilities: setup.capabilities.clone(),
-            ctx: Some(Arc::clone(&setup.ctx)),
-            instance: Some(instance),
+            live: Some(Live {
+                ctx: Arc::clone(&setup.ctx),
+                instance,
+                codec: setup.codec.clone(),
+            }),
             registrations: Arc::clone(&setup.registrations),
-            codec: setup.codec.clone(),
             host_call_timeout: setup.sandbox.host_call_timeout,
             quotas: setup.sandbox.quotas,
         },
@@ -613,10 +621,8 @@ pub(crate) fn build_probe_state(plugin_id: String, sandbox: &SandboxLimits) -> P
             plugin_id,
             generation: 0,
             capabilities: CapabilitySet::default(),
-            ctx: None,
-            instance: None,
+            live: None,
             registrations: Arc::default(),
-            codec: None,
             host_call_timeout: sandbox.host_call_timeout,
             quotas: sandbox.quotas,
         },
