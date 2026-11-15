@@ -1,85 +1,107 @@
-//! `ProviderId` — unique identifier for a server config's provenance.
-//!
-//! Format: `provider_type@unique_id`
-//! Examples: `file@survival.toml`, `docker@mc-survival-1`
-
 use std::fmt;
 use std::str::FromStr;
 
 use crate::error::CoreError;
 
-const PLUGIN_PROVIDER_PREFIX: &str = "plugin:";
+const PLUGIN_SOURCE_PREFIX: &str = "plugin:";
 
-/// How far a provider's configs are trusted when they compete for a domain
-/// or a server id. Configured outranks Discovered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProviderTrust {
-    /// Derived from what a workload declares about itself, like Docker labels.
     Discovered,
-    /// Written or installed by the operator: config files and plugins.
     Configured,
 }
 
-/// Identifies the source of a `ServerConfig`.
-///
-/// Each config in the system is tagged with a `ProviderId` that tells
-/// which provider created it and what unique key it uses within that provider.
-///
-/// The canonical string form is `provider_type@unique_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ProviderSource {
+    File,
+    Docker,
+    Plugin { plugin: String, kind: String },
+}
+
+impl ProviderSource {
+    pub const fn trust(&self) -> ProviderTrust {
+        match self {
+            Self::File | Self::Plugin { .. } => ProviderTrust::Configured,
+            Self::Docker => ProviderTrust::Discovered,
+        }
+    }
+}
+
+impl fmt::Display for ProviderSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::File => f.write_str("file"),
+            Self::Docker => f.write_str("docker"),
+            Self::Plugin { plugin, kind } => write!(f, "{PLUGIN_SOURCE_PREFIX}{plugin}:{kind}"),
+        }
+    }
+}
+
+impl FromStr for ProviderSource {
+    type Err = CoreError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "file" => Ok(Self::File),
+            "docker" => Ok(Self::Docker),
+            _ => s
+                .strip_prefix(PLUGIN_SOURCE_PREFIX)
+                .and_then(|owned| owned.split_once(':'))
+                .map(|(plugin, kind)| Self::Plugin {
+                    plugin: plugin.to_string(),
+                    kind: kind.to_string(),
+                })
+                .ok_or_else(|| CoreError::InvalidProviderId(s.to_string())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProviderId {
-    /// Type of the provider (e.g. `"file"`, `"docker"`, `"api"`).
-    pub provider_type: String,
-    /// Unique identifier within the provider (e.g. `"survival.toml"`, `"mc-survival-1"`).
+    pub source: ProviderSource,
     pub unique_id: String,
 }
 
 impl ProviderId {
-    pub fn new(provider_type: impl Into<String>, unique_id: impl Into<String>) -> Self {
+    pub fn file(filename: impl Into<String>) -> Self {
         Self {
-            provider_type: provider_type.into(),
-            unique_id: unique_id.into(),
+            source: ProviderSource::File,
+            unique_id: filename.into(),
         }
     }
 
-    /// Shorthand for a file-based provider id.
-    pub fn file(filename: impl Into<String>) -> Self {
-        Self::new("file", filename)
-    }
-
-    /// Shorthand for a Docker-based provider id.
     pub fn docker(container_name: impl Into<String>) -> Self {
-        Self::new("docker", container_name)
+        Self {
+            source: ProviderSource::Docker,
+            unique_id: container_name.into(),
+        }
     }
 
     pub fn plugin(plugin_id: &str, kind: &str, document: impl Into<String>) -> Self {
-        Self::new(
-            format!("{PLUGIN_PROVIDER_PREFIX}{plugin_id}:{kind}"),
-            document,
-        )
+        Self {
+            source: ProviderSource::Plugin {
+                plugin: plugin_id.to_string(),
+                kind: kind.to_string(),
+            },
+            unique_id: document.into(),
+        }
     }
 
     pub fn plugin_owner(&self) -> Option<&str> {
-        let owned = self.provider_type.strip_prefix(PLUGIN_PROVIDER_PREFIX)?;
-        Some(
-            owned
-                .split_once(':')
-                .map_or(owned, |(plugin_id, _)| plugin_id),
-        )
+        match &self.source {
+            ProviderSource::Plugin { plugin, .. } => Some(plugin),
+            ProviderSource::File | ProviderSource::Docker => None,
+        }
     }
 
-    pub fn trust(&self) -> ProviderTrust {
-        if self.provider_type == "file" || self.plugin_owner().is_some() {
-            ProviderTrust::Configured
-        } else {
-            ProviderTrust::Discovered
-        }
+    pub const fn trust(&self) -> ProviderTrust {
+        self.source.trust()
     }
 }
 
 impl fmt::Display for ProviderId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}@{}", self.provider_type, self.unique_id)
+        write!(f, "{}@{}", self.source, self.unique_id)
     }
 }
 
@@ -87,10 +109,13 @@ impl FromStr for ProviderId {
     type Err = CoreError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (ptype, uid) = s
+        let (source, unique_id) = s
             .split_once('@')
             .ok_or_else(|| CoreError::InvalidProviderId(s.to_string()))?;
-        Ok(Self::new(ptype, uid))
+        Ok(Self {
+            source: source.parse()?,
+            unique_id: unique_id.to_string(),
+        })
     }
 }
 
@@ -106,9 +131,24 @@ mod tests {
         assert_eq!(id.to_string(), "plugin:k8s:api@lobby");
         assert_eq!(id.plugin_owner(), Some("k8s"));
         assert_eq!(ProviderId::file("a.toml").plugin_owner(), None);
+    }
+
+    #[test]
+    fn only_docker_configs_are_discovered() {
         assert_eq!(
-            ProviderId::new("plugin:bare", "x").plugin_owner(),
-            Some("bare")
+            ProviderId::file("a.toml").trust(),
+            ProviderTrust::Configured
         );
+        assert_eq!(
+            ProviderId::plugin("k8s", "api", "lobby").trust(),
+            ProviderTrust::Configured
+        );
+        assert_eq!(ProviderId::docker("mc").trust(), ProviderTrust::Discovered);
+    }
+
+    #[test]
+    fn an_unknown_source_does_not_parse() {
+        assert!("api@lobby".parse::<ProviderId>().is_err());
+        assert!("plugin:bare@lobby".parse::<ProviderId>().is_err());
     }
 }

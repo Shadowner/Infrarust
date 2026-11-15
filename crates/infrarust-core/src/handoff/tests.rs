@@ -71,7 +71,7 @@ fn server(name: &str, backend: SocketAddr, edit: impl FnOnce(&mut ServerConfig))
 }
 
 fn add(services: &ProxyServices, config: ServerConfig) {
-    let id = ProviderId::new("file", format!("{}.toml", config.effective_id()));
+    let id = ProviderId::file(format!("{}.toml", config.effective_id()));
     services.domain_router.add(id, config);
 }
 

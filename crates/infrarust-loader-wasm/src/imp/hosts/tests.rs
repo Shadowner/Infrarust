@@ -1284,7 +1284,7 @@ fn routed_state(capabilities: CapabilitySet) -> PluginStoreState {
         ),
     ] {
         router.add(
-            infrarust_core::provider::ProviderId::new("file", file),
+            infrarust_core::provider::ProviderId::file(file),
             toml::from_str(document).unwrap(),
         );
     }

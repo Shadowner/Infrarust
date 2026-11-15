@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_core::provider::file::FileProvider;
-use infrarust_core::provider::{ConfigProvider, ProviderChange, ProviderEvent};
+use infrarust_core::provider::{ConfigProvider, ProviderChange, ProviderEvent, ProviderSource};
 
 const MINIMAL_CONFIG: &str = r#"
 domains = ["test.example.com"]
@@ -90,7 +90,7 @@ async fn test_provider_id_format() {
     let provider = FileProvider::new(dir.path().to_path_buf());
     let configs = provider.load_initial().await.unwrap();
     assert_eq!(configs.len(), 1);
-    assert_eq!(configs[0].id.provider_type, "file");
+    assert_eq!(configs[0].id.source, ProviderSource::File);
     assert_eq!(configs[0].id.unique_id, "survival.toml");
     assert_eq!(configs[0].id.to_string(), "file@survival.toml");
 }

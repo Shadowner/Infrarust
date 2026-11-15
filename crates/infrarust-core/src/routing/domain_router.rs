@@ -8,7 +8,7 @@ use wildmatch::WildMatch;
 use infrarust_config::ServerConfig;
 
 use crate::loadbalancer::{LoadBalancer, build_load_balancer};
-use crate::provider::{ProviderId, ProviderTrust};
+use crate::provider::{ProviderId, ProviderSource, ProviderTrust};
 use crate::util::sync::{lock, read, write};
 
 /// Entry stored per provider in the router.
@@ -177,12 +177,9 @@ impl DomainRouter {
         self.publish(&registrations, None)
     }
 
-    /// Removes all configurations from a given provider type.
-    pub fn remove_all_by_provider_type(&self, provider_type: &str) -> RoutingChanges {
+    pub fn remove_all_from(&self, source: &ProviderSource) -> RoutingChanges {
         let mut registrations = lock(&self.registrations);
-        registrations
-            .entries
-            .retain(|id, _| id.provider_type != provider_type);
+        registrations.entries.retain(|id, _| id.source != *source);
         self.publish(&registrations, None)
     }
 
@@ -375,7 +372,7 @@ impl DomainRouter {
     pub fn count_by_provider(&self) -> HashMap<String, usize> {
         let mut counts = HashMap::new();
         for entry in &self.configs {
-            *counts.entry(entry.key().provider_type.clone()).or_insert(0) += 1;
+            *counts.entry(entry.key().source.to_string()).or_insert(0) += 1;
         }
         counts
     }

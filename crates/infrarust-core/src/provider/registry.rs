@@ -309,12 +309,13 @@ fn apply(
 
     let mut reloads: Vec<ConfigReloadEvent> = Vec::new();
     for (id, previous) in before {
+        let provider = id.source.to_string();
         let position = reloads
             .iter()
-            .position(|reload| reload.provider == id.provider_type)
+            .position(|reload| reload.provider == provider)
             .unwrap_or_else(|| {
                 reloads.push(ConfigReloadEvent::new(
-                    id.provider_type.clone(),
+                    provider,
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),

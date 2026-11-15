@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 
-use infrarust_core::provider::ProviderId;
+use infrarust_core::provider::{ProviderId, ProviderSource};
 
 #[test]
 fn test_provider_id_display() {
@@ -15,7 +15,7 @@ fn test_provider_id_display() {
 #[test]
 fn test_provider_id_parse() {
     let id: ProviderId = "docker@mc-1".parse().unwrap();
-    assert_eq!(id.provider_type, "docker");
+    assert_eq!(id.source, ProviderSource::Docker);
     assert_eq!(id.unique_id, "mc-1");
 }
 
@@ -23,7 +23,7 @@ fn test_provider_id_parse() {
 fn test_provider_id_parse_with_multiple_at() {
     // Only split on the first '@'
     let id: ProviderId = "file@config@special.toml".parse().unwrap();
-    assert_eq!(id.provider_type, "file");
+    assert_eq!(id.source, ProviderSource::File);
     assert_eq!(id.unique_id, "config@special.toml");
 }
 
@@ -57,7 +57,7 @@ fn test_provider_id_hash() {
 
 #[test]
 fn test_provider_id_roundtrip() {
-    let original = ProviderId::new("api", "admin-created-1");
+    let original = ProviderId::plugin("admin_api", "api", "admin-created-1");
     let s = original.to_string();
     let parsed: ProviderId = s.parse().unwrap();
     assert_eq!(original, parsed);

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use infrarust_config::ServerConfig;
-use infrarust_core::provider::ProviderId;
+use infrarust_core::provider::{ProviderId, ProviderSource};
 use infrarust_core::routing::DomainRouter;
 
 /// Build a minimal `ServerConfig` with the given domains.
@@ -123,7 +123,7 @@ fn test_remove_only_own_configs() {
 }
 
 #[test]
-fn test_remove_all_by_provider_type() {
+fn test_remove_all_from_a_source() {
     let router = DomainRouter::new();
     let id_file = ProviderId::file("survival.toml");
     let id_docker1 = ProviderId::docker("mc-1");
@@ -135,7 +135,7 @@ fn test_remove_all_by_provider_type() {
 
     assert_eq!(router.len(), 3);
 
-    router.remove_all_by_provider_type("docker");
+    router.remove_all_from(&ProviderSource::Docker);
 
     assert_eq!(router.len(), 1);
     assert!(router.resolve("survival.mc.com").is_some());

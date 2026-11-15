@@ -152,7 +152,7 @@ impl ConfigService for ConfigServiceImpl {
                 id: config.effective_id(),
                 provider_id: provider_id.to_string(),
                 editable: provider_id.plugin_owner().is_some(),
-                provider_type: provider_id.provider_type,
+                provider_type: provider_id.source.to_string(),
             })
             .collect()
     }
@@ -540,7 +540,7 @@ api_key = \"super-secret-key-value\"
             ),
         ] {
             router.add(
-                crate::provider::ProviderId::new("file", file),
+                crate::provider::ProviderId::file(file),
                 toml::from_str(document).unwrap(),
             );
         }
@@ -577,10 +577,7 @@ api_key = \"super-secret-key-value\"
              api_key = \"ptlc_live_xxx\"\nserver_id = \"abc\"\n",
         )
         .unwrap();
-        router.add(
-            crate::provider::ProviderId::new("file", "survival.toml"),
-            config,
-        );
+        router.add(crate::provider::ProviderId::file("survival.toml"), config);
         let service = ConfigServiceImpl::new(
             router,
             root.path().join("infrarust.toml"),
