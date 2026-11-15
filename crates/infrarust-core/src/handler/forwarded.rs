@@ -203,14 +203,7 @@ impl ForwardedLogin<'_> {
                 return Ok(None);
             }
             PlayerChooseInitialServerResult::Denied { reason } => {
-                let reason = reason.clone();
-                self.kick(ctx, &reason).await;
-                admitted
-                    .lifecycle
-                    .end(DisconnectCause::Kicked {
-                        reason: Some(reason),
-                    })
-                    .await;
+                self.refuse(ctx, admitted, reason.clone()).await;
                 return Ok(None);
             }
             _ => choose.initial_server.clone(),
@@ -234,14 +227,7 @@ impl ForwardedLogin<'_> {
             let server = match pre.result() {
                 ServerPreConnectResult::Redirect(server) => server.clone(),
                 ServerPreConnectResult::Denied { reason } => {
-                    let reason = reason.clone();
-                    self.kick(ctx, &reason).await;
-                    admitted
-                        .lifecycle
-                        .end(DisconnectCause::Kicked {
-                            reason: Some(reason),
-                        })
-                        .await;
+                    self.refuse(ctx, admitted, reason.clone()).await;
                     return Ok(None);
                 }
                 ServerPreConnectResult::SendToLimbo { .. } => {
@@ -260,14 +246,7 @@ impl ForwardedLogin<'_> {
             let mut route = match self.resolve(ctx, &server, origin) {
                 Ok(route) => route,
                 Err(reason) => {
-                    let reason = Component::text(reason);
-                    self.kick(ctx, &reason).await;
-                    admitted
-                        .lifecycle
-                        .end(DisconnectCause::Kicked {
-                            reason: Some(reason),
-                        })
-                        .await;
+                    self.refuse(ctx, admitted, Component::text(reason)).await;
                     return Ok(None);
                 }
             };
@@ -516,7 +495,11 @@ impl ForwardedLogin<'_> {
             event,
             "a plugin sent a forwarded connection to limbo, which needs the offline or client_only proxy mode; disconnecting the player"
         );
-        let reason = Component::text(LIMBO_UNAVAILABLE);
+        self.refuse(ctx, admitted, Component::text(LIMBO_UNAVAILABLE))
+            .await;
+    }
+
+    async fn refuse(&self, ctx: &mut ConnectionContext, admitted: Admitted, reason: Component) {
         self.kick(ctx, &reason).await;
         admitted
             .lifecycle
