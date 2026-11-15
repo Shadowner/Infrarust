@@ -10,62 +10,48 @@ use crate::error::WasmLoaderError;
 use crate::store_state::PluginStoreState;
 
 macro_rules! link {
-    ($linker:expr, $plugin_id:expr, $iface:ident) => {
-        $iface::add_to_linker::<_, HasSelf<_>>(&mut $linker, |state| state).map_err(|e| {
-            instantiate_err(
-                $plugin_id,
-                &format!("{} link failed", stringify!($iface)),
-                e,
-            )
-        })?;
+    ($linker:expr, $iface:ident) => {
+        $iface::add_to_linker::<_, HasSelf<_>>(&mut $linker, |state| state)
+            .map_err(|e| link_err(concat!(stringify!($iface), " link failed"), &e))?;
     };
 }
 
-fn instantiate_err(plugin_id: &str, what: &str, e: wasmtime::Error) -> WasmLoaderError {
-    WasmLoaderError::Instantiate {
-        plugin_id: plugin_id.to_owned(),
-        reason: format!("{what}: {e}"),
-    }
+fn link_err(what: &str, e: &wasmtime::Error) -> WasmLoaderError {
+    WasmLoaderError::Engine(wasmtime::format_err!("{what}: {e}"))
 }
 
-fn new_linker_with_wasi(
-    engine: &Engine,
-    plugin_id: &str,
-) -> Result<Linker<PluginStoreState>, WasmLoaderError> {
+fn new_linker_with_wasi(engine: &Engine) -> Result<Linker<PluginStoreState>, WasmLoaderError> {
     let mut linker = Linker::<PluginStoreState>::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-        .map_err(|e| instantiate_err(plugin_id, "wasi linker setup", e))?;
+        .map_err(|e| link_err("wasi linker setup", &e))?;
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
-        .map_err(|e| instantiate_err(plugin_id, "wasi-http linker setup", e))?;
+        .map_err(|e| link_err("wasi-http linker setup", &e))?;
     Ok(linker)
 }
 
-pub(crate) fn build_linker(
-    engine: &Engine,
-    plugin_id: &str,
-) -> Result<Linker<PluginStoreState>, WasmLoaderError> {
-    let mut linker = new_linker_with_wasi(engine, plugin_id)?;
+pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<PluginStoreState>, WasmLoaderError> {
+    let mut linker = new_linker_with_wasi(engine)?;
 
-    link!(linker, plugin_id, log);
-    link!(linker, plugin_id, text);
-    link!(linker, plugin_id, limbo);
-    link!(linker, plugin_id, event_bus);
-    link!(linker, plugin_id, events);
-    link!(linker, plugin_id, players);
-    link!(linker, plugin_id, command_manager);
-    link!(linker, plugin_id, scheduler);
-    link!(linker, plugin_id, config_service);
-    link!(linker, plugin_id, server_manager);
-    link!(linker, plugin_id, ban_service);
-    link!(linker, plugin_id, codec_registry);
-    link!(linker, plugin_id, load_balancer);
-    link!(linker, plugin_id, messaging);
-    link!(linker, plugin_id, proxy_info);
-    link!(linker, plugin_id, plugin_registry);
-    link!(linker, plugin_id, permissions);
-    link!(linker, plugin_id, permission_nodes);
-    link!(linker, plugin_id, providers);
-    link!(linker, plugin_id, connection_claims);
+    link!(linker, log);
+    link!(linker, text);
+    link!(linker, limbo);
+    link!(linker, event_bus);
+    link!(linker, events);
+    link!(linker, players);
+    link!(linker, command_manager);
+    link!(linker, scheduler);
+    link!(linker, config_service);
+    link!(linker, server_manager);
+    link!(linker, ban_service);
+    link!(linker, codec_registry);
+    link!(linker, load_balancer);
+    link!(linker, messaging);
+    link!(linker, proxy_info);
+    link!(linker, plugin_registry);
+    link!(linker, permissions);
+    link!(linker, permission_nodes);
+    link!(linker, providers);
+    link!(linker, connection_claims);
 
     Ok(linker)
 }

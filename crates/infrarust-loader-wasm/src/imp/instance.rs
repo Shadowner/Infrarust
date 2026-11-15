@@ -125,7 +125,7 @@ mod tests {
             )"#,
         )
         .unwrap();
-        let linker = build_linker(&engine, "future").unwrap();
+        let linker = build_linker(&engine).unwrap();
         let err = linker
             .instantiate_pre(&component)
             .map(|_| ())

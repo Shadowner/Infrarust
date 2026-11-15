@@ -45,7 +45,7 @@ struct DiscoveredWasm {
 
 impl WasmPluginLoader {
     pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
-        let linker = build_linker(&engine, "host").map_err(std::io::Error::other)?;
+        let linker = build_linker(&engine).map_err(std::io::Error::other)?;
         let cache = AotCache::new(&engine, config.cache_dir().map(Path::to_path_buf));
         Ok(Self {
             engine: TickedEngine::new(engine, config.epoch_tick()),
