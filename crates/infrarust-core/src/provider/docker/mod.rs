@@ -495,6 +495,8 @@ impl ConfigProvider for DockerProvider {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     fn config(name: &str, address: &str) -> ServerConfig {

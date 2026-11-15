@@ -59,13 +59,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_owned(
+        self.inner.subscribe_owned(
             Arc::clone(&self.owner),
             event_type,
             priority,
             HandlerKind::from_sync(handler),
-        );
-        handle
+        )
     }
 
     fn subscribe_async_erased(
@@ -74,13 +73,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedAsyncHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_owned(
+        self.inner.subscribe_owned(
             Arc::clone(&self.owner),
             event_type,
             priority,
             HandlerKind::from_async(handler),
-        );
-        handle
+        )
     }
 
     fn subscribe_packet(
@@ -89,13 +87,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_packet_owned(
+        self.inner.subscribe_packet_owned(
             Arc::clone(&self.owner),
             filter,
             priority,
             HandlerKind::from_sync(handler),
-        );
-        handle
+        )
     }
 
     fn subscribe_packet_async(
@@ -104,13 +101,12 @@ impl EventBus for TrackingEventBus {
         priority: infrarust_api::event::EventPriority,
         handler: ErasedAsyncHandler,
     ) -> ListenerHandle {
-        let handle = self.inner.subscribe_packet_owned(
+        self.inner.subscribe_packet_owned(
             Arc::clone(&self.owner),
             filter,
             priority,
             HandlerKind::from_async(handler),
-        );
-        handle
+        )
     }
 
     fn has_packet_listeners(

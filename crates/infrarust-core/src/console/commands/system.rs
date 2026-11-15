@@ -475,13 +475,13 @@ mod tests {
     #[test]
     fn help_for_one_command_shows_its_usage_and_aliases() {
         assert_eq!(
-            render(command_block(&builtins()[2])),
+            render(command_block(builtins()[2])),
             "# ban - Ban a player\n\
              | usage     ban <player> [duration] [reason...]\n\
              | category  Bans"
         );
         assert_eq!(
-            render(command_block(&builtins()[0])),
+            render(command_block(builtins()[0])),
             "# list - List online players\n\
              | usage     list [server]\n\
              | aliases   ls\n\
