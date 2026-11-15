@@ -207,6 +207,13 @@ impl HostResources {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Refused {
+    Command,
+    CodecFilter,
+    PermissionNode,
+}
+
 struct Throttles {
     denials: HashMap<Capability, RateLimit>,
     quota_refusals: HashMap<Quota, RateLimit>,
@@ -226,6 +233,14 @@ impl Throttles {
                 DENIED_CALL_LOG_INTERVAL,
                 PERMISSION_NODE_REFUSAL_BURST,
             ),
+        }
+    }
+
+    const fn refusals(&mut self, refused: Refused) -> &mut RateLimit {
+        match refused {
+            Refused::Command => &mut self.command_refusals,
+            Refused::CodecFilter => &mut self.codec_refusals,
+            Refused::PermissionNode => &mut self.permission_node_refusals,
         }
     }
 }
@@ -322,28 +337,19 @@ impl PluginStoreState {
         limit_exceeded(quota.noun(), quota.key(), limit)
     }
 
-    pub(crate) fn report_command_refusal(&mut self, name: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.command_refusals.admit() else {
+    pub(crate) fn report_refusal(&mut self, refused: Refused, subject: &str, reason: &str) {
+        let Some(suppressed) = self.throttles.refusals(refused).admit() else {
             return;
         };
-        tracing::warn!(plugin = %self.guest.plugin_id, command = name, suppressed,
-            "wasm plugin command registration: {reason}");
-    }
-
-    pub(crate) fn report_codec_refusal(&mut self, filter: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.codec_refusals.admit() else {
-            return;
-        };
-        tracing::warn!(plugin = %self.guest.plugin_id, filter, suppressed,
-            "wasm plugin codec filter registration: {reason}");
-    }
-
-    pub(crate) fn report_permission_node_refusal(&mut self, node: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.permission_node_refusals.admit() else {
-            return;
-        };
-        tracing::warn!(plugin = %self.guest.plugin_id, node, suppressed,
-            "wasm plugin permission node registration: {reason}");
+        let plugin = &self.guest.plugin_id;
+        match refused {
+            Refused::Command => tracing::warn!(%plugin, command = subject, suppressed,
+                "wasm plugin command registration: {reason}"),
+            Refused::CodecFilter => tracing::warn!(%plugin, filter = subject, suppressed,
+                "wasm plugin codec filter registration: {reason}"),
+            Refused::PermissionNode => tracing::warn!(%plugin, node = subject, suppressed,
+                "wasm plugin permission node registration: {reason}"),
+        }
     }
 
     pub(crate) fn instance_ref(&self, kind: CallKind) -> HostResult<InstanceRef> {

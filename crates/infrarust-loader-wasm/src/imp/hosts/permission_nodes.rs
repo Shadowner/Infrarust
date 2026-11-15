@@ -7,7 +7,7 @@ use crate::bindings::infrarust::plugin::permission_nodes as wpn;
 use crate::bindings::infrarust::plugin::types::ErrorKind;
 use crate::convert::wit_enum_map;
 use crate::host_error::{HostResult, host_error, permission_node_error};
-use crate::store_state::{PluginStoreState, Quota};
+use crate::store_state::{PluginStoreState, Quota, Refused};
 
 wit_enum_map!(default_from_wit: wpn::PermissionDefault => PermissionDefault {
     False, True, Admin
@@ -75,7 +75,11 @@ impl PluginStoreState {
             let reason = format!(
                 "'{name}' is outside the plugin's namespace: a WASM plugin may only register nodes that start with '{namespace}'"
             );
-            self.report_permission_node_refusal(&name, &format!("refused, {reason}"));
+            self.report_refusal(
+                Refused::PermissionNode,
+                &name,
+                &format!("refused, {reason}"),
+            );
             return Err(host_error(ErrorKind::InvalidArgument, reason));
         }
         if !self.owns_permission_node(ctx.as_ref(), &name) {
@@ -85,7 +89,7 @@ impl PluginStoreState {
         match ctx.register_permission_node(node_from_wit(node)) {
             Ok(()) => Ok(()),
             Err(error) => {
-                self.report_permission_node_refusal(&name, &format!("refused, {error}"));
+                self.report_refusal(Refused::PermissionNode, &name, &format!("refused, {error}"));
                 Err(permission_node_error(&error))
             }
         }

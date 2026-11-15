@@ -8,7 +8,7 @@ use crate::bindings::infrarust::plugin::command_manager as wcm;
 use crate::host_error::{HostResult, command_error};
 use crate::proxies::WasmCommandHandler;
 use crate::registrations::Bound;
-use crate::store_state::{PluginStoreState, Quota};
+use crate::store_state::{PluginStoreState, Quota, Refused};
 
 fn registration_to_wit(registration: &CommandRegistration) -> wcm::CommandRegistration {
     wcm::CommandRegistration {
@@ -166,7 +166,7 @@ impl PluginStoreState {
                         "aliases {:?} are taken or invalid and were skipped",
                         registration.rejected_aliases
                     );
-                    self.report_command_refusal(&name, &reason);
+                    self.report_refusal(Refused::Command, &name, &reason);
                 }
                 let answer = registration_to_wit(&registration);
                 self.registrations().commands().record(&name, registration);
@@ -174,7 +174,7 @@ impl PluginStoreState {
             }
             Err(error) => {
                 self.registrations().commands().unbind(&name);
-                self.report_command_refusal(&name, &format!("refused, {error}"));
+                self.report_refusal(Refused::Command, &name, &format!("refused, {error}"));
                 Err(command_error(&error))
             }
         }
@@ -193,7 +193,11 @@ impl PluginStoreState {
                 Ok(())
             }
             Err(error) => {
-                self.report_command_refusal(name, &format!("unregister refused, {error}"));
+                self.report_refusal(
+                    Refused::Command,
+                    name,
+                    &format!("unregister refused, {error}"),
+                );
                 Err(command_error(&error))
             }
         }
