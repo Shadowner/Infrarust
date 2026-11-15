@@ -1,9 +1,22 @@
 use infrarust_api::events::connection::ConnectCause;
+use infrarust_api::types::ServerId;
 use infrarust_config::ServerConfig;
 
 use crate::player::SessionKind;
 
 pub(crate) const UNVERIFIED_REFUSED: &str = "This server requires a verified Minecraft account";
+
+#[derive(Debug, thiserror::Error)]
+pub enum SwitchRefusal {
+    #[error("unknown server: {0}")]
+    UnknownServer(ServerId),
+
+    #[error("servers are in different networks: '{current}' vs '{target}'")]
+    DifferentNetworks { current: String, target: String },
+
+    #[error("server '{target}' is outside the scope of '{current}'")]
+    OutOfScope { target: ServerId, current: ServerId },
+}
 
 pub(crate) const fn admits_session(kind: SessionKind, target: &ServerConfig) -> bool {
     kind.online_mode() || !target.proxy_mode.requires_verified_player()

@@ -11,8 +11,8 @@ pub enum CoreError {
     #[error("config error: {0}")]
     Config(#[from] infrarust_config::ConfigError),
 
-    #[error("pipeline rejected: {0}")]
-    Rejected(String),
+    #[error(transparent)]
+    SwitchRefused(#[from] crate::session::server_switch::validation::SwitchRefusal),
 
     #[error("no server found for domain: {0}")]
     UnknownDomain(String),

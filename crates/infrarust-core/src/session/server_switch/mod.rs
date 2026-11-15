@@ -35,6 +35,7 @@ use crate::session::session_loop::LimboEntry;
 use crate::session::wake::{WakeFailure, wake};
 
 use config_phase::PhaseError;
+use validation::SwitchRefusal;
 
 const SWITCH_PHASE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -165,33 +166,30 @@ async fn approve(
     let (server_config, load_balancer) = services
         .domain_router
         .find_route_by_server_id(requested.as_str())
-        .ok_or_else(|| CoreError::Rejected(format!("unknown server: {}", requested.as_str())))?;
+        .ok_or_else(|| SwitchRefusal::UnknownServer(requested.clone()))?;
 
     let current_config = services
         .domain_router
         .find_by_server_id(current_server.as_str())
-        .ok_or_else(|| {
-            CoreError::Rejected(format!(
-                "unknown current server: {}",
-                current_server.as_str()
-            ))
-        })?;
+        .ok_or_else(|| SwitchRefusal::UnknownServer(current_server.clone()))?;
 
     if let Some((current, target)) = validation::different_networks(&current_config, &server_config)
     {
-        return Err(CoreError::Rejected(format!(
-            "servers are in different networks: '{current}' vs '{target}'"
-        )));
+        return Err(SwitchRefusal::DifferentNetworks {
+            current: current.to_string(),
+            target: target.to_string(),
+        }
+        .into());
     }
 
     if let SwitchTarget::Unapproved { cause, .. } = &target
         && !validation::switch_in_scope(*cause, &current_config, &server_config)
     {
-        return Err(CoreError::Rejected(format!(
-            "server '{}' is outside the scope of '{}'",
-            requested.as_str(),
-            current_server.as_str()
-        )));
+        return Err(SwitchRefusal::OutOfScope {
+            target: requested,
+            current: current_server.clone(),
+        }
+        .into());
     }
 
     let server = match target {
@@ -246,9 +244,7 @@ async fn approve(
         services
             .domain_router
             .find_route_by_server_id(server.as_str())
-            .ok_or_else(|| {
-                CoreError::Rejected(format!("unknown redirect server: {}", server.as_str()))
-            })?
+            .ok_or_else(|| SwitchRefusal::UnknownServer(server.clone()))?
     };
 
     if server != *current_server && !validation::admits_session(session.kind(), &config) {
