@@ -27,7 +27,7 @@ use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
 use crate::session::context::{SessionContext, SessionIo};
-use crate::session::initial_connect::{InitialMode, LoginProgress, resolve_initial_mode};
+use crate::session::initial_connect::{InitialMode, LoginFacts, resolve_initial_mode};
 use crate::session::session_loop::{ConnectionMode, run_session_loop};
 use auth::{AuthStrategy, Authenticated};
 
@@ -214,8 +214,7 @@ impl InterceptedHandler {
             return Ok(());
         }
 
-        let mut progress = LoginProgress {
-            completed: false,
+        let facts = LoginFacts {
             rewritten,
             online_mode,
         };
@@ -229,7 +228,7 @@ impl InterceptedHandler {
             &routing,
             backend_targets.as_ref(),
             &mut pending_ticket,
-            &mut progress,
+            facts,
         )
         .await
         {

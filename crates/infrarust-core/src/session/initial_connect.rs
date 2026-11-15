@@ -1,19 +1,19 @@
 //! Initial server resolution and backend connection for intercepted modes.
 
-use std::sync::Arc;
-
 use infrarust_api::event::ResultedEvent;
-use infrarust_api::events::connection::ConnectCause;
+use infrarust_api::events::connection::{
+    ConnectCause, PlayerChooseInitialServerEvent, PlayerChooseInitialServerResult,
+    ServerPreConnectResult,
+};
 use infrarust_api::events::lifecycle::DisconnectCause;
 use infrarust_api::limbo::context::LimboEntryContext;
-use infrarust_api::limbo::handler::{HANDLER_UNAVAILABLE, LimboHandler};
+use infrarust_api::limbo::handler::HANDLER_UNAVAILABLE;
 use infrarust_api::types::{Component, ServerId};
-use infrarust_protocol::version::ProtocolVersion;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use super::session_loop::{ConnectionMode, Initial, LimboEntry, Pending};
 use crate::error::CoreError;
 use crate::forwarding::ForwardingHandler;
-use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
 use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::RoutingData;
@@ -34,50 +34,67 @@ pub(crate) enum InitialMode {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct LoginProgress {
-    pub(crate) completed: bool,
+pub(crate) struct LoginFacts {
     pub(crate) rewritten: bool,
     pub(crate) online_mode: bool,
 }
 
-impl LoginProgress {
-    const fn bridges_backend_login(&self, handler: &ForwardingHandler) -> bool {
-        !self.completed
+impl LoginFacts {
+    fn bridges_backend_login(self, client: ConnectionState, handler: &ForwardingHandler) -> bool {
+        client == ConnectionState::Login
             && (self.online_mode || self.rewritten || !matches!(handler, ForwardingHandler::None))
     }
 }
 
-fn kicked(reason: Component) -> InitialMode {
-    InitialMode::Denied(DisconnectCause::Kicked {
+enum Refusal {
+    Denied(DisconnectCause),
+    Failed(CoreError),
+}
+
+impl From<CoreError> for Refusal {
+    fn from(error: CoreError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+struct Chosen {
+    server: ServerId,
+    limbo: Option<LimboEntry>,
+    approved: bool,
+}
+
+async fn kick(ctx: &SessionContext<'_>, client: &mut ClientBridge, reason: Component) -> Refusal {
+    client.disconnect(&reason, ctx.registry()).await.ok();
+    Refusal::Denied(DisconnectCause::Kicked {
         reason: Some(reason),
     })
 }
 
-fn resolve_limbo(
-    registry: &LimboHandlerRegistry,
+async fn initial_limbo(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
     names: &[String],
-) -> Result<Vec<Arc<dyn LimboHandler>>, &'static str> {
-    match registry.resolve_handlers(names) {
-        Ok(handlers) if !handlers.is_empty() => Ok(handlers),
+    target_server: &ServerId,
+) -> Result<LimboEntry, Refusal> {
+    let reason = match ctx.services.limbo_handler_registry.resolve_handlers(names) {
+        Ok(handlers) if !handlers.is_empty() => {
+            return Ok(LimboEntry {
+                handlers,
+                context: LimboEntryContext::InitialConnection {
+                    target_server: target_server.clone(),
+                },
+            });
+        }
         Ok(_) => {
             tracing::warn!("limbo requested at initial connect but no handlers are configured");
-            Err("No limbo handlers configured")
+            "No limbo handlers configured"
         }
         Err(e) => {
             tracing::warn!(error = %e, "refusing the player: a limbo handler is not loaded");
-            Err(HANDLER_UNAVAILABLE)
+            HANDLER_UNAVAILABLE
         }
-    }
-}
-
-async fn deny_limbo(
-    ctx: &SessionContext<'_>,
-    client: &mut ClientBridge,
-    reason: &str,
-) -> Result<InitialMode, CoreError> {
-    let reason = Component::text(reason);
-    client.disconnect(&reason, ctx.registry()).await.ok();
-    Ok(kicked(reason))
+    };
+    Err(kick(ctx, client, Component::text(reason)).await)
 }
 
 pub(crate) async fn resolve_initial_mode(
@@ -86,238 +103,242 @@ pub(crate) async fn resolve_initial_mode(
     routing: &RoutingData,
     backend_targets: Option<&BackendTargets>,
     pending_ticket: &mut Option<PendingTicket>,
-    progress: &mut LoginProgress,
+    facts: LoginFacts,
 ) -> Result<InitialMode, CoreError> {
-    let services = ctx.services;
-    let player = &ctx.session;
-    let server_config = &routing.server_config;
-
-    let initial_server = ServerId::new(routing.config_id.clone());
-    let choose = infrarust_api::events::connection::PlayerChooseInitialServerEvent::new(
-        ctx.player(),
-        initial_server.clone(),
-    );
-    let choose = services.event_bus.fire(choose).await;
-
-    let mut initial_mode: Option<ConnectionMode> = None;
-    let mut target_server_id = match choose.result() {
-        infrarust_api::events::connection::PlayerChooseInitialServerResult::Allowed => {
-            initial_server.clone()
-        }
-        infrarust_api::events::connection::PlayerChooseInitialServerResult::Redirect(id) => {
-            id.clone()
-        }
-        infrarust_api::events::connection::PlayerChooseInitialServerResult::SendToLimbo {
-            limbo_handlers,
-        } => {
-            prepare_client_for_limbo(ctx, io, progress, &initial_server).await?;
-            let handlers = match resolve_limbo(&services.limbo_handler_registry, limbo_handlers) {
-                Ok(handlers) => handlers,
-                Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
-            };
-            initial_mode = Some(ConnectionMode::Limbo(LimboEntry {
-                handlers,
-                context: LimboEntryContext::InitialConnection {
-                    target_server: initial_server.clone(),
-                },
-            }));
-            initial_server.clone()
-        }
-        infrarust_api::events::connection::PlayerChooseInitialServerResult::Denied { reason } => {
-            io.client.disconnect(reason, ctx.registry()).await.ok();
-            return Ok(kicked(reason.clone()));
-        }
-        _ => initial_server.clone(),
-    };
-
-    let approved = initial_mode.is_none();
-    if approved {
-        let pre_connect = pre_connect(
-            &services.event_bus,
-            player,
-            target_server_id.clone(),
-            ConnectCause::Initial,
-        )
-        .await;
-        match pre_connect.result() {
-            infrarust_api::events::connection::ServerPreConnectResult::Allowed => {}
-            infrarust_api::events::connection::ServerPreConnectResult::Denied { reason } => {
-                io.client.disconnect(reason, ctx.registry()).await.ok();
-                return Ok(kicked(reason.clone()));
-            }
-            infrarust_api::events::connection::ServerPreConnectResult::SendToLimbo {
-                limbo_handlers,
-            } => {
-                prepare_client_for_limbo(ctx, io, progress, &target_server_id).await?;
-                let handler_names = if limbo_handlers.is_empty() {
-                    server_config.limbo_handlers.clone()
-                } else {
-                    limbo_handlers.clone()
-                };
-                let handlers = match resolve_limbo(&services.limbo_handler_registry, &handler_names)
-                {
-                    Ok(handlers) => handlers,
-                    Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
-                };
-                initial_mode = Some(ConnectionMode::Limbo(LimboEntry {
-                    handlers,
-                    context: LimboEntryContext::InitialConnection {
-                        target_server: target_server_id.clone(),
-                    },
-                }));
-            }
-            infrarust_api::events::connection::ServerPreConnectResult::Redirect(id) => {
-                target_server_id = id.clone();
-            }
-            _ => {}
-        }
+    match initial(ctx, io, routing, backend_targets, pending_ticket, facts).await {
+        Ok(initial) => Ok(InitialMode::Connected(Box::new(initial))),
+        Err(Refusal::Denied(cause)) => Ok(InitialMode::Denied(cause)),
+        Err(Refusal::Failed(e)) => Err(e),
     }
+}
 
-    let redirected = if target_server_id.as_str() == routing.config_id {
-        None
-    } else {
-        let Some((server_config, load_balancer)) = services
-            .domain_router
-            .find_route_by_server_id(target_server_id.as_str())
-        else {
-            tracing::warn!(
-                from = %routing.config_id,
-                to = %target_server_id,
-                "plugin redirected to an unknown server"
-            );
-            let reason = Component::text("Unknown server");
-            io.client.disconnect(&reason, ctx.registry()).await.ok();
-            return Ok(kicked(reason));
-        };
-        if !validation::admits_session(player.kind(), &server_config) {
-            tracing::info!(
-                username = %player.game_profile().username,
-                from = %routing.config_id,
-                to = %target_server_id,
-                "refusing to redirect an unverified player to a server that requires verification"
-            );
-            let reason = Component::text(validation::UNVERIFIED_REFUSED);
-            io.client.disconnect(&reason, ctx.registry()).await.ok();
-            return Ok(kicked(reason));
-        }
-        Some(RoutingData {
-            server_config,
-            config_id: target_server_id.to_string(),
-            load_balancer,
-        })
-    };
+async fn initial(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    routing: &RoutingData,
+    backend_targets: Option<&BackendTargets>,
+    pending_ticket: &mut Option<PendingTicket>,
+    facts: LoginFacts,
+) -> Result<Initial, Refusal> {
+    let Chosen {
+        server,
+        mut limbo,
+        approved,
+    } = choose_target(ctx, io, routing).await?;
 
+    let redirected = redirected_route(ctx, &mut io.client, routing, &server).await?;
     let routing = redirected.as_ref().unwrap_or(routing);
-    let server_config = &routing.server_config;
-
     let redirected_targets = redirected
         .as_ref()
         .map(|r| fresh_targets(r, ctx, pending_ticket));
     let backend_targets = redirected_targets.as_ref().or(backend_targets);
 
-    if initial_mode.is_none() && !server_config.limbo_handlers.is_empty() {
-        let handlers = match resolve_limbo(
-            &services.limbo_handler_registry,
-            &server_config.limbo_handlers,
-        ) {
-            Ok(handlers) => handlers,
-            Err(reason) => return deny_limbo(ctx, &mut io.client, reason).await,
-        };
-        prepare_client_for_limbo(ctx, io, progress, &target_server_id).await?;
-        initial_mode = Some(ConnectionMode::Limbo(LimboEntry {
-            handlers,
-            context: LimboEntryContext::InitialConnection {
-                target_server: target_server_id.clone(),
-            },
-        }));
+    let limbo_handlers = &routing.server_config.limbo_handlers;
+    if limbo.is_none() && !limbo_handlers.is_empty() {
+        let entry = initial_limbo(ctx, &mut io.client, limbo_handlers, &server).await?;
+        prepare_client_for_limbo(ctx, io, &server).await?;
+        limbo = Some(entry);
     }
 
-    let mut pending = if approved {
-        Pending::approved(target_server_id.clone())
-    } else {
-        Pending::nothing()
-    };
-    let woken = if initial_mode.is_none() {
-        match wake(
-            services,
-            server_config,
-            player.shutdown_token(),
-            io.client.stream(),
-        )
-        .await
-        {
-            Ok(warmed) => Ok(warmed),
-            Err(WakeFailure::Unavailable(unavailable)) => Err(unavailable),
-            Err(WakeFailure::ClientLeft) => {
-                return Ok(InitialMode::Denied(DisconnectCause::ClientQuit));
-            }
+    let (mode, pending) = match limbo {
+        Some(entry) => {
+            let pending = if approved {
+                Pending::approved(server.clone())
+            } else {
+                Pending::nothing()
+            };
+            (ConnectionMode::Limbo(entry), pending)
         }
-    } else {
-        Ok(false)
-    };
-    let mode = if let Some(limbo_mode) = initial_mode {
-        limbo_mode
-    } else if let Err(unavailable) = woken {
-        tracing::info!(
-            server = %routing.config_id,
-            reason = ?unavailable,
-            "the server manager could not start the initial server"
-        );
-        pending = Pending::nothing();
-        ConnectionMode::Kicked(unavailable.into_kick(target_server_id.clone()))
-    } else {
-        let warmed = matches!(woken, Ok(true)).then(|| fresh_targets(routing, ctx, pending_ticket));
-        let backend_targets = warmed.as_ref().or(backend_targets);
-
-        let mut join = ServerJoin::new(player, target_server_id.clone());
-        let connected = match services.resolve_forwarding_handler(server_config) {
-            Ok(forwarding_handler) => {
-                let bridged = progress.bridges_backend_login(&forwarding_handler);
-                let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
-                let login = if progress.completed {
-                    Login::Proxied
-                } else if bridged {
-                    Login::Bridged(&mut *io)
-                } else {
-                    Login::Relay
-                };
-                connect_backend(ctx, &routing.config_id, server_config, &addresses, login)
-                    .await
-                    .map(|backend| (backend, bridged))
-            }
-            Err(mismatch) => Err(mismatch.into()),
-        };
-        match connected {
-            Ok((backend, bridged)) => {
-                progress.completed |= bridged;
-                if progress.completed {
-                    join.connected(&services.event_bus).await;
-                }
-                pending = Pending::join(join);
-                ConnectionMode::Backend(backend)
-            }
-            Err(CoreError::ClientLeft) => {
-                return Ok(InitialMode::Denied(DisconnectCause::ClientQuit));
-            }
-            Err(e) => {
-                if !ctx.token.is_cancelled() {
-                    tracing::info!(
-                        server = %routing.config_id,
-                        error = %e,
-                        "initial backend connection failed"
-                    );
-                }
-                pending = Pending::nothing();
-                ConnectionMode::Kicked(Kick::failed(target_server_id.clone(), e, false))
-            }
+        None => {
+            connect_or_kick(
+                ctx,
+                io,
+                routing,
+                backend_targets,
+                pending_ticket,
+                facts,
+                &server,
+            )
+            .await?
         }
     };
 
-    Ok(InitialMode::Connected(Box::new(Initial {
+    Ok(Initial {
         mode,
-        server: target_server_id,
+        server,
         pending,
-    })))
+    })
+}
+
+async fn choose_target(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    routing: &RoutingData,
+) -> Result<Chosen, Refusal> {
+    let services = ctx.services;
+    let initial_server = ServerId::new(routing.config_id.clone());
+    let choose = PlayerChooseInitialServerEvent::new(ctx.player(), initial_server.clone());
+    let choose = services.event_bus.fire(choose).await;
+    let server = match choose.result() {
+        PlayerChooseInitialServerResult::Redirect(id) => id.clone(),
+        PlayerChooseInitialServerResult::SendToLimbo { limbo_handlers } => {
+            prepare_client_for_limbo(ctx, io, &initial_server).await?;
+            let entry = initial_limbo(ctx, &mut io.client, limbo_handlers, &initial_server).await?;
+            return Ok(Chosen {
+                server: initial_server,
+                limbo: Some(entry),
+                approved: false,
+            });
+        }
+        PlayerChooseInitialServerResult::Denied { reason } => {
+            return Err(kick(ctx, &mut io.client, reason.clone()).await);
+        }
+        _ => initial_server,
+    };
+
+    let pre_connect = pre_connect(
+        &services.event_bus,
+        &ctx.session,
+        server.clone(),
+        ConnectCause::Initial,
+    )
+    .await;
+    let (server, limbo) = match pre_connect.result() {
+        ServerPreConnectResult::Denied { reason } => {
+            return Err(kick(ctx, &mut io.client, reason.clone()).await);
+        }
+        ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
+            prepare_client_for_limbo(ctx, io, &server).await?;
+            let names = if limbo_handlers.is_empty() {
+                &routing.server_config.limbo_handlers
+            } else {
+                limbo_handlers
+            };
+            let entry = initial_limbo(ctx, &mut io.client, names, &server).await?;
+            (server, Some(entry))
+        }
+        ServerPreConnectResult::Redirect(id) => (id.clone(), None),
+        _ => (server, None),
+    };
+    Ok(Chosen {
+        server,
+        limbo,
+        approved: true,
+    })
+}
+
+async fn redirected_route(
+    ctx: &SessionContext<'_>,
+    client: &mut ClientBridge,
+    routing: &RoutingData,
+    target: &ServerId,
+) -> Result<Option<RoutingData>, Refusal> {
+    if target.as_str() == routing.config_id {
+        return Ok(None);
+    }
+    let player = &ctx.session;
+    let Some((server_config, load_balancer)) = ctx
+        .services
+        .domain_router
+        .find_route_by_server_id(target.as_str())
+    else {
+        tracing::warn!(
+            from = %routing.config_id,
+            to = %target,
+            "plugin redirected to an unknown server"
+        );
+        return Err(kick(ctx, client, Component::text("Unknown server")).await);
+    };
+    if !validation::admits_session(player.kind(), &server_config) {
+        tracing::info!(
+            username = %player.game_profile().username,
+            from = %routing.config_id,
+            to = %target,
+            "refusing to redirect an unverified player to a server that requires verification"
+        );
+        return Err(kick(ctx, client, Component::text(validation::UNVERIFIED_REFUSED)).await);
+    }
+    Ok(Some(RoutingData {
+        server_config,
+        config_id: target.to_string(),
+        load_balancer,
+    }))
+}
+
+async fn connect_or_kick(
+    ctx: &SessionContext<'_>,
+    io: &mut SessionIo,
+    routing: &RoutingData,
+    backend_targets: Option<&BackendTargets>,
+    pending_ticket: &mut Option<PendingTicket>,
+    facts: LoginFacts,
+    server: &ServerId,
+) -> Result<(ConnectionMode, Pending), Refusal> {
+    let services = ctx.services;
+    let player = &ctx.session;
+    let server_config = &routing.server_config;
+
+    let warmed = match wake(
+        services,
+        server_config,
+        player.shutdown_token(),
+        io.client.stream(),
+    )
+    .await
+    {
+        Ok(warmed) => warmed,
+        Err(WakeFailure::Unavailable(unavailable)) => {
+            tracing::info!(
+                server = %routing.config_id,
+                reason = ?unavailable,
+                "the server manager could not start the initial server"
+            );
+            let kick = unavailable.into_kick(server.clone());
+            return Ok((ConnectionMode::Kicked(kick), Pending::nothing()));
+        }
+        Err(WakeFailure::ClientLeft) => {
+            return Err(Refusal::Denied(DisconnectCause::ClientQuit));
+        }
+    };
+    let warmed = warmed.then(|| fresh_targets(routing, ctx, pending_ticket));
+    let backend_targets = warmed.as_ref().or(backend_targets);
+
+    let mut join = ServerJoin::new(player, server.clone());
+    let connected = match services.resolve_forwarding_handler(server_config) {
+        Ok(forwarding_handler) => {
+            let client = io.client.state();
+            let addresses = BackendTargets::addresses_or_config(backend_targets, server_config);
+            let login = if client != ConnectionState::Login {
+                Login::Proxied
+            } else if facts.bridges_backend_login(client, &forwarding_handler) {
+                Login::Bridged(&mut *io)
+            } else {
+                Login::Relay
+            };
+            connect_backend(ctx, &routing.config_id, server_config, &addresses, login).await
+        }
+        Err(mismatch) => Err(mismatch.into()),
+    };
+    match connected {
+        Ok(backend) => {
+            if io.client.state() != ConnectionState::Login {
+                join.connected(&services.event_bus).await;
+            }
+            Ok((ConnectionMode::Backend(backend), Pending::join(join)))
+        }
+        Err(CoreError::ClientLeft) => Err(Refusal::Denied(DisconnectCause::ClientQuit)),
+        Err(e) => {
+            if !ctx.token.is_cancelled() {
+                tracing::info!(
+                    server = %routing.config_id,
+                    error = %e,
+                    "initial backend connection failed"
+                );
+            }
+            let kick = Kick::failed(server.clone(), e, false);
+            Ok((ConnectionMode::Kicked(kick), Pending::nothing()))
+        }
+    }
 }
 
 fn fresh_targets(
@@ -343,10 +364,11 @@ fn fresh_targets(
 async fn prepare_client_for_limbo(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,
-    progress: &mut LoginProgress,
     server: &ServerId,
 ) -> Result<(), CoreError> {
-    ensure_login_complete(ctx, io, progress).await?;
+    if io.client.state() == ConnectionState::Login {
+        complete_login(ctx, io).await?;
+    }
 
     let client = &mut io.client;
     let version = ctx.version();
@@ -368,21 +390,6 @@ async fn prepare_client_for_limbo(
         return Err(e);
     }
 
-    Ok(())
-}
-
-async fn ensure_login_complete(
-    ctx: &SessionContext<'_>,
-    io: &mut SessionIo,
-    progress: &mut LoginProgress,
-) -> Result<(), CoreError> {
-    if progress.completed {
-        return Ok(());
-    }
-
-    complete_login(ctx, io).await?;
-
-    progress.completed = true;
     Ok(())
 }
 
@@ -419,9 +426,8 @@ mod tests {
 
     use crate::limbo::test_helpers::{test_client_bridge, test_proxy_services};
 
-    const fn offline_login() -> LoginProgress {
-        LoginProgress {
-            completed: false,
+    const fn offline_login() -> LoginFacts {
+        LoginFacts {
             rewritten: false,
             online_mode: false,
         }
@@ -487,7 +493,6 @@ mod tests {
             1
         );
 
-        let mut progress = offline_login();
         let mode = resolve_initial_mode(
             &ctx,
             &mut io,
@@ -498,7 +503,7 @@ mod tests {
             },
             Some(&stale_targets),
             &mut pending_ticket,
-            &mut progress,
+            offline_login(),
         )
         .await
         .unwrap();
@@ -565,7 +570,6 @@ mod tests {
             .domain_router
             .find_route_by_server_id("origin")
             .unwrap();
-        let mut progress = offline_login();
         let mode = resolve_initial_mode(
             &ctx,
             &mut io,
@@ -576,7 +580,7 @@ mod tests {
             },
             None,
             &mut None,
-            &mut progress,
+            offline_login(),
         )
         .await
         .unwrap();
@@ -619,7 +623,6 @@ mod tests {
             .domain_router
             .find_route_by_server_id("origin")
             .unwrap();
-        let mut progress = offline_login();
         let mode = resolve_initial_mode(
             &ctx,
             &mut io,
@@ -630,7 +633,7 @@ mod tests {
             },
             None,
             &mut None,
-            &mut progress,
+            offline_login(),
         )
         .await
         .unwrap();
@@ -668,9 +671,9 @@ mod tests {
         ctx: &SessionContext<'_>,
         io: &mut SessionIo,
         routing: &RoutingData,
-        mut progress: LoginProgress,
+        facts: LoginFacts,
     ) -> InitialMode {
-        resolve_initial_mode(ctx, io, routing, None, &mut None, &mut progress)
+        resolve_initial_mode(ctx, io, routing, None, &mut None, facts)
             .await
             .unwrap()
     }
@@ -747,7 +750,7 @@ mod tests {
             (request, peer)
         });
 
-        let online = LoginProgress {
+        let online = LoginFacts {
             online_mode: true,
             ..offline_login()
         };
@@ -944,7 +947,7 @@ mod tests {
             (threshold, peer)
         });
 
-        let online = LoginProgress {
+        let online = LoginFacts {
             online_mode: true,
             ..offline_login()
         };
@@ -972,33 +975,34 @@ mod tests {
             },
         ] {
             let handler = build_forwarding_handler(&mode);
-            assert!(offline_login().bridges_backend_login(&handler), "{mode:?}");
-            let completed = LoginProgress {
-                completed: true,
-                ..offline_login()
-            };
-            assert!(!completed.bridges_backend_login(&handler), "{mode:?}");
+            assert!(
+                offline_login().bridges_backend_login(ConnectionState::Login, &handler),
+                "{mode:?}"
+            );
+            assert!(
+                !offline_login().bridges_backend_login(ConnectionState::Config, &handler),
+                "{mode:?}"
+            );
         }
-        assert!(!offline_login().bridges_backend_login(&ForwardingHandler::None));
+        assert!(
+            !offline_login()
+                .bridges_backend_login(ConnectionState::Login, &ForwardingHandler::None)
+        );
     }
 
     #[test]
     fn online_mode_and_a_rewritten_profile_bridge_the_login() {
-        let online = LoginProgress {
+        let online = LoginFacts {
             online_mode: true,
             ..offline_login()
         };
-        let rewritten = LoginProgress {
+        let rewritten = LoginFacts {
             rewritten: true,
             ..offline_login()
         };
-        for progress in [online, rewritten] {
-            assert!(progress.bridges_backend_login(&ForwardingHandler::None));
-            let completed = LoginProgress {
-                completed: true,
-                ..progress
-            };
-            assert!(!completed.bridges_backend_login(&ForwardingHandler::None));
+        for facts in [online, rewritten] {
+            assert!(facts.bridges_backend_login(ConnectionState::Login, &ForwardingHandler::None));
+            assert!(!facts.bridges_backend_login(ConnectionState::Play, &ForwardingHandler::None));
         }
     }
 }
