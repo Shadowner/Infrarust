@@ -4,6 +4,9 @@ use crate::error::{ProtocolError, ProtocolResult};
 pub const MAX_PING_CHANNEL_CHARS: usize = 20;
 pub const MAX_PING_DATA_BYTES: usize = 1 + 2 + MAX_HOSTNAME_CHARS * 2 + 4;
 
+const SECTION: char = '\u{a7}';
+const V1_4_REPLY_PREFIX: &str = "\u{a7}1\0";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LegacyPingVariant {
     Beta,
@@ -77,6 +80,36 @@ impl LegacyPingResponse {
             self.max_players
         );
         build_kick_packet(&payload)
+    }
+
+    pub fn parse_reply(reply: &str) -> ProtocolResult<Self> {
+        let invalid = || ProtocolError::invalid(format!("unreadable legacy ping reply {reply:?}"));
+        let number = |value: &str| value.parse::<i32>().map_err(|_| invalid());
+        if let Some(fields) = reply.strip_prefix(V1_4_REPLY_PREFIX) {
+            let parts: Vec<&str> = fields.split('\0').collect();
+            let [protocol, version, motd, online, max] = parts[..] else {
+                return Err(invalid());
+            };
+            return Ok(Self {
+                protocol_version: number(protocol)?,
+                server_version: version.to_string(),
+                motd: motd.to_string(),
+                online_players: number(online)?,
+                max_players: number(max)?,
+            });
+        }
+        let mut parts = reply.rsplitn(3, SECTION);
+        let (Some(max), Some(online), Some(motd)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(invalid());
+        };
+        Ok(Self {
+            protocol_version: 0,
+            server_version: String::new(),
+            motd: motd.to_string(),
+            online_players: number(online)?,
+            max_players: number(max)?,
+        })
     }
 }
 
@@ -369,5 +402,24 @@ mod tests {
         data.extend_from_slice(&[0x00, 0x4D, 0x00, 0x43]);
         let result = parse_legacy_ping(&data);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn replies_are_read_in_both_formats() {
+        let modern = LegacyPingResponse::parse_reply(
+            "\u{a7}1\u{0}78\u{0}1.6.4\u{0}\u{a7}6Hello\u{0}3\u{0}20",
+        )
+        .unwrap();
+        assert_eq!(modern.protocol_version, 78);
+        assert_eq!(modern.server_version, "1.6.4");
+        assert_eq!(modern.motd, "\u{a7}6Hello");
+        assert_eq!((modern.online_players, modern.max_players), (3, 20));
+
+        let beta = LegacyPingResponse::parse_reply("A \u{a7}cred server\u{a7}4\u{a7}10").unwrap();
+        assert_eq!(beta.motd, "A \u{a7}cred server");
+        assert_eq!((beta.online_players, beta.max_players), (4, 10));
+
+        assert!(LegacyPingResponse::parse_reply("\u{a7}1\u{0}78\u{0}1.6.4").is_err());
+        assert!(LegacyPingResponse::parse_reply("no separators").is_err());
     }
 }
