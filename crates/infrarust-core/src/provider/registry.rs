@@ -12,9 +12,7 @@ use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::routing::DomainRouter;
 
-use super::{
-    ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId, RoutesListener,
-};
+use super::{ConfigProvider, ProviderChange, ProviderConfig, ProviderId, RoutesListener};
 
 pub(super) struct PluginChanges {
     watch: CancellationToken,
@@ -110,7 +108,7 @@ impl ProviderRegistry {
     }
 
     pub async fn start(self) -> Result<(JoinHandle<()>, PluginRoutes), CoreError> {
-        let (tx, rx) = mpsc::channel::<ProviderEvent>(256);
+        let (tx, rx) = mpsc::channel::<Vec<ProviderChange>>(256);
 
         for provider in &self.providers {
             match provider.load_initial().await {
@@ -195,7 +193,7 @@ struct EventLoop {
 impl EventLoop {
     async fn run(
         self,
-        mut providers: mpsc::Receiver<ProviderEvent>,
+        mut providers: mpsc::Receiver<Vec<ProviderChange>>,
         mut plugins: PluginRouteEvents,
         shutdown: &CancellationToken,
     ) {
@@ -218,8 +216,8 @@ impl EventLoop {
                         let _ = applied.send(());
                     }
                 }
-                Some(event) = providers.recv() => {
-                    self.apply(event.into_changes()).await;
+                Some(changes) = providers.recv() => {
+                    self.apply(changes).await;
                 }
             }
         }

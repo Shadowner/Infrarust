@@ -1,7 +1,7 @@
 //! File-based configuration provider.
 //!
 //! Scans a directory of `.toml` files, loading each as a `ServerConfig`.
-//! Watches for changes via `notify` and emits incremental `ProviderEvent`s
+//! Watches for changes via `notify` and emits incremental `ProviderChange`s
 //! (Added/Updated/Removed).
 
 use std::collections::HashMap;
@@ -18,7 +18,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_config::{ConfigError, ServerConfig};
 
 use crate::error::CoreError;
-use crate::provider::{ConfigProvider, ProviderChange, ProviderConfig, ProviderEvent, ProviderId};
+use crate::provider::{ConfigProvider, ProviderChange, ProviderConfig, ProviderId};
 use crate::util::sync::lock;
 
 const QUIET_PERIOD: Duration = Duration::from_millis(300);
@@ -57,7 +57,7 @@ impl ConfigProvider for FileProvider {
 
     fn watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'_, Result<(), CoreError>> {
         Box::pin(self.do_watch(sender, shutdown))
@@ -113,7 +113,7 @@ impl FileProvider {
 
     async fn do_watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
         let (changes_tx, changes) = mpsc::unbounded_channel::<()>();
@@ -150,7 +150,7 @@ async fn follow(
     dir: &Path,
     mut known: HashMap<PathBuf, ServerConfig>,
     mut changes: mpsc::UnboundedReceiver<()>,
-    sender: &mpsc::Sender<ProviderEvent>,
+    sender: &mpsc::Sender<Vec<ProviderChange>>,
     shutdown: &CancellationToken,
 ) {
     if !publish(compute_diff(dir, &mut known), sender).await {
@@ -204,8 +204,8 @@ async fn sleep_until_some(at: Option<Instant>) {
     }
 }
 
-async fn publish(events: Vec<ProviderChange>, sender: &mpsc::Sender<ProviderEvent>) -> bool {
-    events.is_empty() || sender.send(ProviderEvent::Batch(events)).await.is_ok()
+async fn publish(events: Vec<ProviderChange>, sender: &mpsc::Sender<Vec<ProviderChange>>) -> bool {
+    events.is_empty() || sender.send(events).await.is_ok()
 }
 
 fn file_id(path: &Path) -> ProviderId {
@@ -218,7 +218,7 @@ fn file_id(path: &Path) -> ProviderId {
 
 /// Computes the diff between the current directory and the known map.
 ///
-/// Returns a list of `ProviderEvent`s and updates the known map in-place.
+/// Returns a list of `ProviderChange`s and updates the known map in-place.
 fn compute_diff(dir: &Path, known: &mut HashMap<PathBuf, ServerConfig>) -> Vec<ProviderChange> {
     let mut events = Vec::new();
 
@@ -397,19 +397,15 @@ mod tests {
         }
     }
 
-    fn describe(event: &ProviderEvent) -> String {
-        match event {
-            ProviderEvent::Added(pc) | ProviderEvent::Updated(pc) => describe_config(pc),
-            ProviderEvent::Removed(id) => format!("{id} removed"),
-            ProviderEvent::Batch(changes) => changes
-                .iter()
-                .map(|change| match change {
-                    ProviderChange::Added(pc) | ProviderChange::Updated(pc) => describe_config(pc),
-                    ProviderChange::Removed(id) => format!("{id} removed"),
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        }
+    fn describe(changes: &[ProviderChange]) -> String {
+        changes
+            .iter()
+            .map(|change| match change {
+                ProviderChange::Added(pc) | ProviderChange::Updated(pc) => describe_config(pc),
+                ProviderChange::Removed(id) => format!("{id} removed"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn describe_config(pc: &ProviderConfig) -> String {

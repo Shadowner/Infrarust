@@ -20,35 +20,6 @@ pub enum ProviderChange {
     Removed(ProviderId),
 }
 
-#[derive(Debug)]
-pub enum ProviderEvent {
-    Added(ProviderConfig),
-    Updated(ProviderConfig),
-    Removed(ProviderId),
-    Batch(Vec<ProviderChange>),
-}
-
-impl ProviderEvent {
-    pub fn into_changes(self) -> Vec<ProviderChange> {
-        match self {
-            Self::Added(config) => vec![ProviderChange::Added(config)],
-            Self::Updated(config) => vec![ProviderChange::Updated(config)],
-            Self::Removed(id) => vec![ProviderChange::Removed(id)],
-            Self::Batch(changes) => changes,
-        }
-    }
-}
-
-impl From<ProviderChange> for ProviderEvent {
-    fn from(change: ProviderChange) -> Self {
-        match change {
-            ProviderChange::Added(config) => Self::Added(config),
-            ProviderChange::Updated(config) => Self::Updated(config),
-            ProviderChange::Removed(id) => Self::Removed(id),
-        }
-    }
-}
-
 pub trait ConfigProvider: Send + Sync {
     fn provider_type(&self) -> &str;
 
@@ -56,7 +27,7 @@ pub trait ConfigProvider: Send + Sync {
 
     fn watch(
         &self,
-        sender: mpsc::Sender<ProviderEvent>,
+        sender: mpsc::Sender<Vec<ProviderChange>>,
         shutdown: CancellationToken,
     ) -> BoxFuture<'_, Result<(), CoreError>>;
 }
