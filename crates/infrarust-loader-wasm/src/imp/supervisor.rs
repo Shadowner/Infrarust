@@ -517,7 +517,7 @@ impl Supervisor {
     pub(crate) fn taken(&self, job: &Job, waiting: usize) {
         self.instance
             .board()
-            .taken(job.queued, waiting.saturating_add(1));
+            .taken(job.queued.elapsed(), waiting.saturating_add(1));
     }
 
     fn set_health(&mut self, health: Health) {

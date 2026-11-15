@@ -41,6 +41,7 @@ pub(crate) mod status;
 pub(crate) mod store_state;
 pub(crate) mod supervisor;
 pub(crate) mod sync;
+pub(crate) mod wait_window;
 
 pub use config::WasmLoaderConfig;
 pub use engine::build_engine;
