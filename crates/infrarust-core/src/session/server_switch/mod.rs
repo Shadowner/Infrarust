@@ -101,8 +101,12 @@ pub(crate) async fn perform_switch(
             ))
         })?;
 
-    validation::validate_switch_allowed(&current_config, &server_config)
-        .map_err(|e| CoreError::Rejected(e.to_string()))?;
+    if let Some((current, target)) = validation::different_networks(&current_config, &server_config)
+    {
+        return Err(CoreError::Rejected(format!(
+            "servers are in different networks: '{current}' vs '{target}'"
+        )));
+    }
 
     if let SwitchTarget::Unapproved { cause, .. } = &target
         && !validation::switch_in_scope(*cause, &current_config, &server_config)
