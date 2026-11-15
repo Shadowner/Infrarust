@@ -22,13 +22,15 @@ pub enum FilterRegistryError {
     OwnedBy { id: String, owner: String },
     #[error("no filter '{0}' is registered")]
     NotFound(String),
+    #[error("filter '{id}' would create an ordering cycle involving: {involved}")]
+    OrderingCycle { id: String, involved: String },
 }
 
 impl FilterRegistryError {
     /// The [`ErrorKind`] a WASM guest receives for this error.
     pub const fn kind(&self) -> ErrorKind {
         match self {
-            Self::OwnedBy { .. } => ErrorKind::Conflict,
+            Self::OwnedBy { .. } | Self::OrderingCycle { .. } => ErrorKind::Conflict,
             Self::NotFound(_) => ErrorKind::NotFound,
         }
     }

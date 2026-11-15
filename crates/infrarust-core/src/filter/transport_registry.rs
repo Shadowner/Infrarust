@@ -96,22 +96,17 @@ impl TransportFilterRegistryImpl {
 
     fn rebuild(&self) {
         let mut chain = write(&self.chain);
-        *chain = self.base.with_ordered(|filters, ordered| {
-            let ordered_filters: Vec<ChainedFilter> = ordered
-                .iter()
-                .filter_map(|id| {
-                    filters
-                        .iter()
-                        .find(|entry| entry.metadata.id == *id)
-                        .map(|entry| ChainedFilter {
-                            id: entry.metadata.id.clone(),
-                            owner: entry.owner.clone(),
-                            filter: Arc::clone(&entry.item),
-                        })
-                })
-                .collect();
-
-            TransportFilterChain::new(ordered_filters)
+        *chain = self.base.with_ordered(|ordered| {
+            TransportFilterChain::new(
+                ordered
+                    .iter()
+                    .map(|entry| ChainedFilter {
+                        id: entry.metadata.id.clone(),
+                        owner: entry.owner.clone(),
+                        filter: Arc::clone(&entry.item),
+                    })
+                    .collect(),
+            )
         });
     }
 }
