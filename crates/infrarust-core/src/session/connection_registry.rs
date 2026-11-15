@@ -39,7 +39,9 @@ impl ServerRoster {
     }
 
     fn count(&self, server_id: &str) -> usize {
-        self.players.get(server_id).map_or(0, |players| players.len())
+        self.players
+            .get(server_id)
+            .map_or(0, |players| players.len())
     }
 
     fn players(&self, server_id: &str) -> Vec<PlayerId> {

@@ -49,7 +49,12 @@ impl PacketFrame {
         }
     }
 
-    pub(crate) const fn with_raw(id: i32, payload: Bytes, bytes: Bytes, format: WireFormat) -> Self {
+    pub(crate) const fn with_raw(
+        id: i32,
+        payload: Bytes,
+        bytes: Bytes,
+        format: WireFormat,
+    ) -> Self {
         Self {
             id,
             payload,
