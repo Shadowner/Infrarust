@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use super::convert::{
-    MigrationSeverity, MigrationWarning, convert_v1_proxy_config, convert_v1_to_v2,
+    MigrationSeverity, MigrationWarning, Warnings, convert_server, convert_v1_proxy_config,
 };
 use super::v1_types::{V1InfrarustConfig, V1ServerConfig};
 use crate::error::ConfigError;
@@ -28,29 +28,24 @@ pub fn migrate_directory(
         source,
     })?;
 
-    let mut all_warnings = Vec::new();
-    let mut converted = 0usize;
-    let mut skipped = 0usize;
+    let mut report = MigrationReport::default();
 
-    let mut entries = Vec::new();
+    let mut paths = Vec::new();
     for result in std::fs::read_dir(input_dir).map_err(|source| ConfigError::ReadDir {
         path: input_dir.to_path_buf(),
         source,
     })? {
         match result {
-            Ok(entry) => entries.push(entry),
-            Err(e) => {
-                all_warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Error,
-                    file: "unknown".to_string(),
-                    message: format!("Cannot read directory entry: {e}"),
-                });
-            }
+            Ok(entry) => paths.push(entry.path()),
+            Err(e) => report.warnings.push(MigrationWarning {
+                severity: MigrationSeverity::Error,
+                file: "unknown".to_string(),
+                message: format!("Cannot read directory entry: {e}"),
+            }),
         }
     }
 
-    for entry in &entries {
-        let path = entry.path();
+    for path in &paths {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext != "yaml" && ext != "yml" {
             continue;
@@ -60,90 +55,60 @@ pub fn migrate_directory(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                all_warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Error,
-                    file: filename.to_string(),
-                    message: format!("Cannot read file: {e}"),
-                });
-                skipped += 1;
-                continue;
+        let mut warnings = Warnings::new(filename);
+        match migrate_file(path, filename, output_dir, &mut warnings) {
+            Ok(()) => report.converted += 1,
+            Err(skip) => {
+                match skip {
+                    Skip::Empty => warnings.warn("Skipped: empty config (no domains or addresses)"),
+                    Skip::Failed(message) => warnings.error(message),
+                }
+                report.skipped += 1;
             }
-        };
-
-        let v1: V1ServerConfig = match serde_yml::from_str(&content) {
-            Ok(c) => c,
-            Err(e) => {
-                all_warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Error,
-                    file: filename.to_string(),
-                    message: format!("YAML parse error: {e}"),
-                });
-                skipped += 1;
-                continue;
-            }
-        };
-
-        if v1.domains.is_empty() && v1.addresses.is_empty() {
-            all_warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Warning,
-                file: filename.to_string(),
-                message: "Skipped: empty config (no domains or addresses)".to_string(),
-            });
-            skipped += 1;
-            continue;
         }
-
-        let result = convert_v1_to_v2(&v1, filename);
-        all_warnings.extend(result.warnings);
-
-        let toml_content = match toml::to_string_pretty(&result.config) {
-            Ok(t) => t,
-            Err(e) => {
-                all_warnings.push(MigrationWarning {
-                    severity: MigrationSeverity::Error,
-                    file: filename.to_string(),
-                    message: format!("TOML serialization error: {e}"),
-                });
-                skipped += 1;
-                continue;
-            }
-        };
-
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        let out_path = output_dir.join(format!("{stem}.toml"));
-
-        if let Err(e) = std::fs::write(&out_path, toml_content) {
-            all_warnings.push(MigrationWarning {
-                severity: MigrationSeverity::Error,
-                file: filename.to_string(),
-                message: format!("Cannot write output file: {e}"),
-            });
-            skipped += 1;
-            continue;
-        }
-
-        converted += 1;
+        report.warnings.extend(warnings.into_vec());
     }
 
-    if converted == 0 && skipped > 0 {
+    if report.converted == 0 && report.skipped > 0 {
         return Err(ConfigError::NothingMigrated {
-            skipped,
-            warnings: all_warnings,
+            skipped: report.skipped,
+            warnings: report.warnings,
         });
     }
 
-    Ok(MigrationReport {
-        converted,
-        skipped,
-        warnings: all_warnings,
-    })
+    Ok(report)
+}
+
+enum Skip {
+    Empty,
+    Failed(String),
+}
+
+fn migrate_file(
+    path: &Path,
+    filename: &str,
+    output_dir: &Path,
+    warnings: &mut Warnings,
+) -> Result<(), Skip> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| Skip::Failed(format!("Cannot read file: {e}")))?;
+    let v1: V1ServerConfig = serde_yml::from_str(&content)
+        .map_err(|e| Skip::Failed(format!("YAML parse error: {e}")))?;
+
+    if v1.domains.is_empty() && v1.addresses.is_empty() {
+        return Err(Skip::Empty);
+    }
+
+    let config = convert_server(&v1, filename, warnings);
+    let toml_content = toml::to_string_pretty(&config)
+        .map_err(|e| Skip::Failed(format!("TOML serialization error: {e}")))?;
+
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    std::fs::write(output_dir.join(format!("{stem}.toml")), toml_content)
+        .map_err(|e| Skip::Failed(format!("Cannot write output file: {e}")))
 }
 
 pub fn migrate_proxy_config(
