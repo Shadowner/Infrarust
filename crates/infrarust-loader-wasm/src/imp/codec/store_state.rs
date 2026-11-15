@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Instant;
 
 use infrarust_plugin_common::guest_panic::{bounded_guest_panic, is_guest_panic_line};
 use wasmtime::StoreLimits;
@@ -35,7 +34,7 @@ impl CodecLog {
     }
 
     fn admit(&self) -> Option<u64> {
-        self.limit.admit(Instant::now())
+        self.limit.admit()
     }
 
     pub(crate) fn emit(&self, level: GuestLevel, message: &str) {

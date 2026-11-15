@@ -41,7 +41,7 @@ impl Shared {
     }
 
     fn report_fault(&self, op: &str, ip: IpAddr, cause: &str) {
-        let Some(suppressed) = self.faults.admit(Instant::now()) else {
+        let Some(suppressed) = self.faults.admit() else {
             return;
         };
         tracing::warn!(
@@ -58,7 +58,7 @@ impl Shared {
     }
 
     fn report_create_failure(&self, ip: IpAddr, error: &WasmLoaderError) {
-        let Some(suppressed) = self.create_failures.admit(Instant::now()) else {
+        let Some(suppressed) = self.create_failures.admit() else {
             return;
         };
         tracing::error!(
@@ -74,7 +74,7 @@ impl Shared {
     }
 
     fn report_trip(&self, ip: IpAddr, trip: Trip, cause: &str) {
-        let Some(suppressed) = self.quarantines.admit(Instant::now()) else {
+        let Some(suppressed) = self.quarantines.admit() else {
             return;
         };
         let consequence = if self.required {

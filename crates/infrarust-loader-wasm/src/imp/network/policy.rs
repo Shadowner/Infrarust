@@ -447,7 +447,7 @@ impl NetworkPolicy {
         destination: impl Display,
         refusal: Refusal,
     ) {
-        let Some(suppressed) = self.denials.admit(std::time::Instant::now()) else {
+        let Some(suppressed) = self.denials.admit() else {
             return;
         };
         let reason = refusal.reason();
@@ -467,7 +467,7 @@ impl NetworkPolicy {
             self.report_denied(kind, addr, refusal);
             return;
         }
-        let Some(suppressed) = self.inbound_denials.admit(std::time::Instant::now()) else {
+        let Some(suppressed) = self.inbound_denials.admit() else {
             return;
         };
         let reason = refusal.reason();
@@ -774,13 +774,12 @@ mod tests {
             assert!(!check(&policy, addr("203.0.113.9:4000"), SocketAddrUse::UdpReceive).await);
             assert!(!check(&policy, addr("203.0.113.9:4000"), SocketAddrUse::TcpAccept).await);
         }
-        let now = std::time::Instant::now();
-        assert!(policy.denials.admit(now).is_some());
-        assert_eq!(policy.inbound_denials.admit(now), None);
+        assert!(policy.denials.admit().is_some());
+        assert_eq!(policy.inbound_denials.admit(), None);
 
         assert!(!check(&policy, addr("203.0.113.9:4000"), CONNECT).await);
         assert!(!check(&policy, addr("203.0.113.9:4000"), SocketAddrUse::UdpSend).await);
-        assert!(policy.denials.admit(now).is_some());
+        assert!(policy.denials.admit().is_some());
     }
 
     #[tokio::test]

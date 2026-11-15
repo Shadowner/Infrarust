@@ -4,7 +4,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use infrarust_api::event::ListenerHandle;
 use infrarust_api::permissions::{Capability, CapabilitySet};
@@ -268,7 +268,7 @@ impl PluginStoreState {
             .denials
             .entry(capability)
             .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
-            .admit(Instant::now())
+            .admit()
         else {
             return;
         };
@@ -301,7 +301,7 @@ impl PluginStoreState {
             .quota_refusals
             .entry(quota)
             .or_insert_with(|| RateLimit::new(DENIED_CALL_LOG_INTERVAL, 1))
-            .admit(Instant::now());
+            .admit();
         if let Some(suppressed) = admitted {
             let (noun, key) = (quota.noun(), quota.key());
             tracing::warn!(plugin = %self.guest.plugin_id, quota = key, limit, suppressed,
@@ -311,7 +311,7 @@ impl PluginStoreState {
     }
 
     pub(crate) fn report_command_refusal(&mut self, name: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.command_refusals.admit(Instant::now()) else {
+        let Some(suppressed) = self.throttles.command_refusals.admit() else {
             return;
         };
         tracing::warn!(plugin = %self.guest.plugin_id, command = name, suppressed,
@@ -319,7 +319,7 @@ impl PluginStoreState {
     }
 
     pub(crate) fn report_codec_refusal(&mut self, filter: &str, reason: &str) {
-        let Some(suppressed) = self.throttles.codec_refusals.admit(Instant::now()) else {
+        let Some(suppressed) = self.throttles.codec_refusals.admit() else {
             return;
         };
         tracing::warn!(plugin = %self.guest.plugin_id, filter, suppressed,
@@ -327,11 +327,7 @@ impl PluginStoreState {
     }
 
     pub(crate) fn report_permission_node_refusal(&mut self, node: &str, reason: &str) {
-        let Some(suppressed) = self
-            .throttles
-            .permission_node_refusals
-            .admit(Instant::now())
-        else {
+        let Some(suppressed) = self.throttles.permission_node_refusals.admit() else {
             return;
         };
         tracing::warn!(plugin = %self.guest.plugin_id, node, suppressed,

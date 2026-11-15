@@ -432,11 +432,11 @@ impl InstanceRef {
     }
 
     pub(crate) fn admit_warning(&self) -> Option<u64> {
-        self.info.guest_warnings.admit(Instant::now())
+        self.info.guest_warnings.admit()
     }
 
     pub(crate) fn admit_loop_warning(&self) -> Option<u64> {
-        self.info.loop_warnings.admit(Instant::now())
+        self.info.loop_warnings.admit()
     }
 
     pub(crate) fn is_upstream(&self) -> bool {

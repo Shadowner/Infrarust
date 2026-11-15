@@ -246,7 +246,7 @@ impl Supervisor {
             return ControlFlow::Continue(());
         }
         if deadline.is_some_and(|deadline| deadline.has_passed()) {
-            if let Some(suppressed) = self.expired_warnings.admit(std::time::Instant::now()) {
+            if let Some(suppressed) = self.expired_warnings.admit() {
                 tracing::warn!(plugin = %plugin_id, op, suppressed,
                     "skipping a queued wasm guest call: its deadline passed while it waited");
             }

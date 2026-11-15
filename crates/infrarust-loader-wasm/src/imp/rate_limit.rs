@@ -23,7 +23,11 @@ impl RateLimit {
         }
     }
 
-    pub(crate) fn admit(&mut self, now: Instant) -> Option<u64> {
+    pub(crate) fn admit(&mut self) -> Option<u64> {
+        self.admit_at(Instant::now())
+    }
+
+    fn admit_at(&mut self, now: Instant) -> Option<u64> {
         if self.window_ends.is_none_or(|ends| now >= ends) {
             self.window_ends = now.checked_add(self.interval);
             self.used = 0;
@@ -46,8 +50,8 @@ impl SharedRateLimit {
         Self(Mutex::new(RateLimit::new(interval, burst)))
     }
 
-    pub(crate) fn admit(&self, now: Instant) -> Option<u64> {
-        lock(&self.0).admit(now)
+    pub(crate) fn admit(&self) -> Option<u64> {
+        lock(&self.0).admit()
     }
 }
 
@@ -62,25 +66,33 @@ mod tests {
         let start = Instant::now();
         let mut limit = RateLimit::new(SECOND, 2);
 
-        assert_eq!(limit.admit(start), Some(0));
-        assert_eq!(limit.admit(start), Some(0));
-        assert_eq!(limit.admit(start + SECOND / 2), None);
-        assert_eq!(limit.admit(start + SECOND / 2), None);
+        assert_eq!(limit.admit_at(start), Some(0));
+        assert_eq!(limit.admit_at(start), Some(0));
+        assert_eq!(limit.admit_at(start + SECOND / 2), None);
+        assert_eq!(limit.admit_at(start + SECOND / 2), None);
 
-        assert_eq!(limit.admit(start + SECOND), Some(2));
-        assert_eq!(limit.admit(start + SECOND), Some(0));
-        assert_eq!(limit.admit(start + SECOND), None);
+        assert_eq!(limit.admit_at(start + SECOND), Some(2));
+        assert_eq!(limit.admit_at(start + SECOND), Some(0));
+        assert_eq!(limit.admit_at(start + SECOND), None);
     }
 
     #[test]
     fn a_single_admission_per_window_logs_once() {
         let start = Instant::now();
+        let mut limit = RateLimit::new(Duration::from_secs(60), 1);
+
+        assert_eq!(limit.admit_at(start), Some(0));
+        for step in 1..=3 {
+            assert_eq!(limit.admit_at(start + SECOND * step), None);
+        }
+        assert_eq!(limit.admit_at(start + Duration::from_secs(60)), Some(3));
+    }
+
+    #[test]
+    fn a_shared_limit_reads_the_clock_itself() {
         let limit = SharedRateLimit::new(Duration::from_secs(60), 1);
 
-        assert_eq!(limit.admit(start), Some(0));
-        for step in 1..=3 {
-            assert_eq!(limit.admit(start + SECOND * step), None);
-        }
-        assert_eq!(limit.admit(start + Duration::from_secs(60)), Some(3));
+        assert_eq!(limit.admit(), Some(0));
+        assert_eq!(limit.admit(), None);
     }
 }
