@@ -230,7 +230,7 @@ impl HandoffRelay {
                     host: host.clone(),
                     port: *port,
                 }],
-                timeout: self.connector.default_timeout,
+                timeout: self.connector.default_timeout(),
                 proxy_protocol: explicit.unwrap_or(false),
                 server: None,
                 balanced: false,
@@ -286,7 +286,7 @@ impl HandoffRelay {
             timeout: config
                 .timeouts
                 .as_ref()
-                .map_or(self.connector.default_timeout, |t| t.connect),
+                .map_or(self.connector.default_timeout(), |t| t.connect),
             proxy_protocol: explicit.unwrap_or(config.send_proxy_protocol),
             server: Some(Arc::clone(config)),
             balanced: true,
