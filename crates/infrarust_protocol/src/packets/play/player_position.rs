@@ -120,7 +120,6 @@ impl Packet for CSynchronizePlayerPosition {
             w.write_f64_be(self.z)?;
             w.write_f32_be(self.yaw)?;
             w.write_f32_be(self.pitch)?;
-            #[allow(clippy::cast_possible_truncation)]
             w.write_u8(self.flags as u8)?;
             if version.no_less_than(ProtocolVersion::V1_9) {
                 w.write_var_int(&VarInt(self.teleport_id))?;

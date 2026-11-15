@@ -1,9 +1,3 @@
-//! `HAProxy` proxy protocol v1/v2 decode and encode.
-//!
-//! Uses the `ppp` crate for parsing and building proxy protocol headers.
-//! When proxy protocol is expected, it MUST be present — there is no
-//! silent fallback.
-
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
@@ -14,48 +8,29 @@ use tokio::time::timeout;
 use crate::connection::ConnectionInfo;
 use crate::error::TransportError;
 
-/// Maximum proxy protocol header size (covers both v1 and v2).
 const MAX_HEADER_SIZE: usize = 536;
 
 pub const HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Proxy protocol v2 signature (12 bytes).
 const PP_V2_SIGNATURE: [u8; 12] = [
     0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A,
 ];
 
-/// Proxy protocol v1 prefix.
 const PP_V1_PREFIX: &[u8] = b"PROXY ";
 
-/// Version of the proxy protocol header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProxyProtocolVersion {
     V1,
     V2,
 }
 
-/// Decoded proxy protocol information.
 #[derive(Debug, Clone)]
 pub struct ProxyProtocolInfo {
-    /// Source (client) address.
     pub source_addr: SocketAddr,
-    /// Destination address.
     pub dest_addr: SocketAddr,
-    /// Protocol version.
     pub version: ProxyProtocolVersion,
 }
 
-/// Decodes a proxy protocol header from the stream.
-///
-/// Reads up to 536 bytes and attempts to parse as v2 (binary) then v1 (text).
-/// Returns the parsed info (if any) and any leftover bytes that were read
-/// past the end of the header (due to TCP coalescing).
-///
-/// # Errors
-///
-/// Returns an error if the header is missing, malformed, or uses an
-/// unsupported address family. This is fatal -- the connection should
-/// be closed.
 pub(crate) async fn decode_proxy_protocol(
     stream: &mut TcpStream,
 ) -> Result<(Option<ProxyProtocolInfo>, Vec<u8>), TransportError> {
@@ -83,7 +58,6 @@ pub(crate) async fn decode_proxy_protocol(
 
             total_read += n;
 
-            // Try v2 first (binary)
             if total_read >= 16 && buf[..12] == PP_V2_SIGNATURE {
                 match try_decode_v2(&buf[..total_read]) {
                     Ok((info, consumed)) => {
@@ -95,7 +69,6 @@ pub(crate) async fn decode_proxy_protocol(
                 }
             }
 
-            // Try v1 (text)
             if total_read >= 6 && buf[..6] == *PP_V1_PREFIX {
                 match try_decode_v1(&buf[..total_read]) {
                     Ok((info, consumed)) => {
@@ -107,7 +80,6 @@ pub(crate) async fn decode_proxy_protocol(
                 }
             }
 
-            // If we have enough bytes and neither signature matches, it's not PP
             if total_read >= 16 {
                 return Err(TransportError::InvalidProxyProtocol(
                     "data does not start with a proxy protocol signature".to_string(),
@@ -148,7 +120,6 @@ fn try_decode_v2(buf: &[u8]) -> Result<(ProxyProtocolInfo, usize), DecodeAttempt
 }
 
 fn try_decode_v1(buf: &[u8]) -> Result<(Option<ProxyProtocolInfo>, usize), DecodeAttempt> {
-    // v1 header ends with \r\n
     let crlf_pos = buf.windows(2).position(|w| w == b"\r\n");
 
     let end = match crlf_pos {
@@ -163,7 +134,6 @@ fn try_decode_v1(buf: &[u8]) -> Result<(Option<ProxyProtocolInfo>, usize), Decod
         DecodeAttempt::Failed(TransportError::ProxyProtocolDecode(format!("{e:?}")))
     })?;
 
-    // PROXY UNKNOWN is valid per HAProxy spec (used for health checks)
     if matches!(header.addresses, ppp::v1::Addresses::Unknown) {
         return Ok((None, end));
     }
@@ -221,15 +191,6 @@ fn extract_v1_addresses(
     }
 }
 
-/// Encodes and sends a proxy protocol v2 header to the backend stream.
-///
-/// Uses the client's real address (from proxy protocol) if available,
-/// otherwise uses the peer address.
-///
-/// # Errors
-///
-/// Returns [`TransportError::ProxyProtocolDecode`] if header construction
-/// fails, or [`TransportError::Forward`] if writing to the stream fails.
 pub(crate) async fn encode_proxy_protocol_v2(
     stream: &mut TcpStream,
     client_info: &ConnectionInfo,
@@ -245,7 +206,6 @@ pub(crate) async fn encode_proxy_protocol_v2(
             ppp::v2::IPv6::new(src.ip().octets(), dst.ip().octets(), src.port(), dst.port()).into()
         }
         _ => {
-            // Mixed v4/v6 — map v4 source to v6
             let src_v6 = match source_addr.ip() {
                 IpAddr::V4(v4) => v4.to_ipv6_mapped(),
                 IpAddr::V6(v6) => v6,

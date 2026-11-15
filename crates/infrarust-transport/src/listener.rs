@@ -1,9 +1,3 @@
-//! TCP listener with semaphore-bounded accept loop.
-//!
-//! `Listener` wraps a `tokio::net::TcpListener` with connection limits,
-//! graceful shutdown, optional proxy protocol decoding, and socket
-//! configuration on accepted connections.
-
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
@@ -22,26 +16,17 @@ use crate::socket::{
     adopt_listener_socket, configure_listener_socket, configure_tokio_stream, into_tokio_listener,
 };
 
-/// Configuration for the listener.
 #[derive(Debug, Clone)]
 pub struct ListenerConfig {
-    /// Address to bind to.
     pub bind: SocketAddr,
-    /// Maximum concurrent connections (0 = unlimited).
     pub max_connections: u32,
-    /// Maximum concurrent connections per IPv4 address or IPv6 /64 (0 = unlimited).
     pub max_connections_per_ip: u32,
-    /// TCP keepalive configuration for accepted connections.
     pub keepalive: KeepaliveConfig,
-    /// Enable `SO_REUSEPORT` (Linux only).
     pub so_reuseport: bool,
-    /// Decode proxy protocol headers on accepted connections.
     pub receive_proxy_protocol: bool,
-    /// Peers allowed to send a proxy protocol header.
     pub trusted_proxies: Vec<IpNet>,
 }
 
-/// TCP listener with connection limiting and graceful shutdown.
 #[derive(Debug)]
 pub struct Listener {
     inner: TcpListener,
@@ -129,8 +114,6 @@ impl PendingConnection {
     }
 }
 
-/// The share of the global and per-IP limits held by one connection.
-/// Dropping it gives both back.
 #[derive(Debug, Default)]
 pub struct ConnectionSlot {
     _permit: Option<OwnedSemaphorePermit>,
@@ -199,24 +182,9 @@ impl Listener {
         })
     }
 
-    /// Accepts the next connection.
-    ///
-    /// Acquires a semaphore permit (if connection limiting is enabled),
-    /// waits for an incoming connection, and configures the socket.
-    ///
-    /// Transient errors (EMFILE, ENOMEM) are retried with backoff.
-    /// Returns `TransportError::Shutdown` when the shutdown token is cancelled.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportError::Shutdown`] if the shutdown token is
-    /// cancelled, [`TransportError::Accept`] on a non-transient accept
-    /// error, or [`TransportError::SocketConfig`] if socket configuration
-    /// fails.
     pub async fn accept(&self) -> Result<PendingConnection, TransportError> {
         let mut backoff = std::time::Duration::from_millis(100);
         loop {
-            // Acquire permit before accepting
             let permit = if let Some(sem) = &self.semaphore {
                 let permit = tokio::select! {
                     biased;
@@ -232,7 +200,6 @@ impl Listener {
                 None
             };
 
-            // Accept connection
             let (stream, peer_addr) = tokio::select! {
                 biased;
                 () = self.shutdown.cancelled() => {

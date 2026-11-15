@@ -761,7 +761,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::similar_names)]
     fn test_end_to_end_play_packet() {
         use crate::io::{PacketDecoder, PacketEncoder};
         use crate::packets::CKeepAlive;

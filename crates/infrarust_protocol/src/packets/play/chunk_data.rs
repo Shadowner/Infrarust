@@ -62,7 +62,6 @@ impl Packet for CChunkData {
 
         let sections = encode_empty_chunk_sections(self.num_sections, version)?;
         encode_empty_heightmaps(w, version)?;
-        #[allow(clippy::cast_possible_truncation)]
         w.write_var_int(&VarInt(sections.len() as i32))?;
         w.write_all(&sections)?;
         w.write_var_int(&VarInt(0))?;
@@ -87,7 +86,6 @@ fn encode_pre_1_14_empty_chunk(
         let compressed = EMPTY_CHUNK_1_7
             .as_deref()
             .ok_or_else(|| ProtocolError::invalid("could not compress the empty 1.7 chunk"))?;
-        #[allow(clippy::cast_possible_truncation)]
         w.write_i32_be(compressed.len() as i32)?;
         w.write_all(compressed)?;
     } else if version.less_than(ProtocolVersion::V1_9) {
@@ -196,7 +194,6 @@ fn encode_nbt_long_array(
 ) -> ProtocolResult<()> {
     w.write_u8(0x0C)?;
     let name_bytes = name.as_bytes();
-    #[allow(clippy::cast_possible_truncation)]
     w.write_u16_be(name_bytes.len() as u16)?;
     w.write_all(name_bytes)?;
     w.write_i32_be(count)?;
@@ -234,7 +231,6 @@ fn encode_light_masks_as_longs(
     };
 
     for _ in 0..2 {
-        #[allow(clippy::cast_possible_truncation)]
         w.write_var_int(&VarInt(num_longs as i32))?;
         for _ in 0..num_longs {
             w.write_u64_be(0)?;
@@ -242,7 +238,6 @@ fn encode_light_masks_as_longs(
     }
 
     for _ in 0..2 {
-        #[allow(clippy::cast_possible_truncation)]
         w.write_var_int(&VarInt(num_longs as i32))?;
         w.write_u64_be(all_set)?;
         for _ in 1..num_longs {
@@ -267,7 +262,6 @@ fn encode_light_masks_as_bytes(
         w.write_var_int(&VarInt(0))?;
     }
     for _ in 0..2 {
-        #[allow(clippy::cast_possible_truncation)]
         w.write_var_int(&VarInt(all_set.len() as i32))?;
         w.write_all(&all_set)?;
     }

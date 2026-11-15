@@ -1,5 +1,3 @@
-//! Concurrent connection limit per client address.
-
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
@@ -8,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 
-/// The unit a client is accounted under: one IPv4 address, or one IPv6 /64.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IpKey {
     V4(Ipv4Addr),
@@ -36,7 +33,6 @@ impl fmt::Display for IpKey {
     }
 }
 
-/// Counts live connections per [`IpKey`].
 #[derive(Debug)]
 pub struct IpLimiter {
     limit: u32,
@@ -45,7 +41,6 @@ pub struct IpLimiter {
 }
 
 impl IpLimiter {
-    /// Returns `None` when `limit` is 0, which disables the limit.
     pub fn new(limit: u32) -> Option<Arc<Self>> {
         (limit > 0).then(|| {
             Arc::new(Self {
@@ -56,7 +51,6 @@ impl IpLimiter {
         })
     }
 
-    /// Reserves a slot for `ip`, or returns `None` when its key is at the limit.
     pub fn try_acquire(self: &Arc<Self>, ip: IpAddr) -> Option<IpGuard> {
         let key = IpKey::from(ip);
         {
@@ -82,13 +76,11 @@ impl IpLimiter {
         None
     }
 
-    /// Number of keys holding at least one connection.
     pub fn tracked_keys(&self) -> usize {
         self.counts.len()
     }
 }
 
-/// Holds one connection slot of an [`IpKey`] until dropped.
 #[derive(Debug)]
 pub struct IpGuard {
     limiter: Arc<IpLimiter>,

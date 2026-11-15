@@ -22,7 +22,6 @@ pub trait Decode<'a>: Sized {
     fn decode(r: &mut &'a [u8]) -> ProtocolResult<Self>;
 }
 
-#[allow(clippy::missing_errors_doc)]
 pub trait McBufReadExt: Read {
     fn read_u8(&mut self) -> ProtocolResult<u8>;
     fn read_i8(&mut self) -> ProtocolResult<i8>;
@@ -47,7 +46,6 @@ pub trait McBufReadExt: Read {
     fn read_count(&mut self, what: &str) -> ProtocolResult<usize>;
 }
 
-#[allow(clippy::missing_errors_doc)]
 pub trait McBufWriteExt: Write {
     fn write_u8(&mut self, value: u8) -> ProtocolResult<()>;
     fn write_i8(&mut self, value: i8) -> ProtocolResult<()>;

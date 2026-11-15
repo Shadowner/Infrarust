@@ -1,9 +1,3 @@
-//! Low-level networking layer for the Infrarust Minecraft proxy.
-//!
-//! This crate provides TCP accept loops, client/backend connections,
-//! `HAProxy` proxy protocol support, bidirectional forwarding
-//! (userspace copy and kernel splice), and advanced socket configuration.
-
 pub mod backend;
 pub mod connection;
 pub mod error;
