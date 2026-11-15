@@ -137,14 +137,16 @@ impl PluginStoreState {
         let binding =
             match self
                 .registrations()
-                .bind_command(&name, self.generation(), handler, limit)
+                .commands()
+                .bind(&name, self.generation(), handler, limit)
             {
                 Bound::Fresh(binding) => binding,
                 Bound::Full => return Err(self.quota_exceeded(Quota::Commands)),
                 Bound::Rebound => {
                     return Ok(self
                         .registrations()
-                        .command_registration(&name)
+                        .commands()
+                        .registration(&name)
                         .map_or_else(
                             || wcm::CommandRegistration {
                                 name: name.clone(),
@@ -167,12 +169,11 @@ impl PluginStoreState {
                     self.report_command_refusal(&name, &reason);
                 }
                 let answer = registration_to_wit(&registration);
-                self.registrations()
-                    .record_command_registration(&name, registration);
+                self.registrations().commands().record(&name, registration);
                 Ok(answer)
             }
             Err(error) => {
-                self.registrations().unbind_command(&name);
+                self.registrations().commands().unbind(&name);
                 self.report_command_refusal(&name, &format!("refused, {error}"));
                 Err(command_error(&error))
             }
@@ -183,12 +184,12 @@ impl PluginStoreState {
         self.check(gate!("command-manager", "unregister"))?;
         let key = command_key(name);
         let Ok(ctx) = self.services() else {
-            self.registrations().unbind_command(&key);
+            self.registrations().commands().unbind(&key);
             return Ok(());
         };
         match ctx.command_manager().unregister(name) {
             Ok(()) => {
-                self.registrations().unbind_command(&key);
+                self.registrations().commands().unbind(&key);
                 Ok(())
             }
             Err(error) => {

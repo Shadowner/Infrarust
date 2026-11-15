@@ -69,23 +69,117 @@ impl Hold {
     }
 }
 
+#[derive(Clone, Copy)]
+enum SameGeneration {
+    Replaces,
+    Rebinds,
+}
+
+struct Slot<R> {
+    binding: Arc<Binding>,
+    registration: Option<R>,
+}
+
+pub(crate) struct Bindings<R> {
+    slots: Mutex<HashMap<String, Slot<R>>>,
+    same_generation: SameGeneration,
+}
+
+impl<R> Bindings<R> {
+    fn new(same_generation: SameGeneration) -> Self {
+        Self {
+            slots: Mutex::default(),
+            same_generation,
+        }
+    }
+
+    pub(crate) fn bind(&self, name: &str, generation: u64, callback: u64, limit: usize) -> Bound {
+        let mut slots = lock(&self.slots);
+        let current = |slot: &Slot<R>| slot.binding.generation() == Some(generation);
+        if !slots.get(name).is_some_and(current)
+            && slots.values().filter(|slot| current(slot)).count() >= limit
+        {
+            return Bound::Full;
+        }
+        if let Some(slot) = slots.get(name)
+            && slot
+                .binding
+                .generation()
+                .is_none_or(|bound| match self.same_generation {
+                    SameGeneration::Replaces => bound < generation,
+                    SameGeneration::Rebinds => bound <= generation,
+                })
+        {
+            slot.binding.bind(generation, callback);
+            return Bound::Rebound;
+        }
+        let binding = Binding::new(generation, callback);
+        slots.insert(
+            name.to_owned(),
+            Slot {
+                binding: Arc::clone(&binding),
+                registration: None,
+            },
+        );
+        Bound::Fresh(binding)
+    }
+
+    pub(crate) fn unbind(&self, name: &str) {
+        lock(&self.slots).remove(name);
+    }
+
+    pub(crate) fn record(&self, name: &str, registration: R) {
+        if let Some(slot) = lock(&self.slots).get_mut(name) {
+            slot.registration = Some(registration);
+        }
+    }
+
+    pub(crate) fn registration(&self, name: &str) -> Option<R>
+    where
+        R: Clone,
+    {
+        lock(&self.slots).get(name)?.registration.clone()
+    }
+
+    fn sweep(&self, generation: u64) -> Vec<(String, Option<R>)> {
+        lock(&self.slots)
+            .extract_if(|_, slot| slot.binding.generation() != Some(generation))
+            .map(|(name, slot)| {
+                slot.binding.clear();
+                (name, slot.registration)
+            })
+            .collect()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Stale {
     pub(crate) commands: Vec<String>,
     pub(crate) limbo: Vec<LimboHandlerRegistration>,
 }
 
-#[derive(Default)]
 pub(crate) struct Registrations {
-    commands: Mutex<HashMap<String, Arc<Binding>>>,
-    command_registrations: Mutex<HashMap<String, CommandRegistration>>,
-    limbo: Mutex<HashMap<String, Arc<Binding>>>,
-    limbo_registrations: Mutex<HashMap<String, LimboHandlerRegistration>>,
+    commands: Bindings<CommandRegistration>,
+    limbo: Bindings<LimboHandlerRegistration>,
     holds: Mutex<HashMap<PlayerId, Hold>>,
     ban_provider: Mutex<Option<Arc<WasmBanProvider>>>,
     permission_provider: Mutex<Option<Arc<WasmPermissionProvider>>>,
     snapshots: Arc<PermissionSnapshots>,
     codec_filters: Mutex<BTreeSet<String>>,
+}
+
+impl Default for Registrations {
+    fn default() -> Self {
+        Self {
+            commands: Bindings::new(SameGeneration::Replaces),
+            limbo: Bindings::new(SameGeneration::Rebinds),
+            holds: Mutex::default(),
+            ban_provider: Mutex::default(),
+            permission_provider: Mutex::default(),
+            snapshots: Arc::default(),
+            codec_filters: Mutex::default(),
+        }
+    }
 }
 
 impl Registrations {
@@ -131,85 +225,29 @@ impl Registrations {
         *lock(&self.permission_provider) = Some(provider);
     }
 
-    pub(crate) fn bind_command(
-        &self,
-        name: &str,
-        generation: u64,
-        callback: u64,
-        limit: usize,
-    ) -> Bound {
-        bind(&self.commands, name, generation, callback, false, limit)
+    pub(crate) fn commands(&self) -> &Bindings<CommandRegistration> {
+        &self.commands
     }
 
-    pub(crate) fn unbind_command(&self, name: &str) {
-        lock(&self.commands).remove(name);
-        lock(&self.command_registrations).remove(name);
-    }
-
-    pub(crate) fn record_command_registration(
-        &self,
-        name: &str,
-        registration: CommandRegistration,
-    ) {
-        lock(&self.command_registrations).insert(name.to_owned(), registration);
-    }
-
-    pub(crate) fn command_registration(&self, name: &str) -> Option<CommandRegistration> {
-        lock(&self.command_registrations).get(name).cloned()
-    }
-
-    pub(crate) fn bind_limbo(
-        &self,
-        name: &str,
-        generation: u64,
-        callback: u64,
-        limit: usize,
-    ) -> Bound {
-        bind(&self.limbo, name, generation, callback, true, limit)
-    }
-
-    pub(crate) fn unbind_limbo(&self, name: &str) {
-        lock(&self.limbo).remove(name);
-    }
-
-    pub(crate) fn record_limbo_registration(
-        &self,
-        name: &str,
-        registration: LimboHandlerRegistration,
-    ) {
-        lock(&self.limbo_registrations).insert(name.to_owned(), registration);
+    pub(crate) fn limbo(&self) -> &Bindings<LimboHandlerRegistration> {
+        &self.limbo
     }
 
     pub(crate) fn sweep(&self, generation: u64) -> Stale {
-        let mut stale = Stale::default();
-        lock(&self.commands).retain(|name, binding| {
-            let current = binding.generation() == Some(generation);
-            if !current {
-                binding.clear();
-                stale.commands.push(name.clone());
-            }
-            current
-        });
-        let mut registrations = lock(&self.command_registrations);
-        for name in &stale.commands {
-            registrations.remove(name);
+        Stale {
+            commands: self
+                .commands
+                .sweep(generation)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect(),
+            limbo: self
+                .limbo
+                .sweep(generation)
+                .into_iter()
+                .filter_map(|(_, registration)| registration)
+                .collect(),
         }
-        drop(registrations);
-        let mut gone = Vec::new();
-        lock(&self.limbo).retain(|name, binding| {
-            let current = binding.generation() == Some(generation);
-            if !current {
-                binding.clear();
-                gone.push(name.clone());
-            }
-            current
-        });
-        let mut registrations = lock(&self.limbo_registrations);
-        stale.limbo = gone
-            .iter()
-            .filter_map(|name| registrations.remove(name))
-            .collect();
-        stale
     }
 
     pub(crate) fn track_hold(&self, handle: SessionHandle, generation: u64) {
@@ -239,32 +277,6 @@ impl Registrations {
         }
         failed.len()
     }
-}
-
-fn bind(
-    map: &Mutex<HashMap<String, Arc<Binding>>>,
-    name: &str,
-    generation: u64,
-    callback: u64,
-    same_generation_rebinds: bool,
-    limit: usize,
-) -> Bound {
-    let mut map = lock(map);
-    let current = |binding: &Arc<Binding>| binding.generation() == Some(generation);
-    if !map.get(name).is_some_and(current) && map.values().filter(|b| current(b)).count() >= limit {
-        return Bound::Full;
-    }
-    if let Some(binding) = map.get(name)
-        && binding.generation().is_none_or(|bound| {
-            bound < generation || (same_generation_rebinds && bound == generation)
-        })
-    {
-        binding.bind(generation, callback);
-        return Bound::Rebound;
-    }
-    let binding = Binding::new(generation, callback);
-    map.insert(name.to_owned(), Arc::clone(&binding));
-    Bound::Fresh(binding)
 }
 
 #[cfg(test)]
@@ -303,11 +315,11 @@ mod tests {
     #[test]
     fn a_later_generation_rebinds_a_name_instead_of_registering_it_again() {
         let registrations = Registrations::default();
-        let binding = fresh(registrations.bind_command("greet", 1, 10, ROOM));
+        let binding = fresh(registrations.commands().bind("greet", 1, 10, ROOM));
         assert_eq!(binding.callback_for(1), Some(10));
 
         assert!(matches!(
-            registrations.bind_command("greet", 2, 20, ROOM),
+            registrations.commands().bind("greet", 2, 20, ROOM),
             Bound::Rebound
         ));
         assert_eq!(binding.callback_for(2), Some(20));
@@ -317,8 +329,8 @@ mod tests {
     #[test]
     fn the_same_generation_registering_a_name_again_replaces_it() {
         let registrations = Registrations::default();
-        let first = fresh(registrations.bind_command("greet", 1, 10, ROOM));
-        let second = fresh(registrations.bind_command("greet", 1, 11, ROOM));
+        let first = fresh(registrations.commands().bind("greet", 1, 10, ROOM));
+        let second = fresh(registrations.commands().bind("greet", 1, 11, ROOM));
         assert_eq!(first.callback_for(1), Some(10));
         assert_eq!(second.callback_for(1), Some(11));
     }
@@ -326,9 +338,9 @@ mod tests {
     #[test]
     fn the_same_generation_registering_a_limbo_name_again_rebinds_it() {
         let registrations = Registrations::default();
-        let gate = fresh(registrations.bind_limbo("gate", 1, 10, ROOM));
+        let gate = fresh(registrations.limbo().bind("gate", 1, 10, ROOM));
         assert!(matches!(
-            registrations.bind_limbo("gate", 1, 11, ROOM),
+            registrations.limbo().bind("gate", 1, 11, ROOM),
             Bound::Rebound
         ));
         assert_eq!(gate.callback_for(1), Some(11));
@@ -337,19 +349,19 @@ mod tests {
     #[test]
     fn a_sweep_drops_the_names_the_new_generation_did_not_register_again() {
         let registrations = Registrations::default();
-        fresh(registrations.bind_command("kept", 1, 1, ROOM));
-        let dropped = fresh(registrations.bind_command("dropped", 1, 2, ROOM));
-        let gate = fresh(registrations.bind_limbo("gate", 1, 3, ROOM));
-        let gone = fresh(registrations.bind_limbo("gone", 1, 4, ROOM));
-        registrations.bind_command("kept", 2, 5, ROOM);
-        registrations.bind_limbo("gate", 2, 6, ROOM);
+        fresh(registrations.commands().bind("kept", 1, 1, ROOM));
+        let dropped = fresh(registrations.commands().bind("dropped", 1, 2, ROOM));
+        let gate = fresh(registrations.limbo().bind("gate", 1, 3, ROOM));
+        let gone = fresh(registrations.limbo().bind("gone", 1, 4, ROOM));
+        registrations.commands().bind("kept", 2, 5, ROOM);
+        registrations.limbo().bind("gate", 2, 6, ROOM);
         let revoked = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&revoked);
-        registrations.record_limbo_registration(
+        registrations.limbo().record(
             "gone",
             LimboHandlerRegistration::new("gone", move || !flag.swap(true, Ordering::SeqCst)),
         );
-        registrations.record_limbo_registration(
+        registrations.limbo().record(
             "gate",
             LimboHandlerRegistration::new("gate", || panic!("the kept handler is not revoked")),
         );
@@ -365,14 +377,14 @@ mod tests {
         assert_eq!(gone.callback_for(1), None);
         assert!(
             matches!(
-                registrations.bind_limbo("gone", 3, 7, ROOM),
+                registrations.limbo().bind("gone", 3, 7, ROOM),
                 Bound::Fresh(_)
             ),
             "a swept limbo name is registered afresh when it comes back"
         );
         assert_eq!(gone.callback_for(3), None);
         assert!(matches!(
-            registrations.bind_command("dropped", 3, 8, ROOM),
+            registrations.commands().bind("dropped", 3, 8, ROOM),
             Bound::Fresh(_)
         ));
     }
@@ -380,24 +392,24 @@ mod tests {
     #[test]
     fn a_full_generation_refuses_a_new_name_but_replaces_one_it_holds() {
         let registrations = Registrations::default();
-        fresh(registrations.bind_command("a", 1, 1, 2));
-        fresh(registrations.bind_command("b", 1, 2, 2));
+        fresh(registrations.commands().bind("a", 1, 1, 2));
+        fresh(registrations.commands().bind("b", 1, 2, 2));
         assert!(matches!(
-            registrations.bind_command("c", 1, 3, 2),
+            registrations.commands().bind("c", 1, 3, 2),
             Bound::Full
         ));
-        let replaced = fresh(registrations.bind_command("b", 1, 4, 2));
+        let replaced = fresh(registrations.commands().bind("b", 1, 4, 2));
         assert_eq!(replaced.callback_for(1), Some(4));
-        registrations.unbind_command("a");
-        fresh(registrations.bind_command("c", 1, 5, 2));
+        registrations.commands().unbind("a");
+        fresh(registrations.commands().bind("c", 1, 5, 2));
 
-        fresh(registrations.bind_limbo("gate", 1, 6, 1));
+        fresh(registrations.limbo().bind("gate", 1, 6, 1));
         assert!(matches!(
-            registrations.bind_limbo("gate", 1, 7, 1),
+            registrations.limbo().bind("gate", 1, 7, 1),
             Bound::Rebound
         ));
         assert!(matches!(
-            registrations.bind_limbo("other", 1, 8, 1),
+            registrations.limbo().bind("other", 1, 8, 1),
             Bound::Full
         ));
     }
@@ -406,15 +418,15 @@ mod tests {
     fn a_new_generation_counts_only_the_names_it_registered_again() {
         let registrations = Registrations::default();
         for (callback, name) in [(1, "a"), (2, "b"), (3, "c")] {
-            fresh(registrations.bind_command(name, 1, callback, 3));
+            fresh(registrations.commands().bind(name, 1, callback, 3));
         }
         assert!(matches!(
-            registrations.bind_command("a", 2, 10, 2),
+            registrations.commands().bind("a", 2, 10, 2),
             Bound::Rebound
         ));
-        fresh(registrations.bind_command("d", 2, 11, 2));
+        fresh(registrations.commands().bind("d", 2, 11, 2));
         assert!(
-            matches!(registrations.bind_command("b", 2, 12, 2), Bound::Full),
+            matches!(registrations.commands().bind("b", 2, 12, 2), Bound::Full),
             "rebinding a name of the old generation takes room in the new one"
         );
         let stale = registrations.sweep(2);

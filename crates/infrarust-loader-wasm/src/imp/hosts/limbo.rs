@@ -34,7 +34,8 @@ impl PluginStoreState {
         let binding =
             match self
                 .registrations()
-                .bind_limbo(&name, self.generation(), handler, limit)
+                .limbo()
+                .bind(&name, self.generation(), handler, limit)
             {
                 Bound::Fresh(binding) => binding,
                 Bound::Rebound => return Ok(()),
@@ -48,12 +49,11 @@ impl PluginStoreState {
                 Arc::clone(self.registrations()),
             )))
             .map_err(|error| {
-                self.registrations().unbind_limbo(&name);
+                self.registrations().limbo().unbind(&name);
                 tracing::warn!(plugin = %self.plugin_id(), %error, "limbo handler refused");
                 limbo_error(&error)
             })?;
-        self.registrations()
-            .record_limbo_registration(&name, registration);
+        self.registrations().limbo().record(&name, registration);
         Ok(())
     }
 }
