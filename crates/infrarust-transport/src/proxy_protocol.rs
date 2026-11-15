@@ -73,7 +73,7 @@ pub async fn decode_proxy_protocol(
             let n = stream
                 .read(&mut buf[total_read..])
                 .await
-                .map_err(|e| TransportError::ProxyProtocolDecode(e.to_string()))?;
+                .map_err(TransportError::ProxyProtocolIo)?;
 
             if n == 0 {
                 return Err(TransportError::InvalidProxyProtocol(
@@ -116,9 +116,7 @@ pub async fn decode_proxy_protocol(
         }
     })
     .await
-    .map_err(|_| {
-        TransportError::ProxyProtocolDecode("proxy protocol header read timed out".to_string())
-    })?
+    .map_err(|_| TransportError::ProxyProtocolTimeout)?
 }
 
 enum DecodeAttempt {
@@ -270,12 +268,12 @@ pub async fn encode_proxy_protocol_v2(
     let header_bytes =
         ppp::v2::Builder::with_addresses(version_command, ppp::v2::Protocol::Stream, addresses)
             .build()
-            .map_err(|e| TransportError::ProxyProtocolDecode(e.to_string()))?;
+            .map_err(|e| TransportError::ProxyProtocolEncode(e.to_string()))?;
 
     stream
         .write_all(&header_bytes)
         .await
-        .map_err(TransportError::Forward)?;
+        .map_err(TransportError::ProxyProtocolIo)?;
 
     Ok(())
 }

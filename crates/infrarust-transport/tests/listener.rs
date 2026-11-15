@@ -173,7 +173,7 @@ async fn a_silent_connection_holds_its_permit_until_its_header_times_out() {
 
     let err = silent_result.await.unwrap().unwrap_err();
     assert!(
-        matches!(&err, TransportError::ProxyProtocolDecode(msg) if msg.contains("timed out")),
+        matches!(err, TransportError::ProxyProtocolTimeout),
         "{err:?}"
     );
     let waited = started.elapsed();

@@ -45,9 +45,20 @@ pub enum TransportError {
     #[error("invalid proxy protocol: {0}")]
     InvalidProxyProtocol(String),
 
-    /// Failed to decode proxy protocol header.
     #[error("proxy protocol decode error: {0}")]
     ProxyProtocolDecode(String),
+
+    #[error("proxy protocol encode error: {0}")]
+    ProxyProtocolEncode(String),
+
+    #[error("timed out waiting for the proxy protocol header")]
+    ProxyProtocolTimeout,
+
+    #[error("proxy protocol I/O error: {0}")]
+    ProxyProtocolIo(#[source] std::io::Error),
+
+    #[error("I/O error: {0}")]
+    Io(#[source] std::io::Error),
 
     /// A peer outside `trusted_proxies` connected to a proxy protocol listener.
     #[error("peer {peer} is not in trusted_proxies")]

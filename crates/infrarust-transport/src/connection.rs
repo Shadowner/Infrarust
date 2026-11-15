@@ -82,7 +82,7 @@ impl ClientConnection {
             self.stream
                 .read_buf(&mut (&mut self.buffered_data).limit(needed))
                 .await
-                .map_err(TransportError::Forward)?;
+                .map_err(TransportError::Io)?;
         }
         Ok(&self.buffered_data[..self.buffered_data.len().min(n)])
     }
