@@ -193,6 +193,10 @@ impl CodecFilterFactory for WasmCodecFilterFactory {
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "nearly every instance is live and the per-packet path reads it in place"
+)]
 enum State {
     Live(Live),
     Bypassed,
