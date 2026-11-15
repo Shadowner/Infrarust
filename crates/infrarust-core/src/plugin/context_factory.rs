@@ -12,7 +12,8 @@ use super::service_registry::ServiceRegistryImpl;
 use crate::ban::BanManager;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::permissions::PermissionService;
-use crate::plugin_messaging::PluginChannels;
+use crate::plugin_messaging::{PluginChannels, PluginMessaging};
+use crate::registry::ConnectionRegistry;
 use crate::util::sync::lock;
 
 /// Per-plugin permissions extracted from proxy configuration.
@@ -32,10 +33,12 @@ pub struct PluginContextFactoryImpl {
     permissions: Arc<PermissionService>,
     limbo_handlers: Arc<LimboHandlerRegistry>,
     service_registry: Arc<ServiceRegistryImpl>,
-    messaging: Option<(
-        Arc<crate::plugin_messaging::PluginMessaging>,
-        Arc<crate::registry::ConnectionRegistry>,
-    )>,
+    messaging: Option<Messaging>,
+}
+
+struct Messaging {
+    channels: Arc<PluginMessaging>,
+    players: Arc<ConnectionRegistry>,
 }
 
 impl PluginContextFactoryImpl {
@@ -61,10 +64,10 @@ impl PluginContextFactoryImpl {
     #[must_use]
     pub fn with_messaging(
         mut self,
-        messaging: Arc<crate::plugin_messaging::PluginMessaging>,
-        players: Arc<crate::registry::ConnectionRegistry>,
+        channels: Arc<PluginMessaging>,
+        players: Arc<ConnectionRegistry>,
     ) -> Self {
-        self.messaging = Some((messaging, players));
+        self.messaging = Some(Messaging { channels, players });
         self
     }
 
@@ -92,8 +95,8 @@ impl PluginContextFactoryImpl {
 
     fn registries(&self, plugin_id: &str) -> HostRegistries {
         let channels = match &self.messaging {
-            Some((messaging, players)) => {
-                PluginChannels::new(plugin_id, messaging, Arc::clone(players))
+            Some(Messaging { channels, players }) => {
+                PluginChannels::new(plugin_id, channels, Arc::clone(players))
             }
             None => PluginChannels::default(),
         };
