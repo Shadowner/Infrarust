@@ -5,7 +5,6 @@ use std::sync::Arc;
 use infrarust_config::{ForwardingMode as ConfigForwardingMode, ProxyConfig, ServerConfig};
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_server_manager::ServerManagerService;
-use tokio::sync::mpsc;
 
 use crate::ban::manager::BanManager;
 use crate::event_bus::EventBusImpl;
@@ -21,7 +20,7 @@ use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::plugin_messaging::PluginMessaging;
-use crate::provider::ProviderEvent;
+use crate::provider::registry::PluginRoutes;
 use crate::routing::DomainRouter;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::session::connection_registry::ConnectionRegistry;
@@ -72,7 +71,7 @@ pub struct ProxyServices {
     pub limbo_handler_registry: Arc<LimboHandlerRegistry>,
     /// Multi-version registry data cache for limbo login.
     pub registry_codec_cache: Arc<RegistryCodecCache>,
-    pub provider_event_sender: mpsc::Sender<ProviderEvent>,
+    pub plugin_routes: PluginRoutes,
     pub forwarding_mode: Arc<ForwardingMode>,
     pub forwarding_secret: Option<Arc<[u8]>>,
     pub permission_service: Arc<PermissionService>,

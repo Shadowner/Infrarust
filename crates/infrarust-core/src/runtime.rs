@@ -302,15 +302,8 @@ fn plugin_services(
         transport_filter_registry: Arc::clone(&services.transport_filter_registry),
         connection_claims: Arc::clone(&services.connection_claims),
         provider_activator: Arc::new(PluginProviderActivator::new(
-            services.provider_event_sender.clone(),
-            Arc::clone(&services.domain_router),
+            services.plugin_routes.clone(),
             background,
-            services
-                .config
-                .forwarding
-                .as_ref()
-                .map(|forwarding| forwarding.mode.clone())
-                .unwrap_or_default(),
         )),
         proxy_shutdown,
         proxy_info,

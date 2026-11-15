@@ -2,24 +2,20 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::provider::provider_id::ProviderId;
+use crate::provider::registry::PluginRoutes;
+use crate::provider::traits::{ProviderChange, ProviderConfig};
+use crate::util::sync::lock;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::provider::{
     PluginConfigProvider, PluginProviderEvent, PluginProviderSender, ServerDocument,
 };
-use infrarust_config::ForwardingMode;
-
-use crate::provider::provider_id::ProviderId;
-use crate::provider::registry::accepted;
-use crate::provider::traits::{ProviderConfig, ProviderEvent};
-use crate::routing::DomainRouter;
-use crate::util::sync::lock;
 
 struct PluginProviderSenderImpl {
-    sender: mpsc::Sender<ProviderEvent>,
-    shutdown: CancellationToken,
+    routes: PluginRoutes,
+    watch: CancellationToken,
     plugin_id: String,
     kind: String,
 }
@@ -27,16 +23,16 @@ struct PluginProviderSenderImpl {
 impl PluginProviderSender for PluginProviderSenderImpl {
     fn send(&self, event: PluginProviderEvent) -> BoxFuture<'_, bool> {
         Box::pin(async move {
-            let core_event = match event {
+            let change = match event {
                 PluginProviderEvent::Added(doc) => {
-                    self.provider_config_from(&doc).map(ProviderEvent::Added)
+                    self.provider_config_from(&doc).map(ProviderChange::Added)
                 }
                 PluginProviderEvent::Updated(doc) => {
-                    self.provider_config_from(&doc).map(ProviderEvent::Updated)
+                    self.provider_config_from(&doc).map(ProviderChange::Updated)
                 }
-                PluginProviderEvent::Removed(server_id) => {
-                    Some(ProviderEvent::Removed(self.provider_id(server_id.as_str())))
-                }
+                PluginProviderEvent::Removed(server_id) => Some(ProviderChange::Removed(
+                    self.provider_id(server_id.as_str()),
+                )),
                 _ => {
                     tracing::warn!(
                         plugin = %self.plugin_id,
@@ -49,15 +45,15 @@ impl PluginProviderSender for PluginProviderSenderImpl {
 
             // A rejected document must not look like a closed channel, or the
             // plugin would stop watching.
-            let Some(core_event) = core_event else {
-                return !self.sender.is_closed();
+            let Some(change) = change else {
+                return !self.routes.is_closed();
             };
-            self.sender.send(core_event).await.is_ok()
+            self.routes.submit(&self.watch, vec![change]).await
         })
     }
 
     fn is_shutdown(&self) -> bool {
-        self.shutdown.is_cancelled()
+        self.watch.is_cancelled()
     }
 }
 
@@ -111,34 +107,20 @@ pub fn parse_document(
     Ok(config)
 }
 
-struct Activation {
-    config_ids: Vec<ProviderId>,
-    watch: CancellationToken,
-}
-
 pub struct PluginProviderActivator {
-    sender: mpsc::Sender<ProviderEvent>,
-    router: Arc<DomainRouter>,
+    routes: PluginRoutes,
     shutdown: CancellationToken,
-    default_forwarding: ForwardingMode,
     started: AtomicBool,
-    active: Mutex<HashMap<String, Vec<Activation>>>,
+    watches: Mutex<HashMap<String, Vec<CancellationToken>>>,
 }
 
 impl PluginProviderActivator {
-    pub fn new(
-        sender: mpsc::Sender<ProviderEvent>,
-        router: Arc<DomainRouter>,
-        shutdown: CancellationToken,
-        default_forwarding: ForwardingMode,
-    ) -> Self {
+    pub fn new(routes: PluginRoutes, shutdown: CancellationToken) -> Self {
         Self {
-            sender,
-            router,
+            routes,
             shutdown,
-            default_forwarding,
             started: AtomicBool::new(false),
-            active: Mutex::new(HashMap::new()),
+            watches: Mutex::new(HashMap::new()),
         }
     }
 
@@ -167,13 +149,10 @@ impl PluginProviderActivator {
     pub async fn activate(&self, plugin_id: &str, provider: Box<dyn PluginConfigProvider>) {
         let kind = provider.provider_type().to_string();
         let watch = self.shutdown.child_token();
-        self.record(
-            plugin_id,
-            Activation {
-                config_ids: Vec::new(),
-                watch: watch.clone(),
-            },
-        );
+        lock(&self.watches)
+            .entry(plugin_id.to_owned())
+            .or_default()
+            .push(watch.clone());
 
         let documents = match provider.load_initial().await {
             Ok(documents) => documents,
@@ -188,58 +167,29 @@ impl PluginProviderActivator {
             }
         };
 
-        {
-            let mut active = lock(&self.active);
-            if watch.is_cancelled() {
-                return;
-            }
-            let mut config_ids = Vec::new();
-            for doc in &documents {
-                match parse_document(doc) {
-                    Ok(config) => {
-                        let pc = ProviderConfig {
-                            id: ProviderId::plugin(plugin_id, &kind, doc.id.as_str()),
-                            config,
-                        };
-                        if accepted(&pc, &self.default_forwarding) {
-                            self.router.add(pc.id.clone(), pc.config);
-                            config_ids.push(pc.id);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            plugin = %plugin_id,
-                            document = %doc.id.as_str(),
-                            error = %e,
-                            "skipping invalid server document"
-                        );
-                    }
-                }
-            }
-            tracing::info!(
-                plugin = %plugin_id,
-                provider = %kind,
-                count = config_ids.len(),
-                "plugin config provider loaded initial documents"
-            );
-            active
-                .entry(plugin_id.to_owned())
-                .or_default()
-                .push(Activation {
-                    config_ids,
-                    watch: watch.clone(),
-                });
-        }
-
-        let sender_impl = Box::new(PluginProviderSenderImpl {
-            sender: self.sender.clone(),
-            shutdown: watch,
+        let sender = PluginProviderSenderImpl {
+            routes: self.routes.clone(),
+            watch,
             plugin_id: plugin_id.to_owned(),
-            kind: kind.clone(),
-        });
-        let plugin_id = plugin_id.to_owned();
+            kind,
+        };
+        let initial: Vec<ProviderChange> = documents
+            .iter()
+            .filter_map(|doc| sender.provider_config_from(doc))
+            .map(ProviderChange::Added)
+            .collect();
+        tracing::info!(
+            plugin = %sender.plugin_id,
+            provider = %sender.kind,
+            count = initial.len(),
+            "plugin config provider loaded initial documents"
+        );
+        self.routes.submit_and_wait(&sender.watch, initial).await;
+
         tokio::spawn(async move {
-            if let Err(e) = provider.watch(sender_impl).await {
+            let plugin_id = sender.plugin_id.clone();
+            let kind = sender.kind.clone();
+            if let Err(e) = provider.watch(Box::new(sender)).await {
                 tracing::warn!(
                     plugin = %plugin_id,
                     provider = %kind,
@@ -251,31 +201,30 @@ impl PluginProviderActivator {
     }
 
     pub fn deactivate(&self, plugin_id: &str) {
-        let Some(activations) = lock(&self.active).remove(plugin_id) else {
+        let Some(watches) = lock(&self.watches).remove(plugin_id) else {
             return;
         };
-        for activation in activations {
-            activation.watch.cancel();
-            for pid in &activation.config_ids {
-                self.router.remove(pid);
-            }
+        for watch in watches {
+            watch.cancel();
         }
-    }
-
-    fn record(&self, plugin_id: &str, activation: Activation) {
-        lock(&self.active)
-            .entry(plugin_id.to_owned())
-            .or_default()
-            .push(activation);
+        self.routes.unload(plugin_id);
     }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use std::time::Duration;
+
     use infrarust_api::types::ServerId;
+    use infrarust_config::ForwardingMode;
+    use tokio::sync::oneshot;
 
     use super::*;
+    use crate::event_bus::EventBusImpl;
+    use crate::provider::registry::{PluginRouteEvents, ProviderRegistry};
+    use crate::routing::DomainRouter;
+    use crate::status::{FaviconCache, StatusCache};
 
     fn document(id: &str, toml: &str) -> ServerDocument {
         ServerDocument {
@@ -311,7 +260,7 @@ mod tests {
         let config = parse_document(&doc).unwrap();
 
         assert_eq!(config.balance, infrarust_config::BalanceStrategy::LeastConn);
-        assert_eq!(config.slow_start, Some(std::time::Duration::from_secs(45)));
+        assert_eq!(config.slow_start, Some(Duration::from_secs(45)));
         assert!((config.slow_start_aggression - 2.5).abs() < f64::EPSILON);
         assert_eq!(config.addresses[1].weight, 3);
         assert_eq!(config.addresses[1].address.port, 25565);
@@ -320,7 +269,7 @@ mod tests {
         let health = config.active_health.as_ref().unwrap();
         assert_eq!(health.kind, infrarust_config::ProbeKind::StatusPing);
         assert!(health.probe_healthy);
-        assert_eq!(health.interval, std::time::Duration::from_secs(7));
+        assert_eq!(health.interval, Duration::from_secs(7));
 
         let motd = config.motd.online.as_ref().unwrap();
         assert_eq!(motd.text, "Welcome");
@@ -359,22 +308,22 @@ mod tests {
         assert_eq!(parse_document(&doc).unwrap().effective_id(), "explicit");
     }
 
-    fn test_sender() -> (PluginProviderSenderImpl, mpsc::Receiver<ProviderEvent>) {
-        let (sender, receiver) = mpsc::channel(4);
+    fn test_sender() -> (PluginProviderSenderImpl, PluginRouteEvents) {
+        let (routes, events) = PluginRoutes::channel();
         (
             PluginProviderSenderImpl {
-                sender,
-                shutdown: CancellationToken::new(),
+                routes,
+                watch: CancellationToken::new(),
                 plugin_id: "test".to_string(),
                 kind: "api".to_string(),
             },
-            receiver,
+            events,
         )
     }
 
     #[tokio::test]
     async fn rejected_documents_are_dropped_without_closing_the_sender() {
-        let (sender, mut receiver) = test_sender();
+        let (sender, mut events) = test_sender();
 
         assert!(
             sender
@@ -384,7 +333,7 @@ mod tests {
                 )))
                 .await
         );
-        assert!(receiver.try_recv().is_err());
+        assert!(events.changes.try_recv().is_err());
 
         assert!(
             sender
@@ -394,9 +343,10 @@ mod tests {
                 )))
                 .await
         );
+        let submitted = events.changes.try_recv().unwrap();
         assert!(matches!(
-            receiver.try_recv(),
-            Ok(ProviderEvent::Added(config)) if config.config.effective_id() == "lobby"
+            submitted.changes.as_slice(),
+            [ProviderChange::Added(config)] if config.config.effective_id() == "lobby"
         ));
 
         assert!(
@@ -407,9 +357,9 @@ mod tests {
                 )))
                 .await
         );
-        assert!(receiver.try_recv().is_err());
+        assert!(events.changes.try_recv().is_err());
 
-        drop(receiver);
+        drop(events);
         assert!(
             !sender
                 .send(PluginProviderEvent::Removed(ServerId::new("lobby")))
@@ -417,9 +367,32 @@ mod tests {
         );
     }
 
-    struct InitialDocuments(Vec<ServerDocument>);
+    type WatchSender = Box<dyn PluginProviderSender>;
 
-    impl PluginConfigProvider for InitialDocuments {
+    struct TestProvider {
+        initial: Vec<ServerDocument>,
+        watching: Mutex<Option<oneshot::Sender<WatchSender>>>,
+    }
+
+    impl TestProvider {
+        fn with_initial(initial: Vec<ServerDocument>) -> Box<Self> {
+            Box::new(Self {
+                initial,
+                watching: Mutex::new(None),
+            })
+        }
+
+        fn watched(initial: Vec<ServerDocument>) -> (Box<Self>, oneshot::Receiver<WatchSender>) {
+            let (watching, sender) = oneshot::channel();
+            let provider = Box::new(Self {
+                initial,
+                watching: Mutex::new(Some(watching)),
+            });
+            (provider, sender)
+        }
+    }
+
+    impl PluginConfigProvider for TestProvider {
         fn provider_type(&self) -> &str {
             "test"
         }
@@ -427,27 +400,74 @@ mod tests {
         fn load_initial(
             &self,
         ) -> BoxFuture<'_, Result<Vec<ServerDocument>, infrarust_api::error::PluginError>> {
-            let documents = self.0.clone();
+            let documents = self.initial.clone();
             Box::pin(async move { Ok(documents) })
         }
 
         fn watch(
             &self,
-            _sender: Box<dyn PluginProviderSender>,
+            sender: WatchSender,
         ) -> BoxFuture<'_, Result<(), infrarust_api::error::PluginError>> {
+            if let Some(watching) = lock(&self.watching).take() {
+                let _ = watching.send(sender);
+            }
             Box::pin(async { Ok(()) })
         }
     }
 
+    struct Proxy {
+        router: Arc<DomainRouter>,
+        routes: PluginRoutes,
+        activator: PluginProviderActivator,
+        _shutdown: tokio_util::sync::DropGuard,
+    }
+
+    impl Proxy {
+        async fn start(default_forwarding: ForwardingMode) -> Self {
+            let router = Arc::new(DomainRouter::new());
+            let shutdown = CancellationToken::new();
+            let registry = ProviderRegistry::new(
+                Arc::clone(&router),
+                Arc::new(EventBusImpl::new()),
+                Arc::new(StatusCache::new(Duration::from_secs(1))),
+                Arc::new(FaviconCache::load_from_configs(&[], None).await.unwrap()),
+                shutdown.clone(),
+                default_forwarding,
+            );
+            let (_, routes) = registry.start().await.unwrap();
+            Self {
+                router,
+                activator: PluginProviderActivator::new(routes.clone(), shutdown.clone()),
+                routes,
+                _shutdown: shutdown.drop_guard(),
+            }
+        }
+
+        async fn routed(&self) -> Vec<String> {
+            self.routes
+                .submit_and_wait(&CancellationToken::new(), Vec::new())
+                .await;
+            let mut routed: Vec<String> = self
+                .router
+                .list_all()
+                .into_iter()
+                .map(|(_, config)| config.effective_id())
+                .collect();
+            routed.sort();
+            routed
+        }
+    }
+
+    fn server(id: &str) -> ServerDocument {
+        document(
+            id,
+            &format!("domains = [\"{id}.example.com\"]\naddresses = [\"10.0.0.1:25565\"]"),
+        )
+    }
+
     async fn activated_under(default_forwarding: ForwardingMode) -> Vec<String> {
-        let router = Arc::new(DomainRouter::new());
-        let activator = PluginProviderActivator::new(
-            mpsc::channel(1).0,
-            Arc::clone(&router),
-            CancellationToken::new(),
-            default_forwarding,
-        );
-        let provider = InitialDocuments(vec![
+        let proxy = Proxy::start(default_forwarding).await;
+        let provider = TestProvider::with_initial(vec![
             document(
                 "inherited",
                 "domains = [\"inherited.example.com\"]\naddresses = [\"10.0.0.1:25565\"]\n\
@@ -460,15 +480,9 @@ mod tests {
             ),
         ]);
 
-        activator.activate("plugin", Box::new(provider)).await;
+        proxy.activator.activate("plugin", provider).await;
 
-        let mut routed: Vec<String> = router
-            .list_all()
-            .into_iter()
-            .map(|(_, config)| config.effective_id())
-            .collect();
-        routed.sort();
-        routed
+        proxy.routed().await
     }
 
     #[tokio::test]
@@ -488,6 +502,73 @@ mod tests {
             activated_under(ForwardingMode::None).await,
             ["inherited", "optout"]
         );
+    }
+
+    #[tokio::test]
+    async fn initial_documents_are_routed_when_activation_returns() {
+        let proxy = Proxy::start(ForwardingMode::None).await;
+
+        proxy
+            .activator
+            .activate("plugin", TestProvider::with_initial(vec![server("lobby")]))
+            .await;
+
+        assert_eq!(proxy.router.list_all().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn unloading_a_plugin_removes_the_servers_its_watch_delivered() {
+        let proxy = Proxy::start(ForwardingMode::None).await;
+        let (provider, watching) = TestProvider::watched(vec![server("initial")]);
+        proxy.activator.activate("leaving", provider).await;
+        proxy
+            .activator
+            .activate("staying", TestProvider::with_initial(vec![server("kept")]))
+            .await;
+        let sender = watching.await.unwrap();
+
+        assert!(
+            sender
+                .send(PluginProviderEvent::Added(server("late")))
+                .await
+        );
+        assert_eq!(proxy.routed().await, ["initial", "kept", "late"]);
+
+        proxy.activator.deactivate("leaving");
+        assert_eq!(proxy.routed().await, ["kept"]);
+    }
+
+    #[tokio::test]
+    async fn a_document_sent_after_the_unload_is_not_routed() {
+        let proxy = Proxy::start(ForwardingMode::None).await;
+        let (provider, watching) = TestProvider::watched(Vec::new());
+        proxy.activator.activate("leaving", provider).await;
+        let sender = watching.await.unwrap();
+
+        proxy.activator.deactivate("leaving");
+        assert!(sender.is_shutdown());
+        sender
+            .send(PluginProviderEvent::Added(server("late")))
+            .await;
+
+        assert!(proxy.routed().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reloaded_plugin_routes_its_new_documents() {
+        let proxy = Proxy::start(ForwardingMode::None).await;
+        proxy
+            .activator
+            .activate("plugin", TestProvider::with_initial(vec![server("old")]))
+            .await;
+
+        proxy.activator.deactivate("plugin");
+        proxy
+            .activator
+            .activate("plugin", TestProvider::with_initial(vec![server("new")]))
+            .await;
+
+        assert_eq!(proxy.routed().await, ["new"]);
     }
 
     #[test]

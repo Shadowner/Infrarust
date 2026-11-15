@@ -131,7 +131,7 @@ impl ProxyServer {
             );
         }
 
-        let (provider_handle, provider_event_sender) = provider_registry.start().await?;
+        let (provider_handle, plugin_routes) = provider_registry.start().await?;
         tokio::spawn(async move {
             if let Err(e) = provider_handle.await
                 && e.is_panic()
@@ -258,7 +258,7 @@ impl ProxyServer {
             registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
                 Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
             )),
-            provider_event_sender,
+            plugin_routes,
             forwarding_mode,
             forwarding_secret,
             permission_service,
