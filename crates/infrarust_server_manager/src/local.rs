@@ -8,7 +8,6 @@ use tokio::task::JoinHandle;
 
 use crate::error::ServerManagerError;
 use crate::provider::{ProviderStatus, ServerProvider};
-use crate::state::ServerState;
 
 /// Provider that manages a local Java/Minecraft process.
 pub struct LocalProvider {
@@ -53,11 +52,7 @@ impl ServerProvider for LocalProvider {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             if process_lock.is_some() {
-                return Err(ServerManagerError::InvalidState {
-                    server_id: self.server_label(),
-                    state: ServerState::Starting,
-                    action: "start".to_string(),
-                });
+                return Err(std::io::Error::other("process is already running").into());
             }
 
             let mut cmd = tokio::process::Command::new(&self.config.command);
@@ -127,14 +122,9 @@ impl ServerProvider for LocalProvider {
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
-            let process =
-                process_lock
-                    .as_mut()
-                    .ok_or_else(|| ServerManagerError::InvalidState {
-                        server_id: self.server_label(),
-                        state: ServerState::Sleeping,
-                        action: "stop".to_string(),
-                    })?;
+            let process = process_lock.as_mut().ok_or_else(|| {
+                ServerManagerError::from(std::io::Error::other("process is not running"))
+            })?;
 
             // 1. Send "stop\n" on stdin (graceful Minecraft stop)
             if let Err(e) = process.stdin.write_all(b"stop\n").await {
@@ -176,38 +166,25 @@ impl ServerProvider for LocalProvider {
             let mut process_lock = self.process.lock().await;
             let result = match process_lock.as_mut() {
                 None => Ok(ProviderStatus::Stopped),
-                Some(process) => {
-                    // Check if the process has exited by trying try_wait
-                    match process.child.try_wait() {
-                        Ok(Some(status)) => {
-                            // Process has exited — clean up
-                            process.stdout_task.abort();
-                            process.stderr_task.abort();
-                            *process_lock = None;
-                            if status.success() {
-                                Ok(ProviderStatus::Stopped)
-                            } else {
-                                Ok(ProviderStatus::Crashed)
-                            }
-                        }
-                        Ok(None) => {
-                            // Process still running
-                            if process.ready.load(Ordering::Acquire) {
-                                Ok(ProviderStatus::Running)
-                            } else {
-                                Ok(ProviderStatus::Starting)
-                            }
-                        }
-                        Err(_) => {
-                            // Can't determine — assume still running based on ready flag
-                            if process.ready.load(Ordering::Acquire) {
-                                Ok(ProviderStatus::Running)
-                            } else {
-                                Ok(ProviderStatus::Starting)
-                            }
+                Some(process) => match process.child.try_wait() {
+                    Ok(Some(status)) => {
+                        process.stdout_task.abort();
+                        process.stderr_task.abort();
+                        *process_lock = None;
+                        if status.success() {
+                            Ok(ProviderStatus::Stopped)
+                        } else {
+                            Ok(ProviderStatus::Crashed)
                         }
                     }
-                }
+                    Ok(None) | Err(_) => {
+                        if process.ready.load(Ordering::Acquire) {
+                            Ok(ProviderStatus::Running)
+                        } else {
+                            Ok(ProviderStatus::Starting)
+                        }
+                    }
+                },
             };
             drop(process_lock);
             result

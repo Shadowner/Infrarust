@@ -251,9 +251,22 @@ done
     let provider = LocalProvider::new(config);
 
     provider.start().await.unwrap();
-    let result = provider.start().await;
-    assert!(result.is_err());
+    let error = provider.start().await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "process error: process is already running"
+    );
 
     // Cleanup
     provider.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_stop_without_a_process_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = make_mock_script(dir.path(), "server.sh", "#!/bin/bash\necho done\n");
+    let provider = LocalProvider::new(make_config(&script, dir.path()));
+
+    let error = provider.stop().await.unwrap_err();
+    assert_eq!(error.to_string(), "process error: process is not running");
 }
