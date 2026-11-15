@@ -5,11 +5,11 @@ use wasmtime::component::Resource;
 
 use super::parse_text;
 use crate::actor::CallKind;
+use crate::adapters::WasmLimboHandler;
 use crate::bindings::infrarust::plugin::limbo as wl;
 use crate::bindings::infrarust::plugin::types as wt;
 use crate::convert;
 use crate::host_error::{HostResult, invalid_component, limbo_error, player_error};
-use crate::limbo::WasmLimboHandler;
 use crate::registrations::Bound;
 use crate::store_state::{PluginStoreState, Quota};
 

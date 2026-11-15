@@ -5,7 +5,7 @@ use infrarust_api::command::CommandRegistration;
 use infrarust_api::limbo::{LimboHandlerRegistration, LimboOutcome, SessionHandle};
 use infrarust_api::types::PlayerId;
 
-use crate::providers::{WasmBanProvider, WasmPermissionProvider};
+use crate::adapters::{WasmBanProvider, WasmPermissionProvider};
 use crate::snapshots::PermissionSnapshots;
 use crate::sync::lock;
 

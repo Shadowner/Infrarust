@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use crate::actor::CallKind;
+use crate::adapters;
 use crate::bindings::infrarust::plugin::scheduler as wsched;
 use crate::host_error::HostResult;
-use crate::proxies;
 use crate::store_state::{PluginStoreState, Quota};
 
 impl wsched::Host for PluginStoreState {
@@ -36,7 +36,7 @@ impl PluginStoreState {
             Duration::from_millis(after),
             Box::new(move || {
                 tasks.fired(id);
-                Box::pin(proxies::run_scheduled_task(instance, handler))
+                Box::pin(adapters::run_scheduled_task(instance, handler))
             }),
         );
         self.bind_task(id, handle);
@@ -57,7 +57,7 @@ impl PluginStoreState {
         let handle = ctx.scheduler().repeat(
             Duration::from_millis(period),
             initial_delay.map(Duration::from_millis),
-            Box::new(move || Box::pin(proxies::run_scheduled_task(instance.clone(), handler))),
+            Box::new(move || Box::pin(adapters::run_scheduled_task(instance.clone(), handler))),
         );
         self.bind_task(id, handle);
         Ok(id)

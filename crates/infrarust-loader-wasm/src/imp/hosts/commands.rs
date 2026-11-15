@@ -4,9 +4,9 @@ use infrarust_api::command::{CommandInfo, CommandManager, CommandRegistration, C
 
 use super::Gate;
 use crate::actor::CallKind;
+use crate::adapters::WasmCommandHandler;
 use crate::bindings::infrarust::plugin::command_manager as wcm;
 use crate::host_error::{HostResult, command_error};
-use crate::proxies::WasmCommandHandler;
 use crate::registrations::Bound;
 use crate::store_state::{PluginStoreState, Quota, Refused};
 
