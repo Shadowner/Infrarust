@@ -13,26 +13,26 @@ use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::pipeline::types::HandshakeData;
-use crate::session::framed_stream::FramedStream;
+use crate::session::framed_stream::{FramedStream, Unencrypted};
 
 const ONLINE_BACKEND: &str =
     "the backend is in online mode; intercepted modes need online-mode=false";
 
 pub struct BackendBridge {
-    framed: FramedStream,
+    framed: FramedStream<Unencrypted>,
     server_address: Option<infrarust_config::ServerAddress>,
 }
 
 impl Deref for BackendBridge {
-    type Target = FramedStream;
+    type Target = FramedStream<Unencrypted>;
 
-    fn deref(&self) -> &FramedStream {
+    fn deref(&self) -> &FramedStream<Unencrypted> {
         &self.framed
     }
 }
 
 impl DerefMut for BackendBridge {
-    fn deref_mut(&mut self) -> &mut FramedStream {
+    fn deref_mut(&mut self) -> &mut FramedStream<Unencrypted> {
         &mut self.framed
     }
 }

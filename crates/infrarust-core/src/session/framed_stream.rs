@@ -18,26 +18,57 @@ use crate::util::packets::encode_for_state;
 const READ_CHUNK: usize = 16 * 1024;
 const MAX_HELD_BYTES: usize = 1024 * 1024;
 
-pub struct FramedStream {
+pub trait Cipher: Default {
+    fn encrypt(&mut self, data: &mut [u8]);
+    fn decrypt(&mut self, data: &mut [u8]);
+}
+
+#[derive(Default)]
+pub struct Unencrypted;
+
+impl Cipher for Unencrypted {
+    fn encrypt(&mut self, _: &mut [u8]) {}
+    fn decrypt(&mut self, _: &mut [u8]) {}
+}
+
+#[derive(Default)]
+pub struct Encryptable {
+    encrypt: Option<EncryptCipher>,
+    decrypt: Option<DecryptCipher>,
+}
+
+impl Cipher for Encryptable {
+    fn encrypt(&mut self, data: &mut [u8]) {
+        if let Some(cipher) = &mut self.encrypt {
+            cipher.encrypt(data);
+        }
+    }
+
+    fn decrypt(&mut self, data: &mut [u8]) {
+        if let Some(cipher) = &mut self.decrypt {
+            cipher.decrypt(data);
+        }
+    }
+}
+
+pub struct FramedStream<C> {
     stream: TcpStream,
     writes: WriteGuard,
     decoder: PacketDecoder,
     encoder: PacketEncoder,
-    encrypt_cipher: Option<EncryptCipher>,
-    decrypt_cipher: Option<DecryptCipher>,
+    cipher: C,
     protocol_version: ProtocolVersion,
     state: ConnectionState,
 }
 
-impl FramedStream {
+impl<C: Cipher> FramedStream<C> {
     pub(crate) fn new(stream: TcpStream, protocol_version: ProtocolVersion) -> Self {
         Self {
             stream,
             writes: WriteGuard::new(),
             decoder: PacketDecoder::new(),
             encoder: PacketEncoder::new(),
-            encrypt_cipher: None,
-            decrypt_cipher: None,
+            cipher: C::default(),
             protocol_version,
             state: ConnectionState::Login,
         }
@@ -105,9 +136,7 @@ impl FramedStream {
             let old_len = buf.len();
             match self.stream.try_read_buf(buf) {
                 Ok(n) => {
-                    if let Some(cipher) = &mut self.decrypt_cipher {
-                        cipher.decrypt(&mut self.decoder.read_buf_mut()[old_len..]);
-                    }
+                    self.cipher.decrypt(&mut buf[old_len..]);
                     return Ok(n);
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {}
@@ -144,9 +173,7 @@ impl FramedStream {
         if data.is_empty() {
             return self.writes.check();
         }
-        if let Some(cipher) = &mut self.encrypt_cipher {
-            cipher.encrypt(&mut data);
-        }
+        self.cipher.encrypt(&mut data);
         self.writes.write_all(&mut self.stream, &data).await
     }
 
@@ -172,17 +199,6 @@ impl FramedStream {
         self.stream.shutdown().await.ok();
     }
 
-    pub fn enable_encryption(&mut self, key: &[u8; 16]) -> Result<(), CoreError> {
-        if !self.decoder.read_buf_mut().is_empty() {
-            return Err(CoreError::Auth(
-                "client sent data ahead of the encryption switch".to_string(),
-            ));
-        }
-        self.encrypt_cipher = Some(EncryptCipher::new(key));
-        self.decrypt_cipher = Some(DecryptCipher::new(key));
-        Ok(())
-    }
-
     pub const fn set_compression(&mut self, threshold: i32) {
         self.decoder.set_compression(threshold);
         self.encoder.set_compression(threshold);
@@ -190,5 +206,20 @@ impl FramedStream {
 
     pub const fn compression_threshold(&self) -> Option<i32> {
         self.encoder.compression_threshold()
+    }
+}
+
+impl FramedStream<Encryptable> {
+    pub fn enable_encryption(&mut self, key: &[u8; 16]) -> Result<(), CoreError> {
+        if !self.decoder.read_buf_mut().is_empty() {
+            return Err(CoreError::Auth(
+                "client sent data ahead of the encryption switch".to_string(),
+            ));
+        }
+        self.cipher = Encryptable {
+            encrypt: Some(EncryptCipher::new(key)),
+            decrypt: Some(DecryptCipher::new(key)),
+        };
+        Ok(())
     }
 }

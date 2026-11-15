@@ -52,7 +52,7 @@ use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
-use crate::session::framed_stream::FramedStream;
+use crate::session::framed_stream::{Cipher, FramedStream};
 use crate::session::kick::BackendKick;
 use crate::session::login_bridge::{LoginClock, read_timeout};
 use crate::session::login_messages::{LoginMessages, Routed};
@@ -1133,7 +1133,7 @@ fn command_tree_frame(
 }
 
 fn send_injected_frames(
-    writer: &mut FramedStream,
+    writer: &mut FramedStream<impl Cipher>,
     output: &mut infrarust_api::filter::FrameOutput,
     send_before: bool,
     send_after: bool,
@@ -1160,7 +1160,7 @@ enum Filtered {
 fn apply_codec_filter(
     chain: &mut CodecFilterChain,
     frame: &mut PacketFrame,
-    writer: &mut FramedStream,
+    writer: &mut FramedStream<impl Cipher>,
 ) -> Result<Filtered, CoreError> {
     if chain.is_empty() {
         return Ok(Filtered::Forward);

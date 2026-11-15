@@ -13,24 +13,24 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::session::framed_stream::FramedStream;
+use crate::session::framed_stream::{Encryptable, FramedStream};
 use crate::util::text;
 
 pub struct ClientBridge {
-    framed: FramedStream,
+    framed: FramedStream<Encryptable>,
     awaiting_config_ack: bool,
 }
 
 impl Deref for ClientBridge {
-    type Target = FramedStream;
+    type Target = FramedStream<Encryptable>;
 
-    fn deref(&self) -> &FramedStream {
+    fn deref(&self) -> &FramedStream<Encryptable> {
         &self.framed
     }
 }
 
 impl DerefMut for ClientBridge {
-    fn deref_mut(&mut self) -> &mut FramedStream {
+    fn deref_mut(&mut self) -> &mut FramedStream<Encryptable> {
         &mut self.framed
     }
 }
