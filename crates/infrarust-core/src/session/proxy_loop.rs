@@ -717,12 +717,10 @@ impl Loop<'_> {
 
             if Some(frame.id) == self.ids.s_tab_request
                 && let Some(packet_id) = self.ids.c_tab_response
-                && let Ok(DecodedPacket::Typed { id: _, packet }) =
-                    registry.decode_frame(&frame, state, Direction::Serverbound, version)
-                && let Some(req) = packet.as_any().downcast_ref::<STabCompleteRequest>()
+                && let Ok(Some(req)) = registry.decode_as::<STabCompleteRequest>(&frame, version)
                 && let Some(input) = req.text.trim_start().strip_prefix('/')
             {
-                let reply = TabReply::new(packet_id, req, version);
+                let reply = TabReply::new(packet_id, &req, version);
                 let source = CommandSource::Player(self.ctx.player());
                 match services.command_manager.prepare_suggestion(source, input) {
                     Prepared::Unknown => {}
@@ -952,11 +950,8 @@ impl Loop<'_> {
                 );
                 None
             } else {
-                match registry.decode_frame(&frame, state, Direction::Clientbound, version) {
-                    Ok(DecodedPacket::Typed { packet, .. }) => {
-                        packet.as_any().downcast_ref::<CCommands>().cloned()
-                    }
-                    Ok(DecodedPacket::Opaque { .. }) => None,
+                match registry.decode_as::<CCommands>(&frame, version) {
+                    Ok(tree) => tree,
                     Err(e) => {
                         tracing::warn!(
                             "relaying the backend's command tree without the proxy's commands: {e}"

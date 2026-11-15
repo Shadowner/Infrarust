@@ -6,8 +6,8 @@ use infrarust_protocol::packets::cookie::SLoginCookieResponse;
 use infrarust_protocol::packets::login::{
     CLoginSuccess, CSetCompression, Property, SLoginAcknowledged, SLoginPluginResponse,
 };
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::session::client_bridge::ClientBridge;
@@ -145,25 +145,13 @@ async fn consume_login_acknowledged(
         );
     };
 
-    let decoded = registry.decode_frame(
-        &frame,
-        ConnectionState::Login,
-        Direction::Serverbound,
-        version,
-    )?;
-
-    match decoded {
-        DecodedPacket::Typed { packet, .. }
-            if packet
-                .as_any()
-                .downcast_ref::<SLoginAcknowledged>()
-                .is_some() =>
-        {
+    match registry.decode_as::<SLoginAcknowledged>(&frame, version)? {
+        Some(_) => {
             client.set_state(ConnectionState::Config);
             tracing::debug!("client LoginAcknowledged -> Config");
             Ok(())
         }
-        _ => Err(CoreError::Protocol(
+        None => Err(CoreError::Protocol(
             infrarust_protocol::ProtocolError::invalid("expected LoginAcknowledged from client"),
         )),
     }

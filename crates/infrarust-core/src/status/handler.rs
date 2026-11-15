@@ -13,8 +13,8 @@ use infrarust_api::types::ServerId;
 use infrarust_config::{MotdConfig, ServerConfig};
 use infrarust_protocol::io::PacketDecoder;
 use infrarust_protocol::packets::status::{CPingResponse, CStatusResponse, SPingRequest};
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::ProtocolVersion;
 
 use infrarust_server_manager::{ServerManagerService, ServerState};
 
@@ -483,20 +483,10 @@ impl StatusHandler {
         )
         .await?;
 
-        let decoded = self.registry.decode_frame(
-            &frame,
-            ConnectionState::Status,
-            Direction::Serverbound,
-            STATUS_PROTOCOL_VERSION,
-        )?;
-
-        let payload = match decoded {
-            DecodedPacket::Typed { packet, .. } => packet
-                .as_any()
-                .downcast_ref::<SPingRequest>()
-                .map_or(0, |p| p.payload),
-            DecodedPacket::Opaque { .. } => 0,
-        };
+        let payload = self
+            .registry
+            .decode_as::<SPingRequest>(&frame, STATUS_PROTOCOL_VERSION)?
+            .map_or(0, |ping| ping.payload);
 
         let pong = CPingResponse { payload };
         send_packet(
