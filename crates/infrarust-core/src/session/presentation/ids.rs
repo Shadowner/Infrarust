@@ -24,10 +24,9 @@ use crate::api_convert::pack_result_to_api;
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::player::PlayerSession;
-use crate::player::packets::{
-    boss_bar_added, boss_bar_removed, build_header_footer, encode_packet,
-};
+use crate::player::packets::{boss_bar_added, boss_bar_removed, build_header_footer};
 use crate::session::client_bridge::ClientBridge;
+use crate::util::packets::encode_packet;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct Ids {

@@ -45,7 +45,6 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 use crate::error::CoreError;
 use crate::filter::codec_chain::{CODEC_FILTER_FAILED, CodecFilterChain, FilterResult};
 use crate::player::commands::CommandOutcome;
-use crate::player::packets::encode_for_state;
 use crate::player::{PlayerCommand, PlayerSession};
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::services::ProxyServices;
@@ -59,6 +58,7 @@ use crate::session::login_bridge::{LoginClock, read_timeout};
 use crate::session::login_messages::{LoginMessages, Routed};
 use crate::session::presentation;
 use crate::session::server_join::ServerJoin;
+use crate::util::packets::encode_for_state;
 use crate::util::text::encode_text_component;
 
 /// Result of the proxy loop, determining what happens after the loop ends.

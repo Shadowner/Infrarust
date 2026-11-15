@@ -22,8 +22,8 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
-use crate::player::packets::{encode_packet, respawn_frame};
 use crate::session::client_bridge::ClientBridge;
+use crate::util::packets::{encode_packet, respawn_frame};
 
 const LIMBO_DIMENSION_NAME: &str = "minecraft:the_end";
 const LIMBO_DIMENSION_ID: i32 = 2;

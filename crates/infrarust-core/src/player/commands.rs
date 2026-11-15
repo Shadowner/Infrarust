@@ -18,7 +18,7 @@ use infrarust_protocol::packets::resource_pack::{
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
-use super::packets::{self, encode_packet};
+use super::packets;
 use super::{
     BossBarCommand, ClientCommand, MessageTarget, OutgoingMessage, PlayerCommand, PlayerSession,
 };
@@ -26,6 +26,7 @@ use crate::error::CoreError;
 use crate::plugin_messaging::channels::{self, MessageIds};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
+use crate::util::packets::encode_packet;
 use crate::util::text::encode_text_component;
 
 const MAX_DEFERRED_COMMANDS: usize = 128;

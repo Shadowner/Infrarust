@@ -14,9 +14,9 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::limbo::registry_cache::RegistryCodecCache;
-use crate::player::packets::encode_packet;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::frame_chain::FrameChain;
+use crate::util::packets::encode_packet;
 
 const LIMBO_CONFIG_PHASE_TIMEOUT_SECS: u64 = 10;
 

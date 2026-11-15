@@ -8,7 +8,7 @@ use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
 use crate::limbo::spawn::build_limbo_join_game;
-use crate::player::packets::encode_packet;
+use crate::util::packets::encode_packet;
 
 fn registry() -> &'static PacketRegistry {
     static REGISTRY: OnceLock<PacketRegistry> = OnceLock::new();

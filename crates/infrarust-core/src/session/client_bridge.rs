@@ -24,8 +24,8 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
 use crate::pipeline::preauth_frame::refuse_oversized;
-use crate::player::packets::encode_for_state;
 use crate::session::bounded_write::WriteGuard;
+use crate::util::packets::encode_for_state;
 use crate::util::text;
 
 const READ_CHUNK: usize = 16 * 1024;

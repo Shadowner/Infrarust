@@ -14,7 +14,7 @@ use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
 use crate::error::CoreError;
-use crate::player::packets::encode_packet;
+use crate::util::packets::encode_packet;
 
 /// Maximum time (seconds) to wait for a keepalive response before
 /// considering the client timed out.

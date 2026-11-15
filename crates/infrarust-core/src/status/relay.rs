@@ -27,7 +27,7 @@ use super::STATUS_PROTOCOL_VERSION;
 use super::response::ServerPingResponse;
 use crate::error::CoreError;
 use crate::pipeline::preauth_frame::{MAX_STATUS_FRAME, read_preauth_frame};
-use crate::player::packets::packet_id;
+use crate::util::packets::packet_id;
 
 /// Result of a successful status relay.
 #[derive(Debug)]
