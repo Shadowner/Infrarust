@@ -36,7 +36,8 @@ pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::{IdentityCheck, ProxyMode};
 pub use rate_limit::RateLimitConfig;
 pub use server_manager::{
-    CraftyManagerConfig, LocalManagerConfig, PterodactylManagerConfig, ServerManagerConfig,
+    CraftyManagerConfig, LocalManagerConfig, ManagerLifecycle, PterodactylManagerConfig,
+    ServerManagerConfig,
 };
 pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{

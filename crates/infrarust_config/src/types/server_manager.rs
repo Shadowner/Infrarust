@@ -15,6 +15,32 @@ pub enum ServerManagerConfig {
     Crafty(CraftyManagerConfig),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManagerLifecycle {
+    pub shutdown_after: Option<Duration>,
+    pub start_timeout: Duration,
+    pub poll_interval: Duration,
+}
+
+impl ServerManagerConfig {
+    pub const fn lifecycle(&self) -> ManagerLifecycle {
+        macro_rules! lifecycle {
+            ($cfg:expr) => {
+                ManagerLifecycle {
+                    shutdown_after: $cfg.shutdown_after,
+                    start_timeout: $cfg.start_timeout,
+                    poll_interval: $cfg.poll_interval,
+                }
+            };
+        }
+        match self {
+            Self::Local(cfg) => lifecycle!(cfg),
+            Self::Pterodactyl(cfg) => lifecycle!(cfg),
+            Self::Crafty(cfg) => lifecycle!(cfg),
+        }
+    }
+}
+
 /// Local provider: launches a local Java process.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
