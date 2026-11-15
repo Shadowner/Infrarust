@@ -13,10 +13,9 @@ mod slow_start;
 
 pub use factory::build_load_balancer;
 pub use first_available::FirstAvailable;
-pub use health::{
-    BackendHealthView, BackendReport, BackendState, HealthSnapshot, HealthTransitionListener,
-    PassiveBackendHealth,
-};
+#[cfg(feature = "test-support")]
+pub use health::HealthSnapshot;
+pub use health::{BackendHealthView, BackendState, HealthTransitionListener, PassiveBackendHealth};
 pub use least_conn::LeastConnections;
 pub use load::BackendLoad;
 pub use pending::{PendingRegistry, PendingTicket, reservation_ttl};

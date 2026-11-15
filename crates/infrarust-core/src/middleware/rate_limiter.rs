@@ -62,6 +62,7 @@ impl RateLimiterMiddleware {
     }
 
     /// Number of keys held across the login and status limiters.
+    #[cfg(feature = "test-support")]
     pub fn tracked_keys(&self) -> usize {
         self.login_limiter.len() + self.status_limiter.len()
     }

@@ -7,8 +7,10 @@
 
 pub mod labels;
 
+#[cfg(feature = "test-support")]
+pub use labels::labels_to_server_config;
 pub use labels::{
-    ContainerRefused, container_server_config, labels_to_server_config, resolve_container_address,
+    ContainerRefused, container_server_config, resolve_container_address,
     withheld_forwarding_warning,
 };
 

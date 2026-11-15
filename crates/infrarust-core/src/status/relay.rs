@@ -36,7 +36,7 @@ pub struct RelayResult {
     pub response: ServerPingResponse,
     /// Round-trip latency of the ping/pong exchange.
     pub latency: Duration,
-    /// Address the relay actually reached, which failover may have changed.
+    #[cfg_attr(not(feature = "telemetry"), allow(dead_code))]
     pub address: ServerAddress,
 }
 

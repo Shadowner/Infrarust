@@ -31,6 +31,7 @@ pub fn core_to_api_ping_response(core: &ServerPingResponse) -> PingResponse {
     response
 }
 
+#[cfg(feature = "test-support")]
 pub fn apply_api_to_core(
     core: &mut ServerPingResponse,
     api: &PingResponse,
@@ -52,6 +53,7 @@ pub fn apply_api_sample_to_core(core: &mut ServerPingResponse, api: &PingRespons
         .collect();
 }
 
+#[cfg(feature = "test-support")]
 pub fn apply_api_scalars_to_core(core: &mut ServerPingResponse, api: &PingResponse) {
     core.players.max = api.max_players;
     core.players.online = api.online_players;

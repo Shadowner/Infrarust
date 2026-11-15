@@ -45,7 +45,6 @@ impl std::error::Error for ActionError {}
 #[derive(Debug)]
 pub struct Kicked {
     pub player: String,
-    pub server: Option<ServerId>,
     pub reason: String,
 }
 
@@ -95,7 +94,6 @@ pub async fn kick_player(
     player.disconnect(Component::text(&reason)).await;
     Ok(Kicked {
         player: player.profile().username.clone(),
-        server,
         reason,
     })
 }

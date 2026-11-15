@@ -32,10 +32,6 @@ pub struct LoginStartParserMiddleware {
 }
 
 impl LoginStartParserMiddleware {
-    pub const fn new() -> Self {
-        Self { login_claims: None }
-    }
-
     pub const fn with_login_claims(bus: Arc<EventBusImpl>) -> Self {
         Self {
             login_claims: Some(bus),
@@ -255,7 +251,7 @@ mod tests {
         mode: Option<ProxyMode>,
         wire: &[u8],
     ) -> (Result<MiddlewareResult, CoreError>, ConnectionContext) {
-        parse_with(&LoginStartParserMiddleware::new(), version, mode, wire).await
+        parse_with(&LoginStartParserMiddleware::default(), version, mode, wire).await
     }
 
     async fn parse_with(
@@ -287,7 +283,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_client_that_never_sends_its_login_start_times_out() {
         let (mut ctx, _client) = login_ctx(ProtocolVersion::V1_20_2, None, &[]).await;
-        let result = LoginStartParserMiddleware::new().process(&mut ctx).await;
+        let result = LoginStartParserMiddleware::default()
+            .process(&mut ctx)
+            .await;
         assert!(matches!(result, Err(CoreError::Timeout(_))), "{result:?}");
     }
 
@@ -456,7 +454,7 @@ mod tests {
             let (mut ctx, _client) = login_ctx(ProtocolVersion::V1_20, Some(mode), &declared).await;
             let refused = tokio::time::timeout(
                 Duration::from_secs(1),
-                LoginStartParserMiddleware::new().process(&mut ctx),
+                LoginStartParserMiddleware::default().process(&mut ctx),
             )
             .await
             .expect("the proxy must not wait for the declared bytes");

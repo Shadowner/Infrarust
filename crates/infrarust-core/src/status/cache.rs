@@ -171,7 +171,7 @@ impl StatusCache {
         );
     }
 
-    /// Removes a single server's cache entries.
+    #[cfg(feature = "test-support")]
     pub fn invalidate(&self, server_id: &str) {
         self.entries.remove(server_id);
         self.legacy_entries.retain(|(id, _), _| id != server_id);

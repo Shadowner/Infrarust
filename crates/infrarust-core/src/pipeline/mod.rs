@@ -53,14 +53,6 @@ impl Pipeline {
         }
         Ok(MiddlewareResult::Continue)
     }
-
-    pub fn len(&self) -> usize {
-        self.middlewares.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.middlewares.is_empty()
-    }
 }
 
 impl Default for Pipeline {

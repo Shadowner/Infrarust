@@ -106,16 +106,6 @@ impl StatusHandler {
         self
     }
 
-    /// Returns a reference to the status cache (for hot-reload invalidation).
-    pub const fn cache(&self) -> &Arc<StatusCache> {
-        &self.cache
-    }
-
-    /// Returns a reference to the favicon cache (for hot-reload).
-    pub const fn favicon_cache(&self) -> &Arc<FaviconCache> {
-        &self.favicon_cache
-    }
-
     /// Handles a status request on the given connection context.
     ///
     /// # Errors

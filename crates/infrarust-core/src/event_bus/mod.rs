@@ -9,6 +9,8 @@ pub mod bus;
 pub mod diagnostic;
 pub(crate) mod handler;
 
+#[cfg(feature = "test-support")]
 pub use builtin::{BUILTIN_EVENTS, is_builtin_event};
 pub use bus::{CORE_OWNER, EventBusConfig, EventBusImpl};
+#[cfg(feature = "test-support")]
 pub use diagnostic::{DiagnosticKind, HandlerDiagnostic};

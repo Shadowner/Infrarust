@@ -27,8 +27,6 @@ use crate::error::CoreError;
 use crate::pipeline::preauth_frame::MAX_ENCRYPTION_RESPONSE_FRAME;
 use crate::session::client_bridge::ClientBridge;
 
-const DEFAULT_SESSION_URL: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
-
 /// Bounds on what authentications may hold, individually and together.
 #[derive(Debug, Clone)]
 pub struct AuthLimits {
@@ -70,14 +68,6 @@ pub struct MojangAuth {
 }
 
 impl MojangAuth {
-    /// Creates a new `MojangAuth` with a fresh RSA-1024 key.
-    ///
-    /// # Errors
-    /// Returns `CoreError::Auth` if RSA key generation or DER encoding fails.
-    pub fn new() -> Result<Self, CoreError> {
-        Self::with_limits(DEFAULT_SESSION_URL.to_string(), AuthLimits::default())
-    }
-
     /// Creates a `MojangAuth` with a custom session server URL (for testing).
     ///
     /// # Errors
@@ -444,13 +434,13 @@ mod tests {
         let nonce = [0x01, 0x02, 0x03, 0x04];
         let (_, signature) = sign_challenge(&nonce, 7);
 
-        let auth = MojangAuth::new().unwrap();
+        let auth = MojangAuth::with_session_url(String::new()).unwrap();
         assert!(auth.rsa_key.decrypt(Pkcs1v15Encrypt, &signature).is_err());
     }
 
     #[test]
     fn test_mojang_auth_creation() {
-        let auth = MojangAuth::new();
+        let auth = MojangAuth::with_session_url(String::new());
         assert!(auth.is_ok());
         let auth = auth.unwrap();
         // Public key should be non-empty DER
