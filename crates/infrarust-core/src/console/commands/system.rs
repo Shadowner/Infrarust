@@ -317,7 +317,7 @@ impl ConsoleCommand for StatusCommand {
                 managed: services.server_manager.as_ref().map(|manager| {
                     StateCounts::tally(manager.get_all_managed().iter().map(|(_, state)| state))
                 }),
-                plugins: services.plugin_manager.read().await.list_plugins().len(),
+                plugins: services.plugins.plugin_count().await,
             };
             status_block(&report).into()
         })

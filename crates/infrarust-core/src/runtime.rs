@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -20,11 +19,12 @@ use infrarust_config::proxy::PluginConfig;
 use infrarust_server_manager::ServerProvider;
 use infrarust_transport::Listener;
 
+use crate::console::ConsoleServices;
 use crate::error::CoreError;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
-    PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginPermissions,
-    PluginRegistryImpl,
+    PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginManagerHandle,
+    PluginPermissions, PluginRegistryImpl,
 };
 use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
@@ -220,13 +220,13 @@ impl ProxyRuntimeBuilder {
         provider_activator.start();
         plugin_manager.activate_config_providers().await;
 
-        let plugin_manager = Arc::new(RwLock::new(plugin_manager));
+        let plugins = PluginManagerHandle::new(plugin_manager);
         let server = Arc::new(server);
 
         let (listener, local_addr) = match bind_listener(&server, inherited_listener).await {
             Ok(bound) => bound,
             Err(e) => {
-                plugin_manager.write().await.shutdown().await;
+                plugins.shutdown().await;
                 return Err(e);
             }
         };
@@ -237,7 +237,7 @@ impl ProxyRuntimeBuilder {
 
         Ok(RunningProxy {
             server,
-            plugin_manager,
+            plugins,
             plugin_registry,
             context_factory,
             serve_task,
@@ -398,7 +398,7 @@ pub fn proxy_info_from_config(config: &ProxyConfig, version: &str) -> ProxyInfo 
 
 pub struct RunningProxy {
     server: Arc<ProxyServer>,
-    plugin_manager: Arc<RwLock<PluginManager>>,
+    plugins: PluginManagerHandle,
     plugin_registry: Arc<PluginRegistryImpl>,
     context_factory: Arc<PluginContextFactoryImpl>,
     serve_task: JoinHandle<Result<(), CoreError>>,
@@ -422,8 +422,28 @@ impl RunningProxy {
         self.server.services()
     }
 
-    pub fn plugin_manager(&self) -> &Arc<RwLock<PluginManager>> {
-        &self.plugin_manager
+    pub const fn plugins(&self) -> &PluginManagerHandle {
+        &self.plugins
+    }
+
+    pub fn console_services(&self) -> ConsoleServices {
+        let services = self.services();
+        ConsoleServices {
+            player_registry: Arc::clone(&services.player_registry),
+            connection_registry: Arc::clone(&services.connection_registry),
+            ban_manager: Arc::clone(&services.ban_manager),
+            server_manager: services.server_manager.clone(),
+            config_service: Arc::new(ConfigServiceImpl::new(
+                Arc::clone(&services.domain_router),
+                services.config_path.clone(),
+                Arc::clone(&services.config),
+            )),
+            plugins: self.plugins.clone(),
+            permission_service: Arc::clone(&services.permission_service),
+            command_manager: Arc::clone(&services.command_manager),
+            shutdown: self.shutdown.clone(),
+            start_time: self.start_time,
+        }
     }
 
     pub fn plugin_registry(&self) -> &Arc<PluginRegistryImpl> {
@@ -435,9 +455,7 @@ impl RunningProxy {
     }
 
     pub async fn disable_plugin(&self, id: &str) -> Result<(), PluginManagerError> {
-        let stop = self.plugin_manager.write().await.begin_plugin_stop(id)?;
-        stop.run().await;
-        Ok(())
+        self.plugins.disable_plugin(id).await
     }
 
     pub const fn start_time(&self) -> Instant {
@@ -468,11 +486,7 @@ impl RunningProxy {
                 "ProxyShutdownEvent listeners used up the plugin shutdown time; stopping the plugins without waiting for them");
         }
 
-        self.plugin_manager
-            .write()
-            .await
-            .shutdown_until(deadline)
-            .await;
+        self.plugins.shutdown_until(deadline).await;
         self.server.stop_background_tasks();
 
         result
@@ -591,13 +605,7 @@ mod tests {
 
         assert_ne!(running.local_addr().port(), 0);
         assert_eq!(*log.lock().unwrap(), vec!["enable", "initialize"]);
-        assert!(
-            running
-                .plugin_manager()
-                .read()
-                .await
-                .is_plugin_loaded("recorder")
-        );
+        assert!(running.plugins().is_plugin_loaded("recorder").await);
         assert!(running.plugin_registry().plugin_info("recorder").is_some());
 
         let client = tokio::net::TcpStream::connect(running.local_addr()).await;
@@ -640,12 +648,7 @@ mod tests {
             .await
             .unwrap();
 
-        let ctx = running
-            .plugin_manager()
-            .read()
-            .await
-            .plugin_context("late")
-            .unwrap();
+        let ctx = running.plugins().plugin_context("late").await.unwrap();
         ctx.register_limbo_handler(Box::new(LateGate)).unwrap();
 
         assert!(
@@ -712,12 +715,7 @@ mod tests {
             .await
             .unwrap();
 
-        let ctx = running
-            .plugin_manager()
-            .read()
-            .await
-            .plugin_context("late")
-            .unwrap();
+        let ctx = running.plugins().plugin_context("late").await.unwrap();
         ctx.register_config_provider(Box::new(StaticDocuments("late-lobby")));
 
         assert!(
@@ -809,14 +807,11 @@ mod tests {
             .await
             .unwrap();
 
-        {
-            let manager = running.plugin_manager().read().await;
-            assert!(!manager.is_plugin_loaded("sleeper"));
-            assert!(matches!(
-                manager.plugin_state("sleeper"),
-                Some(PluginState::Disabled)
-            ));
-        }
+        assert!(!running.plugins().is_plugin_loaded("sleeper").await);
+        assert!(matches!(
+            running.plugins().plugin_state("sleeper").await,
+            Some(PluginState::Disabled)
+        ));
         assert!(log.lock().unwrap().is_empty());
 
         running.shutdown().await.unwrap();

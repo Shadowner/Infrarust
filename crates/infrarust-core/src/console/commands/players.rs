@@ -514,6 +514,7 @@ mod tests {
     use crate::permissions::PermissionService;
     use crate::player::registry::PlayerRegistryImpl;
     use crate::player::{PlayerCommand, PlayerSession};
+    use crate::plugin::PluginManagerHandle;
     use crate::plugin::PluginRegistryImpl;
     use crate::plugin::manager::PluginManager;
     use crate::provider::ProviderId;
@@ -551,21 +552,21 @@ mod tests {
         let permission_service =
             Arc::new(PermissionService::new_sync(&PermissionsConfig::default()));
         let command_manager = Arc::new(CommandManagerImpl::new());
-        let console = ConsoleServices::new(
-            Arc::clone(&player_registry),
-            Arc::clone(&connection_registry),
-            Arc::new(BanManager::disabled(
+        let console = ConsoleServices {
+            player_registry: Arc::clone(&player_registry),
+            connection_registry: Arc::clone(&connection_registry),
+            ban_manager: Arc::new(BanManager::disabled(
                 Arc::clone(&connection_registry),
                 Arc::new(EventBusImpl::new()),
             )),
-            None,
-            Arc::clone(&config_service),
-            Arc::new(tokio::sync::RwLock::new(PluginManager::new(Vec::new()))),
-            Arc::clone(&permission_service),
-            Arc::clone(&command_manager),
-            CancellationToken::new(),
-            Instant::now(),
-        );
+            server_manager: None,
+            config_service: Arc::clone(&config_service),
+            plugins: PluginManagerHandle::new(PluginManager::new(Vec::new())),
+            permission_service: Arc::clone(&permission_service),
+            command_manager: Arc::clone(&command_manager),
+            shutdown: CancellationToken::new(),
+            start_time: Instant::now(),
+        };
         let ir = CommandServices {
             player_registry,
             config_service,

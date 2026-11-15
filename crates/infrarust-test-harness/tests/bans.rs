@@ -19,7 +19,6 @@ use infrarust_core::console::ConsoleServices;
 use infrarust_core::console::commands::register_all;
 use infrarust_core::console::dispatcher::CommandDispatcher;
 use infrarust_core::console::output::{CommandOutput, OutputLine};
-use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_test_harness::{
     BackendConn, ClientSession, ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend,
     ProtocolVersion, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
@@ -245,24 +244,10 @@ async fn join(
 }
 
 fn console(proxy: &TestProxy) -> ConsoleServices {
-    let services = proxy.services();
-    let running = proxy.running().expect("the proxy is running");
-    ConsoleServices::new(
-        Arc::clone(&services.player_registry),
-        Arc::clone(&services.connection_registry),
-        Arc::clone(&services.ban_manager),
-        services.server_manager.clone(),
-        Arc::new(ConfigServiceImpl::new(
-            Arc::clone(&services.domain_router),
-            services.config_path.clone(),
-            Arc::clone(&services.config),
-        )),
-        Arc::clone(running.plugin_manager()),
-        Arc::clone(&services.permission_service),
-        Arc::clone(&services.command_manager),
-        proxy.shutdown_token().clone(),
-        running.start_time(),
-    )
+    proxy
+        .running()
+        .expect("the proxy is running")
+        .console_services()
 }
 
 async fn run_console(proxy: &TestProxy, line: &str) {

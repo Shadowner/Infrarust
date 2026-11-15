@@ -14,7 +14,7 @@ use infrarust_server_manager::ServerManagerService;
 use crate::ban::manager::BanManager;
 use crate::permissions::PermissionService;
 use crate::player::registry::PlayerRegistryImpl;
-use crate::plugin::manager::PluginManager;
+use crate::plugin::PluginManagerHandle;
 use crate::registry::ConnectionRegistry;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::services::config_service::ConfigServiceImpl;
@@ -25,40 +25,11 @@ pub struct ConsoleServices {
     pub ban_manager: Arc<BanManager>,
     pub server_manager: Option<Arc<ServerManagerService>>,
     pub config_service: Arc<ConfigServiceImpl>,
-    pub plugin_manager: Arc<tokio::sync::RwLock<PluginManager>>,
+    pub plugins: PluginManagerHandle,
     pub permission_service: Arc<PermissionService>,
     pub command_manager: Arc<CommandManagerImpl>,
     pub shutdown: CancellationToken,
     pub start_time: Instant,
-}
-
-impl ConsoleServices {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        player_registry: Arc<PlayerRegistryImpl>,
-        connection_registry: Arc<ConnectionRegistry>,
-        ban_manager: Arc<BanManager>,
-        server_manager: Option<Arc<ServerManagerService>>,
-        config_service: Arc<ConfigServiceImpl>,
-        plugin_manager: Arc<tokio::sync::RwLock<PluginManager>>,
-        permission_service: Arc<PermissionService>,
-        command_manager: Arc<CommandManagerImpl>,
-        shutdown: CancellationToken,
-        start_time: Instant,
-    ) -> Self {
-        Self {
-            player_registry,
-            connection_registry,
-            ban_manager,
-            server_manager,
-            config_service,
-            plugin_manager,
-            permission_service,
-            command_manager,
-            shutdown,
-            start_time,
-        }
-    }
 }
 
 pub struct ConsoleTask {

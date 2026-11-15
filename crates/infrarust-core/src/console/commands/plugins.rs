@@ -236,19 +236,18 @@ impl ConsoleCommand for PluginsCommand {
         services: &'a ConsoleServices,
     ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
-            let manager = services.plugin_manager.read().await;
-            let plugins: Vec<_> = manager
-                .list_plugins()
-                .into_iter()
-                .map(|meta| {
+            let plugins = services.plugins.plugins().await;
+            let rows: Vec<PluginRow<'_>> = plugins
+                .iter()
+                .map(|plugin| {
                     (
-                        meta,
-                        manager.plugin_state(&meta.id),
-                        manager.plugin_runtime(&meta.id),
+                        &plugin.metadata,
+                        plugin.state.as_ref(),
+                        plugin.runtime.clone(),
                     )
                 })
                 .collect();
-            plugins_output(&plugins)
+            plugins_output(&rows)
         })
     }
 }
@@ -282,13 +281,17 @@ impl ConsoleCommand for PluginCommand {
                 return usage(self);
             };
 
-            let manager = services.plugin_manager.read().await;
-            let Some(meta) = manager.list_plugins().into_iter().find(|p| p.id == *id) else {
+            let plugins = services.plugins.plugins().await;
+            let Some(plugin) = plugins.iter().find(|plugin| plugin.metadata.id == *id) else {
                 return CommandOutput::error(format!("Plugin '{id}' not found"));
             };
 
-            let runtime = manager.plugin_runtime(id);
-            plugin_block(meta, manager.plugin_state(id), runtime.as_ref()).into()
+            plugin_block(
+                &plugin.metadata,
+                plugin.state.as_ref(),
+                plugin.runtime.as_ref(),
+            )
+            .into()
         })
     }
 }

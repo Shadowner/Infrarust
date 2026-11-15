@@ -16,7 +16,6 @@ use tracing_subscriber::EnvFilter;
 
 use infrarust_config::ProxyConfig;
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
-use infrarust_core::services::config_service::ConfigServiceImpl;
 use infrarust_core::terminal::Banner;
 use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
@@ -313,23 +312,7 @@ async fn run(
         .await
         .context("failed to initialize proxy server")?;
 
-    let services = running.services();
-    let console_services = Arc::new(infrarust_core::console::ConsoleServices::new(
-        Arc::clone(&services.player_registry),
-        Arc::clone(&services.connection_registry),
-        Arc::clone(&services.ban_manager),
-        services.server_manager.clone(),
-        Arc::new(ConfigServiceImpl::new(
-            Arc::clone(&services.domain_router),
-            services.config_path.clone(),
-            Arc::clone(&services.config),
-        )),
-        Arc::clone(running.plugin_manager()),
-        Arc::clone(&services.permission_service),
-        Arc::clone(&services.command_manager),
-        shutdown.clone(),
-        running.start_time(),
-    ));
+    let console_services = Arc::new(running.console_services());
 
     let console_task = infrarust_core::console::ConsoleTask::new(console_services);
     let console_handle = tokio::spawn(console_task.run());
