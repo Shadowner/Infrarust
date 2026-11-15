@@ -17,7 +17,7 @@ use tracing_subscriber::EnvFilter;
 use infrarust_config::ProxyConfig;
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::services::config_service::ConfigServiceImpl;
-use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_core::terminal::Banner;
 use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 

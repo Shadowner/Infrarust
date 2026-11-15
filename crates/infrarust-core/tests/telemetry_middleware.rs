@@ -12,7 +12,7 @@ use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
 use infrarust_core::pipeline::types::{
     ConnectionIntent, HandshakeData, LoginData, LoginStartLayout, RoutingData,
 };
-use infrarust_core::telemetry::formatter::InfrarustFormatter;
+use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_protocol::version::ProtocolVersion;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
