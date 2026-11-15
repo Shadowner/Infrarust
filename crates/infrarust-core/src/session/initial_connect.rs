@@ -47,7 +47,7 @@ impl LoginFacts {
 }
 
 enum Refusal {
-    Denied(DisconnectCause),
+    Denied(Box<DisconnectCause>),
     Failed(CoreError),
 }
 
@@ -65,9 +65,9 @@ struct Chosen {
 
 async fn kick(ctx: &SessionContext<'_>, client: &mut ClientBridge, reason: Component) -> Refusal {
     client.disconnect(&reason, ctx.registry()).await.ok();
-    Refusal::Denied(DisconnectCause::Kicked {
+    Refusal::Denied(Box::new(DisconnectCause::Kicked {
         reason: Some(reason),
-    })
+    }))
 }
 
 async fn initial_limbo(
@@ -107,7 +107,7 @@ pub(crate) async fn resolve_initial_mode(
 ) -> Result<InitialMode, CoreError> {
     match initial(ctx, io, routing, backend_targets, pending_ticket, facts).await {
         Ok(initial) => Ok(InitialMode::Connected(Box::new(initial))),
-        Err(Refusal::Denied(cause)) => Ok(InitialMode::Denied(cause)),
+        Err(Refusal::Denied(cause)) => Ok(InitialMode::Denied(*cause)),
         Err(Refusal::Failed(e)) => Err(e),
     }
 }
@@ -297,7 +297,7 @@ async fn connect_or_kick(
             return Ok((ConnectionMode::Kicked(kick), Pending::nothing()));
         }
         Err(WakeFailure::ClientLeft) => {
-            return Err(Refusal::Denied(DisconnectCause::ClientQuit));
+            return Err(Refusal::Denied(Box::new(DisconnectCause::ClientQuit)));
         }
     };
     let warmed = warmed.then(|| fresh_targets(routing, ctx, pending_ticket));
@@ -326,7 +326,7 @@ async fn connect_or_kick(
             }
             Ok((ConnectionMode::Backend(backend), Pending::join(join)))
         }
-        Err(CoreError::ClientLeft) => Err(Refusal::Denied(DisconnectCause::ClientQuit)),
+        Err(CoreError::ClientLeft) => Err(Refusal::Denied(Box::new(DisconnectCause::ClientQuit))),
         Err(e) => {
             if !ctx.token.is_cancelled() {
                 tracing::info!(

@@ -85,7 +85,13 @@ struct Destination {
 
 enum Approval {
     Go(Destination),
-    Settled(SwitchResult),
+    Settled(Box<SwitchResult>),
+}
+
+impl Approval {
+    fn settled(result: SwitchResult) -> Self {
+        Self::Settled(Box::new(result))
+    }
 }
 
 pub(crate) async fn perform_switch(
@@ -96,7 +102,7 @@ pub(crate) async fn perform_switch(
 ) -> Result<SwitchResult, CoreError> {
     let destination = match approve(ctx, current_server, target).await? {
         Approval::Go(destination) => destination,
-        Approval::Settled(result) => return Ok(result),
+        Approval::Settled(result) => return Ok(*result),
     };
     let client = &mut io.client;
     let services = ctx.services;
@@ -204,7 +210,7 @@ async fn approve(
                     redirect.clone()
                 }
                 ServerPreConnectResult::Denied { reason } => {
-                    return Ok(Approval::Settled(SwitchResult::Denied(reason.clone())));
+                    return Ok(Approval::settled(SwitchResult::Denied(reason.clone())));
                 }
                 ServerPreConnectResult::SendToLimbo { limbo_handlers } => {
                     tracing::info!("server switch redirected to limbo by event");
@@ -216,7 +222,7 @@ async fn approve(
                     let handlers = services
                         .limbo_handler_registry
                         .resolve_handlers(handler_names)?;
-                    return Ok(Approval::Settled(SwitchResult::Limbo(LimboEntry {
+                    return Ok(Approval::settled(SwitchResult::Limbo(LimboEntry {
                         handlers,
                         context: LimboEntryContext::PluginRedirect {
                             from_server: Some(current_server.clone()),
@@ -228,7 +234,7 @@ async fn approve(
             if matches!(cause, ConnectCause::Switch | ConnectCause::PluginMessage)
                 && effective == *current_server
             {
-                return Ok(Approval::Settled(SwitchResult::Unchanged));
+                return Ok(Approval::settled(SwitchResult::Unchanged));
             }
             effective
         }
@@ -251,7 +257,7 @@ async fn approve(
             target = %server,
             "refusing to switch an unverified player to a server that requires verification"
         );
-        return Ok(Approval::Settled(SwitchResult::Denied(Component::text(
+        return Ok(Approval::settled(SwitchResult::Denied(Component::text(
             validation::UNVERIFIED_REFUSED,
         ))));
     }
