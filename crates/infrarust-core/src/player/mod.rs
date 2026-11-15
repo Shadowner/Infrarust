@@ -64,28 +64,36 @@ const SELF_WAIT_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
 pub const SHUTDOWN_REASON: &str = "Proxy is shutting down";
 
-/// Commands sent to the proxy loop for a specific player.
 #[derive(Debug)]
 pub enum PlayerCommand {
-    /// Send a system chat message to the player.
-    SendMessage(Component),
-    /// Display a title on the player's screen.
-    SendTitle(Box<TitleData>),
-    /// Display a message in the action bar.
-    SendActionBar(Component),
-    /// Send a raw packet to the player's client.
-    SendPacket(RawPacket),
-    /// Kick the player with a reason.
+    Packet(ClientPacket),
     Kick(Component),
-    /// Switch the player to a different backend server.
     SwitchServer(ServerId, ConnectCause),
     PluginMessage(OutgoingMessage),
-    HeaderFooter(Box<(Component, Component)>),
-    ClearTitle {
-        reset: bool,
-    },
-    BossBar(Uuid, BossBarCommand),
     Client(ClientCommand),
+}
+
+#[derive(Debug)]
+pub enum ClientPacket {
+    Message(Component),
+    Title(Box<TitleData>),
+    ActionBar(Component),
+    Raw(RawPacket),
+    HeaderFooter(Box<HeaderFooter>),
+    ClearTitle { reset: bool },
+    BossBar(Uuid, BossBarCommand),
+}
+
+impl From<ClientPacket> for PlayerCommand {
+    fn from(packet: ClientPacket) -> Self {
+        Self::Packet(packet)
+    }
+}
+
+#[derive(Debug)]
+pub struct HeaderFooter {
+    pub header: Component,
+    pub footer: Component,
 }
 
 #[derive(Debug)]
