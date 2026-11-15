@@ -53,6 +53,7 @@ use crate::session::backend_bridge::BackendBridge;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
+use crate::session::framed_stream::FramedStream;
 use crate::session::kick::BackendKick;
 use crate::session::login_bridge::{LoginClock, read_timeout};
 use crate::session::login_messages::{LoginMessages, Routed};
@@ -139,7 +140,7 @@ impl HotIds {
         if !awaiting_join {
             return None;
         }
-        match backend.state {
+        match backend.state() {
             ConnectionState::Play if Some(frame.id) == self.c_join_game => Some(Milestone::Joined),
             ConnectionState::Login if Some(frame.id) == self.c_login_success => {
                 Some(Milestone::LoggedIn)
@@ -181,7 +182,7 @@ impl LoopState {
         }
     }
 
-    const fn client_reading(client: &ClientBridge) -> ConnectionState {
+    fn client_reading(client: &ClientBridge) -> ConnectionState {
         if client.awaits_config_ack() {
             ConnectionState::Play
         } else {
@@ -189,11 +190,11 @@ impl LoopState {
         }
     }
 
-    const fn backend_reading(&self, backend: &BackendBridge) -> ConnectionState {
+    fn backend_reading(&self, backend: &BackendBridge) -> ConnectionState {
         if self.reconfiguring {
             ConnectionState::Config
         } else {
-            backend.state
+            backend.state()
         }
     }
 
@@ -238,7 +239,7 @@ impl LoopState {
         session.client_state().record_ping(sent_at.elapsed());
     }
 
-    const fn client_open(&self, client: &ClientBridge, in_game: bool) -> bool {
+    fn client_open(&self, client: &ClientBridge, in_game: bool) -> bool {
         match client.state() {
             ConnectionState::Play => in_game,
             ConnectionState::Config => !self.config_closing,
@@ -623,7 +624,7 @@ impl Loop<'_> {
         let frames = match presentation::restore_frames(
             &self.ctx.session,
             self.ctx.registry(),
-            self.io.client.protocol_version,
+            self.io.client.protocol_version(),
         ) {
             Ok(frames) => frames,
             Err(e) => {
@@ -652,7 +653,7 @@ impl Loop<'_> {
             return;
         }
         let Some(id) =
-            MessageIds::resolve(self.ctx.registry(), version).serverbound(self.backend.state)
+            MessageIds::resolve(self.ctx.registry(), version).serverbound(self.backend.state())
         else {
             return;
         };
@@ -672,7 +673,7 @@ impl Loop<'_> {
         let registry = self.ctx.registry();
         let services = self.ctx.services;
         let session = &self.ctx.session;
-        let version = self.io.client.protocol_version;
+        let version = self.io.client.protocol_version();
         let state = LoopState::client_reading(&self.io.client);
 
         if state == ConnectionState::Play {
@@ -881,7 +882,7 @@ impl Loop<'_> {
     ) -> Result<BackendAction, CoreError> {
         let registry = self.ctx.registry();
         let services = self.ctx.services;
-        let version = self.io.client.protocol_version;
+        let version = self.io.client.protocol_version();
         let state = self.state.backend_reading(self.backend);
 
         if state == ConnectionState::Play {
@@ -1140,9 +1141,8 @@ fn command_tree_frame(
     }
 }
 
-/// Queues injected frames from a codec filter's FrameOutput.
 fn send_injected_frames(
-    writer: &mut impl FrameWriter,
+    writer: &mut FramedStream,
     output: &mut infrarust_api::filter::FrameOutput,
     send_before: bool,
     send_after: bool,
@@ -1160,24 +1160,6 @@ fn send_injected_frames(
     Ok(())
 }
 
-/// Helper trait to abstract over client/backend bridge for queueing writes.
-/// Queued frames are sent by the arm-end `flush()` in `proxy_loop`.
-trait FrameWriter {
-    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError>;
-}
-
-impl FrameWriter for ClientBridge {
-    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        ClientBridge::queue_frame(self, frame)
-    }
-}
-
-impl FrameWriter for BackendBridge {
-    fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        BackendBridge::queue_frame(self, frame)
-    }
-}
-
 enum Filtered {
     Forward,
     Consumed,
@@ -1187,7 +1169,7 @@ enum Filtered {
 fn apply_codec_filter(
     chain: &mut CodecFilterChain,
     frame: &mut PacketFrame,
-    writer: &mut impl FrameWriter,
+    writer: &mut FramedStream,
 ) -> Result<Filtered, CoreError> {
     if chain.is_empty() {
         return Ok(Filtered::Forward);

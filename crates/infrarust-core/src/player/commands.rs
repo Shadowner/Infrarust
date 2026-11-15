@@ -118,7 +118,7 @@ impl CommandInbox {
         state: ConnectionState,
         command: ClientCommand,
     ) -> Result<(), CoreError> {
-        let version = client.protocol_version;
+        let version = client.protocol_version();
         let config = state == ConnectionState::Config;
         let frame = match command {
             ClientCommand::PushPack(pack) => {
@@ -232,7 +232,7 @@ impl CommandInbox {
         if self.messages.messages.is_empty() {
             return;
         }
-        let version = client.protocol_version;
+        let version = client.protocol_version();
         let ids = MessageIds::resolve(registry, version);
         let api_version = ApiVersion::new(version.0);
         let mut kept = MessageQueue::new();
@@ -246,11 +246,11 @@ impl CommandInbox {
                 MessageTarget::Backend => match backend.as_deref_mut() {
                     Some(backend)
                         if matches!(
-                            backend.state,
+                            backend.state(),
                             ConnectionState::Config | ConnectionState::Play
                         ) =>
                     {
-                        ids.serverbound(backend.state).map(|id| {
+                        ids.serverbound(backend.state()).map(|id| {
                             backend.queue_frame(&channels::build(
                                 id,
                                 channel,
@@ -406,7 +406,7 @@ fn queue_frames(
     command: PlayerCommand,
     registry: &PacketRegistry,
 ) -> Result<(), CoreError> {
-    let version = client.protocol_version;
+    let version = client.protocol_version();
     match command {
         PlayerCommand::SendMessage(message) => client.queue_frame(
             &packets::build_system_chat_message(&message, version, registry)?,

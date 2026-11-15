@@ -77,7 +77,7 @@ async fn start_login(
         backend.send_handshake(&handshake).await?;
     } else {
         backend
-            .send_raw(&rewrite_handshake(&ctx.handshake, config)?)
+            .write_unframed(&rewrite_handshake(&ctx.handshake, config)?)
             .await?;
     }
     backend

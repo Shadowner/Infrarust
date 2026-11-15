@@ -101,7 +101,7 @@ pub(super) async fn replay(
     target: &ServerConfig,
     version: ProtocolVersion,
 ) -> Result<(), CoreError> {
-    let frames = client_state_frames(session, services, target, backend.state, version);
+    let frames = client_state_frames(session, services, target, backend.state(), version);
     if frames.is_empty() {
         return Ok(());
     }

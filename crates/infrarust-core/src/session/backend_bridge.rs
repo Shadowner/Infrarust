@@ -1,13 +1,10 @@
-use std::io::ErrorKind;
+use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio_util::sync::CancellationToken;
 
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
-use infrarust_protocol::io::{PacketDecoder, PacketEncoder, PacketFrame};
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::{
     CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
@@ -20,35 +17,36 @@ use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::pipeline::types::HandshakeData;
-use crate::session::bounded_write::WriteGuard;
+use crate::session::framed_stream::FramedStream;
 use crate::session::kick::BackendKick;
 use crate::session::login_messages::LoginMessages;
-use crate::util::packets::encode_for_state;
-
-const READ_CHUNK: usize = 16 * 1024;
 
 const ONLINE_BACKEND: &str =
     "the backend is in online mode; intercepted modes need online-mode=false";
 
 pub struct BackendBridge {
-    stream: TcpStream,
-    writes: WriteGuard,
-    decoder: PacketDecoder,
-    encoder: PacketEncoder,
-    pub state: ConnectionState,
-    pub protocol_version: ProtocolVersion,
+    framed: FramedStream,
     server_address: Option<infrarust_config::ServerAddress>,
+}
+
+impl Deref for BackendBridge {
+    type Target = FramedStream;
+
+    fn deref(&self) -> &FramedStream {
+        &self.framed
+    }
+}
+
+impl DerefMut for BackendBridge {
+    fn deref_mut(&mut self) -> &mut FramedStream {
+        &mut self.framed
+    }
 }
 
 impl BackendBridge {
     pub fn new(stream: TcpStream, protocol_version: ProtocolVersion) -> Self {
         Self {
-            stream,
-            writes: WriteGuard::new(),
-            decoder: PacketDecoder::new(),
-            encoder: PacketEncoder::new(),
-            state: ConnectionState::Login,
-            protocol_version,
+            framed: FramedStream::new(stream, protocol_version),
             server_address: None,
         }
     }
@@ -61,71 +59,6 @@ impl BackendBridge {
 
     pub const fn server_address(&self) -> Option<&infrarust_config::ServerAddress> {
         self.server_address.as_ref()
-    }
-
-    pub fn set_cancel(&mut self, cancel: CancellationToken) {
-        self.writes.set_cancel(cancel);
-    }
-
-    pub async fn read_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
-        loop {
-            if let Some(frame) = self.decoder.try_next_frame()? {
-                return Ok(Some(frame));
-            }
-
-            self.stream.readable().await?;
-            let buf = self.decoder.read_buf_mut();
-            buf.reserve(READ_CHUNK);
-            match self.stream.try_read_buf(buf) {
-                Ok(0) => return Ok(None),
-                Ok(_) => {}
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
-                Err(e) => return Err(e.into()),
-            }
-        }
-    }
-
-    pub fn try_next_frame(&mut self) -> Result<Option<PacketFrame>, CoreError> {
-        Ok(self.decoder.try_next_frame()?)
-    }
-
-    pub fn queue_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        Ok(self.encoder.append_frame(frame)?)
-    }
-
-    pub async fn flush(&mut self) -> Result<(), CoreError> {
-        let data = self.encoder.take();
-        if data.is_empty() {
-            return self.writes.check();
-        }
-        self.writes.write_all(&mut self.stream, &data).await
-    }
-
-    pub async fn write_frame(&mut self, frame: &PacketFrame) -> Result<(), CoreError> {
-        self.queue_frame(frame)?;
-        self.flush().await
-    }
-
-    pub async fn send_packet<P: Packet>(
-        &mut self,
-        packet: &P,
-        registry: &PacketRegistry,
-    ) -> Result<(), CoreError> {
-        let frame = encode_for_state(packet, self.state, self.protocol_version, registry)?;
-        self.write_frame(&frame).await
-    }
-
-    pub const fn set_compression(&mut self, threshold: i32) {
-        self.decoder.set_compression(threshold);
-        self.encoder.set_compression(threshold);
-    }
-
-    pub const fn compression_threshold(&self) -> Option<i32> {
-        self.encoder.compression_threshold()
-    }
-
-    pub const fn set_state(&mut self, state: ConnectionState) {
-        self.state = state;
     }
 
     pub(crate) fn online_mode_refusal(&self) -> CoreError {
@@ -143,28 +76,19 @@ impl BackendBridge {
         server_config: &ServerConfig,
     ) -> Result<(), CoreError> {
         let handshake_bytes = rewrite_handshake(handshake_data, server_config)?;
-        self.writes
-            .write_all(&mut self.stream, &handshake_bytes)
-            .await?;
+        self.write_unframed(&handshake_bytes).await?;
 
         for raw in handshake_data.raw_packets.iter().skip(1) {
-            self.writes.write_all(&mut self.stream, raw).await?;
+            self.write_unframed(raw).await?;
         }
-
-        self.stream.flush().await?;
         Ok(())
     }
 
     pub async fn send_handshake(&mut self, handshake: &SHandshake) -> Result<(), CoreError> {
         let mut payload = Vec::new();
-        handshake.encode(&mut payload, self.protocol_version)?;
-        self.encoder.append_raw(0x00, &payload)?;
-        let data = self.encoder.take();
-        self.writes.write_all(&mut self.stream, &data).await
-    }
-
-    pub async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), CoreError> {
-        self.writes.write_all(&mut self.stream, bytes).await
+        handshake.encode(&mut payload, self.protocol_version())?;
+        self.queue_raw(0x00, &payload)?;
+        self.flush().await
     }
 
     pub async fn send_login_start(
@@ -177,9 +101,7 @@ impl BackendBridge {
             uuid: Some(offline_uuid(username)),
             profile_key: None,
         };
-        self.send_packet(&login_start, registry).await?;
-        self.stream.flush().await?;
-        Ok(())
+        self.send_packet(&login_start, registry).await
     }
 
     pub async fn consume_backend_login(

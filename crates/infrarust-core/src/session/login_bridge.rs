@@ -452,7 +452,7 @@ mod tests {
             assert_eq!(sent.payload, received.payload);
         }
         assert_eq!(received_answers[1].payload[..5], var_int(-101)[..]);
-        assert_eq!(backend_bridge.state, ConnectionState::Config);
+        assert_eq!(backend_bridge.state(), ConnectionState::Config);
     }
 
     #[tokio::test]

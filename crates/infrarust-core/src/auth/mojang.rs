@@ -163,7 +163,7 @@ impl MojangAuth {
         OsRng.fill_bytes(&mut verify_token);
 
         // Send EncryptionRequest
-        let version = client.protocol_version;
+        let version = client.protocol_version();
         let enc_request = CEncryptionRequest {
             server_id: String::new(),
             public_key: self.public_key_der.clone(),

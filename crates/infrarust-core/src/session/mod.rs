@@ -7,6 +7,7 @@ pub(crate) mod client_bridge;
 pub(crate) mod client_login;
 pub(crate) mod context;
 pub(crate) mod frame_chain;
+pub(crate) mod framed_stream;
 pub(crate) mod initial_connect;
 pub mod kick;
 pub(crate) mod login_admission;
