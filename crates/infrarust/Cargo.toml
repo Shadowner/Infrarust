@@ -22,7 +22,8 @@ name = "infrarust"
 path = "src/main.rs"
 
 [features]
-default = ["default-plugins", "libdeflater", "wasm"]
+default = ["default-plugins", "libdeflater", "wasm", "mimalloc"]
+mimalloc = ["dep:mimalloc"]
 telemetry = ["infrarust-core/telemetry", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 docker = ["infrarust-core/docker"]
 default-plugins = ["plugin-auth", "plugin-server-wake"]
@@ -37,6 +38,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -62,8 +64,7 @@ infrarust-loader-wasm = { workspace = true, optional = true, features = ["wasm"]
 opentelemetry = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 
-[target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = { workspace = true }
+mimalloc = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
