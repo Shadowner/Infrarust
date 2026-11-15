@@ -14,7 +14,7 @@ use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{
-    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, select_forwarder,
+    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, Forwarder,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -100,8 +100,7 @@ pub(crate) struct Ready {
 
 impl Ready {
     pub(crate) async fn forward(mut self, client: TcpStream) -> ForwardResult {
-        let forwarder = select_forwarder(self.mode);
-        let result = forwarder
+        let result = Forwarder::for_mode(self.mode)
             .forward(
                 client,
                 self.backend.into_stream(),

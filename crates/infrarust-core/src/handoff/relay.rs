@@ -5,7 +5,7 @@ use infrarust_api::handoff::{Handoff, HandoffTarget};
 use infrarust_api::types::ServerId;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_transport::{
-    BackendConnection, BackendConnector, CopyForwarder, ForwardResult, Forwarder, TransportError,
+    BackendConnection, BackendConnector, ForwardResult, Forwarder, TransportError,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -183,12 +183,12 @@ impl HandoffRelay {
         Ok(result)
     }
 
-    fn forwarder(&self) -> Box<dyn Forwarder> {
+    fn forwarder(&self) -> Forwarder {
         #[cfg(target_os = "linux")]
         if self.zero_copy {
-            return Box::new(infrarust_transport::SpliceForwarder::new());
+            return Forwarder::Splice;
         }
-        Box::new(CopyForwarder)
+        Forwarder::Copy
     }
 
     fn resolve(

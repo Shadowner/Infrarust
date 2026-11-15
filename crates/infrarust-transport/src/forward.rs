@@ -1,12 +1,4 @@
-//! Bidirectional TCP forwarding.
-//!
-//! Provides two forwarding strategies:
-//! - `CopyForwarder`: portable userspace copy via two spawned `tokio::io::copy` tasks
-//! - `SpliceForwarder`: Linux-only zero-copy via `splice(2)` syscall
-
-use std::future::Future;
 use std::io;
-use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use tokio::net::TcpStream;
@@ -16,56 +8,59 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_config::ProxyMode;
 
-/// Result of a forwarding session.
 #[derive(Debug)]
 pub struct ForwardResult {
-    /// Bytes transferred from client to backend.
     pub client_to_backend: u64,
-    /// Bytes transferred from backend to client.
     pub backend_to_client: u64,
-    /// Reason the forwarding ended.
     pub reason: ForwardEndReason,
 }
 
-/// Reason a forwarding session ended.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ForwardEndReason {
-    /// Client closed the connection.
     ClientClosed,
-    /// Backend closed the connection.
     BackendClosed,
-    /// Shutdown signal received.
     Shutdown,
-    /// I/O error during forwarding.
     Error(io::Error),
 }
 
-/// Trait for bidirectional TCP forwarding strategies.
-///
-/// Uses `Pin<Box<dyn Future>>` for dyn-compatibility.
-pub trait Forwarder: Send + Sync {
-    /// Forwards data bidirectionally between client and backend.
-    fn forward(
-        &self,
-        client: TcpStream,
-        backend: TcpStream,
-        shutdown: CancellationToken,
-    ) -> Pin<Box<dyn Future<Output = ForwardResult> + Send + '_>>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Forwarder {
+    Copy,
+    #[cfg(target_os = "linux")]
+    Splice,
 }
 
-/// Portable userspace copy forwarder spawning one `tokio::io::copy` task per direction.
-#[derive(Debug, Default)]
-pub struct CopyForwarder;
+impl Forwarder {
+    pub fn for_mode(mode: ProxyMode) -> Self {
+        if mode != ProxyMode::ZeroCopy {
+            return Self::Copy;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Self::Splice
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            tracing::warn!(
+                "ZeroCopy mode requested but splice is only available on Linux, \
+                 falling back to userspace copy"
+            );
+            Self::Copy
+        }
+    }
 
-impl Forwarder for CopyForwarder {
-    fn forward(
-        &self,
+    pub async fn forward(
+        self,
         client: TcpStream,
         backend: TcpStream,
         shutdown: CancellationToken,
-    ) -> Pin<Box<dyn Future<Output = ForwardResult> + Send + '_>> {
-        Box::pin(copy_forward(client, backend, shutdown))
+    ) -> ForwardResult {
+        match self {
+            Self::Copy => copy_forward(client, backend, shutdown).await,
+            #[cfg(target_os = "linux")]
+            Self::Splice => splice_impl::splice_forward(client, backend, shutdown).await,
+        }
     }
 }
 
@@ -177,37 +172,10 @@ fn transferred(end: Option<&io::Result<u64>>) -> u64 {
 
 #[cfg(target_os = "linux")]
 mod splice_impl {
-    use super::{
-        CancellationToken, ForwardEndReason, ForwardResult, Forwarder, Future, Pin, Side,
-        TcpStream, finish,
-    };
-    use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
+    use super::{CancellationToken, ForwardEndReason, ForwardResult, Side, TcpStream, finish};
+    use std::os::fd::{AsFd, OwnedFd};
 
-    /// Zero-copy forwarder using the Linux `splice(2)` syscall.
-    #[derive(Debug)]
-    pub struct SpliceForwarder {
-        pipe_size: usize,
-    }
-
-    impl Default for SpliceForwarder {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl SpliceForwarder {
-        /// Creates a new splice forwarder with default pipe size (64 KiB).
-        pub const fn new() -> Self {
-            Self {
-                pipe_size: 64 * 1024,
-            }
-        }
-
-        /// Creates a new splice forwarder with custom pipe size.
-        pub const fn with_pipe_size(pipe_size: usize) -> Self {
-            Self { pipe_size }
-        }
-    }
+    const PIPE_SIZE: usize = 64 * 1024;
 
     struct KernelPipe {
         read_fd: OwnedFd,
@@ -248,15 +216,6 @@ mod splice_impl {
         }
     }
 
-    /// Splices data in one direction via a kernel pipe.
-    ///
-    /// Uses the `TcpStream`'s readiness methods to avoid double epoll registration.
-    /// When the source reaches EOF, the destination's write half is shut down to
-    /// propagate the EOF signal to the other direction.
-    /// Converts a nix errno to a `std::io::Error`, preserving the OS error code.
-    ///
-    /// Unlike `Error::other()`, this correctly maps EAGAIN to `ErrorKind::WouldBlock`,
-    /// which is required for `try_io`'s readiness-clearing contract.
     fn nix_to_io_error(e: nix::Error) -> std::io::Error {
         std::io::Error::from_raw_os_error(e as i32)
     }
@@ -277,20 +236,14 @@ mod splice_impl {
         tokio::pin!(cancelled);
 
         loop {
-            // Drain: source → pipe
             let drained = tokio::select! {
                 biased;
                 () = &mut cancelled => break,
                 result = src.ready(Interest::READABLE) => {
                     let _ = result?;
-                    // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
-                    // We borrow it only within the scope of `try_io`'s closure, which guarantees
-                    // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
-                    #[allow(unsafe_code)]
-                    let src_fd = unsafe { BorrowedFd::borrow_raw(src.as_raw_fd()) };
                     match src.try_io(Interest::READABLE, || {
                         nix::fcntl::splice(
-                            src_fd,
+                            src.as_fd(),
                             None,
                             &pipe.write_fd,
                             None,
@@ -306,7 +259,6 @@ mod splice_impl {
                 }
             };
 
-            // Pump: pipe → destination
             let mut pumped = 0usize;
             while pumped < drained {
                 tokio::select! {
@@ -316,13 +268,8 @@ mod splice_impl {
                     }
                     result = dst.ready(Interest::WRITABLE) => {
                         let _ = result?;
-                        // SAFETY: `TcpStream` owns a valid file descriptor for its entire lifetime.
-                        // We borrow it only within the scope of `try_io`'s closure, which guarantees
-                        // the fd remains valid. The `TcpStream` is not dropped or moved during this call.
-                        #[allow(unsafe_code)]
-                        let dst_fd = unsafe { BorrowedFd::borrow_raw(dst.as_raw_fd()) };
                         match dst.try_io(Interest::WRITABLE, || {
-                            nix::fcntl::splice(&pipe.read_fd, None, dst_fd, None, drained - pumped, flags)
+                            nix::fcntl::splice(&pipe.read_fd, None, dst.as_fd(), None, drained - pumped, flags)
                                 .map_err(nix_to_io_error)
                         }) {
                             Ok(0) => {
@@ -339,105 +286,67 @@ mod splice_impl {
                 }
             }
 
-            // pumped is a byte count from splice, always fits in u64.
             total += pumped as u64;
         }
 
-        // Propagate EOF to the other end by half-closing the destination's write side.
-        // This lets the other direction detect EOF and finish naturally.
         if eof_received {
-            let _ = nix::sys::socket::shutdown(dst.as_raw_fd(), nix::sys::socket::Shutdown::Write);
+            let _ = socket2::SockRef::from(dst).shutdown(std::net::Shutdown::Write);
         }
 
         Ok(eof_received.then_some(total))
     }
 
-    impl Forwarder for SpliceForwarder {
-        fn forward(
-            &self,
-            client: TcpStream,
-            backend: TcpStream,
-            shutdown: CancellationToken,
-        ) -> Pin<Box<dyn Future<Output = ForwardResult> + Send + '_>> {
-            let pipe_size = self.pipe_size;
-            Box::pin(async move {
-                let pipe_c2b = match KernelPipe::new(pipe_size) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return ForwardResult {
-                            client_to_backend: 0,
-                            backend_to_client: 0,
-                            reason: ForwardEndReason::Error(e),
-                        };
-                    }
-                };
-
-                let pipe_b2c = match KernelPipe::new(pipe_size) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return ForwardResult {
-                            client_to_backend: 0,
-                            backend_to_client: 0,
-                            reason: ForwardEndReason::Error(e),
-                        };
-                    }
-                };
-
-                let c2b = splice_one_direction(&client, &backend, &pipe_c2b, shutdown.clone());
-                let b2c = splice_one_direction(&backend, &client, &pipe_b2c, shutdown.clone());
-
-                let cancelled = shutdown.cancelled();
-                tokio::pin!(c2b, b2c, cancelled);
-
-                let mut first = None;
-                let mut c2b_end = None;
-                let mut b2c_end = None;
-                while c2b_end.is_none() || b2c_end.is_none() {
-                    let (side, ended) = tokio::select! {
-                        biased;
-                        () = &mut cancelled => break,
-                        ended = &mut c2b, if c2b_end.is_none() => (Side::Client, ended),
-                        ended = &mut b2c, if b2c_end.is_none() => (Side::Backend, ended),
-                    };
-                    let Some(ended) = ended.transpose() else {
-                        break;
-                    };
-                    let failed = ended.is_err();
-                    first.get_or_insert(side);
-                    match side {
-                        Side::Client => c2b_end = Some(ended),
-                        Side::Backend => b2c_end = Some(ended),
-                    }
-                    if failed {
-                        break;
-                    }
-                }
-                finish(first, c2b_end, b2c_end)
-            })
+    fn pipe_failed(e: std::io::Error) -> ForwardResult {
+        ForwardResult {
+            client_to_backend: 0,
+            backend_to_client: 0,
+            reason: ForwardEndReason::Error(e),
         }
     }
-}
 
-#[cfg(target_os = "linux")]
-pub use splice_impl::SpliceForwarder;
+    pub(super) async fn splice_forward(
+        client: TcpStream,
+        backend: TcpStream,
+        shutdown: CancellationToken,
+    ) -> ForwardResult {
+        let pipe_c2b = match KernelPipe::new(PIPE_SIZE) {
+            Ok(pipe) => pipe,
+            Err(e) => return pipe_failed(e),
+        };
+        let pipe_b2c = match KernelPipe::new(PIPE_SIZE) {
+            Ok(pipe) => pipe,
+            Err(e) => return pipe_failed(e),
+        };
 
-/// Selects the appropriate forwarder based on the proxy mode.
-pub fn select_forwarder(mode: ProxyMode) -> Box<dyn Forwarder> {
-    match mode {
-        ProxyMode::ZeroCopy => {
-            #[cfg(target_os = "linux")]
-            {
-                Box::new(SpliceForwarder::new())
+        let c2b = splice_one_direction(&client, &backend, &pipe_c2b, shutdown.clone());
+        let b2c = splice_one_direction(&backend, &client, &pipe_b2c, shutdown.clone());
+
+        let cancelled = shutdown.cancelled();
+        tokio::pin!(c2b, b2c, cancelled);
+
+        let mut first = None;
+        let mut c2b_end = None;
+        let mut b2c_end = None;
+        while c2b_end.is_none() || b2c_end.is_none() {
+            let (side, ended) = tokio::select! {
+                biased;
+                () = &mut cancelled => break,
+                ended = &mut c2b, if c2b_end.is_none() => (Side::Client, ended),
+                ended = &mut b2c, if b2c_end.is_none() => (Side::Backend, ended),
+            };
+            let Some(ended) = ended.transpose() else {
+                break;
+            };
+            let failed = ended.is_err();
+            first.get_or_insert(side);
+            match side {
+                Side::Client => c2b_end = Some(ended),
+                Side::Backend => b2c_end = Some(ended),
             }
-            #[cfg(not(target_os = "linux"))]
-            {
-                tracing::warn!(
-                    "ZeroCopy mode requested but splice is only available on Linux, \
-                     falling back to CopyForwarder"
-                );
-                Box::new(CopyForwarder)
+            if failed {
+                break;
             }
         }
-        _ => Box::new(CopyForwarder),
+        finish(first, c2b_end, b2c_end)
     }
 }

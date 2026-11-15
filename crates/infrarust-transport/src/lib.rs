@@ -16,7 +16,7 @@ pub mod socket;
 pub use backend::{BackendConnection, BackendConnector, ConnectAttempt, ConnectAttemptObserver};
 pub use connection::{ClientConnection, ConnectionInfo};
 pub use error::{TransportError, TransportResult};
-pub use forward::{CopyForwarder, ForwardEndReason, ForwardResult, Forwarder, select_forwarder};
+pub use forward::{ForwardEndReason, ForwardResult, Forwarder};
 pub use ip_limit::{IpGuard, IpKey, IpLimiter};
 pub use listener::{
     AcceptedConnection, ConnectionSlot, Listener, ListenerConfig, PendingConnection,
@@ -28,6 +28,3 @@ pub use socket::{
     configure_listener_socket, configure_stream_socket, init_socket_activation,
     into_tokio_listener, into_tokio_stream,
 };
-
-#[cfg(target_os = "linux")]
-pub use forward::SpliceForwarder;

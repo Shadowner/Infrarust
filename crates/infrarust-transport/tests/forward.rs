@@ -23,7 +23,7 @@ async fn test_copy_forwarder_bidirectional() {
     let (proxy_backend, backend_side) = create_connected_pair().await;
 
     let shutdown = CancellationToken::new();
-    let forwarder = CopyForwarder;
+    let forwarder = Forwarder::Copy;
 
     let forward_handle = tokio::spawn({
         let shutdown = shutdown.clone();
@@ -71,7 +71,7 @@ async fn test_copy_forwarder_shutdown() {
     let (proxy_backend, _backend_side) = create_connected_pair().await;
 
     let shutdown = CancellationToken::new();
-    let forwarder = CopyForwarder;
+    let forwarder = Forwarder::Copy;
 
     let forward_handle = tokio::spawn({
         let shutdown = shutdown.clone();
@@ -96,7 +96,7 @@ async fn test_copy_forwarder_shutdown() {
     assert!(matches!(result.reason, ForwardEndReason::Shutdown));
 }
 
-async fn assert_client_eof_half_close<F: Forwarder + 'static>(forwarder: F) {
+async fn assert_client_eof_half_close(forwarder: Forwarder) {
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
 
@@ -154,13 +154,13 @@ async fn assert_client_eof_half_close<F: Forwarder + 'static>(forwarder: F) {
 
 #[tokio::test]
 async fn test_copy_forwarder_client_eof_half_close() {
-    assert_client_eof_half_close(CopyForwarder).await;
+    assert_client_eof_half_close(Forwarder::Copy).await;
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn test_splice_forwarder_client_eof_half_close() {
-    assert_client_eof_half_close(SpliceForwarder::new()).await;
+    assert_client_eof_half_close(Forwarder::Splice).await;
 }
 
 #[cfg(target_os = "linux")]
@@ -170,7 +170,7 @@ async fn test_splice_forwarder_linux() {
     let (proxy_backend, backend_side) = create_connected_pair().await;
 
     let shutdown = CancellationToken::new();
-    let forwarder = SpliceForwarder::new();
+    let forwarder = Forwarder::Splice;
 
     let forward_handle = tokio::spawn({
         let shutdown = shutdown.clone();
@@ -225,9 +225,9 @@ async fn test_splice_forwarder_linux() {
 const T: Duration = Duration::from_secs(5);
 const SHUTDOWN_ROUNDS: usize = 20;
 
-type Forwarding<'a> = std::pin::Pin<Box<dyn Future<Output = ForwardResult> + Send + 'a>>;
+type Forwarding = std::pin::Pin<Box<dyn Future<Output = ForwardResult> + Send>>;
 
-async fn start_without_driving(forward: &mut Forwarding<'_>) {
+async fn start_without_driving(forward: &mut Forwarding) {
     let pending =
         std::future::poll_fn(|cx| std::task::Poll::Ready(forward.as_mut().poll(cx).is_pending()))
             .await;
@@ -274,8 +274,9 @@ async fn relay_one_byte_each_way(
 async fn copy_forwarder_blames_the_backend_that_closed_first_even_when_polled_late() {
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
-    let forwarder = CopyForwarder;
-    let mut forward = forwarder.forward(proxy_client, proxy_backend, CancellationToken::new());
+    let forwarder = Forwarder::Copy;
+    let mut forward: Forwarding =
+        Box::pin(forwarder.forward(proxy_client, proxy_backend, CancellationToken::new()));
     start_without_driving(&mut forward).await;
     let (mut client_read, mut client_write) = client_side.into_split();
     let (mut backend_read, mut backend_write) = backend_side.into_split();
@@ -297,8 +298,9 @@ async fn copy_forwarder_blames_the_backend_that_closed_first_even_when_polled_la
 async fn copy_forwarder_blames_the_client_that_closed_first_even_when_polled_late() {
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
-    let forwarder = CopyForwarder;
-    let mut forward = forwarder.forward(proxy_client, proxy_backend, CancellationToken::new());
+    let forwarder = Forwarder::Copy;
+    let mut forward: Forwarding =
+        Box::pin(forwarder.forward(proxy_client, proxy_backend, CancellationToken::new()));
     start_without_driving(&mut forward).await;
     let (mut client_read, mut client_write) = client_side.into_split();
     let (mut backend_read, mut backend_write) = backend_side.into_split();
@@ -316,13 +318,11 @@ async fn copy_forwarder_blames_the_client_that_closed_first_even_when_polled_lat
     );
 }
 
-async fn assert_blames_the_side_that_closed_first<F: Forwarder + Default + 'static>(
-    backend_first: bool,
-) {
+async fn assert_blames_the_side_that_closed_first(forwarder: Forwarder, backend_first: bool) {
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
     let forward = tokio::spawn(async move {
-        F::default()
+        forwarder
             .forward(proxy_client, proxy_backend, CancellationToken::new())
             .await
     });
@@ -357,23 +357,23 @@ async fn assert_blames_the_side_that_closed_first<F: Forwarder + Default + 'stat
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn splice_forwarder_blames_the_backend_that_closed_first() {
-    assert_blames_the_side_that_closed_first::<SpliceForwarder>(true).await;
+    assert_blames_the_side_that_closed_first(Forwarder::Splice, true).await;
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn splice_forwarder_blames_the_client_that_closed_first() {
-    assert_blames_the_side_that_closed_first::<SpliceForwarder>(false).await;
+    assert_blames_the_side_that_closed_first(Forwarder::Splice, false).await;
 }
 
-async fn assert_shutdown_ends_a_half_closed_forward<F: Forwarder + Default + 'static>() {
+async fn assert_shutdown_ends_a_half_closed_forward(forwarder: Forwarder) {
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
     let shutdown = CancellationToken::new();
     let forward = tokio::spawn({
         let shutdown = shutdown.clone();
         async move {
-            F::default()
+            forwarder
                 .forward(proxy_client, proxy_backend, shutdown)
                 .await
         }
@@ -409,16 +409,16 @@ async fn assert_shutdown_ends_a_half_closed_forward<F: Forwarder + Default + 'st
 
 #[tokio::test]
 async fn copy_forwarder_shutdown_ends_a_half_closed_forward() {
-    assert_shutdown_ends_a_half_closed_forward::<CopyForwarder>().await;
+    assert_shutdown_ends_a_half_closed_forward(Forwarder::Copy).await;
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn splice_forwarder_shutdown_ends_a_half_closed_forward() {
-    assert_shutdown_ends_a_half_closed_forward::<SpliceForwarder>().await;
+    assert_shutdown_ends_a_half_closed_forward(Forwarder::Splice).await;
 }
 
-async fn assert_shutdown_is_reported_as_shutdown<F: Forwarder + Default + 'static>() {
+async fn assert_shutdown_is_reported_as_shutdown(forwarder: Forwarder) {
     for round in 0..SHUTDOWN_ROUNDS {
         let (mut client_side, proxy_client) = create_connected_pair().await;
         let (proxy_backend, mut backend_side) = create_connected_pair().await;
@@ -426,7 +426,7 @@ async fn assert_shutdown_is_reported_as_shutdown<F: Forwarder + Default + 'stati
         let forward = tokio::spawn({
             let shutdown = shutdown.clone();
             async move {
-                F::default()
+                forwarder
                     .forward(proxy_client, proxy_backend, shutdown)
                     .await
             }
@@ -450,11 +450,11 @@ async fn assert_shutdown_is_reported_as_shutdown<F: Forwarder + Default + 'stati
 
 #[tokio::test]
 async fn copy_forwarder_reports_shutdown_as_shutdown() {
-    assert_shutdown_is_reported_as_shutdown::<CopyForwarder>().await;
+    assert_shutdown_is_reported_as_shutdown(Forwarder::Copy).await;
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn splice_forwarder_reports_shutdown_as_shutdown() {
-    assert_shutdown_is_reported_as_shutdown::<SpliceForwarder>().await;
+    assert_shutdown_is_reported_as_shutdown(Forwarder::Splice).await;
 }
