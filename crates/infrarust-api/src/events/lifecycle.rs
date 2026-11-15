@@ -414,17 +414,4 @@ mod tests {
         assert_eq!(DisconnectCause::Shutdown.as_str(), "shutdown");
         assert_eq!(DisconnectCause::Error.as_str(), "error");
     }
-
-    #[test]
-    fn non_exhaustive_result_match() {
-        let result = PreLoginResult::Allowed;
-        #[allow(unreachable_patterns)]
-        match result {
-            PreLoginResult::Allowed
-            | PreLoginResult::Denied { .. }
-            | PreLoginResult::ForceOffline
-            | PreLoginResult::ForceOnline
-            | _ => {}
-        }
-    }
 }

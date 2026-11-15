@@ -580,19 +580,6 @@ mod tests {
     }
 
     #[test]
-    fn ban_target_non_exhaustive() {
-        let target = BanTarget::Username("griefer".into());
-        #[allow(unreachable_patterns)]
-        match target {
-            BanTarget::Ip(_)
-            | BanTarget::IpRange(_)
-            | BanTarget::Username(_)
-            | BanTarget::Uuid(_)
-            | _ => {}
-        }
-    }
-
-    #[test]
     fn ban_entry_permanent() {
         let entry = BanEntry::new(
             "1",

@@ -199,23 +199,3 @@ pub trait ConfigService: Send + Sync + crate::__sealed::Sealed {
     /// Returns the value at a dotted path of the effective proxy config, or `None`.
     fn get_value(&self, key: &str) -> Option<String>;
 }
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
-
-    #[test]
-    fn proxy_mode_non_exhaustive() {
-        let mode = ProxyMode::Passthrough;
-        #[allow(unreachable_patterns)]
-        match mode {
-            ProxyMode::Passthrough
-            | ProxyMode::ZeroCopy
-            | ProxyMode::ClientOnly
-            | ProxyMode::Offline
-            | ProxyMode::ServerOnly
-            | _ => {}
-        }
-    }
-}

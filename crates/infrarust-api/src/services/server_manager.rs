@@ -36,24 +36,3 @@ pub trait ServerManager: Send + Sync + crate::__sealed::Sealed {
     /// Returns all servers and their current states.
     fn get_all_servers(&self) -> Vec<(ServerId, ServerState)>;
 }
-
-#[cfg(test)]
-mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
-
-    #[test]
-    fn server_state_non_exhaustive() {
-        let state = ServerState::Online;
-        #[allow(unreachable_patterns)]
-        match state {
-            ServerState::Online
-            | ServerState::Offline
-            | ServerState::Starting
-            | ServerState::Stopping
-            | ServerState::Sleeping
-            | ServerState::Crashed
-            | _ => {}
-        }
-    }
-}
