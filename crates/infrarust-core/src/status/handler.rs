@@ -56,20 +56,33 @@ pub struct StatusHandler {
     relay_gate: Arc<RelayGate>,
 }
 
+pub struct StatusDeps {
+    pub relay_client: StatusRelayClient,
+    pub cache: Arc<StatusCache>,
+    pub favicon_cache: Arc<FaviconCache>,
+    pub server_manager: Option<Arc<ServerManagerService>>,
+    pub registry: Arc<PacketRegistry>,
+    pub default_motd: Option<MotdConfig>,
+    pub event_bus: Arc<EventBusImpl>,
+    pub counts: Arc<dyn AddressConnectionCount>,
+    pub health: Arc<dyn BackendHealthView>,
+    pub relay_gate: Arc<RelayGate>,
+}
+
 impl StatusHandler {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        relay_client: StatusRelayClient,
-        cache: Arc<StatusCache>,
-        favicon_cache: Arc<FaviconCache>,
-        server_manager: Option<Arc<ServerManagerService>>,
-        registry: Arc<PacketRegistry>,
-        default_motd: Option<MotdConfig>,
-        event_bus: Arc<EventBusImpl>,
-        counts: Arc<dyn AddressConnectionCount>,
-        health: Arc<dyn BackendHealthView>,
-        relay_gate: Arc<RelayGate>,
-    ) -> Self {
+    pub fn new(deps: StatusDeps) -> Self {
+        let StatusDeps {
+            relay_client,
+            cache,
+            favicon_cache,
+            server_manager,
+            registry,
+            default_motd,
+            event_bus,
+            counts,
+            health,
+            relay_gate,
+        } = deps;
         Self {
             relay_client,
             cache,

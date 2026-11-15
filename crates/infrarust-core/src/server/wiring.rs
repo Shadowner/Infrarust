@@ -42,7 +42,7 @@ use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
 use crate::services::command_manager::CommandManagerImpl;
 use crate::status::relay_gate::RelayGate;
-use crate::status::{FaviconCache, StatusCache, StatusHandler, StatusRelayClient};
+use crate::status::{FaviconCache, StatusCache, StatusDeps, StatusHandler, StatusRelayClient};
 
 impl ProxyServer {
     pub async fn new(
@@ -198,18 +198,18 @@ impl ProxyServer {
         );
 
         let relay_gate = Arc::new(RelayGate::default());
-        let status_handler = StatusHandler::new(
+        let status_handler = StatusHandler::new(StatusDeps {
             relay_client,
-            Arc::clone(&status_cache),
-            Arc::clone(&favicon_cache),
-            server_manager.as_ref().map(Arc::clone),
-            Arc::clone(&packet_registry),
-            config.default_motd.clone(),
-            Arc::clone(&event_bus),
-            Arc::clone(&backend_load) as _,
-            Arc::clone(&backend_health) as _,
-            Arc::clone(&relay_gate),
-        );
+            cache: Arc::clone(&status_cache),
+            favicon_cache: Arc::clone(&favicon_cache),
+            server_manager: server_manager.clone(),
+            registry: Arc::clone(&packet_registry),
+            default_motd: config.default_motd.clone(),
+            event_bus: Arc::clone(&event_bus),
+            counts: Arc::clone(&backend_load) as _,
+            health: Arc::clone(&backend_health) as _,
+            relay_gate: Arc::clone(&relay_gate),
+        });
 
         #[cfg(feature = "telemetry")]
         let status_handler = status_handler.with_metrics(Arc::clone(&proxy_metrics));

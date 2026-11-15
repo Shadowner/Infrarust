@@ -21,6 +21,6 @@ pub mod response;
 
 pub use cache::StatusCache;
 pub use favicon::{FaviconCache, load_favicon};
-pub use handler::StatusHandler;
+pub use handler::{StatusDeps, StatusHandler};
 pub use relay::StatusRelayClient;
 pub use response::ServerPingResponse;

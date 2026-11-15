@@ -35,7 +35,7 @@ use infrarust_core::pipeline::types::{ConnectionIntent, HandshakeData, RoutingDa
 use infrarust_core::registry::ConnectionRegistry;
 use infrarust_core::status::relay_gate::RelayGate;
 use infrarust_core::status::{
-    FaviconCache, ServerPingResponse, StatusCache, StatusHandler, StatusRelayClient,
+    FaviconCache, ServerPingResponse, StatusCache, StatusDeps, StatusHandler, StatusRelayClient,
 };
 use infrarust_protocol::registry::build_default_registry;
 use infrarust_protocol::version::ProtocolVersion;
@@ -110,8 +110,8 @@ fn fixture(listeners: usize) -> Fixture {
     let favicons = runtime
         .block_on(FaviconCache::load_from_configs(&[], None))
         .unwrap();
-    let handler = StatusHandler::new(
-        StatusRelayClient::new(
+    let handler = StatusHandler::new(StatusDeps {
+        relay_client: StatusRelayClient::new(
             Arc::new(BackendConnector::new(
                 Duration::from_secs(1),
                 KeepaliveConfig::default(),
@@ -119,16 +119,16 @@ fn fixture(listeners: usize) -> Fixture {
             Arc::clone(&registry),
             Duration::from_secs(1),
         ),
-        Arc::clone(&cache),
-        Arc::new(favicons),
-        None,
+        cache: Arc::clone(&cache),
+        favicon_cache: Arc::new(favicons),
+        server_manager: None,
         registry,
-        None,
-        bus,
-        Arc::new(BackendLoad::new()),
-        Arc::new(PassiveBackendHealth::new()),
-        Arc::new(RelayGate::default()),
-    );
+        default_motd: None,
+        event_bus: bus,
+        counts: Arc::new(BackendLoad::new()),
+        health: Arc::new(PassiveBackendHealth::new()),
+        relay_gate: Arc::new(RelayGate::default()),
+    });
 
     let (server, client, peer, local) = runtime.block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
