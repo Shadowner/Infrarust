@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::BoxFuture;
 use crate::error::ErrorKind;
-use crate::event::BoxFuture;
 use crate::permissions::PermissionChecker;
 use crate::player::Player;
 use crate::types::{Component, PlayerId};

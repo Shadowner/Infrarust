@@ -1,7 +1,7 @@
 //! Server manager service.
 
+use crate::BoxFuture;
 use crate::error::ServiceError;
-use crate::event::BoxFuture;
 use crate::types::ServerId;
 
 #[doc(hidden)]

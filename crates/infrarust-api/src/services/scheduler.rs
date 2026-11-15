@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::event::BoxFuture;
+use crate::BoxFuture;
 
 #[doc(hidden)]
 pub mod private {

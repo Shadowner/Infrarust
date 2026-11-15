@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
+use crate::BoxFuture;
 use crate::error::ServiceError;
-use crate::event::BoxFuture;
 use crate::services::server_manager::{ServerManager, ServerState};
 use crate::types::ServerId;
 

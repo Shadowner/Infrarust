@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::event::BoxFuture;
+use crate::BoxFuture;
 use crate::types::{Component, PlayerId, ServerId};
 
 use super::session::LimboSession;

@@ -10,9 +10,9 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
+use crate::BoxFuture;
 use crate::command::CommandManager;
 use crate::error::PluginError;
-use crate::event::BoxFuture;
 use crate::event::bus::EventBus;
 use crate::filter::registry::{CodecFilterRegistry, TransportFilterRegistry};
 use crate::handoff::ConnectionClaimRegistry;

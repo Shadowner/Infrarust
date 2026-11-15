@@ -2,8 +2,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use crate::BoxFuture;
 use crate::error::PlayerError;
-use crate::event::BoxFuture;
 use crate::player::Player;
 use crate::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,

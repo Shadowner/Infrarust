@@ -7,8 +7,8 @@ use bytes::Bytes;
 
 use uuid::Uuid;
 
+use crate::BoxFuture;
 use crate::error::PlayerError;
-use crate::event::BoxFuture;
 use crate::messaging::ChannelId;
 use crate::types::{
     Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId, TitleData,

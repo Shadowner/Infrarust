@@ -7,7 +7,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
-use crate::event::BoxFuture;
+use crate::BoxFuture;
 use crate::types::Extensions;
 
 use super::metadata::FilterMetadata;

@@ -10,8 +10,8 @@ pub use ipnet::IpNet;
 use ipnet::Ipv4Net;
 use uuid::Uuid;
 
+use crate::BoxFuture;
 use crate::error::ServiceError;
-use crate::event::BoxFuture;
 use crate::types::{Component, ServerId};
 
 #[doc(hidden)]

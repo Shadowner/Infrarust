@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, PoisonError, RwLock};
 
+use crate::BoxFuture;
 use crate::error::ErrorKind;
-use crate::event::BoxFuture;
 use crate::types::{GameProfile, PlayerId};
 
 pub const ADMIN_PERMISSION: &str = "infrarust.admin";

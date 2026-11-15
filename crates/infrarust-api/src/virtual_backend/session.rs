@@ -1,7 +1,7 @@
 //! Virtual backend session trait.
 
+use crate::BoxFuture;
 use crate::error::PlayerError;
-use crate::event::BoxFuture;
 use crate::types::{Component, GameProfile, PlayerId, ProtocolVersion, RawPacket, ServerId};
 
 #[doc(hidden)]

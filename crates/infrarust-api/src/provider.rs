@@ -43,8 +43,8 @@
 //! }
 //! ```
 
+use crate::BoxFuture;
 use crate::error::PluginError;
-use crate::event::BoxFuture;
 use crate::types::ServerId;
 
 /// A server configuration as raw TOML, parsed by the proxy against its
