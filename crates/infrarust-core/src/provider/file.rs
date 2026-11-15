@@ -52,7 +52,7 @@ impl ConfigProvider for FileProvider {
     }
 
     fn load_initial(&self) -> BoxFuture<'_, Result<Vec<ProviderConfig>, CoreError>> {
-        Box::pin(async move { self.do_load_initial() })
+        Box::pin(self.do_load_initial())
     }
 
     fn watch(
@@ -65,34 +65,11 @@ impl ConfigProvider for FileProvider {
 }
 
 impl FileProvider {
-    fn do_load_initial(&self) -> Result<Vec<ProviderConfig>, CoreError> {
-        let dir = &self.servers_dir;
-        if !dir.exists() {
-            tracing::warn!(dir = %dir.display(), "servers directory not found, returning empty");
-            *self.lock_published() = Some(HashMap::new());
-            return Ok(Vec::new());
-        }
-
-        let mut loaded = HashMap::new();
-        let entries = std::fs::read_dir(dir)?;
-
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.extension().is_none_or(|ext| ext != "toml") {
-                continue;
-            }
-
-            match load_server_config(&path) {
-                Ok(config) => {
-                    loaded.insert(path, config);
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path.display(), error = %e, "skipping invalid config");
-                }
-            }
-        }
+    async fn do_load_initial(&self) -> Result<Vec<ProviderConfig>, CoreError> {
+        let dir = self.servers_dir.clone();
+        let loaded = tokio::task::spawn_blocking(move || load_directory(&dir))
+            .await
+            .map_err(std::io::Error::other)??;
 
         let configs: Vec<ProviderConfig> = loaded
             .iter()
@@ -104,7 +81,7 @@ impl FileProvider {
         *self.lock_published() = Some(loaded);
 
         tracing::info!(
-            dir = %dir.display(),
+            dir = %self.servers_dir.display(),
             count = configs.len(),
             "file provider loaded initial configs"
         );
@@ -122,6 +99,30 @@ impl FileProvider {
         follow(&self.servers_dir, published, &changes, &sender, &shutdown).await;
         Ok(())
     }
+}
+
+fn load_directory(dir: &Path) -> std::io::Result<HashMap<PathBuf, ServerConfig>> {
+    let mut loaded = HashMap::new();
+    if !dir.exists() {
+        tracing::warn!(dir = %dir.display(), "servers directory not found, returning empty");
+        return Ok(loaded);
+    }
+
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.extension().is_none_or(|ext| ext != "toml") {
+            continue;
+        }
+        match load_server_config(&path) {
+            Ok(config) => {
+                loaded.insert(path, config);
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping invalid config");
+            }
+        }
+    }
+    Ok(loaded)
 }
 
 fn watch_directory(dir: &Path, changes: Arc<Notify>) -> Result<RecommendedWatcher, CoreError> {
@@ -150,7 +151,7 @@ async fn follow(
     sender: &mpsc::Sender<Vec<ProviderChange>>,
     shutdown: &CancellationToken,
 ) {
-    if !publish(compute_diff(dir, &mut known), sender).await {
+    if !rescan(dir, &mut known, sender).await {
         return;
     }
 
@@ -165,7 +166,7 @@ async fn follow(
             }
             () = sleep_until_some(reload_at) => {
                 pending = None;
-                if !publish(compute_diff(dir, &mut known), sender).await {
+                if !rescan(dir, &mut known, sender).await {
                     return;
                 }
             }
@@ -198,8 +199,23 @@ async fn sleep_until_some(at: Option<Instant>) {
     }
 }
 
-async fn publish(events: Vec<ProviderChange>, sender: &mpsc::Sender<Vec<ProviderChange>>) -> bool {
-    events.is_empty() || sender.send(events).await.is_ok()
+async fn rescan(
+    dir: &Path,
+    known: &mut HashMap<PathBuf, ServerConfig>,
+    sender: &mpsc::Sender<Vec<ProviderChange>>,
+) -> bool {
+    let dir = dir.to_path_buf();
+    let mut scanned = std::mem::take(known);
+    let Ok((changes, scanned)) = tokio::task::spawn_blocking(move || {
+        let changes = compute_diff(&dir, &mut scanned);
+        (changes, scanned)
+    })
+    .await
+    else {
+        return false;
+    };
+    *known = scanned;
+    changes.is_empty() || sender.send(changes).await.is_ok()
 }
 
 fn file_id(path: &Path) -> ProviderId {
