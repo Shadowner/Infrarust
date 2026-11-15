@@ -3,7 +3,7 @@ use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use dashmap::mapref::one::RefMut;
+use dashmap::mapref::one::{Ref, RefMut};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -177,6 +177,12 @@ impl ServerEntry {
     }
 }
 
+fn not_found(server_id: &str) -> ServerManagerError {
+    ServerManagerError::ServerNotFound {
+        server_id: server_id.to_string(),
+    }
+}
+
 impl ServerManagerService {
     /// Creates the service from server configs.
     ///
@@ -261,6 +267,21 @@ impl ServerManagerService {
             .unwrap_or_else(PoisonError::into_inner);
         listeners.push((id, callback));
         id
+    }
+
+    fn entry(&self, server_id: &str) -> Result<Ref<'_, String, ServerEntry>, ServerManagerError> {
+        self.entries
+            .get(server_id)
+            .ok_or_else(|| not_found(server_id))
+    }
+
+    fn entry_mut(
+        &self,
+        server_id: &str,
+    ) -> Result<RefMut<'_, String, ServerEntry>, ServerManagerError> {
+        self.entries
+            .get_mut(server_id)
+            .ok_or_else(|| not_found(server_id))
     }
 
     fn fire_state_change(&self, server_id: &str, old: ServerState, new: ServerState) {
@@ -348,11 +369,7 @@ impl ServerManagerService {
         server_id: &str,
     ) -> Result<(), ServerManagerError> {
         let (rx, start_timeout) = {
-            let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
-                ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                }
-            })?;
+            let mut entry = self.entry_mut(server_id)?;
 
             match entry.state {
                 ServerState::Online => return Ok(()),
@@ -408,12 +425,7 @@ impl ServerManagerService {
     /// [`ServerManagerError::StartThrottled`] if it was started or crashed too recently,
     /// or a provider-specific error if the start command fails.
     pub async fn wake(self: &Arc<Self>, server_id: &str) -> Result<(), ServerManagerError> {
-        let entry =
-            self.entries
-                .get_mut(server_id)
-                .ok_or_else(|| ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                })?;
+        let entry = self.entry_mut(server_id)?;
         let start = match entry.state {
             ServerState::Online | ServerState::Starting => return Ok(()),
             ServerState::Stopping => {
@@ -499,11 +511,7 @@ impl ServerManagerService {
     /// or a provider-specific error if the start command fails.
     pub async fn start_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let (provider, old_state, attempt) = {
-            let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
-                ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                }
-            })?;
+            let mut entry = self.entry_mut(server_id)?;
 
             if !entry.state.is_startable() {
                 return Err(ServerManagerError::InvalidState {
@@ -530,11 +538,7 @@ impl ServerManagerService {
     /// or a provider-specific error if the stop command fails.
     pub async fn stop_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
         let (provider, old_state) = {
-            let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
-                ServerManagerError::ServerNotFound {
-                    server_id: server_id.to_string(),
-                }
-            })?;
+            let mut entry = self.entry_mut(server_id)?;
 
             let old = entry.state;
             entry.set_state(ServerState::Stopping);
@@ -595,12 +599,7 @@ impl ServerManagerService {
         server_id: &str,
     ) -> Result<ProviderStatus, ServerManagerError> {
         let provider = {
-            let entry =
-                self.entries
-                    .get(server_id)
-                    .ok_or_else(|| ServerManagerError::ServerNotFound {
-                        server_id: server_id.to_string(),
-                    })?;
+            let entry = self.entry(server_id)?;
             Arc::clone(&entry.provider)
         };
 
