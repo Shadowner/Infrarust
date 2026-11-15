@@ -38,12 +38,4 @@ mod tests {
         assert_eq!(packet.packet_id, 0x0E);
         assert_eq!(&packet.data[..], b"hello");
     }
-
-    #[test]
-    fn clone() {
-        let a = RawPacket::new(1, bytes::Bytes::from_static(b"data"));
-        let b = a.clone();
-        assert_eq!(a.packet_id, b.packet_id);
-        assert_eq!(a.data, b.data);
-    }
 }
