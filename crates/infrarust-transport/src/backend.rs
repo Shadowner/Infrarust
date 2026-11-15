@@ -543,4 +543,49 @@ mod tests {
         assert_eq!(connect(&cache, &address, &resolver).await.unwrap(), live);
         assert_eq!(resolver.calls(), 1);
     }
+
+    #[tokio::test]
+    async fn connect_one_sends_the_proxy_header_without_notifying_the_observer() {
+        use crate::proxy_protocol::decode_proxy_protocol;
+
+        struct Counting(AtomicUsize);
+        impl ConnectAttemptObserver for Counting {
+            fn on_attempt(&self, _attempt: &ConnectAttempt<'_>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let (listener, addr) = listening().await;
+        let header = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            decode_proxy_protocol(&mut stream).await.unwrap().0
+        });
+
+        let observer = Arc::new(Counting(AtomicUsize::new(0)));
+        let connector = BackendConnector::new(Duration::from_secs(5), KeepaliveConfig::default())
+            .with_observer(Arc::clone(&observer) as _);
+        let address = ServerAddress {
+            host: addr.ip().to_string(),
+            port: addr.port(),
+        };
+        let info = ConnectionInfo {
+            peer_addr: "127.0.0.1:12345".parse().unwrap(),
+            real_addr: None,
+            local_addr: addr,
+            connected_at: Instant::now(),
+        };
+        let conn = connector
+            .connect_one(&address, Duration::from_secs(5), true, &info)
+            .await
+            .unwrap();
+
+        let header = header
+            .await
+            .unwrap()
+            .expect("a PROXY v2 header was written");
+        assert_eq!(header.source_addr, info.peer_addr);
+        assert_eq!(header.dest_addr, addr);
+        assert_eq!(conn.remote_addr(), addr);
+        assert_eq!(observer.0.load(Ordering::SeqCst), 0);
+    }
 }

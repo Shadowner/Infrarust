@@ -82,10 +82,10 @@ impl ProxyServer {
 
         let listener = match inherited {
             Some(inherited) => Listener::adopt(inherited, listener_config, self.shutdown.clone())?,
-            None => Listener::bind(listener_config, self.shutdown.clone()).await?,
+            None => Listener::bind(listener_config, self.shutdown.clone())?,
         };
 
-        tracing::info!(bind = %listener.local_addr()?, "proxy server listening");
+        tracing::info!(bind = %listener.local_addr(), "proxy server listening");
         Ok(listener)
     }
 

@@ -22,7 +22,9 @@ pub fn activated_listener() -> Result<Option<std::net::TcpListener>, TransportEr
     }
 }
 
-pub fn adopt_listener_socket(listener: std::net::TcpListener) -> Result<Socket, TransportError> {
+pub(crate) fn adopt_listener_socket(
+    listener: std::net::TcpListener,
+) -> Result<Socket, TransportError> {
     let socket = Socket::from(listener);
     socket
         .set_nonblocking(true)
@@ -30,7 +32,7 @@ pub fn adopt_listener_socket(listener: std::net::TcpListener) -> Result<Socket, 
     Ok(socket)
 }
 
-pub fn configure_listener_socket(
+pub(crate) fn configure_listener_socket(
     addr: SocketAddr,
     reuseport: bool,
 ) -> Result<Socket, TransportError> {
@@ -72,7 +74,7 @@ pub fn configure_listener_socket(
     Ok(socket)
 }
 
-pub fn configure_stream_socket(
+fn configure_stream_socket(
     socket: &Socket,
     keepalive: &KeepaliveConfig,
 ) -> Result<(), TransportError> {
@@ -96,19 +98,18 @@ pub fn configure_stream_socket(
     Ok(())
 }
 
-pub fn configure_tokio_stream(
+pub(crate) fn configure_tokio_stream(
     stream: &TcpStream,
     keepalive: &KeepaliveConfig,
 ) -> Result<(), TransportError> {
     configure_stream_socket(&SockRef::from(stream), keepalive)
 }
 
-pub fn into_tokio_listener(socket: Socket) -> Result<TcpListener, TransportError> {
+pub(crate) fn into_tokio_listener(socket: Socket) -> Result<TcpListener, TransportError> {
     let std_listener: std::net::TcpListener = socket.into();
     TcpListener::from_std(std_listener).map_err(TransportError::SocketConfig)
 }
 
-pub fn into_tokio_stream(socket: Socket) -> Result<TcpStream, TransportError> {
-    let std_stream: std::net::TcpStream = socket.into();
-    TcpStream::from_std(std_stream).map_err(TransportError::SocketConfig)
-}
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests;

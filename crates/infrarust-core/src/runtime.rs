@@ -355,7 +355,7 @@ async fn bind_listener(
     inherited: Option<std::net::TcpListener>,
 ) -> Result<(Listener, SocketAddr), CoreError> {
     let listener = server.bind_or_adopt(inherited).await?;
-    let local_addr = listener.local_addr()?;
+    let local_addr = listener.local_addr();
     Ok((listener, local_addr))
 }
 

@@ -21,10 +21,5 @@ pub use ip_limit::{IpGuard, IpKey, IpLimiter};
 pub use listener::{
     AcceptedConnection, ConnectionSlot, Listener, ListenerConfig, PendingConnection,
 };
-pub use proxy_protocol::{
-    ProxyProtocolInfo, ProxyProtocolVersion, decode_proxy_protocol, encode_proxy_protocol_v2,
-};
-pub use socket::{
-    activated_listener, configure_listener_socket, configure_stream_socket, into_tokio_listener,
-    into_tokio_stream,
-};
+pub use proxy_protocol::{ProxyProtocolInfo, ProxyProtocolVersion};
+pub use socket::activated_listener;

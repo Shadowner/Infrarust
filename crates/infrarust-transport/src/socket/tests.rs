@@ -1,11 +1,8 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+use super::*;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use command_fds::{CommandFdExt, FdMapping};
-use infrarust_config::KeepaliveConfig;
-use infrarust_transport::socket::*;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rusty_fork::{fork, rusty_fork_id};
-use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::fd::AsFd;
 use std::time::Duration;
@@ -23,7 +20,7 @@ fn test_configure_listener_socket_binds() {
 #[test]
 fn test_configure_listener_socket_activation() {
     let fork_result = fork(
-        "test_configure_listener_socket_activation",
+        "socket::tests::test_configure_listener_socket_activation",
         rusty_fork_id!(),
         move |cmd: &mut std::process::Command| {
             let activator_socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -90,12 +87,7 @@ fn test_nodelay_configured() {
     let local_addr = listener_socket.local_addr().unwrap().as_socket().unwrap();
 
     // Create a stream socket and connect
-    let stream_socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::STREAM,
-        Some(socket2::Protocol::TCP),
-    )
-    .unwrap();
+    let stream_socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
 
     stream_socket.set_nonblocking(true).unwrap();
     let _ = stream_socket.connect(&local_addr.into());
@@ -115,12 +107,7 @@ fn test_keepalive_configured() {
     let listener_socket = configure_listener_socket(addr, false).unwrap();
     let local_addr = listener_socket.local_addr().unwrap().as_socket().unwrap();
 
-    let stream_socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::STREAM,
-        Some(socket2::Protocol::TCP),
-    )
-    .unwrap();
+    let stream_socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
 
     stream_socket.set_nonblocking(true).unwrap();
     let _ = stream_socket.connect(&local_addr.into());

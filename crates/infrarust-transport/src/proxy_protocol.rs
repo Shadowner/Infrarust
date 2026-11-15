@@ -56,7 +56,7 @@ pub struct ProxyProtocolInfo {
 /// Returns an error if the header is missing, malformed, or uses an
 /// unsupported address family. This is fatal -- the connection should
 /// be closed.
-pub async fn decode_proxy_protocol(
+pub(crate) async fn decode_proxy_protocol(
     stream: &mut TcpStream,
 ) -> Result<(Option<ProxyProtocolInfo>, Vec<u8>), TransportError> {
     timeout(HEADER_TIMEOUT, async {
@@ -230,7 +230,7 @@ fn extract_v1_addresses(
 ///
 /// Returns [`TransportError::ProxyProtocolDecode`] if header construction
 /// fails, or [`TransportError::Forward`] if writing to the stream fails.
-pub async fn encode_proxy_protocol_v2(
+pub(crate) async fn encode_proxy_protocol_v2(
     stream: &mut TcpStream,
     client_info: &ConnectionInfo,
 ) -> Result<(), TransportError> {
@@ -277,3 +277,7 @@ pub async fn encode_proxy_protocol_v2(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests;

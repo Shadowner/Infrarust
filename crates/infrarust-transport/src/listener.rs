@@ -137,12 +137,9 @@ pub struct ConnectionSlot {
     _ip_guard: Option<IpGuard>,
 }
 
-/// An accepted connection with its slot.
-///
-/// The slot is held for the lifetime of the connection.
+#[derive(Debug)]
 pub struct AcceptedConnection {
-    /// The accepted client connection.
-    pub connection: ClientConnection,
+    connection: ClientConnection,
     slot: ConnectionSlot,
 }
 
@@ -152,18 +149,8 @@ impl AcceptedConnection {
     }
 }
 
-impl std::fmt::Debug for AcceptedConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AcceptedConnection")
-            .field("connection", &self.connection)
-            .field("slot", &self.slot)
-            .finish()
-    }
-}
-
 impl Listener {
-    #[allow(clippy::unused_async)]
-    pub async fn bind(
+    pub fn bind(
         config: ListenerConfig,
         shutdown: CancellationToken,
     ) -> Result<Self, TransportError> {
@@ -276,13 +263,8 @@ impl Listener {
         }
     }
 
-    /// Returns the local address the listener is bound to.
-    ///
-    /// # Errors
-    ///
-    /// Never fails: the address is read once at bind time.
-    pub const fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        Ok(self.local_addr)
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 }
 

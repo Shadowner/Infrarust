@@ -48,23 +48,18 @@ async fn send_header_then(addr: SocketAddr, payload: &[u8]) -> TcpStream {
 #[tokio::test]
 async fn test_bind_and_accept() {
     let shutdown = CancellationToken::new();
-    let listener = Listener::bind(test_config(), shutdown.clone())
-        .await
-        .unwrap();
+    let listener = Listener::bind(test_config(), shutdown.clone()).unwrap();
 
-    let addr = listener.local_addr().unwrap();
+    let addr = listener.local_addr();
 
     let client = TcpStream::connect(addr).await.unwrap();
     let pending = listener.accept().await.unwrap();
     assert_eq!(pending.peer_addr(), client.local_addr().unwrap());
 
-    let accepted = pending.resolve().await.unwrap();
-    assert_eq!(
-        accepted.connection.peer_addr(),
-        client.local_addr().unwrap()
-    );
-    assert_eq!(accepted.connection.real_ip(), None);
-    drop(accepted);
+    let (connection, slot) = pending.resolve().await.unwrap().into_parts();
+    assert_eq!(connection.peer_addr(), client.local_addr().unwrap());
+    assert_eq!(connection.real_ip(), None);
+    drop((connection, slot));
     shutdown.cancel();
 }
 
@@ -74,8 +69,8 @@ async fn test_max_connections_semaphore() {
     let mut config = test_config();
     config.max_connections = 1;
 
-    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(config, shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     // First connection should succeed
     let _client1 = TcpStream::connect(addr).await.unwrap();
@@ -105,9 +100,7 @@ async fn test_max_connections_semaphore() {
 #[tokio::test]
 async fn test_shutdown_stops_accept() {
     let shutdown = CancellationToken::new();
-    let listener = Listener::bind(test_config(), shutdown.clone())
-        .await
-        .unwrap();
+    let listener = Listener::bind(test_config(), shutdown.clone()).unwrap();
 
     shutdown.cancel();
 
@@ -119,10 +112,8 @@ async fn test_shutdown_stops_accept() {
 #[tokio::test]
 async fn accept_does_not_wait_for_the_proxy_protocol_header() {
     let shutdown = CancellationToken::new();
-    let listener = Listener::bind(proxy_protocol_config(0), shutdown.clone())
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(proxy_protocol_config(0), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     let silent = TcpStream::connect(addr).await.unwrap();
     let _talker = send_header_then(addr, b"hello").await;
@@ -137,12 +128,13 @@ async fn accept_does_not_wait_for_the_proxy_protocol_header() {
         .await
         .expect("the next connection is accepted")
         .unwrap();
-    let mut accepted = timeout(Duration::from_secs(1), pending.resolve())
+    let (mut connection, _slot) = timeout(Duration::from_secs(1), pending.resolve())
         .await
         .expect("the header already arrived")
-        .unwrap();
-    assert_eq!(accepted.connection.real_ip(), header_source());
-    assert_eq!(accepted.connection.peek(5).await.unwrap(), b"hello");
+        .unwrap()
+        .into_parts();
+    assert_eq!(connection.real_ip(), header_source());
+    assert_eq!(connection.peek(5).await.unwrap(), b"hello");
 
     drop(waiting);
     shutdown.cancel();
@@ -151,10 +143,8 @@ async fn accept_does_not_wait_for_the_proxy_protocol_header() {
 #[tokio::test(start_paused = true)]
 async fn a_silent_connection_holds_its_permit_until_its_header_times_out() {
     let shutdown = CancellationToken::new();
-    let listener = Listener::bind(proxy_protocol_config(2), shutdown.clone())
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(proxy_protocol_config(2), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     let mut silent = TcpStream::connect(addr).await.unwrap();
     let waiting = listener.accept().await.unwrap();
@@ -168,8 +158,8 @@ async fn a_silent_connection_holds_its_permit_until_its_header_times_out() {
 
     let started = Instant::now();
     let silent_result = tokio::spawn(waiting.resolve());
-    let mut accepted = talking.resolve().await.unwrap();
-    assert_eq!(accepted.connection.real_ip(), header_source());
+    let (mut connection, _slot) = talking.resolve().await.unwrap().into_parts();
+    assert_eq!(connection.real_ip(), header_source());
 
     let err = silent_result.await.unwrap().unwrap_err();
     assert!(
@@ -187,10 +177,10 @@ async fn a_silent_connection_holds_its_permit_until_its_header_times_out() {
         .expect("the timed-out connection gave its permit back")
         .unwrap();
     assert_eq!(
-        late.resolve().await.unwrap().connection.real_ip(),
+        late.resolve().await.unwrap().into_parts().0.real_ip(),
         header_source()
     );
-    assert_eq!(accepted.connection.peek(5).await.unwrap(), b"hello");
+    assert_eq!(connection.peek(5).await.unwrap(), b"hello");
 
     shutdown.cancel();
 }
@@ -202,8 +192,8 @@ async fn an_untrusted_peer_is_refused_without_waiting_for_its_header() {
         trusted_proxies: vec!["192.0.2.0/24".parse().unwrap()],
         ..proxy_protocol_config(0)
     };
-    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(config, shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     let mut silent = TcpStream::connect(addr).await.unwrap();
     let pending = listener.accept().await.unwrap();
@@ -224,14 +214,19 @@ async fn an_untrusted_peer_is_refused_without_waiting_for_its_header() {
 #[tokio::test]
 async fn a_header_from_a_trusted_peer_is_honored() {
     let shutdown = CancellationToken::new();
-    let listener = Listener::bind(proxy_protocol_config(0), shutdown.clone())
-        .await
-        .unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(proxy_protocol_config(0), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     let _client = send_header_then(addr, b"").await;
-    let accepted = listener.accept().await.unwrap().resolve().await.unwrap();
-    assert_eq!(accepted.connection.real_ip(), header_source());
+    let (connection, _slot) = listener
+        .accept()
+        .await
+        .unwrap()
+        .resolve()
+        .await
+        .unwrap()
+        .into_parts();
+    assert_eq!(connection.real_ip(), header_source());
 
     shutdown.cancel();
 }
@@ -243,8 +238,8 @@ async fn the_connection_over_the_per_ip_limit_is_refused() {
         max_connections_per_ip: 32,
         ..test_config()
     };
-    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(config, shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     let mut held = Vec::new();
     for _ in 0..32 {
@@ -280,8 +275,8 @@ async fn the_per_ip_limit_counts_the_address_from_the_proxy_header() {
         max_connections_per_ip: 1,
         ..proxy_protocol_config(0)
     };
-    let listener = Listener::bind(config, shutdown.clone()).await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = Listener::bind(config, shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
 
     async fn from(addr: SocketAddr, source: &str) -> TcpStream {
         let mut client = TcpStream::connect(addr).await.unwrap();

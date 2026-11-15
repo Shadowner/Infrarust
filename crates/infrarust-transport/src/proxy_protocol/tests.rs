@@ -1,15 +1,14 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 
-use infrarust_transport::proxy_protocol::*;
+use super::*;
 
 #[tokio::test]
 async fn test_decode_v1_tcp4() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     // Send a v1 proxy protocol header
@@ -30,7 +29,7 @@ async fn test_decode_v2_tcp4() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     // Build a v2 header using ppp
@@ -57,7 +56,7 @@ async fn test_decode_v2_tcp6() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     let src: std::net::Ipv6Addr = "::1".parse().unwrap();
@@ -85,10 +84,10 @@ async fn test_encode_v2_tcp4() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
-    let info = infrarust_transport::ConnectionInfo {
+    let info = ConnectionInfo {
         peer_addr: "192.168.1.1:12345".parse().unwrap(),
         real_addr: None,
         local_addr: "10.0.0.1:25565".parse().unwrap(),
@@ -110,10 +109,10 @@ async fn test_encode_v2_uses_the_real_client_address_and_port() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
-    let info = infrarust_transport::ConnectionInfo {
+    let info = ConnectionInfo {
         peer_addr: "192.168.1.1:12345".parse().unwrap(),
         real_addr: Some("203.0.113.7:40123".parse().unwrap()),
         local_addr: "10.0.0.1:25565".parse().unwrap(),
@@ -134,7 +133,7 @@ async fn test_decode_v1_unknown() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     // PROXY UNKNOWN is valid per HAProxy spec (health checks)
@@ -152,7 +151,7 @@ async fn test_decode_v1_with_leftover() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     let header = b"PROXY TCP4 192.168.1.1 10.0.0.1 12345 25565\r\n";
@@ -170,11 +169,11 @@ async fn test_decode_v1_with_leftover() {
     assert_eq!(leftover, extra.to_vec());
 }
 
-async fn write_fragmented(stream: &mut tokio::net::TcpStream, data: &[u8]) {
+async fn write_fragmented(stream: &mut TcpStream, data: &[u8]) {
     for byte in data {
         stream.write_all(std::slice::from_ref(byte)).await.unwrap();
         stream.flush().await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
 
@@ -183,7 +182,7 @@ async fn test_decode_v1_fragmented() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     let header = b"PROXY TCP4 192.168.1.1 10.0.0.1 12345 25565\r\n";
@@ -207,7 +206,7 @@ async fn test_decode_v2_fragmented() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     let addresses = ppp::v2::IPv4::new([192, 168, 1, 1], [10, 0, 0, 1], 12345, 25565);
@@ -237,7 +236,7 @@ async fn test_oversize_header_rejected() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     // Valid v1 prefix that never terminates with CRLF, exceeding MAX_HEADER_SIZE (536).
@@ -249,7 +248,7 @@ async fn test_oversize_header_rejected() {
     assert!(
         matches!(
             &err,
-            infrarust_transport::TransportError::InvalidProxyProtocol(msg)
+            TransportError::InvalidProxyProtocol(msg)
                 if msg.contains("exceeds maximum size")
         ),
         "expected oversize rejection, got {err:?}"
@@ -261,10 +260,10 @@ async fn test_encode_v2_mixed_v4_source_v6_dest() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
-    let info = infrarust_transport::ConnectionInfo {
+    let info = ConnectionInfo {
         peer_addr: "192.168.1.1:12345".parse().unwrap(),
         real_addr: None,
         local_addr: "[2001:db8::1]:25565".parse().unwrap(),
@@ -289,7 +288,7 @@ async fn test_no_proxy_protocol() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let mut client = TcpStream::connect(addr).await.unwrap();
     let (mut server_stream, _) = listener.accept().await.unwrap();
 
     // Send garbage data
