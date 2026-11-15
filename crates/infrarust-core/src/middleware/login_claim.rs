@@ -111,7 +111,7 @@ mod tests {
     use super::*;
     use crate::ban::{BAN_CHECK_UNAVAILABLE, FileBanStorage};
     use crate::pipeline::types::{ConnectionIntent, Refused};
-    use crate::session::connection_registry::ConnectionRegistry;
+    use crate::registry::ConnectionRegistry;
 
     const UUID: Uuid = Uuid::from_u128(0xa7c3_5e10_9b2d_4f6e_8a01_c4d2_e3f4_a5b6);
     const PAYLOAD: &[u8] = b"\x05probe0123456789abcdef";

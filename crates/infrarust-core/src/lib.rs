@@ -24,9 +24,7 @@ pub mod player;
 pub mod plugin;
 pub mod plugin_messaging;
 pub mod provider;
-pub mod registry {
-    pub use crate::session::connection_registry::{ConnectionRegistry, SessionGuard};
-}
+pub mod registry;
 pub mod registry_data;
 pub mod routing;
 pub mod runtime;

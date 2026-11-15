@@ -8,7 +8,7 @@ use infrarust_api::player::Player;
 use infrarust_api::types::ServerId;
 use infrarust_config::ServerAddress;
 
-use crate::session::connection_registry::ConnectionRegistry;
+use crate::registry::ConnectionRegistry;
 
 pub struct ServerMessengerImpl {
     registry: Arc<ConnectionRegistry>,

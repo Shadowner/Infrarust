@@ -7,7 +7,7 @@ use infrarust_api::player::Player;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::types::{PlayerId, ServerId};
 
-use crate::session::connection_registry::ConnectionRegistry;
+use crate::registry::ConnectionRegistry;
 
 /// Thin wrapper around [`ConnectionRegistry`] that exposes the API-level
 /// [`PlayerRegistry`] trait.

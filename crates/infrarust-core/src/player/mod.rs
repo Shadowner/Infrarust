@@ -44,7 +44,7 @@ use crate::loadbalancer::BackendLoad;
 use crate::permissions::PermissionService;
 use crate::util::sync::{lock, read, write};
 
-use crate::session::connection_registry::{Seat, ServerRoster};
+use crate::registry::{Seat, ServerRoster};
 use crate::session::presentation::Presentation;
 use client_state::ClientState;
 use command_queue::CommandQueue;

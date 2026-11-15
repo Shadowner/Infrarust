@@ -19,9 +19,9 @@ use crate::handler::passthrough::PassthroughHandler;
 use crate::handoff::HandoffRelay;
 use crate::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::pipeline::Pipeline;
+use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
-use crate::session::connection_registry::ConnectionRegistry;
 use crate::status::StatusHandler;
 
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);

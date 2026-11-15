@@ -24,7 +24,7 @@ use crate::ban::types::{BanEntry, BanSource, BanTarget};
 use crate::error::CoreError;
 use crate::event_bus::EventBusImpl;
 use crate::player::PlayerSession;
-use crate::session::connection_registry::ConnectionRegistry;
+use crate::registry::ConnectionRegistry;
 use crate::util::provider_slot::PluginProviderSlot;
 
 pub const BAN_CHECK_UNAVAILABLE: &str =

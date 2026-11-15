@@ -213,7 +213,7 @@ mod tests {
     use super::*;
     use crate::ban::{BanManager, FileBanStorage};
     use crate::limbo::test_helpers::test_proxy_services;
-    use crate::session::connection_registry::ConnectionRegistry;
+    use crate::registry::ConnectionRegistry;
 
     const SHORT: RawClaimLimits = RawClaimLimits {
         partial_match: Duration::from_millis(200),
