@@ -21,7 +21,7 @@ use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::{ProxyModeName, server_state_str};
+use crate::util::{ProxyModeName, format_address, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
 
@@ -124,11 +124,7 @@ pub async fn list(
             editable: is_editable(&state, &id_str, providers),
             has_server_manager: config.has_server_manager,
             id: id_str,
-            addresses: config
-                .addresses
-                .iter()
-                .map(|a| format!("{}:{}", a.host, a.port))
-                .collect(),
+            addresses: config.addresses.iter().map(format_address).collect(),
             domains: config.domains.clone(),
             proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
             state: server_state.map(server_state_str).map(String::from),
@@ -161,11 +157,7 @@ pub async fn get(
         editable: is_editable(&state, &id, providers),
         has_server_manager: config.has_server_manager,
         id,
-        addresses: config
-            .addresses
-            .iter()
-            .map(|a| format!("{}:{}", a.host, a.port))
-            .collect(),
+        addresses: config.addresses.iter().map(format_address).collect(),
         domains: config.domains.clone(),
         proxy_mode: ProxyModeName::try_from(config.proxy_mode)?.to_string(),
         limbo_handlers: config.limbo_handlers.clone(),

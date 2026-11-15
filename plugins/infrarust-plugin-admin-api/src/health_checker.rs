@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::dto::server::{HealthCheckResponse, PlayerSampleResponse};
-use crate::util::now_iso8601;
+use crate::util::{format_address, now_iso8601};
 
 const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V1_21;
@@ -40,7 +40,7 @@ impl HealthChecker {
             None => return HealthCheckResponse::error("No address configured"),
         };
 
-        let target = format!("{}:{}", addr.host, addr.port);
+        let target = format_address(addr);
         let domain = config
             .domains
             .first()
