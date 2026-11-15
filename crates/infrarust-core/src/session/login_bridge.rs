@@ -19,7 +19,7 @@ use crate::forwarding::velocity::{
     VelocityForwarding, answer_velocity_request, is_velocity_request,
 };
 use crate::session::backend_bridge::BackendBridge;
-use crate::session::backend_login::acknowledge_login;
+use crate::session::backend_login::{ConnectError, acknowledge_login};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login_within;
 use crate::session::context::{SessionContext, SessionIo};
@@ -85,7 +85,7 @@ pub(crate) async fn bridge_login(
     server: &str,
     config: &ServerConfig,
     velocity: Option<VelocityForwarding<'_>>,
-) -> Result<(), CoreError> {
+) -> Result<(), ConnectError> {
     let idle = read_timeout(config);
     let mut relay = Relay {
         registry: ctx.registry(),
@@ -182,7 +182,7 @@ impl Relay<'_> {
         mut client: Option<&mut ClientBridge>,
         backend: &mut BackendBridge,
         mut clock: LoginClock,
-    ) -> Result<(), CoreError> {
+    ) -> Result<(), ConnectError> {
         let deadline = tokio::time::sleep_until(clock.deadline());
         tokio::pin!(deadline);
         loop {
@@ -194,12 +194,8 @@ impl Relay<'_> {
                 frame = client_frame(client.as_deref_mut()) => Event::Client(frame),
             };
             match event {
-                Event::Cancelled => {
-                    return Err(CoreError::Rejected(
-                        "the session ended during the backend login".to_string(),
-                    ));
-                }
-                Event::Expired => return Err(clock.expired()),
+                Event::Cancelled => return Err(ConnectError::Cancelled),
+                Event::Expired => return Err(clock.expired().into()),
                 Event::Backend(Ok(Some(frame))) => {
                     let progress = self
                         .on_backend(frame, client.as_deref_mut(), backend)
@@ -209,13 +205,13 @@ impl Relay<'_> {
                     }
                     clock.backend_spoke(self.waiting_on_client());
                 }
-                Event::Backend(Ok(None)) => return Err(CoreError::ConnectionClosed),
-                Event::Backend(Err(e)) => return Err(e),
+                Event::Backend(Ok(None)) => return Err(CoreError::ConnectionClosed.into()),
+                Event::Backend(Err(e)) => return Err(e.into()),
                 Event::Client(Ok(Some(frame))) => {
                     self.on_client(frame, backend).await?;
                     clock.client_answered(self.waiting_on_client());
                 }
-                Event::Client(Ok(None)) => return Err(CoreError::ClientLeft),
+                Event::Client(Ok(None)) => return Err(ConnectError::ClientLeft),
                 Event::Client(Err(e)) => return Err(client_gone(e)),
             }
             if deadline.deadline() != clock.deadline() {
@@ -229,7 +225,7 @@ impl Relay<'_> {
         frame: PacketFrame,
         client: Option<&mut ClientBridge>,
         backend: &mut BackendBridge,
-    ) -> Result<Progress, CoreError> {
+    ) -> Result<Progress, ConnectError> {
         let id = Some(frame.id);
         if id == self.ids.success {
             if self.version.less_than(ProtocolVersion::V1_20_2) {
@@ -246,13 +242,13 @@ impl Relay<'_> {
                 "backend compression activated"
             );
         } else if id == self.ids.disconnect {
-            return Err(CoreError::BackendKick(Box::new(BackendKick::new(
+            return Err(ConnectError::Kicked(Box::new(BackendKick::new(
                 frame,
                 ConnectionState::Login,
                 self.version,
             ))));
         } else if id == self.ids.encryption {
-            return Err(backend.online_mode_refusal());
+            return Err(backend.online_mode_refusal().into());
         } else if id == self.ids.plugin_request {
             let request = CLoginPluginRequest::decode(&mut frame.payload.as_ref(), self.version)?;
             if is_velocity_request(&request) {
@@ -319,13 +315,13 @@ impl Relay<'_> {
     }
 }
 
-fn client_gone(error: CoreError) -> CoreError {
+fn client_gone(error: CoreError) -> ConnectError {
     if error.is_expected_disconnect() {
         tracing::debug!("the client left during the backend login: {error}");
     } else {
         tracing::warn!("the client broke off its login: {error}");
     }
-    CoreError::ClientLeft
+    ConnectError::ClientLeft
 }
 
 #[cfg(test)]
@@ -362,7 +358,7 @@ mod tests {
         ctx: &SessionContext<'_>,
         io: &mut SessionIo,
         config: &ServerConfig,
-    ) -> Result<BackendBridge, CoreError> {
+    ) -> Result<BackendBridge, ConnectError> {
         let addresses = vec![config.addresses[0].address.clone()];
         connect_backend(ctx, "origin", config, &addresses, Login::Bridged(io)).await
     }
@@ -594,7 +590,7 @@ mod tests {
         let result =
             tokio::time::timeout(Duration::from_secs(5), bridge(&ctx, &mut io, &config)).await;
 
-        let Ok(Err(CoreError::Auth(message))) = result else {
+        let Ok(Err(ConnectError::Failed(CoreError::Auth(message)))) = result else {
             panic!(
                 "expected an immediate refusal, got {:?}",
                 result.map(|r| r.err())
@@ -624,7 +620,7 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), bridge(&ctx, &mut io, &config)).await;
 
         assert!(
-            matches!(result, Ok(Err(CoreError::Timeout(_)))),
+            matches!(result, Ok(Err(ConnectError::Failed(CoreError::Timeout(_))))),
             "{:?}",
             result.map(|r| r.err())
         );
@@ -653,7 +649,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Ok(Err(CoreError::Timeout(_)))),
+            matches!(result, Ok(Err(ConnectError::Failed(CoreError::Timeout(_))))),
             "{:?}",
             result.map(|r| r.err())
         );
@@ -721,7 +717,7 @@ mod tests {
         drop(io);
 
         assert!(
-            matches!(result, Err(CoreError::Timeout(_))),
+            matches!(result, Err(ConnectError::Failed(CoreError::Timeout(_)))),
             "{:?}",
             result.err()
         );
@@ -770,7 +766,7 @@ mod tests {
         let _peer = client_side.await.unwrap();
 
         assert!(
-            matches!(result, Ok(Err(CoreError::Timeout(_)))),
+            matches!(result, Ok(Err(ConnectError::Failed(CoreError::Timeout(_))))),
             "{:?}",
             result.map(|r| r.err())
         );
@@ -807,7 +803,7 @@ mod tests {
         let _peer = client_side.await.unwrap();
 
         assert!(
-            matches!(result, Ok(Err(CoreError::ClientLeft))),
+            matches!(result, Ok(Err(ConnectError::ClientLeft))),
             "{:?}",
             result.map(|r| r.err())
         );

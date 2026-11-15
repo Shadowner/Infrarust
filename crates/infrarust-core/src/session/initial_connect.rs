@@ -17,7 +17,7 @@ use crate::forwarding::ForwardingHandler;
 use crate::loadbalancer::PendingTicket;
 use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::RoutingData;
-use crate::session::backend_login::{Login, connect_backend};
+use crate::session::backend_login::{ConnectError, Login, connect_backend};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login;
 use crate::session::context::{SessionContext, SessionIo};
@@ -317,7 +317,7 @@ async fn connect_or_kick(
             };
             connect_backend(ctx, &routing.config_id, server_config, &addresses, login).await
         }
-        Err(mismatch) => Err(mismatch.into()),
+        Err(mismatch) => Err(CoreError::from(mismatch).into()),
     };
     match connected {
         Ok(backend) => {
@@ -326,7 +326,9 @@ async fn connect_or_kick(
             }
             Ok((ConnectionMode::Backend(backend), Pending::join(join)))
         }
-        Err(CoreError::ClientLeft) => Err(Refusal::Denied(Box::new(DisconnectCause::ClientQuit))),
+        Err(ConnectError::ClientLeft) => {
+            Err(Refusal::Denied(Box::new(DisconnectCause::ClientQuit)))
+        }
         Err(e) => {
             if !ctx.token.is_cancelled() {
                 tracing::info!(

@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::CoreError;
 use crate::loadbalancer::LoadBalancer;
 use crate::session::backend_bridge::BackendBridge;
-use crate::session::backend_login::{Login, connect_backend};
+use crate::session::backend_login::{ConnectError, Login, connect_backend};
 use crate::session::client_bridge::ClientBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
@@ -280,7 +280,7 @@ async fn hand_over(
     let session = &ctx.session;
     let version = ctx.version();
     let server = &destination.server;
-    let failed = |error, stranded| {
+    let failed = |error: ConnectError, stranded| {
         Ok(SwitchResult::Failed(Kick::failed(
             server.clone(),
             error,
@@ -304,7 +304,7 @@ async fn hand_over(
         )
         .await
     {
-        return failed(e, stranded);
+        return failed(e.into(), stranded);
     }
     let first_frame = if config_phase {
         let chain = FrameChain::new(ctx, server);
@@ -329,7 +329,8 @@ async fn hand_over(
     let join_game_frame = match first_frame {
         Ok(frame) => frame,
         Err(PhaseError::Client(e)) => return Err(e),
-        Err(PhaseError::Backend(e)) => return failed(e, stranded),
+        Err(PhaseError::Kicked(kick)) => return failed(ConnectError::Kicked(kick), stranded),
+        Err(PhaseError::Backend(e)) => return failed(e.into(), stranded),
     };
     if !config_phase
         && let Err(e) = replay::replay(
@@ -341,7 +342,7 @@ async fn hand_over(
         )
         .await
     {
-        return failed(e, stranded);
+        return failed(e.into(), stranded);
     }
 
     switch_packets::send_switch_packets(

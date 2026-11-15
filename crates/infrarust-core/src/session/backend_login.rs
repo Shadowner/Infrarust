@@ -8,7 +8,32 @@ use crate::forwarding::velocity::VelocityForwarding;
 use crate::forwarding::{ForwardingHandler, build_handshake_for_backend};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::context::{SessionContext, SessionIo};
+use crate::session::kick::BackendKick;
 use crate::session::login_bridge::bridge_login;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnectError {
+    #[error("backend kicked the player: {0}")]
+    Kicked(Box<BackendKick>),
+
+    #[error("the client left during the login")]
+    ClientLeft,
+
+    #[error("the session ended during the backend login")]
+    Cancelled,
+
+    #[error("transport error: {0}")]
+    Unreachable(#[from] infrarust_transport::TransportError),
+
+    #[error(transparent)]
+    Failed(#[from] CoreError),
+}
+
+impl From<infrarust_protocol::ProtocolError> for ConnectError {
+    fn from(error: infrarust_protocol::ProtocolError) -> Self {
+        Self::Failed(error.into())
+    }
+}
 
 pub(crate) enum Login<'a> {
     Relay,
@@ -22,7 +47,7 @@ pub(crate) async fn connect_backend(
     config: &ServerConfig,
     addresses: &[ServerAddress],
     login: Login<'_>,
-) -> Result<BackendBridge, CoreError> {
+) -> Result<BackendBridge, ConnectError> {
     let version = ctx.version();
     let connection = ctx
         .backend_connector
@@ -56,7 +81,7 @@ async fn log_in(
     backend: &mut BackendBridge,
     server: &str,
     config: &ServerConfig,
-) -> Result<(), CoreError> {
+) -> Result<(), ConnectError> {
     let handler = start_login(ctx, config, backend).await?;
     let data = ctx.forwarding_data();
     let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {

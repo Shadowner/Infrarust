@@ -33,6 +33,7 @@ use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
+use crate::session::backend_login::ConnectError;
 use crate::session::kick::Kick;
 use crate::session::kick::MAX_KICK_REDIRECTS;
 use crate::session::login_admission::{self, Admitted, LoginAdmission, PreLogin, pre_login};
@@ -411,7 +412,7 @@ impl ForwardedLogin<'_> {
         admitted: &Admitted,
         route: &Route,
         opening: &Opening<'_>,
-    ) -> Result<BackendConnection, CoreError> {
+    ) -> Result<BackendConnection, ConnectError> {
         let config = &route.routing.server_config;
         let mut backend = self
             .connector
@@ -451,7 +452,7 @@ impl ForwardedLogin<'_> {
         };
         if let Err(e) = sent {
             admitted.session.set_connected_address(None);
-            return Err(e);
+            return Err(e.into());
         }
         Ok(backend)
     }

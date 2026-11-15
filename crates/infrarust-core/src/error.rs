@@ -50,9 +50,6 @@ pub enum CoreError {
     #[error("telemetry initialization error: {0}")]
     TelemetryInit(String),
 
-    #[error("backend kicked the player: {0}")]
-    BackendKick(Box<crate::session::kick::BackendKick>),
-
     #[error("invalid session state: {0}")]
     InvalidState(&'static str),
 
