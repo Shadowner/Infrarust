@@ -18,7 +18,9 @@ use crate::connection::{ClientConnection, canonicalize_ip};
 use crate::error::TransportError;
 use crate::ip_limit::{IpGuard, IpLimiter};
 use crate::proxy_protocol::decode_proxy_protocol;
-use crate::socket::{configure_listener_socket, configure_tokio_stream, into_tokio_listener};
+use crate::socket::{
+    adopt_listener_socket, configure_listener_socket, configure_tokio_stream, into_tokio_listener,
+};
 
 /// Configuration for the listener.
 #[derive(Debug, Clone)]
@@ -160,18 +162,30 @@ impl std::fmt::Debug for AcceptedConnection {
 }
 
 impl Listener {
-    /// Binds to the configured address and prepares the listener.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportError::Bind`] if the socket cannot be bound, or
-    /// [`TransportError::SocketConfig`] if socket configuration fails.
-    #[allow(clippy::unused_async)] // Kept async for API consistency; callers already await this.
+    #[allow(clippy::unused_async)]
     pub async fn bind(
         config: ListenerConfig,
         shutdown: CancellationToken,
     ) -> Result<Self, TransportError> {
         let socket = configure_listener_socket(config.bind, config.so_reuseport)?;
+        Self::listen(socket, config, shutdown)
+    }
+
+    pub fn adopt(
+        inherited: std::net::TcpListener,
+        config: ListenerConfig,
+        shutdown: CancellationToken,
+    ) -> Result<Self, TransportError> {
+        let socket = adopt_listener_socket(inherited)?;
+        tracing::info!(configured_bind = %config.bind, "adopting socket passed by socket activation");
+        Self::listen(socket, config, shutdown)
+    }
+
+    fn listen(
+        socket: socket2::Socket,
+        config: ListenerConfig,
+        shutdown: CancellationToken,
+    ) -> Result<Self, TransportError> {
         let inner = into_tokio_listener(socket)?;
         let local_addr = inner.local_addr().map_err(TransportError::SocketConfig)?;
 

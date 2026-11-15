@@ -62,6 +62,13 @@ impl ProxyServer {
     }
 
     pub async fn bind(&self) -> Result<Listener, CoreError> {
+        self.bind_or_adopt(None).await
+    }
+
+    pub(crate) async fn bind_or_adopt(
+        &self,
+        inherited: Option<std::net::TcpListener>,
+    ) -> Result<Listener, CoreError> {
         let config = &self.services.config;
         let listener_config = ListenerConfig {
             bind: config.bind,
@@ -73,7 +80,10 @@ impl ProxyServer {
             trusted_proxies: config.trusted_proxies.clone(),
         };
 
-        let listener = Listener::bind(listener_config, self.shutdown.clone()).await?;
+        let listener = match inherited {
+            Some(inherited) => Listener::adopt(inherited, listener_config, self.shutdown.clone())?,
+            None => Listener::bind(listener_config, self.shutdown.clone()).await?,
+        };
 
         tracing::info!(bind = %listener.local_addr()?, "proxy server listening");
         Ok(listener)

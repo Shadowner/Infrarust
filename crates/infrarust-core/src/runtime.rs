@@ -47,6 +47,7 @@ impl ProxyRuntime {
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
             plugin_shutdown: ShutdownLimits::default(),
             server_providers: Vec::new(),
+            inherited_listener: None,
         }
     }
 }
@@ -68,9 +69,16 @@ pub struct ProxyRuntimeBuilder {
     drain_timeout: Duration,
     plugin_shutdown: ShutdownLimits,
     server_providers: Vec<ProviderOverride>,
+    inherited_listener: Option<std::net::TcpListener>,
 }
 
 impl ProxyRuntimeBuilder {
+    #[must_use]
+    pub fn inherited_listener(mut self, listener: Option<std::net::TcpListener>) -> Self {
+        self.inherited_listener = listener;
+        self
+    }
+
     #[must_use]
     pub fn shutdown_token(mut self, token: CancellationToken) -> Self {
         self.shutdown = token;
@@ -141,6 +149,7 @@ impl ProxyRuntimeBuilder {
             drain_timeout,
             plugin_shutdown,
             server_providers,
+            inherited_listener,
         } = self;
 
         let proxy_info = proxy_info
@@ -214,7 +223,7 @@ impl ProxyRuntimeBuilder {
         let plugin_manager = Arc::new(RwLock::new(plugin_manager));
         let server = Arc::new(server);
 
-        let (listener, local_addr) = match bind_listener(&server).await {
+        let (listener, local_addr) = match bind_listener(&server, inherited_listener).await {
             Ok(bound) => bound,
             Err(e) => {
                 plugin_manager.write().await.shutdown().await;
@@ -341,8 +350,11 @@ fn plugin_permissions(
     permissions
 }
 
-async fn bind_listener(server: &ProxyServer) -> Result<(Listener, SocketAddr), CoreError> {
-    let listener = server.bind().await?;
+async fn bind_listener(
+    server: &ProxyServer,
+    inherited: Option<std::net::TcpListener>,
+) -> Result<(Listener, SocketAddr), CoreError> {
+    let listener = server.bind_or_adopt(inherited).await?;
     let local_addr = listener.local_addr()?;
     Ok((listener, local_addr))
 }

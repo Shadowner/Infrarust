@@ -79,10 +79,13 @@ fn main() -> ExitCode {
         return migrate::run(input, output, config.as_deref());
     }
 
-    if let Err(e) = infrarust_transport::init_socket_activation() {
-        eprintln!("error: {e}");
-        return ExitCode::FAILURE;
-    }
+    let inherited_listener = match infrarust_transport::activated_listener() {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let (config, config_warnings) = if !cli.config.exists()
         && cli.config == Path::new("infrarust.toml")
@@ -146,7 +149,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config, cli.config, log_broadcast)) {
+    match runtime.block_on(run(config, cli.config, log_broadcast, inherited_listener)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -267,6 +270,7 @@ async fn run(
     config: ProxyConfig,
     config_path: std::path::PathBuf,
     log_broadcast: Option<LogBroadcast>,
+    inherited_listener: Option<std::net::TcpListener>,
 ) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
@@ -295,6 +299,7 @@ async fn run(
         .shutdown_token(shutdown.clone())
         .proxy_info(proxy_info)
         .trusted_plugins(static_ids)
+        .inherited_listener(inherited_listener)
         .loader(Box::new(static_loader));
 
     #[cfg(feature = "wasm")]

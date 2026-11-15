@@ -52,10 +52,8 @@ fn test_configure_listener_socket_activation() {
                 .parse::<u16>()
                 .unwrap();
 
-            init_socket_activation().unwrap();
-
-            let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-            let activated_socket = configure_listener_socket(addr, false).unwrap();
+            let inherited = activated_listener().unwrap().unwrap();
+            let activated_socket = adopt_listener_socket(inherited).unwrap();
             let activated_port = activated_socket
                 .local_addr()
                 .unwrap()
