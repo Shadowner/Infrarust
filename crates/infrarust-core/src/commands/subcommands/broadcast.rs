@@ -3,7 +3,7 @@ use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 
 use crate::commands::actions::broadcast;
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SubcommandHandler};
 
 pub(crate) struct BroadcastSubcommand;
 
@@ -22,6 +22,14 @@ impl SubcommandHandler for BroadcastSubcommand {
 
     fn usage(&self) -> &str {
         "/ir broadcast <message> [--server <name>]"
+    }
+
+    fn runs_bare(&self) -> bool {
+        false
+    }
+
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const { &[ArgSpec::phrase("message")] }
     }
 
     fn execute<'a>(

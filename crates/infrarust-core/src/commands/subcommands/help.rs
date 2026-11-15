@@ -1,37 +1,22 @@
-use std::collections::HashMap;
-
 use infrarust_api::branding::ProxyMessage;
 use infrarust_api::command::CommandContext;
 
-use crate::commands::{AliasTarget, CommandServices, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SUBCOMMANDS, SubcommandHandler};
 
-pub(crate) fn handle_help(
-    ctx: &CommandContext,
-    args: &[String],
-    subcommands: &HashMap<String, Box<dyn SubcommandHandler>>,
-    aliases: &HashMap<String, AliasTarget>,
-    services: &CommandServices,
-) {
+pub(crate) fn handle_help(ctx: &CommandContext, args: &[String], services: &CommandServices) {
     let player = &ctx.source;
-    let entry = |name: &str| -> Option<(&str, &str)> {
-        subcommands
-            .get(name)
-            .map(|sub| (sub.usage(), sub.description()))
-            .or_else(|| {
-                aliases
-                    .get(name)
-                    .map(|target| (target.alias.usage, target.alias.description))
-            })
-    };
 
     if let Some(cmd_name) = args.first() {
         let lower = cmd_name.to_lowercase();
-        if let Some((usage, description)) = entry(&lower) {
+        if let Some(entry) = SUBCOMMANDS.entry(&lower) {
             if services
                 .permission_service
                 .is_command_allowed(&lower, player)
             {
-                player.send_message(ProxyMessage::info(&format!("{usage} — {description}")));
+                player.send_message(ProxyMessage::info(&format!(
+                    "{} — {}",
+                    entry.usage, entry.description
+                )));
             } else {
                 player.send_message(ProxyMessage::error(crate::commands::NO_PERMISSION));
             }
@@ -43,15 +28,17 @@ pub(crate) fn handle_help(
     } else {
         player.send_message(ProxyMessage::info("Available commands:"));
 
-        let mut names: Vec<&String> = subcommands.keys().chain(aliases.keys()).collect();
-        names.sort();
+        let mut entries: Vec<_> = SUBCOMMANDS.entries().collect();
+        entries.sort_by_key(|entry| entry.name);
 
-        for name in names {
-            if let Some((_, description)) = entry(name)
-                && services.permission_service.is_command_allowed(name, player)
+        for entry in entries {
+            if services
+                .permission_service
+                .is_command_allowed(entry.name, player)
             {
                 player.send_message(ProxyMessage::detail(&format!(
-                    "  {name:<12} - {description}"
+                    "  {:<12} - {}",
+                    entry.name, entry.description
                 )));
             }
         }
@@ -75,12 +62,16 @@ impl SubcommandHandler for HelpSubcommand {
         "/ir help [command]"
     }
 
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const { &[ArgSpec::word("command")] }
+    }
+
     fn execute<'a>(
         &'a self,
-        _ctx: &'a CommandContext,
-        _args: &'a [String],
-        _services: &'a CommandServices,
+        ctx: &'a CommandContext,
+        args: &'a [String],
+        services: &'a CommandServices,
     ) -> infrarust_api::event::BoxFuture<'a, ()> {
-        Box::pin(async {})
+        Box::pin(async move { handle_help(ctx, args, services) })
     }
 }

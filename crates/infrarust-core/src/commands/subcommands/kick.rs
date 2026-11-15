@@ -3,7 +3,7 @@ use infrarust_api::command::{CommandContext, CommandSource};
 use infrarust_api::event::BoxFuture;
 
 use crate::commands::actions::kick_player;
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SubcommandHandler};
 
 pub(crate) struct KickSubcommand;
 
@@ -22,6 +22,14 @@ impl SubcommandHandler for KickSubcommand {
 
     fn usage(&self) -> &str {
         "/ir kick <player> [reason]"
+    }
+
+    fn runs_bare(&self) -> bool {
+        false
+    }
+
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const { &[ArgSpec::word("player"), ArgSpec::phrase("reason")] }
     }
 
     fn execute<'a>(

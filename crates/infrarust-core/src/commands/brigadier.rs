@@ -6,6 +6,7 @@ use infrarust_protocol::packets::play::commands::{
 };
 use infrarust_protocol::version::ProtocolVersion;
 
+use crate::commands::{ArgParser, SUBCOMMANDS};
 use crate::services::command_manager::ProxyTree;
 
 const ASK_SERVER: Option<&str> = Some("minecraft:ask_server");
@@ -67,132 +68,41 @@ pub fn inject_proxy_commands(
         .ok_or_else(|| ProtocolError::invalid("command tree root index out of range"))?;
     drop_shadowed_roots(&mut commands.nodes, root, &tree.shadowed);
 
-    let is_visible = |name: &str| -> bool {
-        match &visible_subcommands {
-            None => true,
-            Some(set) => set.contains(name),
-        }
-    };
+    let is_visible = |name: &str| visible_subcommands.is_none_or(|set| set.contains(name));
 
-    let has_any_visible = match &visible_subcommands {
-        None => true,
-        Some(set) => !set.is_empty(),
-    };
-
-    if has_any_visible {
+    if visible_subcommands.is_none_or(|set| !set.is_empty()) {
         let mut sub = SubTree::new(commands.nodes.len());
         let infrarust_idx = sub.push(CommandNode::literal("infrarust"));
         let mut ir_children = Vec::new();
 
-        if is_visible("help") {
-            let help_idx = sub.push(CommandNode::literal_executable("help"));
-            let help_cmd_idx = sub.push(CommandNode::argument(
-                "command",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            sub.link(help_idx, help_cmd_idx);
-            ir_children.push(help_idx);
-        }
-
-        if is_visible("version") {
-            ir_children.push(sub.push(CommandNode::literal_executable("version")));
-        }
-
-        if is_visible("list") {
-            ir_children.push(sub.push(CommandNode::literal_executable("list")));
-        }
-
-        if is_visible("plugins") {
-            ir_children.push(sub.push(CommandNode::literal_executable("plugins")));
-        }
-
-        if is_visible("reload") {
-            ir_children.push(sub.push(CommandNode::literal_executable("reload")));
-        }
-
-        if is_visible("server") {
-            let server_idx = sub.push(CommandNode::literal_executable("server"));
-            let server_name_idx = sub.push(CommandNode::argument(
-                "name",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            sub.link(server_idx, server_name_idx);
-            ir_children.push(server_idx);
-        }
-
-        if is_visible("find") {
-            let find_idx = sub.push(CommandNode::literal("find"));
-            let find_player_idx = sub.push(CommandNode::argument(
-                "player",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            sub.link(find_idx, find_player_idx);
-            ir_children.push(find_idx);
-        }
-
-        if is_visible("send") {
-            let send_idx = sub.push(CommandNode::literal("send"));
-            let send_player_idx = sub.push(CommandNode::argument_non_executable(
-                "player",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            let send_server_idx = sub.push(CommandNode::argument(
-                "server",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            sub.link(send_player_idx, send_server_idx);
-            sub.link(send_idx, send_player_idx);
-            ir_children.push(send_idx);
-        }
-
-        if is_visible("kick") {
-            let kick_idx = sub.push(CommandNode::literal("kick"));
-            let kick_player_idx = sub.push(CommandNode::argument(
-                "player",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            let kick_reason_idx = sub.push(CommandNode::argument(
-                "reason",
-                string_parser(GREEDY_PHRASE, version)?,
-                None,
-            ));
-            sub.link(kick_player_idx, kick_reason_idx);
-            sub.link(kick_idx, kick_player_idx);
-            ir_children.push(kick_idx);
-        }
-
-        if is_visible("broadcast") {
-            let broadcast_idx = sub.push(CommandNode::literal("broadcast"));
-            let broadcast_msg_idx = sub.push(CommandNode::argument(
-                "message",
-                string_parser(GREEDY_PHRASE, version)?,
-                None,
-            ));
-            sub.link(broadcast_idx, broadcast_msg_idx);
-            ir_children.push(broadcast_idx);
-        }
-
-        if is_visible("plugin") {
-            let plugin_lit_idx = sub.push(CommandNode::literal("plugin"));
-            let plugin_id_idx = sub.push(CommandNode::argument_non_executable(
-                "plugin_id",
-                string_parser(SINGLE_WORD, version)?,
-                ASK_SERVER,
-            ));
-            let plugin_cmd_idx = sub.push(CommandNode::argument(
-                "command",
-                string_parser(GREEDY_PHRASE, version)?,
-                ASK_SERVER,
-            ));
-            sub.link(plugin_id_idx, plugin_cmd_idx);
-            sub.link(plugin_lit_idx, plugin_id_idx);
-            ir_children.push(plugin_lit_idx);
+        for entry in SUBCOMMANDS.entries().filter(|entry| is_visible(entry.name)) {
+            if entry.is_alias || entry.handler.runs_bare() {
+                ir_children.push(sub.push(CommandNode::literal_executable(entry.name)));
+            } else {
+                ir_children.push(sub.push(CommandNode::literal(entry.name)));
+            }
+            if entry.is_alias {
+                continue;
+            }
+            let mut parent = ir_children[ir_children.len() - 1];
+            for arg in entry.handler.arguments() {
+                let parser = string_parser(
+                    match arg.parser {
+                        ArgParser::Word => SINGLE_WORD,
+                        ArgParser::Phrase => GREEDY_PHRASE,
+                    },
+                    version,
+                )?;
+                let suggestions = if arg.ask_server { ASK_SERVER } else { None };
+                let node = if arg.executable {
+                    CommandNode::argument(arg.name, parser, suggestions)
+                } else {
+                    CommandNode::argument_non_executable(arg.name, parser, suggestions)
+                };
+                let child = sub.push(node);
+                sub.link(parent, child);
+                parent = child;
+            }
         }
 
         let children: Vec<i32> = ir_children

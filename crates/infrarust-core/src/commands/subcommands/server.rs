@@ -4,7 +4,7 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::types::ServerId;
 
-use crate::commands::{CommandServices, SubcommandHandler};
+use crate::commands::{ArgSpec, CommandServices, SubcommandHandler};
 
 pub(crate) struct ServerSubcommand;
 
@@ -19,6 +19,10 @@ impl SubcommandHandler for ServerSubcommand {
 
     fn usage(&self) -> &str {
         "/ir server [name]"
+    }
+
+    fn arguments(&self) -> &'static [ArgSpec] {
+        const { &[ArgSpec::word("name")] }
     }
 
     fn execute<'a>(
