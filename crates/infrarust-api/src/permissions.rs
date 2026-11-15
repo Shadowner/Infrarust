@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -6,6 +5,8 @@ use std::sync::{Arc, PoisonError, RwLock};
 use crate::BoxFuture;
 use crate::error::ErrorKind;
 use crate::types::{GameProfile, PlayerId};
+
+pub use infrarust_plugin_common::normalize_node;
 
 pub const ADMIN_PERMISSION: &str = "infrarust.admin";
 pub const COMMAND_PERMISSION_PREFIX: &str = "infrarust.command.";
@@ -100,16 +101,6 @@ impl PermissionChecker for AllPermissionsChecker {
 
     fn to_snapshot(&self) -> Option<PermissionSnapshot> {
         Some(PermissionSnapshot::new().with_admin(true))
-    }
-}
-
-#[must_use]
-pub fn normalize_node(node: &str) -> Cow<'_, str> {
-    let node = node.trim();
-    if node.chars().any(char::is_uppercase) {
-        Cow::Owned(node.to_lowercase())
-    } else {
-        Cow::Borrowed(node)
     }
 }
 
