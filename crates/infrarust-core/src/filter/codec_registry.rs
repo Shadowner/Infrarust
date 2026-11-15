@@ -163,13 +163,13 @@ mod tests {
     }
 
     fn test_init() -> CodecSessionInit {
-        CodecSessionInit {
-            client_version: infrarust_api::types::ProtocolVersion::new(767),
-            connection_id: 1,
-            remote_addr: "127.0.0.1:12345".parse().unwrap(),
-            real_ip: None,
-            side: ConnectionSide::ClientSide,
-        }
+        CodecSessionInit::new(
+            infrarust_api::types::ProtocolVersion::new(767),
+            1,
+            "127.0.0.1:12345".parse().unwrap(),
+            None,
+            ConnectionSide::ClientSide,
+        )
     }
 
     #[test]

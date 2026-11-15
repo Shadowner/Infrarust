@@ -7,7 +7,7 @@ use tracing::Instrument;
 use infrarust_api::events::handshake::RejectReason;
 use infrarust_api::filter::TransportContext;
 use infrarust_api::handoff::Handoff;
-use infrarust_api::types::{Component, Extensions};
+use infrarust_api::types::Component;
 use infrarust_config::{ProxyMode, UnknownDomainBehavior};
 use infrarust_protocol::ProtocolError;
 use infrarust_protocol::version::ProtocolVersion;
@@ -493,12 +493,11 @@ impl ProxyServer {
 }
 
 fn transport_context(ctx: &ConnectionContext) -> TransportContext {
-    TransportContext {
-        remote_addr: ctx.peer_addr(),
-        local_addr: ctx.local_addr(),
-        real_ip: ctx.real_ip(),
-        connection_time: ctx.connected_at().into_std(),
-        connection_id: ctx.connection_id,
-        extensions: Extensions::new(),
-    }
+    TransportContext::new(
+        ctx.peer_addr(),
+        ctx.local_addr(),
+        ctx.real_ip(),
+        ctx.connected_at().into_std(),
+        ctx.connection_id,
+    )
 }

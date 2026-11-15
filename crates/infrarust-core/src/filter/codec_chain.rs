@@ -231,20 +231,20 @@ pub fn build_codec_chains(
     remote_addr: SocketAddr,
     real_ip: Option<IpAddr>,
 ) -> (CodecFilterChain, CodecFilterChain) {
-    let client_init = CodecSessionInit {
+    let client_init = CodecSessionInit::new(
         client_version,
         connection_id,
         remote_addr,
         real_ip,
-        side: ConnectionSide::ClientSide,
-    };
-    let server_init = CodecSessionInit {
+        ConnectionSide::ClientSide,
+    );
+    let server_init = CodecSessionInit::new(
         client_version,
         connection_id,
         remote_addr,
         real_ip,
-        side: ConnectionSide::ServerSide,
-    };
+        ConnectionSide::ServerSide,
+    );
 
     #[cfg(not(feature = "bench-timing"))]
     let (client_instances, server_instances) = (
