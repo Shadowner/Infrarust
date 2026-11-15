@@ -33,7 +33,6 @@ pub(crate) mod plugin;
 pub(crate) mod rate_limit;
 pub(crate) mod recovery;
 pub(crate) mod registrations;
-pub(crate) mod resources;
 pub(crate) mod snapshots;
 pub(crate) mod status;
 pub(crate) mod store_state;

@@ -10,7 +10,7 @@ mod codec;
 mod commands;
 mod config;
 mod event_bus;
-mod limbo;
+pub(crate) mod limbo;
 mod load_balancer;
 mod log;
 mod messaging;
