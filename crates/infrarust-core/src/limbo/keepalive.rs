@@ -19,19 +19,18 @@ pub(crate) enum KeepAliveTick {
     Timeout,
 }
 
+struct Pending {
+    id: i64,
+    sent_at: Instant,
+}
+
 pub(crate) struct KeepAliveState {
-    last_sent_id: i64,
-    last_sent_at: Instant,
-    awaiting_response: bool,
+    pending: Option<Pending>,
 }
 
 impl KeepAliveState {
-    pub fn new() -> Self {
-        Self {
-            last_sent_id: 0,
-            last_sent_at: Instant::now(),
-            awaiting_response: false,
-        }
+    pub const fn new() -> Self {
+        Self { pending: None }
     }
 
     pub fn tick(
@@ -39,8 +38,8 @@ impl KeepAliveState {
         version: ProtocolVersion,
         registry: &PacketRegistry,
     ) -> Result<KeepAliveTick, CoreError> {
-        if self.awaiting_response {
-            if self.last_sent_at.elapsed() >= Duration::from_secs(KEEPALIVE_TIMEOUT_SECS) {
+        if let Some(pending) = &self.pending {
+            if pending.sent_at.elapsed() >= Duration::from_secs(KEEPALIVE_TIMEOUT_SECS) {
                 return Ok(KeepAliveTick::Timeout);
             }
             return Ok(KeepAliveTick::Idle);
@@ -55,21 +54,18 @@ impl KeepAliveState {
                 .as_millis() as i64
         };
 
-        self.last_sent_id = id;
-        self.last_sent_at = Instant::now();
-        self.awaiting_response = true;
+        self.pending = Some(Pending {
+            id,
+            sent_at: Instant::now(),
+        });
 
         let frame = encode_packet(&CKeepAlive { id }, version, registry)?;
         Ok(KeepAliveTick::Send(frame))
     }
 
     pub fn on_response(&mut self, id: i64) -> Option<Duration> {
-        if self.awaiting_response && id == self.last_sent_id {
-            self.awaiting_response = false;
-            Some(self.last_sent_at.elapsed())
-        } else {
-            None
-        }
+        let pending = self.pending.take_if(|pending| pending.id == id)?;
+        Some(pending.sent_at.elapsed())
     }
 }
 
@@ -106,7 +102,7 @@ mod tests {
             matches!(result, KeepAliveTick::Send(_)),
             "first tick should produce a frame"
         );
-        assert!(state.awaiting_response);
+        assert!(state.pending.is_some());
     }
 
     #[test]
@@ -136,7 +132,8 @@ mod tests {
 
         let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         // Advance time past the timeout while still awaiting the response.
-        state.last_sent_at = Instant::now() - Duration::from_secs(KEEPALIVE_TIMEOUT_SECS + 1);
+        state.pending.as_mut().unwrap().sent_at =
+            Instant::now() - Duration::from_secs(KEEPALIVE_TIMEOUT_SECS + 1);
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         assert!(
@@ -151,11 +148,9 @@ mod tests {
         let mut state = KeepAliveState::new();
 
         let _ = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
-        assert!(
-            state.on_response(state.last_sent_id).is_some(),
-            "valid id clears pending"
-        );
-        assert!(!state.awaiting_response);
+        let sent = state.pending.as_ref().unwrap().id;
+        assert!(state.on_response(sent).is_some(), "valid id clears pending");
+        assert!(state.pending.is_none());
 
         let result = state.tick(ProtocolVersion::V1_21, &registry).unwrap();
         assert!(
@@ -167,11 +162,13 @@ mod tests {
     #[test]
     fn on_response_correct_id() {
         let mut state = KeepAliveState::new();
-        state.last_sent_id = 42;
-        state.awaiting_response = true;
+        state.pending = Some(Pending {
+            id: 42,
+            sent_at: Instant::now(),
+        });
 
         assert!(state.on_response(42).is_some());
-        assert!(!state.awaiting_response);
+        assert!(state.pending.is_none());
         assert!(
             state.on_response(42).is_none(),
             "a second answer measures nothing"
@@ -181,10 +178,12 @@ mod tests {
     #[test]
     fn on_response_wrong_id() {
         let mut state = KeepAliveState::new();
-        state.last_sent_id = 42;
-        state.awaiting_response = true;
+        state.pending = Some(Pending {
+            id: 42,
+            sent_at: Instant::now(),
+        });
 
         assert!(state.on_response(99).is_none());
-        assert!(state.awaiting_response);
+        assert!(state.pending.is_some());
     }
 }
