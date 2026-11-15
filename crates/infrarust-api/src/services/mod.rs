@@ -26,6 +26,6 @@ pub use providers::{ProviderKind, ProviderRejected};
 pub use proxy_info::{
     KeepaliveInfo, ProxyInfo, RateLimitInfo, StatusCacheInfo, UnknownDomainBehavior,
 };
-pub use scheduler::{AsyncTask, RepeatingTask, Scheduler, TaskHandle};
+pub use scheduler::{AsyncTask, RepeatingTask, Scheduler, SchedulerExt, TaskHandle};
 pub use server_manager::{ServerManager, ServerState};
 pub use service_registry::{ServiceHandle, ServiceRegistry, ServiceRegistryExt};
