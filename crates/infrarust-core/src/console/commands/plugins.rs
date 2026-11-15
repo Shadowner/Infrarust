@@ -5,7 +5,7 @@ use infrarust_api::plugin::{PluginHealth, PluginMetadata, PluginRuntimeStatus};
 
 use crate::console::ConsoleServices;
 use crate::console::commands::usage;
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{Block, CommandCategory, CommandOutput, Fields, Line, Span, Table};
 use crate::console::parser::format_duration_short;
 use crate::plugin::PluginState;
@@ -210,24 +210,14 @@ pub(crate) fn plugin_block(
 pub struct PluginsCommand;
 
 impl ConsoleCommand for PluginsCommand {
-    fn name(&self) -> &str {
-        "plugins"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["pl"]
-    }
-
-    fn description(&self) -> &str {
-        "List loaded plugins"
-    }
-
-    fn usage(&self) -> &str {
-        "plugins"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Plugins
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "plugins",
+            aliases: &["pl"],
+            description: "List loaded plugins",
+            usage: "plugins",
+            category: CommandCategory::Plugins,
+        }
     }
 
     fn execute<'a>(
@@ -255,20 +245,14 @@ impl ConsoleCommand for PluginsCommand {
 pub struct PluginCommand;
 
 impl ConsoleCommand for PluginCommand {
-    fn name(&self) -> &str {
-        "plugin"
-    }
-
-    fn description(&self) -> &str {
-        "Show plugin details"
-    }
-
-    fn usage(&self) -> &str {
-        "plugin <id>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Plugins
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "plugin",
+            aliases: &[],
+            description: "Show plugin details",
+            usage: "plugin <id>",
+            category: CommandCategory::Plugins,
+        }
     }
 
     fn execute<'a>(

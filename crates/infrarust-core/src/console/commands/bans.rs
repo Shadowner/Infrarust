@@ -8,7 +8,7 @@ use infrarust_config::IdentityCheck;
 
 use crate::console::ConsoleServices;
 use crate::console::commands::{args, usage};
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{
     Block, CommandCategory, CommandOutput, Fields, Line, OutputLine, Span, Table,
 };
@@ -17,20 +17,14 @@ use crate::console::parser::{format_duration_short, parse_ban_target};
 pub struct BanCommand;
 
 impl ConsoleCommand for BanCommand {
-    fn name(&self) -> &str {
-        "ban"
-    }
-
-    fn description(&self) -> &str {
-        "Ban a player by username"
-    }
-
-    fn usage(&self) -> &str {
-        "ban <player> [duration] [reason...]"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Bans
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "ban",
+            aliases: &[],
+            description: "Ban a player by username",
+            usage: "ban <player> [duration] [reason...]",
+            category: CommandCategory::Bans,
+        }
     }
 
     fn execute<'a>(
@@ -52,24 +46,14 @@ impl ConsoleCommand for BanCommand {
 pub struct BanIpCommand;
 
 impl ConsoleCommand for BanIpCommand {
-    fn name(&self) -> &str {
-        "ban-ip"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["banip"]
-    }
-
-    fn description(&self) -> &str {
-        "Ban an IP address or range"
-    }
-
-    fn usage(&self) -> &str {
-        "ban-ip <ip|cidr> [duration] [reason...]"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Bans
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "ban-ip",
+            aliases: &["banip"],
+            description: "Ban an IP address or range",
+            usage: "ban-ip <ip|cidr> [duration] [reason...]",
+            category: CommandCategory::Bans,
+        }
     }
 
     fn execute<'a>(
@@ -100,24 +84,14 @@ impl ConsoleCommand for BanIpCommand {
 pub struct UnbanCommand;
 
 impl ConsoleCommand for UnbanCommand {
-    fn name(&self) -> &str {
-        "unban"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["pardon"]
-    }
-
-    fn description(&self) -> &str {
-        "Unban a player"
-    }
-
-    fn usage(&self) -> &str {
-        "unban <player>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Bans
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "unban",
+            aliases: &["pardon"],
+            description: "Unban a player",
+            usage: "unban <player>",
+            category: CommandCategory::Bans,
+        }
     }
 
     fn execute<'a>(
@@ -146,24 +120,14 @@ impl ConsoleCommand for UnbanCommand {
 pub struct UnbanIpCommand;
 
 impl ConsoleCommand for UnbanIpCommand {
-    fn name(&self) -> &str {
-        "unban-ip"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["unbanip", "pardonip"]
-    }
-
-    fn description(&self) -> &str {
-        "Unban an IP address or range"
-    }
-
-    fn usage(&self) -> &str {
-        "unban-ip <ip|cidr>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Bans
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "unban-ip",
+            aliases: &["unbanip", "pardonip"],
+            description: "Unban an IP address or range",
+            usage: "unban-ip <ip|cidr>",
+            category: CommandCategory::Bans,
+        }
     }
 
     fn execute<'a>(
@@ -196,24 +160,14 @@ impl ConsoleCommand for UnbanIpCommand {
 pub struct BanListCommand;
 
 impl ConsoleCommand for BanListCommand {
-    fn name(&self) -> &str {
-        "banlist"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["bans"]
-    }
-
-    fn description(&self) -> &str {
-        "List all active bans"
-    }
-
-    fn usage(&self) -> &str {
-        "banlist"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Bans
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "banlist",
+            aliases: &["bans"],
+            description: "List all active bans",
+            usage: "banlist",
+            category: CommandCategory::Bans,
+        }
     }
 
     fn execute<'a>(
@@ -235,20 +189,14 @@ impl ConsoleCommand for BanListCommand {
 pub struct BanInfoCommand;
 
 impl ConsoleCommand for BanInfoCommand {
-    fn name(&self) -> &str {
-        "baninfo"
-    }
-
-    fn description(&self) -> &str {
-        "Show details of a ban"
-    }
-
-    fn usage(&self) -> &str {
-        "baninfo <player|ip|uuid>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Bans
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "baninfo",
+            aliases: &[],
+            description: "Show details of a ban",
+            usage: "baninfo <player|ip|uuid>",
+            category: CommandCategory::Bans,
+        }
     }
 
     fn execute<'a>(

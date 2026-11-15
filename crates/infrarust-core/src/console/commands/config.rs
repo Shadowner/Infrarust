@@ -3,7 +3,7 @@ use infrarust_api::services::config_service::{ConfigService, ServerConfig};
 
 use crate::console::ConsoleServices;
 use crate::console::commands::servers::join_addresses;
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{Block, CommandCategory, CommandOutput, Span, Table};
 
 pub(crate) fn config_block(configs: &[ServerConfig]) -> Block {
@@ -32,20 +32,14 @@ pub(crate) fn value_block(key: &str, value: String) -> Block {
 pub struct ReloadCommand;
 
 impl ConsoleCommand for ReloadCommand {
-    fn name(&self) -> &str {
-        "reload"
-    }
-
-    fn description(&self) -> &str {
-        "Reload configuration"
-    }
-
-    fn usage(&self) -> &str {
-        "reload"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Config
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "reload",
+            aliases: &[],
+            description: "Reload configuration",
+            usage: "reload",
+            category: CommandCategory::Config,
+        }
     }
 
     fn execute<'a>(
@@ -64,20 +58,14 @@ impl ConsoleCommand for ReloadCommand {
 pub struct ConfigCommand;
 
 impl ConsoleCommand for ConfigCommand {
-    fn name(&self) -> &str {
-        "config"
-    }
-
-    fn description(&self) -> &str {
-        "Show configuration"
-    }
-
-    fn usage(&self) -> &str {
-        "config [key]"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Config
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "config",
+            aliases: &[],
+            description: "Show configuration",
+            usage: "config [key]",
+            category: CommandCategory::Config,
+        }
     }
 
     fn execute<'a>(

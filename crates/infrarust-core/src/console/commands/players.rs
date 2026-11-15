@@ -9,7 +9,7 @@ use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 use crate::commands::actions::{broadcast, find_player, kick_player, send_player};
 use crate::console::ConsoleServices;
 use crate::console::commands::{args, usage};
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{
     Block, CommandCategory, CommandOutput, Fields, Line, OutputLine, Span, Table,
 };
@@ -17,24 +17,14 @@ use crate::console::output::{
 pub struct ListPlayersCommand;
 
 impl ConsoleCommand for ListPlayersCommand {
-    fn name(&self) -> &str {
-        "list"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["players", "who", "online", "ls"]
-    }
-
-    fn description(&self) -> &str {
-        "List connected players"
-    }
-
-    fn usage(&self) -> &str {
-        "list [server]"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "list",
+            aliases: &["players", "who", "online", "ls"],
+            description: "List connected players",
+            usage: "list [server]",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -58,20 +48,14 @@ impl ConsoleCommand for ListPlayersCommand {
 pub struct FindPlayerCommand;
 
 impl ConsoleCommand for FindPlayerCommand {
-    fn name(&self) -> &str {
-        "find"
-    }
-
-    fn description(&self) -> &str {
-        "Find a player by name"
-    }
-
-    fn usage(&self) -> &str {
-        "find <player>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "find",
+            aliases: &[],
+            description: "Find a player by name",
+            usage: "find <player>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -95,20 +79,14 @@ impl ConsoleCommand for FindPlayerCommand {
 pub struct KickCommand;
 
 impl ConsoleCommand for KickCommand {
-    fn name(&self) -> &str {
-        "kick"
-    }
-
-    fn description(&self) -> &str {
-        "Kick a player"
-    }
-
-    fn usage(&self) -> &str {
-        "kick <player> [reason...]"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "kick",
+            aliases: &[],
+            description: "Kick a player",
+            usage: "kick <player> [reason...]",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -135,24 +113,14 @@ impl ConsoleCommand for KickCommand {
 pub struct KickIpCommand;
 
 impl ConsoleCommand for KickIpCommand {
-    fn name(&self) -> &str {
-        "kick-ip"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["kickip"]
-    }
-
-    fn description(&self) -> &str {
-        "Kick all players from an IP"
-    }
-
-    fn usage(&self) -> &str {
-        "kick-ip <ip>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "kick-ip",
+            aliases: &["kickip"],
+            description: "Kick all players from an IP",
+            usage: "kick-ip <ip>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -195,20 +163,14 @@ impl ConsoleCommand for KickIpCommand {
 pub struct SendCommand;
 
 impl ConsoleCommand for SendCommand {
-    fn name(&self) -> &str {
-        "send"
-    }
-
-    fn description(&self) -> &str {
-        "Transfer a player to a server"
-    }
-
-    fn usage(&self) -> &str {
-        "send <player> <server>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "send",
+            aliases: &[],
+            description: "Transfer a player to a server",
+            usage: "send <player> <server>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -241,24 +203,14 @@ impl ConsoleCommand for SendCommand {
 pub struct SendAllCommand;
 
 impl ConsoleCommand for SendAllCommand {
-    fn name(&self) -> &str {
-        "send-all"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["sendall"]
-    }
-
-    fn description(&self) -> &str {
-        "Transfer all players to a server"
-    }
-
-    fn usage(&self) -> &str {
-        "send-all <server>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "send-all",
+            aliases: &["sendall"],
+            description: "Transfer all players to a server",
+            usage: "send-all <server>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -310,24 +262,14 @@ impl ConsoleCommand for SendAllCommand {
 pub struct MsgCommand;
 
 impl ConsoleCommand for MsgCommand {
-    fn name(&self) -> &str {
-        "msg"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["tell", "whisper"]
-    }
-
-    fn description(&self) -> &str {
-        "Send a message to a player"
-    }
-
-    fn usage(&self) -> &str {
-        "msg <player> <message...>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "msg",
+            aliases: &["tell", "whisper"],
+            description: "Send a message to a player",
+            usage: "msg <player> <message...>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(
@@ -366,24 +308,14 @@ impl ConsoleCommand for MsgCommand {
 pub struct BroadcastCommand;
 
 impl ConsoleCommand for BroadcastCommand {
-    fn name(&self) -> &str {
-        "broadcast"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["bc", "say"]
-    }
-
-    fn description(&self) -> &str {
-        "Broadcast a message to all players"
-    }
-
-    fn usage(&self) -> &str {
-        "broadcast <message...>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Players
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "broadcast",
+            aliases: &["bc", "say"],
+            description: "Broadcast a message to all players",
+            usage: "broadcast <message...>",
+            category: CommandCategory::Players,
+        }
     }
 
     fn execute<'a>(

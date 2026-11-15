@@ -8,7 +8,7 @@ use infrarust_server_manager::ServerState;
 
 use crate::console::ConsoleServices;
 use crate::console::commands::usage;
-use crate::console::dispatcher::ConsoleCommand;
+use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{Block, CommandCategory, CommandOutput, Fields, Line, Span, Table};
 use crate::terminal::Mark;
 
@@ -164,24 +164,14 @@ pub(crate) fn server_block(server: &ServerView, state: Option<ServerState>) -> B
 pub struct ServersCommand;
 
 impl ConsoleCommand for ServersCommand {
-    fn name(&self) -> &str {
-        "servers"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["backends"]
-    }
-
-    fn description(&self) -> &str {
-        "List all servers"
-    }
-
-    fn usage(&self) -> &str {
-        "servers"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Servers
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "servers",
+            aliases: &["backends"],
+            description: "List all servers",
+            usage: "servers",
+            category: CommandCategory::Servers,
+        }
     }
 
     fn execute<'a>(
@@ -211,20 +201,14 @@ impl ConsoleCommand for ServersCommand {
 pub struct ServerCommand;
 
 impl ConsoleCommand for ServerCommand {
-    fn name(&self) -> &str {
-        "server"
-    }
-
-    fn description(&self) -> &str {
-        "Show server details"
-    }
-
-    fn usage(&self) -> &str {
-        "server <id>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Servers
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "server",
+            aliases: &[],
+            description: "Show server details",
+            usage: "server <id>",
+            category: CommandCategory::Servers,
+        }
     }
 
     fn execute<'a>(
@@ -258,20 +242,14 @@ impl ConsoleCommand for ServerCommand {
 pub struct StartServerCommand;
 
 impl ConsoleCommand for StartServerCommand {
-    fn name(&self) -> &str {
-        "start"
-    }
-
-    fn description(&self) -> &str {
-        "Start a server"
-    }
-
-    fn usage(&self) -> &str {
-        "start <server_id>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Servers
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "start",
+            aliases: &[],
+            description: "Start a server",
+            usage: "start <server_id>",
+            category: CommandCategory::Servers,
+        }
     }
 
     fn execute<'a>(
@@ -301,24 +279,14 @@ impl ConsoleCommand for StartServerCommand {
 pub struct StopServerCommand;
 
 impl ConsoleCommand for StopServerCommand {
-    fn name(&self) -> &str {
-        "stop-server"
-    }
-
-    fn aliases(&self) -> &[&str] {
-        &["stopserver"]
-    }
-
-    fn description(&self) -> &str {
-        "Stop a server"
-    }
-
-    fn usage(&self) -> &str {
-        "stop-server <server_id>"
-    }
-
-    fn category(&self) -> CommandCategory {
-        CommandCategory::Servers
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "stop-server",
+            aliases: &["stopserver"],
+            description: "Stop a server",
+            usage: "stop-server <server_id>",
+            category: CommandCategory::Servers,
+        }
     }
 
     fn execute<'a>(
