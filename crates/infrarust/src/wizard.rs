@@ -17,13 +17,26 @@ struct WizardSettings {
     bind: SocketAddr,
     servers_dir: PathBuf,
     max_connections: u32,
-    web_enabled: bool,
-    enable_webui: bool,
-    web_bind: String,
-    web_port: u16,
-    api_key: Option<String>,
-    sample_server_domain: Option<String>,
-    sample_server_address: Option<String>,
+    web: Option<WebSettings>,
+    sample: Option<SampleServer>,
+}
+
+struct WebSettings {
+    webui: bool,
+    host: &'static str,
+    port: u16,
+    api_key: String,
+}
+
+impl WebSettings {
+    fn listen(&self) -> String {
+        format!("{}:{}", self.host, self.port)
+    }
+}
+
+struct SampleServer {
+    domain: String,
+    address: String,
 }
 
 pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
@@ -34,160 +47,13 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
         console::style("No configuration file found. Let's set one up!").bold()
     );
 
-    let mode = Select::new()
-        .with_prompt("How would you like to configure Infrarust?")
-        .items([
-            "Minimal configuration (recommended)",
-            "Complete configuration reference (open docs)",
-        ])
-        .default(0)
-        .interact()?;
-
-    if mode == 1 {
-        println!(
-            "\n  Visit the configuration reference:\n  {}\n",
-            console::style("https://infrarust.dev/v2/reference/config-schema")
-                .underlined()
-                .cyan()
-        );
-        println!(
-            "  Create an {} file and run infrarust again.\n",
-            console::style("infrarust.toml").bold()
-        );
+    if !prompt_minimal_setup()? {
         return Ok(WizardOutcome::ExitClean);
     }
 
     println!();
 
-    let bind: SocketAddr = Input::new()
-        .with_prompt("Proxy listen address")
-        .default(infrarust_config::defaults::bind())
-        .interact_text()?;
-
-    let servers_dir: String = Input::new()
-        .with_prompt("Server configs directory")
-        .default(
-            infrarust_config::defaults::servers_dir()
-                .display()
-                .to_string(),
-        )
-        .interact_text()?;
-    let servers_dir = PathBuf::from(servers_dir);
-
-    let max_connections: u32 = Input::new()
-        .with_prompt("Maximum simultaneous connections (0 = unlimited)")
-        .default(infrarust_config::defaults::max_connections())
-        .interact_text()?;
-
-    let web_enabled = Confirm::new()
-        .with_prompt("Enable web admin panel?")
-        .default(true)
-        .interact()?;
-
-    let mut enable_webui = true;
-    let mut web_bind = "127.0.0.1".to_string();
-    let mut web_port: u16 = 8080;
-    let mut api_key: Option<String> = None;
-
-    if web_enabled {
-        let web_mode = Select::new()
-            .with_prompt("Web features")
-            .items(["API + Web UI (recommended)", "API only"])
-            .default(0)
-            .interact()?;
-        enable_webui = web_mode == 0;
-
-        println!(
-            "  {}",
-            console::style(
-                "127.0.0.1 = local only (secure, use a reverse proxy for external access)"
-            )
-            .dim()
-        );
-        println!(
-            "  {}",
-            console::style("0.0.0.0   = all interfaces (accessible from the network)").dim()
-        );
-        let web_bind_choice = Select::new()
-            .with_prompt("Web bind address")
-            .items([
-                "127.0.0.1 (local only, recommended)",
-                "0.0.0.0 (all interfaces)",
-            ])
-            .default(0)
-            .interact()?;
-        web_bind = if web_bind_choice == 0 {
-            "127.0.0.1".to_string()
-        } else {
-            "0.0.0.0".to_string()
-        };
-
-        web_port = Input::new()
-            .with_prompt("Web listen port")
-            .default(8080u16)
-            .validate_with(|input: &u16| -> Result<(), String> {
-                if *input == 0 {
-                    return Err("Port must be between 1 and 65535".to_string());
-                }
-                if *input == bind.port() {
-                    return Err(format!(
-                        "Web port conflicts with proxy bind port ({})",
-                        bind.port()
-                    ));
-                }
-                Ok(())
-            })
-            .interact_text()?;
-
-        let key = uuid::Uuid::new_v4().to_string();
-        println!();
-        println!(
-            "  {} {}",
-            console::style("Generated API key:").bold(),
-            console::style(&key).green().bold()
-        );
-        println!();
-        println!(
-            "  {} Save this key! It is required to access the web panel.",
-            console::style("WARNING:").yellow().bold()
-        );
-        println!(
-            "  It will be written to the {} section of {}",
-            console::style("[web]").dim(),
-            console::style("infrarust.toml").dim()
-        );
-        println!();
-        api_key = Some(key);
-    }
-
-    let sample_domain: String = Input::new()
-        .with_prompt("Domain to route (leave empty to skip)")
-        .allow_empty(true)
-        .default(String::new())
-        .interact_text()?;
-
-    let (sample_server_domain, sample_server_address) = if sample_domain.is_empty() {
-        (None, None)
-    } else {
-        let address: String = Input::new()
-            .with_prompt("Backend server address")
-            .default("127.0.0.1:25565".to_string())
-            .interact_text()?;
-        (Some(sample_domain), Some(address))
-    };
-
-    let settings = WizardSettings {
-        bind,
-        servers_dir,
-        max_connections,
-        web_enabled,
-        enable_webui,
-        web_bind,
-        web_port,
-        api_key,
-        sample_server_domain,
-        sample_server_address,
-    };
+    let settings = prompt_settings()?;
 
     println!();
     print_summary(&settings);
@@ -223,6 +89,158 @@ pub fn run(config_path: &Path) -> anyhow::Result<WizardOutcome> {
     Ok(WizardOutcome::Config(Box::new(config)))
 }
 
+fn prompt_minimal_setup() -> anyhow::Result<bool> {
+    let mode = Select::new()
+        .with_prompt("How would you like to configure Infrarust?")
+        .items([
+            "Minimal configuration (recommended)",
+            "Complete configuration reference (open docs)",
+        ])
+        .default(0)
+        .interact()?;
+
+    if mode == 1 {
+        println!(
+            "\n  Visit the configuration reference:\n  {}\n",
+            console::style("https://infrarust.dev/v2/reference/config-schema")
+                .underlined()
+                .cyan()
+        );
+        println!(
+            "  Create an {} file and run infrarust again.\n",
+            console::style("infrarust.toml").bold()
+        );
+    }
+    Ok(mode == 0)
+}
+
+fn prompt_settings() -> anyhow::Result<WizardSettings> {
+    let bind: SocketAddr = Input::new()
+        .with_prompt("Proxy listen address")
+        .default(infrarust_config::defaults::bind())
+        .interact_text()?;
+
+    let servers_dir: String = Input::new()
+        .with_prompt("Server configs directory")
+        .default(
+            infrarust_config::defaults::servers_dir()
+                .display()
+                .to_string(),
+        )
+        .interact_text()?;
+
+    let max_connections: u32 = Input::new()
+        .with_prompt("Maximum simultaneous connections (0 = unlimited)")
+        .default(infrarust_config::defaults::max_connections())
+        .interact_text()?;
+
+    Ok(WizardSettings {
+        bind,
+        servers_dir: PathBuf::from(servers_dir),
+        max_connections,
+        web: prompt_web(bind)?,
+        sample: prompt_sample()?,
+    })
+}
+
+fn prompt_web(proxy_bind: SocketAddr) -> anyhow::Result<Option<WebSettings>> {
+    let enabled = Confirm::new()
+        .with_prompt("Enable web admin panel?")
+        .default(true)
+        .interact()?;
+    if !enabled {
+        return Ok(None);
+    }
+
+    let web_mode = Select::new()
+        .with_prompt("Web features")
+        .items(["API + Web UI (recommended)", "API only"])
+        .default(0)
+        .interact()?;
+
+    println!(
+        "  {}",
+        console::style("127.0.0.1 = local only (secure, use a reverse proxy for external access)")
+            .dim()
+    );
+    println!(
+        "  {}",
+        console::style("0.0.0.0   = all interfaces (accessible from the network)").dim()
+    );
+    let bind_choice = Select::new()
+        .with_prompt("Web bind address")
+        .items([
+            "127.0.0.1 (local only, recommended)",
+            "0.0.0.0 (all interfaces)",
+        ])
+        .default(0)
+        .interact()?;
+
+    let port = Input::new()
+        .with_prompt("Web listen port")
+        .default(8080u16)
+        .validate_with(|input: &u16| -> Result<(), String> {
+            if *input == 0 {
+                return Err("Port must be between 1 and 65535".to_string());
+            }
+            if *input == proxy_bind.port() {
+                return Err(format!(
+                    "Web port conflicts with proxy bind port ({})",
+                    proxy_bind.port()
+                ));
+            }
+            Ok(())
+        })
+        .interact_text()?;
+
+    let api_key = uuid::Uuid::new_v4().to_string();
+    println!();
+    println!(
+        "  {} {}",
+        console::style("Generated API key:").bold(),
+        console::style(&api_key).green().bold()
+    );
+    println!();
+    println!(
+        "  {} Save this key! It is required to access the web panel.",
+        console::style("WARNING:").yellow().bold()
+    );
+    println!(
+        "  It will be written to the {} section of {}",
+        console::style("[web]").dim(),
+        console::style("infrarust.toml").dim()
+    );
+    println!();
+
+    Ok(Some(WebSettings {
+        webui: web_mode == 0,
+        host: if bind_choice == 0 {
+            "127.0.0.1"
+        } else {
+            "0.0.0.0"
+        },
+        port,
+        api_key,
+    }))
+}
+
+fn prompt_sample() -> anyhow::Result<Option<SampleServer>> {
+    let domain: String = Input::new()
+        .with_prompt("Domain to route (leave empty to skip)")
+        .allow_empty(true)
+        .default(String::new())
+        .interact_text()?;
+    if domain.is_empty() {
+        return Ok(None);
+    }
+
+    let address: String = Input::new()
+        .with_prompt("Backend server address")
+        .default("127.0.0.1:25565".to_string())
+        .interact_text()?;
+    Ok(Some(SampleServer { domain, address }))
+}
+
 fn write_files(config_path: &Path, settings: &WizardSettings) -> anyhow::Result<()> {
     let toml = generate_config_toml(settings)?;
     std::fs::write(config_path, toml).context("failed to write infrarust.toml")?;
@@ -230,10 +248,7 @@ fn write_files(config_path: &Path, settings: &WizardSettings) -> anyhow::Result<
     std::fs::create_dir_all(&settings.servers_dir)
         .with_context(|| format!("failed to create {}", settings.servers_dir.display()))?;
 
-    if let (Some(domain), Some(address)) = (
-        &settings.sample_server_domain,
-        &settings.sample_server_address,
-    ) {
+    if let Some(SampleServer { domain, address }) = &settings.sample {
         let filename = sanitize_filename(domain);
         let server_path = settings.servers_dir.join(format!("{filename}.toml"));
         let server_toml = generate_server_toml(domain, address)?;
@@ -256,8 +271,7 @@ fn generate_config_toml(settings: &WizardSettings) -> anyhow::Result<String> {
         enable_api: bool,
         enable_webui: bool,
         bind: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        api_key: Option<&'a str>,
+        api_key: &'a str,
     }
 
     #[derive(serde::Serialize)]
@@ -269,11 +283,11 @@ fn generate_config_toml(settings: &WizardSettings) -> anyhow::Result<String> {
         web: Option<GeneratedWeb<'a>>,
     }
 
-    let web = settings.web_enabled.then(|| GeneratedWeb {
+    let web = settings.web.as_ref().map(|web| GeneratedWeb {
         enable_api: true,
-        enable_webui: settings.enable_webui,
-        bind: format!("{}:{}", settings.web_bind, settings.web_port),
-        api_key: settings.api_key.as_deref(),
+        enable_webui: web.webui,
+        bind: web.listen(),
+        api_key: &web.api_key,
     });
 
     let body = toml::to_string_pretty(&GeneratedConfig {
@@ -352,23 +366,22 @@ fn print_summary(settings: &WizardSettings) {
         },
     ]);
 
-    if settings.web_enabled {
-        let features = if settings.enable_webui {
-            "API + Web UI"
-        } else {
-            "API only"
-        };
-        table.add_row(vec!["Web admin", &format!("enabled ({features})")]);
-        table.add_row(vec![
-            "Web listen",
-            &format!("{}:{}", settings.web_bind, settings.web_port),
-        ]);
-    } else {
-        table.add_row(vec!["Web admin", "disabled"]);
+    match &settings.web {
+        Some(web) => {
+            let features = if web.webui {
+                "API + Web UI"
+            } else {
+                "API only"
+            };
+            table.add_row(vec!["Web admin", &format!("enabled ({features})")]);
+            table.add_row(vec!["Web listen", &web.listen()]);
+        }
+        None => {
+            table.add_row(vec!["Web admin", "disabled"]);
+        }
     }
 
-    if let Some(domain) = &settings.sample_server_domain {
-        let address = settings.sample_server_address.as_deref().unwrap_or("—");
+    if let Some(SampleServer { domain, address }) = &settings.sample {
         table.add_row(vec!["Sample server", &format!("{domain} -> {address}")]);
     }
 
@@ -467,13 +480,13 @@ mod tests {
             bind: "0.0.0.0:25565".parse().unwrap(),
             servers_dir: PathBuf::from(servers_dir),
             max_connections: 50,
-            web_enabled: true,
-            enable_webui: false,
-            web_bind: "127.0.0.1".to_string(),
-            web_port: 8080,
-            api_key: api_key.map(str::to_string),
-            sample_server_domain: None,
-            sample_server_address: None,
+            web: api_key.map(|key| WebSettings {
+                webui: false,
+                host: "127.0.0.1",
+                port: 8080,
+                api_key: key.to_string(),
+            }),
+            sample: None,
         }
     }
 
@@ -494,8 +507,7 @@ mod tests {
 
     #[test]
     fn generated_config_toml_omits_web_when_disabled() {
-        let mut settings = settings_with("./servers", None);
-        settings.web_enabled = false;
+        let settings = settings_with("./servers", None);
         let toml_str = generate_config_toml(&settings).unwrap();
         let config: ProxyConfig = toml::from_str(&toml_str).unwrap();
         assert!(config.web.is_none());
