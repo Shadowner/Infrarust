@@ -119,19 +119,10 @@ impl WasmLoaderError {
                 reason: bounded(reason),
             },
             WasmLoaderError::NotAComponent { ref path, .. }
-            | WasmLoaderError::TooLarge { ref path, .. } => LoaderError::InvalidFormat {
+            | WasmLoaderError::TooLarge { ref path, .. }
+            | WasmLoaderError::WorldIncompatible { ref path, .. } => LoaderError::InvalidFormat {
                 path: path.clone(),
                 reason: bounded(&self),
-            },
-            WasmLoaderError::WorldIncompatible {
-                path,
-                found,
-                expected,
-            } => LoaderError::InvalidFormat {
-                path,
-                reason: format!(
-                    "plugin built for {found}; this host supports {expected}, rebuild it with an infrarust-plugin-sdk that targets {expected}"
-                ),
             },
             WasmLoaderError::NotAPlugin { path } => LoaderError::InvalidFormat {
                 path,
