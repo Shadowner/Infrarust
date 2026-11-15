@@ -35,20 +35,13 @@ use config_phase::PhaseError;
 
 const SWITCH_PHASE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Successful server switch result.
-pub struct SwitchSuccess {
-    /// The new backend bridge (replaces the old one in the proxy loop).
-    pub new_backend: BackendBridge,
-    /// The server ID that was switched to.
-    pub new_server_id: ServerId,
-}
-
 pub(crate) enum SwitchResult {
-    Backend(SwitchSuccess),
+    Backend(BackendBridge, ServerId),
     Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
     Denied(Component),
     Unchanged,
     Failed(Kick),
+    Error(CoreError),
 }
 
 pub(crate) enum SwitchTarget {
@@ -317,8 +310,5 @@ pub(crate) async fn perform_switch(
         "server switch complete"
     );
 
-    Ok(SwitchResult::Backend(SwitchSuccess {
-        new_backend,
-        new_server_id: effective_target,
-    }))
+    Ok(SwitchResult::Backend(new_backend, effective_target))
 }

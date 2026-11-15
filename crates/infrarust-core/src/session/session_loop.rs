@@ -111,28 +111,28 @@ pub(crate) async fn run_session_loop(
                         let action = switch(ctx, io, &current_server_id, request).await;
                         session.settle_connect(&target, &connection_result(ctx, &action));
                         let settled = match action {
-                            SwitchAction::Backend(backend, server) => {
+                            SwitchResult::Backend(backend, server) => {
                                 Settled::Backend(backend, server)
                             }
-                            SwitchAction::Unchanged => Settled::Stay,
-                            SwitchAction::Limbo(handlers, _) if handlers.is_empty() => {
+                            SwitchResult::Unchanged => Settled::Stay,
+                            SwitchResult::Limbo(handlers, _) if handlers.is_empty() => {
                                 tracing::warn!(
                                     "SendToLimbo during switch but no handlers, staying on current server"
                                 );
                                 Settled::Stay
                             }
-                            SwitchAction::Limbo(handlers, entry) => {
+                            SwitchResult::Limbo(handlers, entry) => {
                                 Settled::Limbo(handlers, entry, current_server_id.clone())
                             }
-                            SwitchAction::Denied(reason) => {
+                            SwitchResult::Denied(reason) => {
                                 tracing::info!(reason = %reason, "server switch denied by event");
                                 chat(ctx, &mut io.client, &reason).await;
                                 Settled::Stay
                             }
-                            SwitchAction::Failed(kick) => {
+                            SwitchResult::Failed(kick) => {
                                 settle(ctx, io, &current_server_id, kick, true).await
                             }
-                            SwitchAction::Error(e) => {
+                            SwitchResult::Error(e) => {
                                 tracing::warn!("server switch failed: {e}");
                                 let message = Component::text(format!("Server switch failed: {e}"));
                                 chat(ctx, &mut io.client, &message).await;
@@ -252,16 +252,16 @@ pub(crate) async fn run_session_loop(
                         let action = switch(ctx, io, &current_server_id, target).await;
                         session.settle_connect(&requested, &connection_result(ctx, &action));
                         match action {
-                            SwitchAction::Backend(new_backend, new_server) => {
+                            SwitchResult::Backend(new_backend, new_server) => {
                                 mode = ConnectionMode::Backend(new_backend);
                                 current_server_id = new_server;
                             }
-                            SwitchAction::Unchanged => {
+                            SwitchResult::Unchanged => {
                                 break ProxyLoopOutcome::Error(CoreError::InvalidState(
                                     "a limbo exit kept no server to join",
                                 ));
                             }
-                            SwitchAction::Limbo(handlers, limbo_ctx) => {
+                            SwitchResult::Limbo(handlers, limbo_ctx) => {
                                 if from_initial || handlers.is_empty() {
                                     if from_initial {
                                         tracing::warn!(
@@ -274,7 +274,7 @@ pub(crate) async fn run_session_loop(
                                 }
                                 mode = ConnectionMode::Limbo(handlers, limbo_ctx);
                             }
-                            SwitchAction::Denied(reason) => {
+                            SwitchResult::Denied(reason) => {
                                 tracing::info!(reason = %reason, "switch after limbo denied by event");
                                 io.client
                                     .disconnect(&reason, &services.packet_registry)
@@ -282,10 +282,10 @@ pub(crate) async fn run_session_loop(
                                     .ok();
                                 break ProxyLoopOutcome::Kicked { reason };
                             }
-                            SwitchAction::Failed(kick) => {
+                            SwitchResult::Failed(kick) => {
                                 mode = ConnectionMode::Kicked(kick);
                             }
-                            SwitchAction::Error(e) => {
+                            SwitchResult::Error(e) => {
                                 tracing::warn!("switch after limbo failed: {e}");
                                 break ProxyLoopOutcome::Error(e);
                             }
@@ -426,44 +426,28 @@ impl Pending {
     }
 }
 
-enum SwitchAction {
-    Backend(BackendBridge, ServerId),
-    Limbo(Vec<Arc<dyn LimboHandler>>, LimboEntryContext),
-    Denied(Component),
-    Unchanged,
-    Failed(Kick),
-    Error(CoreError),
-}
-
 async fn switch(
     ctx: &SessionContext<'_>,
     io: &mut SessionIo,
     current_server: &ServerId,
     target: SwitchTarget,
-) -> SwitchAction {
-    match crate::session::server_switch::perform_switch(ctx, io, current_server, target).await {
-        Ok(SwitchResult::Backend(success)) => {
-            SwitchAction::Backend(success.new_backend, success.new_server_id)
-        }
-        Ok(SwitchResult::Limbo(handlers, ctx)) => SwitchAction::Limbo(handlers, ctx),
-        Ok(SwitchResult::Denied(reason)) => SwitchAction::Denied(reason),
-        Ok(SwitchResult::Unchanged) => SwitchAction::Unchanged,
-        Ok(SwitchResult::Failed(kick)) => SwitchAction::Failed(kick),
-        Err(e) => SwitchAction::Error(e),
-    }
+) -> SwitchResult {
+    crate::session::server_switch::perform_switch(ctx, io, current_server, target)
+        .await
+        .unwrap_or_else(SwitchResult::Error)
 }
 
-fn connection_result(ctx: &SessionContext<'_>, action: &SwitchAction) -> ConnectionResult {
+fn connection_result(ctx: &SessionContext<'_>, action: &SwitchResult) -> ConnectionResult {
     if ctx.session.shutdown_token().is_cancelled() {
         return ConnectionResult::Cancelled;
     }
     match action {
-        SwitchAction::Backend(..) => ConnectionResult::Success,
-        SwitchAction::Unchanged => ConnectionResult::AlreadyConnected,
-        SwitchAction::Limbo(..) => ConnectionResult::Cancelled,
-        SwitchAction::Denied(reason) => ConnectionResult::Denied(reason.clone()),
-        SwitchAction::Failed(kick) => ConnectionResult::Failed(shown_reason(ctx, kick)),
-        SwitchAction::Error(e) => ConnectionResult::Failed(Component::text(e.to_string())),
+        SwitchResult::Backend(..) => ConnectionResult::Success,
+        SwitchResult::Unchanged => ConnectionResult::AlreadyConnected,
+        SwitchResult::Limbo(..) => ConnectionResult::Cancelled,
+        SwitchResult::Denied(reason) => ConnectionResult::Denied(reason.clone()),
+        SwitchResult::Failed(kick) => ConnectionResult::Failed(shown_reason(ctx, kick)),
+        SwitchResult::Error(e) => ConnectionResult::Failed(Component::text(e.to_string())),
     }
 }
 
@@ -498,20 +482,20 @@ async fn settle(
                     cause: ConnectCause::KickRedirect,
                 };
                 match switch(ctx, io, current_server, request).await {
-                    SwitchAction::Backend(backend, server) => {
+                    SwitchResult::Backend(backend, server) => {
                         return Settled::Backend(backend, server);
                     }
-                    SwitchAction::Limbo(handlers, entry) if !handlers.is_empty() => {
+                    SwitchResult::Limbo(handlers, entry) if !handlers.is_empty() => {
                         return Settled::Limbo(handlers, entry, current_server.clone());
                     }
-                    SwitchAction::Failed(next) => kick = next,
-                    SwitchAction::Denied(reason) => {
+                    SwitchResult::Failed(next) => kick = next,
+                    SwitchResult::Denied(reason) => {
                         return notify(ctx, &mut io.client, &kick, reason, can_stay).await;
                     }
-                    SwitchAction::Limbo(..) | SwitchAction::Unchanged => {
+                    SwitchResult::Limbo(..) | SwitchResult::Unchanged => {
                         return fall_back(ctx, &mut io.client, &kick, can_stay).await;
                     }
-                    SwitchAction::Error(e) => {
+                    SwitchResult::Error(e) => {
                         tracing::warn!(server = %kick.server, "kick redirect failed: {e}");
                         return fall_back(ctx, &mut io.client, &kick, can_stay).await;
                     }
