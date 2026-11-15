@@ -20,8 +20,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{HandoffError, HandoffLevel, HandoffRelay};
 use crate::limbo::test_helpers::test_proxy_services;
-use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
+use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, RoutingData};
 use crate::provider::ProviderId;
 use crate::services::ProxyServices;

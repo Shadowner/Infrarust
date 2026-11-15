@@ -15,7 +15,7 @@ use crate::error::CoreError;
 use crate::forwarding::ForwardingHandler;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::PendingTicket;
-use crate::middleware::backend_selection::BackendTargets;
+use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::RoutingData;
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::backend_login::{Login, connect_backend};

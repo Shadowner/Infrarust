@@ -2,10 +2,7 @@
 
 use std::sync::Arc;
 
-use smallvec::SmallVec;
-
 use infrarust_api::event::BoxFuture;
-use infrarust_config::{ServerAddress, ServerConfig};
 
 use crate::error::CoreError;
 use crate::loadbalancer::{
@@ -13,21 +10,7 @@ use crate::loadbalancer::{
 };
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::RoutingData;
-
-#[derive(Debug, Clone)]
-pub struct BackendTargets {
-    pub addresses: SmallVec<[ServerAddress; 4]>,
-}
-
-impl BackendTargets {
-    pub fn addresses_or_config(
-        targets: Option<&Self>,
-        server: &ServerConfig,
-    ) -> Vec<ServerAddress> {
-        targets.map_or_else(|| server.address_list(), |t| t.addresses.to_vec())
-    }
-}
+use crate::pipeline::types::{BackendTargets, RoutingData};
 
 pub struct BackendSelectionMiddleware {
     registry: Arc<dyn AddressConnectionCount>,

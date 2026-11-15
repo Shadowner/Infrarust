@@ -7,8 +7,8 @@ use infrarust_transport::BackendConnector;
 
 use super::forwarded::{Arrival, ForwardedLogin, Opening, Route, Wire};
 use crate::error::CoreError;
-use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
+use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::services::ProxyServices;
 

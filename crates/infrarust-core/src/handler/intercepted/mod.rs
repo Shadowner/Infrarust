@@ -102,7 +102,7 @@ impl InterceptedHandler {
         let login_data = conn.extensions.get::<LoginData>().cloned();
         let backend_targets = conn
             .extensions
-            .get::<crate::middleware::backend_selection::BackendTargets>()
+            .get::<crate::pipeline::types::BackendTargets>()
             .cloned();
 
         let version = handshake.protocol_version;

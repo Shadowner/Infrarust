@@ -16,9 +16,10 @@ use infrarust_core::loadbalancer::{
     LeastConnections, LoadBalancer, PendingRegistry, PendingTicket, SelectionMode,
     peek_backend_addresses, select_backend_addresses,
 };
-use infrarust_core::middleware::backend_selection::{BackendSelectionMiddleware, BackendTargets};
+use infrarust_core::middleware::backend_selection::BackendSelectionMiddleware;
 use infrarust_core::pipeline::context::ConnectionContext;
 use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
+use infrarust_core::pipeline::types::BackendTargets;
 use infrarust_core::pipeline::types::RoutingData;
 
 async fn make_test_ctx() -> ConnectionContext {

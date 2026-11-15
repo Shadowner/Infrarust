@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
-use infrarust_config::ServerConfig;
+use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::ProtocolVersion;
 use infrarust_protocol::legacy::{LegacyHandshakeRequest, LegacyPingRequest};
 use infrarust_protocol::packets::ProfileKey;
+use smallvec::SmallVec;
 use uuid::Uuid;
 
 /// Intent extracted from the Minecraft handshake packet.
@@ -107,3 +108,17 @@ pub struct ClaimedLogin(pub infrarust_api::handoff::Handoff);
 
 #[derive(Debug)]
 pub struct LayoutRefusal(pub infrarust_protocol::ProtocolError);
+
+#[derive(Debug, Clone)]
+pub struct BackendTargets {
+    pub addresses: SmallVec<[ServerAddress; 4]>,
+}
+
+impl BackendTargets {
+    pub fn addresses_or_config(
+        targets: Option<&Self>,
+        server: &ServerConfig,
+    ) -> Vec<ServerAddress> {
+        targets.map_or_else(|| server.address_list(), |t| t.addresses.to_vec())
+    }
+}

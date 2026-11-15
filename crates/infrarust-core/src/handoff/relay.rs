@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::CoreError;
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
-use crate::middleware::backend_selection::BackendTargets;
 use crate::pipeline::context::ConnectionContext;
+use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
 use crate::util::domain_rewrite::handoff_handshake;
