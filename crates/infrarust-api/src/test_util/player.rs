@@ -191,7 +191,7 @@ impl MockPlayer {
     }
 }
 
-impl crate::player::private::Sealed for MockPlayer {}
+impl crate::__sealed::Sealed for MockPlayer {}
 
 impl Player for MockPlayer {
     fn id(&self) -> PlayerId {

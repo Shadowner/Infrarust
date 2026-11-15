@@ -27,7 +27,7 @@ use super::{
 use crate::session::presentation::BarControl;
 use crate::util::sync::{lock, read};
 
-impl infrarust_api::player::private::Sealed for PlayerSession {}
+impl infrarust_api::__sealed::Sealed for PlayerSession {}
 
 impl Player for PlayerSession {
     fn id(&self) -> PlayerId {

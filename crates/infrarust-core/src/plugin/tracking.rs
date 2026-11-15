@@ -50,7 +50,7 @@ impl TrackingEventBus {
     }
 }
 
-impl infrarust_api::event::bus::private::Sealed for TrackingEventBus {}
+impl infrarust_api::__sealed::Sealed for TrackingEventBus {}
 
 impl EventBus for TrackingEventBus {
     fn subscribe_erased(
@@ -160,7 +160,7 @@ impl TrackingCommandManager {
     }
 }
 
-impl infrarust_api::command::private::Sealed for TrackingCommandManager {}
+impl infrarust_api::__sealed::Sealed for TrackingCommandManager {}
 
 impl CommandManager for TrackingCommandManager {
     fn register(
@@ -215,7 +215,7 @@ impl TrackingCodecFilterRegistry {
     }
 }
 
-impl infrarust_api::filter::registry::private::Sealed for TrackingCodecFilterRegistry {}
+impl infrarust_api::__sealed::Sealed for TrackingCodecFilterRegistry {}
 
 impl CodecFilterRegistry for TrackingCodecFilterRegistry {
     fn register(&self, factory: Box<dyn CodecFilterFactory>) -> Result<(), FilterRegistryError> {
@@ -242,7 +242,7 @@ impl TrackingTransportFilterRegistry {
     }
 }
 
-impl infrarust_api::filter::registry::private::Sealed for TrackingTransportFilterRegistry {}
+impl infrarust_api::__sealed::Sealed for TrackingTransportFilterRegistry {}
 
 impl TransportFilterRegistry for TrackingTransportFilterRegistry {
     fn register(&self, filter: Box<dyn TransportFilter>) -> Result<(), FilterRegistryError> {
@@ -276,7 +276,7 @@ impl TrackingScheduler {
     }
 }
 
-impl infrarust_api::services::scheduler::private::Sealed for TrackingScheduler {}
+impl infrarust_api::__sealed::Sealed for TrackingScheduler {}
 
 impl Scheduler for TrackingScheduler {
     fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle {

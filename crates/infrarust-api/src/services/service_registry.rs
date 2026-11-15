@@ -4,8 +4,9 @@ use std::sync::Arc;
 use crate::error::ServiceError;
 use crate::types::Revocation;
 
+#[doc(hidden)]
 pub mod private {
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 pub type ErasedService = Arc<dyn Any + Send + Sync>;
@@ -33,7 +34,7 @@ impl ServiceHandle {
     }
 }
 
-pub trait ServiceRegistry: Send + Sync + private::Sealed {
+pub trait ServiceRegistry: Send + Sync + crate::__sealed::Sealed {
     fn provide_erased(
         &self,
         service: TypeId,
@@ -102,7 +103,7 @@ mod tests {
         entries: Mutex<HashMap<TypeId, (&'static str, ErasedService)>>,
     }
 
-    impl private::Sealed for MapRegistry {}
+    impl crate::__sealed::Sealed for MapRegistry {}
 
     impl ServiceRegistry for MapRegistry {
         fn provide_erased(

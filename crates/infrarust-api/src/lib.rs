@@ -74,6 +74,10 @@ pub mod __private {
     pub mod caller_deadline;
     pub mod session_task;
 }
+#[doc(hidden)]
+pub mod __sealed {
+    pub trait Sealed {}
+}
 pub mod branding;
 pub mod command;
 pub mod error;

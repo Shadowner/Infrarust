@@ -155,7 +155,7 @@ impl PluginConnectionClaims {
     }
 }
 
-impl infrarust_api::handoff::private::Sealed for PluginConnectionClaims {}
+impl infrarust_api::__sealed::Sealed for PluginConnectionClaims {}
 
 impl ConnectionClaimRegistry for PluginConnectionClaims {
     fn register_prefix(&self, prefix: &[u8]) -> Result<(), ClaimError> {

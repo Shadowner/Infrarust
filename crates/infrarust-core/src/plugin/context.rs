@@ -252,7 +252,7 @@ impl PluginContextImpl {
     }
 }
 
-impl infrarust_api::plugin::private::Sealed for PluginContextImpl {}
+impl infrarust_api::__sealed::Sealed for PluginContextImpl {}
 
 impl PluginContext for PluginContextImpl {
     fn event_bus(&self) -> Arc<dyn EventBus> {

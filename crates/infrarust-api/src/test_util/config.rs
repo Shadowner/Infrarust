@@ -159,7 +159,7 @@ impl MockConfigService {
     }
 }
 
-impl crate::services::config_service::private::Sealed for MockConfigService {}
+impl crate::__sealed::Sealed for MockConfigService {}
 
 impl ConfigService for MockConfigService {
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig> {

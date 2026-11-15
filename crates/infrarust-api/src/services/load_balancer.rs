@@ -3,9 +3,9 @@
 use crate::error::ErrorKind;
 use crate::types::{ServerAddress, ServerId};
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`LoadBalancerService`](super::LoadBalancerService).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 pub use infrarust_plugin_common::enums::BackendState;
@@ -53,7 +53,7 @@ impl LbError {
 /// Inspection and maintenance of a server's backend addresses.
 ///
 /// Obtained via [`PluginContext::load_balancer_service()`](crate::plugin::PluginContext::load_balancer_service).
-pub trait LoadBalancerService: Send + Sync + private::Sealed {
+pub trait LoadBalancerService: Send + Sync + crate::__sealed::Sealed {
     /// Name of the balancing strategy of a server, e.g. `least_conn`.
     fn strategy(&self, server: &ServerId) -> Option<String>;
 

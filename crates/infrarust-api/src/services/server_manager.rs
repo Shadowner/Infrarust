@@ -4,9 +4,9 @@ use crate::error::ServiceError;
 use crate::event::BoxFuture;
 use crate::types::ServerId;
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`ServerManager`](super::ServerManager).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 pub use infrarust_plugin_common::enums::ServerState;
@@ -14,7 +14,7 @@ pub use infrarust_plugin_common::enums::ServerState;
 /// Service for managing backend server lifecycle.
 ///
 /// Obtained via [`PluginContext::server_manager()`](crate::plugin::PluginContext::server_manager).
-pub trait ServerManager: Send + Sync + private::Sealed {
+pub trait ServerManager: Send + Sync + crate::__sealed::Sealed {
     /// Returns the current state of a server, or `None` if the server ID is unknown.
     fn get_state(&self, server: &ServerId) -> Option<ServerState>;
 

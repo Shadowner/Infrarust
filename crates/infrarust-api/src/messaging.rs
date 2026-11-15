@@ -188,11 +188,12 @@ impl MessagingError {
     }
 }
 
+#[doc(hidden)]
 pub mod private {
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
-pub trait ChannelRegistrar: Send + Sync + private::Sealed {
+pub trait ChannelRegistrar: Send + Sync + crate::__sealed::Sealed {
     fn register(&self, channel: ChannelId);
 
     fn unregister(&self, channel: &ChannelId) -> bool;
@@ -200,7 +201,7 @@ pub trait ChannelRegistrar: Send + Sync + private::Sealed {
     fn channels(&self) -> Vec<ChannelId>;
 }
 
-pub trait ServerMessenger: Send + Sync + private::Sealed {
+pub trait ServerMessenger: Send + Sync + crate::__sealed::Sealed {
     fn send_to_server(
         &self,
         server: &ServerId,

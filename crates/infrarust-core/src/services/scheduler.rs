@@ -233,7 +233,7 @@ async fn run_async(owner: &str, future: BoxFuture<'static, ()>) {
     }
 }
 
-impl infrarust_api::services::scheduler::private::Sealed for SchedulerImpl {}
+impl infrarust_api::__sealed::Sealed for SchedulerImpl {}
 
 impl Scheduler for SchedulerImpl {
     fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle {

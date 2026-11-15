@@ -21,7 +21,7 @@ impl PlayerRegistryImpl {
     }
 }
 
-impl infrarust_api::services::player_registry::private::Sealed for PlayerRegistryImpl {}
+impl infrarust_api::__sealed::Sealed for PlayerRegistryImpl {}
 
 impl PlayerRegistry for PlayerRegistryImpl {
     fn get_player(&self, username: &str) -> Option<Arc<dyn Player>> {

@@ -338,11 +338,12 @@ impl CommandError {
     }
 }
 
+#[doc(hidden)]
 pub mod private {
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
-pub trait CommandManager: Send + Sync + private::Sealed {
+pub trait CommandManager: Send + Sync + crate::__sealed::Sealed {
     fn register(
         &self,
         spec: CommandSpec,

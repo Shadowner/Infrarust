@@ -14,9 +14,9 @@ use crate::error::ServiceError;
 use crate::event::BoxFuture;
 use crate::types::{Component, ServerId};
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`BanService`](super::BanService).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 #[cfg(feature = "serde")]
@@ -542,7 +542,7 @@ pub trait BanProvider: Send + Sync {
     }
 }
 
-pub trait BanService: BanProvider + private::Sealed {
+pub trait BanService: BanProvider + crate::__sealed::Sealed {
     fn is_banned<'a>(&'a self, target: &'a BanTarget) -> BoxFuture<'a, Result<bool, ServiceError>> {
         Box::pin(async move { Ok(self.get(target).await?.is_some()) })
     }
@@ -722,7 +722,7 @@ mod tests {
 
     struct CyclingBans;
 
-    impl private::Sealed for CyclingBans {}
+    impl crate::__sealed::Sealed for CyclingBans {}
 
     impl BanProvider for CyclingBans {
         fn check<'a>(

@@ -100,7 +100,7 @@ impl ConfigServiceImpl {
     }
 }
 
-impl infrarust_api::services::config_service::private::Sealed for ConfigServiceImpl {}
+impl infrarust_api::__sealed::Sealed for ConfigServiceImpl {}
 
 impl ConfigService for ConfigServiceImpl {
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig> {
@@ -240,7 +240,7 @@ impl ReadOnlyConfigService {
     }
 }
 
-impl infrarust_api::services::config_service::private::Sealed for ReadOnlyConfigService {}
+impl infrarust_api::__sealed::Sealed for ReadOnlyConfigService {}
 
 impl ConfigService for ReadOnlyConfigService {
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig> {

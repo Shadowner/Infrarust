@@ -57,7 +57,7 @@ impl LoadBalancerServiceImpl {
     }
 }
 
-impl infrarust_api::services::load_balancer::private::Sealed for LoadBalancerServiceImpl {}
+impl infrarust_api::__sealed::Sealed for LoadBalancerServiceImpl {}
 
 impl LoadBalancerService for LoadBalancerServiceImpl {
     fn strategy(&self, server: &ServerId) -> Option<String> {

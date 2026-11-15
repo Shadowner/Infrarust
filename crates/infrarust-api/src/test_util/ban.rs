@@ -99,7 +99,7 @@ impl MockBanService {
     }
 }
 
-impl crate::services::ban_service::private::Sealed for MockBanService {}
+impl crate::__sealed::Sealed for MockBanService {}
 
 impl BanProvider for MockBanService {
     fn check<'a>(

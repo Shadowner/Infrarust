@@ -3,9 +3,9 @@
 use crate::error::ErrorKind;
 use crate::types::ServerId;
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`ConfigService`](super::ConfigService).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 pub use infrarust_plugin_common::enums::ProxyMode;
@@ -157,7 +157,7 @@ impl ConfigWriteError {
 /// Obtained via [`PluginContext::config_service()`](crate::plugin::PluginContext::config_service).
 /// Everything but [`write_proxy_config_document`](Self::write_proxy_config_document)
 /// is readable by any plugin.
-pub trait ConfigService: Send + Sync + private::Sealed {
+pub trait ConfigService: Send + Sync + crate::__sealed::Sealed {
     /// Returns the configuration for a specific server.
     fn get_server_config(&self, server: &ServerId) -> Option<ServerConfig>;
 

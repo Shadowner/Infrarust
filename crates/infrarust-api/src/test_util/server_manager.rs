@@ -52,7 +52,7 @@ impl MockServerManager {
     }
 }
 
-impl crate::services::server_manager::private::Sealed for MockServerManager {}
+impl crate::__sealed::Sealed for MockServerManager {}
 
 impl ServerManager for MockServerManager {
     fn get_state(&self, server: &ServerId) -> Option<ServerState> {

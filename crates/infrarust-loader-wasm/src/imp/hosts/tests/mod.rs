@@ -164,7 +164,7 @@ impl RecordingPlayer {
     }
 }
 
-impl infrarust_api::player::private::Sealed for RecordingPlayer {}
+impl infrarust_api::__sealed::Sealed for RecordingPlayer {}
 
 impl Player for RecordingPlayer {
     fn id(&self) -> PlayerId {

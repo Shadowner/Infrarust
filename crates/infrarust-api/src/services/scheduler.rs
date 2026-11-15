@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use crate::event::BoxFuture;
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`Scheduler`](super::Scheduler).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// An opaque handle to a scheduled task.
@@ -31,7 +31,7 @@ impl TaskHandle {
 ///
 /// Tasks run on the proxy's async runtime. The scheduler does not
 /// depend on tokio in the API — the proxy provides the implementation.
-pub trait Scheduler: Send + Sync + private::Sealed {
+pub trait Scheduler: Send + Sync + crate::__sealed::Sealed {
     fn delay(&self, duration: Duration, task: AsyncTask) -> TaskHandle;
 
     fn repeat(

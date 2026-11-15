@@ -23,7 +23,7 @@ impl ServerManagerBridge {
     }
 }
 
-impl infrarust_api::services::server_manager::private::Sealed for ServerManagerBridge {}
+impl infrarust_api::__sealed::Sealed for ServerManagerBridge {}
 
 impl ServerManager for ServerManagerBridge {
     fn get_state(&self, server: &ServerId) -> Option<ServerState> {
@@ -76,7 +76,7 @@ impl ServerManager for ServerManagerBridge {
 /// A no-op [`ServerManager`] for proxies with no managed servers.
 pub struct NoopServerManager;
 
-impl infrarust_api::services::server_manager::private::Sealed for NoopServerManager {}
+impl infrarust_api::__sealed::Sealed for NoopServerManager {}
 
 impl ServerManager for NoopServerManager {
     fn get_state(&self, _server: &ServerId) -> Option<ServerState> {

@@ -459,7 +459,7 @@ impl Default for EventBusImpl {
 }
 
 // Allow `infrarust-core` to implement the sealed `EventBus` trait.
-impl infrarust_api::event::bus::private::Sealed for EventBusImpl {}
+impl infrarust_api::__sealed::Sealed for EventBusImpl {}
 
 impl EventBus for EventBusImpl {
     fn subscribe_erased(

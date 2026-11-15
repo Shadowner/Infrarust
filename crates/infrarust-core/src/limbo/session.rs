@@ -14,7 +14,7 @@ use infrarust_api::error::PlayerError;
 use infrarust_api::limbo::context::LimboEntryContext;
 use infrarust_api::limbo::handle::SessionHandle;
 use infrarust_api::limbo::handler::LimboOutcome;
-use infrarust_api::limbo::session::{LimboSession, private};
+use infrarust_api::limbo::session::LimboSession;
 use infrarust_api::types::{Component, GameProfile, PlayerId, TitleData};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::registry::PacketRegistry;
@@ -88,7 +88,7 @@ impl LimboSessionImpl {
     }
 }
 
-impl private::Sealed for LimboSessionImpl {}
+impl infrarust_api::__sealed::Sealed for LimboSessionImpl {}
 
 impl LimboSession for LimboSessionImpl {
     fn player_id(&self) -> PlayerId {

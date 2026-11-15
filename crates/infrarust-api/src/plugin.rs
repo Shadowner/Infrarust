@@ -342,16 +342,16 @@ impl PluginMetadata {
     }
 }
 
+#[doc(hidden)]
 pub mod private {
-    /// Sealed — only the proxy implements [`PluginContext`](super::PluginContext).
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 /// Context provided to plugins during [`Plugin::on_enable`].
 ///
 /// Gives access to all proxy services and registration methods.
 /// The proxy is the sole implementor.
-pub trait PluginContext: Send + Sync + private::Sealed {
+pub trait PluginContext: Send + Sync + crate::__sealed::Sealed {
     fn event_bus(&self) -> Arc<dyn EventBus>;
 
     fn player_registry(&self) -> Arc<dyn PlayerRegistry>;

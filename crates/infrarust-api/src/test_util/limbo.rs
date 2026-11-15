@@ -2,12 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
 
+use crate::__sealed::Sealed;
 use crate::error::PlayerError;
 use crate::limbo::context::LimboEntryContext;
 use crate::limbo::handle::SessionHandle;
 use crate::limbo::handler::LimboOutcome;
 use crate::limbo::session::LimboSession;
-use crate::limbo::session::private::Sealed;
 use crate::types::{Component, GameProfile, PlayerId, TitleData};
 
 use super::lock;

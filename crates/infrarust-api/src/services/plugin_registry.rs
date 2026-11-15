@@ -2,8 +2,9 @@
 
 use crate::plugin::{PluginMetadata, PluginRuntimeStatus, PluginState};
 
+#[doc(hidden)]
 pub mod private {
-    pub trait Sealed {}
+    pub use crate::__sealed::Sealed;
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +21,7 @@ impl PluginInfo {
 }
 
 /// Read-only view of all loaded plugins.
-pub trait PluginRegistry: Send + Sync + private::Sealed {
+pub trait PluginRegistry: Send + Sync + crate::__sealed::Sealed {
     fn list_plugin_info(&self) -> Vec<PluginInfo>;
     fn plugin_info(&self, id: &str) -> Option<PluginInfo>;
 

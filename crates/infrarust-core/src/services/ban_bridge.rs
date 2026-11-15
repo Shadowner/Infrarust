@@ -25,7 +25,7 @@ impl PluginBanService {
     }
 }
 
-impl infrarust_api::services::ban_service::private::Sealed for PluginBanService {}
+impl infrarust_api::__sealed::Sealed for PluginBanService {}
 
 impl BanProvider for PluginBanService {
     fn check<'a>(
