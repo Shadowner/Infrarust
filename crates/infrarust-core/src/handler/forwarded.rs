@@ -25,6 +25,7 @@ use uuid::Uuid;
 use super::helpers::cancelled_cause;
 use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
@@ -37,7 +38,6 @@ use crate::session::kick::Kick;
 use crate::session::kick::MAX_KICK_REDIRECTS;
 use crate::session::server_join::pre_connect;
 use crate::session::wake::{WakeFailure, wake};
-use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) const LIMBO_UNAVAILABLE: &str = "Limbo is not available on this server";
 pub(crate) const UNKNOWN_SERVER: &str = "Unknown server";

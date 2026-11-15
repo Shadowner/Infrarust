@@ -1,6 +1,7 @@
 //! Player identity forwarding for Minecraft backend servers.
 
 pub mod bungeeguard;
+pub mod domain_rewrite;
 pub mod error;
 pub mod legacy;
 pub mod secret;
@@ -105,7 +106,7 @@ pub fn build_handshake_for_backend(
 
     use crate::pipeline::types::ConnectionIntent;
 
-    let host = crate::util::domain_rewrite::backend_host(server_config)
+    let host = domain_rewrite::backend_host(server_config)
         .unwrap_or_else(|| handshake_data.domain.clone());
 
     let next_state = match handshake_data.intent {
@@ -144,9 +145,9 @@ mod tests {
     use infrarust_protocol::{Packet, VarInt};
     use serde_json::Value;
 
+    use super::domain_rewrite::rewrite_handshake;
     use super::*;
     use crate::pipeline::types::{ConnectionIntent, HandshakeData};
-    use crate::util::domain_rewrite::rewrite_handshake;
 
     const MARKERS: [&str; 4] = ["\0FML\0", "\0FML2\0", "\0FML3\0", "\0FORGE"];
     const PLAYER_UUID: &str = "069a79f444e94726a5befca90e38aaf5";

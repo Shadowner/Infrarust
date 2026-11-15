@@ -12,12 +12,12 @@ use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::handoff_handshake;
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::BackendTargets;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::services::ProxyServices;
-use crate::util::domain_rewrite::handoff_handshake;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

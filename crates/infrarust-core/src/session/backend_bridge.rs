@@ -22,12 +22,12 @@ use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
 
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::pipeline::types::HandshakeData;
 use crate::player::packets::encode_for_state;
 use crate::session::bounded_write::WriteGuard;
 use crate::session::kick::BackendKick;
 use crate::session::login_messages::LoginMessages;
-use crate::util::domain_rewrite::rewrite_handshake;
 
 const READ_CHUNK: usize = 16 * 1024;
 

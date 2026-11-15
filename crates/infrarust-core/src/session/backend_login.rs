@@ -4,12 +4,12 @@ use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::forwarding::{ForwardingHandler, build_handshake_for_backend};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::login_bridge::bridge_login;
 use crate::session::login_messages::LoginMessages;
-use crate::util::domain_rewrite::rewrite_handshake;
 
 pub(crate) enum Login<'a> {
     Relay,
