@@ -92,6 +92,12 @@ pub struct RoutingChanges {
     pub left: Vec<(ProviderId, Arc<ServerConfig>)>,
 }
 
+pub struct Route {
+    pub provider_id: ProviderId,
+    pub config: Arc<ServerConfig>,
+    pub load_balancer: Arc<dyn LoadBalancer>,
+}
+
 struct WildcardEntry {
     matcher: WildMatch,
     provider_id: ProviderId,
@@ -287,13 +293,11 @@ impl DomainRouter {
     /// Exact matches take priority over wildcard matches.
     /// FML markers and trailing dots are stripped before resolution.
     pub fn resolve(&self, domain: &str) -> Option<(ProviderId, Arc<ServerConfig>)> {
-        self.resolve_route(domain).map(|(id, cfg, _lb)| (id, cfg))
+        self.resolve_route(domain)
+            .map(|route| (route.provider_id, route.config))
     }
 
-    pub fn resolve_route(
-        &self,
-        domain: &str,
-    ) -> Option<(ProviderId, Arc<ServerConfig>, Arc<dyn LoadBalancer>)> {
+    pub fn resolve_route(&self, domain: &str) -> Option<Route> {
         let stripped = normalize_handshake(domain);
         let normalized = stripped.to_lowercase();
 
@@ -301,11 +305,11 @@ impl DomainRouter {
         if let Some(provider_id) = self.exact_domains.get(&normalized)
             && let Some(entry) = self.configs.get(provider_id.value())
         {
-            return Some((
-                provider_id.value().clone(),
-                Arc::clone(&entry.config),
-                Arc::clone(&entry.load_balancer),
-            ));
+            return Some(Route {
+                provider_id: provider_id.value().clone(),
+                config: Arc::clone(&entry.config),
+                load_balancer: Arc::clone(&entry.load_balancer),
+            });
         }
 
         // 2. Wildcard match (sequential scan)
@@ -315,11 +319,11 @@ impl DomainRouter {
                 if wc.matcher.matches(&normalized)
                     && let Some(entry) = self.configs.get(&wc.provider_id)
                 {
-                    return Some((
-                        wc.provider_id.clone(),
-                        Arc::clone(&entry.config),
-                        Arc::clone(&entry.load_balancer),
-                    ));
+                    return Some(Route {
+                        provider_id: wc.provider_id.clone(),
+                        config: Arc::clone(&entry.config),
+                        load_balancer: Arc::clone(&entry.load_balancer),
+                    });
                 }
             }
         }

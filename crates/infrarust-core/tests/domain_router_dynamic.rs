@@ -291,10 +291,10 @@ fn test_update_preserves_load_balancer_when_balancing_is_unchanged() {
     };
 
     router.add(id.clone(), config("before"));
-    let (_, _, first) = router.resolve_route("play.mc").unwrap();
+    let first = router.resolve_route("play.mc").unwrap().load_balancer;
 
     router.update(id.clone(), config("after"));
-    let (_, _, reused) = router.resolve_route("play.mc").unwrap();
+    let reused = router.resolve_route("play.mc").unwrap().load_balancer;
     assert!(
         Arc::ptr_eq(&first, &reused),
         "an unrelated edit must keep the rotation state"
@@ -306,7 +306,7 @@ fn test_update_preserves_load_balancer_when_balancing_is_unchanged() {
     )
     .unwrap();
     router.update(id, rebalanced);
-    let (_, _, rebuilt) = router.resolve_route("play.mc").unwrap();
+    let rebuilt = router.resolve_route("play.mc").unwrap().load_balancer;
     assert!(!Arc::ptr_eq(&first, &rebuilt));
     assert_eq!(rebuilt.name(), "least_conn");
 }

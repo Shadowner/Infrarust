@@ -7,7 +7,7 @@ use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::{LegacyHello, RoutingData};
-use crate::routing::DomainRouter;
+use crate::routing::{DomainRouter, Route};
 
 /// Middleware that resolves the target server from the handshake domain.
 ///
@@ -48,7 +48,12 @@ impl Middleware for DomainRouterMiddleware {
                 .then(|| self.domain_router.resolve_route(domain))
                 .flatten();
 
-            let Some((_provider_id, server_config, load_balancer)) = route else {
+            let Some(Route {
+                config: server_config,
+                load_balancer,
+                ..
+            }) = route
+            else {
                 tracing::debug!(domain, "no server found for domain");
                 return Ok(MiddlewareResult::Reject {
                     reason: RejectReason::UnknownDomain,

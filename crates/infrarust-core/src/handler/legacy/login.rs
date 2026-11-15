@@ -166,15 +166,15 @@ mod tests {
         ctx: &mut ConnectionContext,
     ) -> Result<(), CoreError> {
         legacy_hello::read_login_hello(ctx).await?;
-        let (_, server_config, load_balancer) = handler
+        let route = handler
             .services
             .domain_router
             .resolve_route("lobby.test")
             .unwrap();
         ctx.routing = Some(RoutingData {
-            config_id: server_config.effective_id(),
-            server_config,
-            load_balancer,
+            config_id: route.config.effective_id(),
+            server_config: route.config,
+            load_balancer: route.load_balancer,
         });
         let Some(LegacyHello::Login { request, raw }) = ctx.legacy_hello.clone() else {
             panic!("a legacy login must leave its hello");
