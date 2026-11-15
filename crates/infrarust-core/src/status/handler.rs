@@ -146,8 +146,8 @@ impl StatusHandler {
         ctx: &ConnectionContext,
         connection_registry: &ConnectionRegistry,
     ) -> Result<Bytes, CoreError> {
-        let routing = ctx.extensions.get::<RoutingData>();
-        let handshake = ctx.extensions.get::<HandshakeData>();
+        let routing = ctx.routing.as_ref();
+        let handshake = ctx.handshake.as_ref();
         let client_version = handshake.map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
 
         let resolved = self

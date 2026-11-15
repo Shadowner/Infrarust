@@ -16,7 +16,7 @@ use infrarust_transport::IpKey;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData};
+use crate::pipeline::types::ConnectionIntent;
 
 type KeyedLimiter = RateLimiter<IpKey, DashMapStateStore<IpKey>, DefaultClock>;
 
@@ -103,7 +103,7 @@ impl Middleware for RateLimiterMiddleware {
                 return Ok(MiddlewareResult::Continue);
             }
 
-            let Some(handshake) = ctx.extensions.get::<HandshakeData>() else {
+            let Some(handshake) = ctx.handshake.as_ref() else {
                 return Ok(MiddlewareResult::Continue); // No handshake yet, skip
             };
 

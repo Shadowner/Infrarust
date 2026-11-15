@@ -6,7 +6,7 @@ use infrarust_api::events::handshake::RejectReason;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, LegacyHello, RoutingData};
+use crate::pipeline::types::{LegacyHello, RoutingData};
 use crate::routing::DomainRouter;
 
 /// Middleware that resolves the target server from the handshake domain.
@@ -36,13 +36,13 @@ impl Middleware for DomainRouterMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let handshake = ctx.require_extension::<HandshakeData>("HandshakeData")?;
+            let handshake = ctx.require_handshake()?;
 
             let domain = &handshake.domain;
 
             let hostless = ctx
-                .extensions
-                .get::<LegacyHello>()
+                .legacy_hello
+                .as_ref()
                 .is_some_and(LegacyHello::is_hostless);
             let route = (!hostless)
                 .then(|| self.domain_router.resolve_route(domain))
@@ -74,7 +74,7 @@ impl Middleware for DomainRouterMiddleware {
 
             tracing::debug!(domain, config_id, "domain routed");
 
-            ctx.extensions.insert(RoutingData {
+            ctx.routing = Some(RoutingData {
                 server_config,
                 config_id,
                 load_balancer,

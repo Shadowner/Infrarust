@@ -11,9 +11,6 @@ use infrarust_config::{TraceClientIp, TracesConfig};
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
-
-pub struct ConnectionSpan(pub tracing::Span);
 
 /// Middleware that creates a root `"connection"` span with client/server metadata.
 ///
@@ -21,7 +18,6 @@ pub struct ConnectionSpan(pub tracing::Span);
 /// and before `ServerManager` (to include server startup time in the span).
 ///
 /// **Reads**: `HandshakeData`, `RoutingData`, `LoginData` (all optional, degrades gracefully)
-/// **Inserts**: `ConnectionSpan` (tracing span for the connection)
 pub struct TelemetryMiddleware {
     client_ip: TraceClientIp,
     username: bool,
@@ -71,34 +67,31 @@ impl Middleware for TelemetryMiddleware {
             let client_ip = traced_ip(self.client_ip, ctx.client_ip());
 
             let domain = ctx
-                .extensions
-                .get::<HandshakeData>()
+                .handshake
+                .as_ref()
                 .map(|h| h.domain.clone())
                 .unwrap_or_default();
 
             let server_id = ctx
-                .extensions
-                .get::<RoutingData>()
+                .routing
+                .as_ref()
                 .map(|r| r.config_id.clone())
                 .unwrap_or_default();
 
             let proxy_mode = ctx
-                .extensions
-                .get::<RoutingData>()
+                .routing
+                .as_ref()
                 .map(|r| format!("{:?}", r.server_config.proxy_mode))
                 .unwrap_or_default();
 
             let username = self.username.then(|| {
-                ctx.extensions
-                    .get::<LoginData>()
+                ctx.login
+                    .as_ref()
                     .map(|l| l.username.clone())
                     .unwrap_or_default()
             });
 
-            let protocol_version = ctx
-                .extensions
-                .get::<HandshakeData>()
-                .map_or(0, |h| h.protocol_version.0);
+            let protocol_version = ctx.handshake.as_ref().map_or(0, |h| h.protocol_version.0);
 
             let span = tracing::info_span!(
                 "connection",
@@ -110,7 +103,7 @@ impl Middleware for TelemetryMiddleware {
                 protocol.version = protocol_version,
             );
 
-            ctx.extensions.insert(ConnectionSpan(span));
+            ctx.span = Some(span);
             Ok(MiddlewareResult::Continue)
         })
     }

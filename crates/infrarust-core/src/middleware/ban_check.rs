@@ -8,7 +8,6 @@ use crate::ban::BanManager;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 
 pub struct BanCheckMiddleware {
     ban_manager: Arc<BanManager>,
@@ -30,14 +29,14 @@ impl Middleware for BanCheckMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let login = ctx.require_extension::<LoginData>("LoginData")?;
+            let login = ctx.require_login()?;
 
             let mut attempt = LoginAttempt::pre_auth(ctx.client_ip(), login.username.clone())
                 .claimed_uuid(login.player_uuid);
-            if let Some(handshake) = ctx.extensions.get::<HandshakeData>() {
+            if let Some(handshake) = ctx.handshake.as_ref() {
                 attempt = attempt.virtual_host(handshake.domain.clone());
             }
-            if let Some(routing) = ctx.extensions.get::<RoutingData>() {
+            if let Some(routing) = ctx.routing.as_ref() {
                 attempt = attempt.server(ServerId::new(routing.config_id.clone()));
             }
 

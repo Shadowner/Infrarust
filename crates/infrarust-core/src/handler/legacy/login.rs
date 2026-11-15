@@ -11,7 +11,6 @@ use crate::handler::forwarded::{
 use crate::handler::helpers::send_legacy_kick;
 use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, RoutingData};
 
 impl LegacyHandler {
     pub(crate) async fn handle_login(
@@ -20,11 +19,8 @@ impl LegacyHandler {
         request: &LegacyHandshakeRequest,
         raw: &[u8],
     ) -> Result<(), CoreError> {
-        let domain = ctx
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .domain
-            .clone();
-        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
+        let domain = ctx.require_handshake()?.domain.clone();
+        let routing = ctx.require_routing()?.clone();
 
         let attempt = LoginAttempt::pre_auth(ctx.client_ip(), request.username.clone())
             .virtual_host(domain.clone())
@@ -115,6 +111,7 @@ mod tests {
     use crate::loadbalancer::AddressConnectionCount;
     use crate::middleware::legacy_hello;
     use crate::pipeline::types::LegacyHello;
+    use crate::pipeline::types::RoutingData;
     use crate::provider::ProviderId;
     use crate::status::StatusCache;
 
@@ -174,14 +171,12 @@ mod tests {
             .domain_router
             .resolve_route("lobby.test")
             .unwrap();
-        ctx.extensions.insert(RoutingData {
+        ctx.routing = Some(RoutingData {
             config_id: server_config.effective_id(),
             server_config,
             load_balancer,
         });
-        let Some(LegacyHello::Login { request, raw }) =
-            ctx.extensions.get::<LegacyHello>().cloned()
-        else {
+        let Some(LegacyHello::Login { request, raw }) = ctx.legacy_hello.clone() else {
             panic!("a legacy login must leave its hello");
         };
         handler.handle_login(ctx, &request, &raw).await

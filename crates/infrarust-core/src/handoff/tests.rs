@@ -149,7 +149,7 @@ fn routed(services: &ProxyServices, ctx: &mut ConnectionContext, server: &str) {
         .domain_router
         .find_route_by_server_id(server)
         .unwrap();
-    ctx.extensions.insert(RoutingData {
+    ctx.routing = Some(RoutingData {
         server_config,
         config_id: server.into(),
         load_balancer,
@@ -387,7 +387,7 @@ async fn a_handshake_handoff_replays_the_handshake_as_passthrough_forwards_it() 
     routed(&services, &mut ctx, "origin");
     let handshake = handshake_data("origin.test\0FML3\0", ProtocolVersion::V1_21);
     let raw = handshake.raw_packets[0].clone();
-    ctx.extensions.insert(handshake);
+    ctx.handshake = Some(handshake);
     ctx.buffered_data = BytesMut::from(&b"\x01\x00"[..]);
     let task = spawn(
         relay(services),
@@ -428,7 +428,7 @@ async fn a_handoff_never_replays_forwarding_fields_the_client_appended_to_its_ho
         let mut handshake = handshake_data(smuggled, ProtocolVersion::V1_21);
         let login_start = BytesMut::from(&b"\x07\x00\x05Steve"[..]);
         handshake.raw_packets.push(login_start.clone());
-        ctx.extensions.insert(handshake);
+        ctx.handshake = Some(handshake);
         let handoff = match target {
             "route" => Handoff::route(),
             _ => Handoff::to(HandoffTarget::address("127.0.0.1", addr.port())),
@@ -471,7 +471,7 @@ async fn a_login_handoff_replays_the_rewritten_handshake_then_the_login_start_as
     let mut handshake = handshake_data("origin.test\0FML3\0", ProtocolVersion::V1_21);
     let login_start = BytesMut::from(&b"\x07\x00\x05Steve"[..]);
     handshake.raw_packets.push(login_start.clone());
-    ctx.extensions.insert(handshake);
+    ctx.handshake = Some(handshake);
     ctx.buffered_data = BytesMut::from(&b"\x02\x02\x00"[..]);
     let task = spawn(
         relay(services),
@@ -511,7 +511,7 @@ async fn a_route_handoff_uses_the_addresses_already_picked_for_the_connection() 
     add(&services, server("origin", configured_addr, |_| {}));
     let Client { mut peer, mut ctx } = client().await;
     routed(&services, &mut ctx, "origin");
-    ctx.extensions.insert(BackendTargets {
+    ctx.backend_targets = Some(BackendTargets {
         addresses: smallvec::smallvec![infrarust_config::ServerAddress {
             host: "127.0.0.1".into(),
             port: picked_addr.port(),

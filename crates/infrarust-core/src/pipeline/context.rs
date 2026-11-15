@@ -1,5 +1,3 @@
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -12,6 +10,9 @@ use infrarust_transport::{AcceptedConnection, ClientConnection, ConnectionInfo, 
 
 use crate::error::CoreError;
 use crate::filter::transport_chain::TransportSession;
+use crate::loadbalancer::PendingTicket;
+use crate::pipeline::types::{BackendTargets, HandshakeData, LegacyHello, LoginData, RoutingData};
+use infrarust_protocol::ProtocolError;
 
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -19,52 +20,18 @@ fn next_connection_id() -> u64 {
     NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-#[derive(Debug, Default)]
-pub struct Extensions {
-    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-}
-
-impl Extensions {
-    pub fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
-    }
-
-    pub fn insert<T: Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
-        self.map
-            .insert(TypeId::of::<T>(), Box::new(val))
-            .and_then(|prev| prev.downcast().ok().map(|b| *b))
-    }
-
-    pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.map
-            .get(&TypeId::of::<T>())
-            .and_then(|b| b.downcast_ref())
-    }
-
-    pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
-        self.map
-            .get_mut(&TypeId::of::<T>())
-            .and_then(|b| b.downcast_mut())
-    }
-
-    pub fn contains<T: Send + Sync + 'static>(&self) -> bool {
-        self.map.contains_key(&TypeId::of::<T>())
-    }
-
-    pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
-        self.map
-            .remove(&TypeId::of::<T>())
-            .and_then(|b| b.downcast().ok().map(|b| *b))
-    }
-}
-
 pub struct ConnectionContext {
     stream: Option<TcpStream>,
     info: ConnectionInfo,
     pub buffered_data: BytesMut,
-    pub extensions: Extensions,
+    pub handshake: Option<HandshakeData>,
+    pub routing: Option<RoutingData>,
+    pub login: Option<LoginData>,
+    pub legacy_hello: Option<LegacyHello>,
+    pub layout_refusal: Option<ProtocolError>,
+    pub backend_targets: Option<BackendTargets>,
+    pub pending_ticket: Option<PendingTicket>,
+    pub span: Option<tracing::Span>,
     pub connection_id: u64,
     transport: Option<TransportSession>,
     _slot: ConnectionSlot,
@@ -83,20 +50,36 @@ impl ConnectionContext {
             stream: Some(stream),
             info,
             buffered_data,
-            extensions: Extensions::new(),
+            handshake: None,
+            routing: None,
+            login: None,
+            legacy_hello: None,
+            layout_refusal: None,
+            backend_targets: None,
+            pending_ticket: None,
+            span: None,
             connection_id: next_connection_id(),
             transport: None,
             _slot: slot,
         }
     }
 
-    pub fn require_extension<T: Send + Sync + 'static>(
-        &self,
-        name: &'static str,
-    ) -> Result<&T, CoreError> {
-        self.extensions
-            .get::<T>()
-            .ok_or(CoreError::MissingExtension(name))
+    pub fn require_handshake(&self) -> Result<&HandshakeData, CoreError> {
+        self.handshake
+            .as_ref()
+            .ok_or(CoreError::MissingExtension("HandshakeData"))
+    }
+
+    pub fn require_routing(&self) -> Result<&RoutingData, CoreError> {
+        self.routing
+            .as_ref()
+            .ok_or(CoreError::MissingExtension("RoutingData"))
+    }
+
+    pub fn require_login(&self) -> Result<&LoginData, CoreError> {
+        self.login
+            .as_ref()
+            .ok_or(CoreError::MissingExtension("LoginData"))
     }
 
     #[allow(clippy::expect_used)]
@@ -205,61 +188,5 @@ mod tests {
 
         assert_eq!(ctx.client_addr(), peer);
         assert_eq!(ctx.real_ip(), None);
-    }
-
-    #[test]
-    fn extensions_insert_and_get() {
-        let mut ext = Extensions::new();
-        ext.insert(42u32);
-        assert_eq!(ext.get::<u32>(), Some(&42));
-    }
-
-    #[test]
-    fn extensions_get_missing_returns_none() {
-        let ext = Extensions::new();
-        assert_eq!(ext.get::<u32>(), None);
-    }
-
-    #[test]
-    fn extensions_overwrite_returns_previous() {
-        let mut ext = Extensions::new();
-        ext.insert(1u32);
-        let prev = ext.insert(2u32);
-        assert_eq!(prev, Some(1));
-        assert_eq!(ext.get::<u32>(), Some(&2));
-    }
-
-    #[test]
-    fn extensions_different_types_coexist() {
-        let mut ext = Extensions::new();
-        ext.insert(42u32);
-        ext.insert("hello".to_string());
-        assert_eq!(ext.get::<u32>(), Some(&42));
-        assert_eq!(ext.get::<String>(), Some(&"hello".to_string()));
-    }
-
-    #[test]
-    fn extensions_contains() {
-        let mut ext = Extensions::new();
-        assert!(!ext.contains::<u32>());
-        ext.insert(1u32);
-        assert!(ext.contains::<u32>());
-    }
-
-    #[test]
-    fn extensions_remove() {
-        let mut ext = Extensions::new();
-        ext.insert(42u32);
-        let removed = ext.remove::<u32>();
-        assert_eq!(removed, Some(42));
-        assert!(!ext.contains::<u32>());
-    }
-
-    #[test]
-    fn extensions_get_mut() {
-        let mut ext = Extensions::new();
-        ext.insert(vec![1, 2, 3]);
-        ext.get_mut::<Vec<i32>>().unwrap().push(4);
-        assert_eq!(ext.get::<Vec<i32>>(), Some(&vec![1, 2, 3, 4]));
     }
 }

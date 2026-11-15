@@ -113,7 +113,7 @@ fn insert_hello(
     hello: LegacyHello,
 ) {
     ctx.buffered_data.clear();
-    ctx.extensions.insert(HandshakeData {
+    ctx.handshake = Some(HandshakeData {
         domain: normalize_handshake(&host).to_lowercase(),
         raw_host: host,
         port: port.unwrap_or(0),
@@ -121,7 +121,7 @@ fn insert_hello(
         intent,
         raw_packets: Vec::new(),
     });
-    ctx.extensions.insert(hello);
+    ctx.legacy_hello = Some(hello);
 }
 
 async fn read_ping_bytes(ctx: &mut ConnectionContext) -> Result<Vec<u8>, CoreError> {
@@ -331,14 +331,14 @@ mod tests {
         let (mut ctx, _client) = ctx_with(&v1_6_ping("LOBBY.test", 25570), 1).await;
         read_ping_hello(&mut ctx).await.unwrap();
 
-        let handshake = ctx.extensions.get::<HandshakeData>().unwrap();
+        let handshake = ctx.handshake.as_ref().unwrap();
         assert_eq!(handshake.intent, ConnectionIntent::Status);
         assert_eq!(handshake.domain, "lobby.test");
         assert_eq!(handshake.raw_host, "LOBBY.test");
         assert_eq!(handshake.port, 25570);
         assert_eq!(handshake.protocol_version, ProtocolVersion(78));
         assert!(ctx.buffered_data.is_empty());
-        assert!(!ctx.extensions.get::<LegacyHello>().unwrap().is_hostless());
+        assert!(!ctx.legacy_hello.as_ref().unwrap().is_hostless());
     }
 
     #[tokio::test]
@@ -346,6 +346,6 @@ mod tests {
         let (mut ctx, _client) = ctx_with(&[0xFE], 1).await;
         read_ping_hello(&mut ctx).await.unwrap();
 
-        assert!(ctx.extensions.get::<LegacyHello>().unwrap().is_hostless());
+        assert!(ctx.legacy_hello.as_ref().unwrap().is_hostless());
     }
 }

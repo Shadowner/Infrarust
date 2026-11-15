@@ -82,9 +82,6 @@ impl LegacyHello {
     }
 }
 
-#[derive(Debug)]
-pub struct LayoutRefusal(pub infrarust_protocol::ProtocolError);
-
 #[derive(Debug, Clone)]
 pub struct BackendTargets {
     pub addresses: SmallVec<[ServerAddress; 4]>,

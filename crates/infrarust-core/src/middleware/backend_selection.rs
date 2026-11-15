@@ -10,7 +10,7 @@ use crate::loadbalancer::{
 };
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{BackendTargets, RoutingData};
+use crate::pipeline::types::BackendTargets;
 
 pub struct BackendSelectionMiddleware {
     registry: Arc<dyn AddressConnectionCount>,
@@ -48,7 +48,7 @@ impl Middleware for BackendSelectionMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let Some(routing) = ctx.extensions.get::<RoutingData>() else {
+            let Some(routing) = ctx.routing.as_ref() else {
                 return Ok(MiddlewareResult::Continue); // status ping, etc.
             };
 
@@ -70,9 +70,9 @@ impl Middleware for BackendSelectionMiddleware {
             );
 
             if let (Some(pending), Some(picked)) = (&self.pending, targets.addresses.first()) {
-                ctx.extensions.insert(pending.reserve(picked));
+                ctx.pending_ticket = Some(pending.reserve(picked));
             }
-            ctx.extensions.insert(targets);
+            ctx.backend_targets = Some(targets);
             Ok(MiddlewareResult::Continue)
         })
     }

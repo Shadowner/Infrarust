@@ -27,7 +27,7 @@ use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
-use crate::loadbalancer::{PendingTicket, select_backend_addresses};
+use crate::loadbalancer::select_backend_addresses;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
@@ -278,7 +278,7 @@ impl ForwardedLogin<'_> {
                                 ))
                                 .await;
                             admitted.session.set_current_server(server.clone());
-                            ctx.extensions.remove::<PendingTicket>();
+                            ctx.pending_ticket.take();
                             return Ok(Some(Ready {
                                 player: admitted.session,
                                 server,
@@ -400,8 +400,7 @@ impl ForwardedLogin<'_> {
         )
         .to_vec();
         if let Some(first) = addresses.first() {
-            ctx.extensions
-                .insert(services.pending_backends.reserve(first));
+            ctx.pending_ticket = Some(services.pending_backends.reserve(first));
         }
         addresses
     }

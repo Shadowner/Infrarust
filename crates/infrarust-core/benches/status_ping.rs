@@ -143,12 +143,12 @@ fn fixture(listeners: usize) -> Fixture {
         toml::from_str("domains = [\"play.example.net\"]\naddresses = [\"127.0.0.1:25566\"]\n")
             .unwrap(),
     );
-    ctx.extensions.insert(RoutingData {
+    ctx.routing = Some(RoutingData {
         load_balancer: build_load_balancer(&config.balance_config()),
         server_config: config,
         config_id: SERVER.to_string(),
     });
-    ctx.extensions.insert(HandshakeData {
+    ctx.handshake = Some(HandshakeData {
         domain: "play.example.net".to_string(),
         raw_host: "play.example.net".to_string(),
         port: 25565,

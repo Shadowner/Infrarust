@@ -18,7 +18,7 @@ use super::helpers::cancelled_cause;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
+use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::commands::CommandInbox;
 use crate::player::{SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
@@ -91,13 +91,9 @@ impl InterceptedHandler {
         mut conn: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = conn
-            .require_extension::<RoutingData>("RoutingData")?
-            .clone();
-        let handshake = conn
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .clone();
-        let login_data = conn.extensions.get::<LoginData>().cloned();
+        let routing = conn.require_routing()?.clone();
+        let handshake = conn.require_handshake()?.clone();
+        let login_data = conn.login.clone();
 
         let version = handshake.protocol_version;
         let registry = &self.services.packet_registry;
@@ -200,13 +196,8 @@ impl InterceptedHandler {
             return Ok(());
         }
 
-        let backend_targets = conn
-            .extensions
-            .get::<crate::pipeline::types::BackendTargets>()
-            .cloned();
-        let mut pending_ticket = conn
-            .extensions
-            .remove::<crate::loadbalancer::PendingTicket>();
+        let backend_targets = conn.backend_targets.clone();
+        let mut pending_ticket = conn.pending_ticket.take();
         let facts = LoginFacts {
             rewritten,
             online_mode,

@@ -17,11 +17,10 @@ use super::ProxyServer;
 use crate::error::CoreError;
 use crate::handoff::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::handoff::{HandoffError, HandoffLevel};
-use crate::middleware::telemetry::ConnectionSpan;
 use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
-use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyHello, RoutingData};
+use crate::pipeline::types::{ConnectionIntent, LegacyHello};
 use crate::player::SHUTDOWN_REASON;
 
 enum ConnectionError {
@@ -132,14 +131,12 @@ impl ProxyServer {
             return Ok(());
         }
 
-        let intent = ctx
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .intent;
+        let intent = ctx.require_handshake()?.intent;
         let Some(mut ctx) = self.screen(ctx, intent, &shutdown).await else {
             return Ok(());
         };
 
-        if let Some(hello) = ctx.extensions.get::<LegacyHello>().cloned() {
+        if let Some(hello) = ctx.legacy_hello.clone() {
             return match hello {
                 LegacyHello::Ping { request, raw } => self
                     .legacy_handler
@@ -244,7 +241,7 @@ impl ProxyServer {
                 Ok(false)
             }
             MiddlewareResult::Reject { reason, message } => {
-                let intent = ctx.extensions.get::<HandshakeData>().map(|h| h.intent);
+                let intent = ctx.handshake.as_ref().map(|h| h.intent);
                 let unknown_domain = reason == RejectReason::UnknownDomain;
                 let dropped =
                     unknown_domain && self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
@@ -288,7 +285,7 @@ impl ProxyServer {
                 None
             }
             Admission::Dropped => None,
-            Admission::Handoff(_) if ctx.extensions.contains::<LegacyHello>() => {
+            Admission::Handoff(_) if ctx.legacy_hello.is_some() => {
                 tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
                 None
             }
@@ -357,15 +354,9 @@ impl ProxyServer {
         mut ctx: ConnectionContext,
         shutdown: &CancellationToken,
     ) -> Result<(), ConnectionError> {
-        let proxy_mode = ctx
-            .require_extension::<RoutingData>("RoutingData")?
-            .server_config
-            .proxy_mode;
+        let proxy_mode = ctx.require_routing()?.server_config.proxy_mode;
 
-        let span = ctx
-            .extensions
-            .remove::<ConnectionSpan>()
-            .map_or_else(tracing::Span::none, |cs| cs.0);
+        let span = ctx.span.take().unwrap_or_else(tracing::Span::none);
 
         let session = shutdown.child_token();
         match proxy_mode {
@@ -384,7 +375,7 @@ impl ProxyServer {
             ProxyMode::Full => {
                 tracing::error!(
                     server = %ctx
-                        .require_extension::<RoutingData>("RoutingData")?
+                        .require_routing()?
                         .server_config
                         .effective_id(),
                     "server configured with the reserved proxy_mode = \"full\", \
@@ -483,12 +474,12 @@ impl ProxyServer {
         ctx: &mut ConnectionContext,
         reason: &Component,
     ) -> Result<(), CoreError> {
-        if ctx.extensions.contains::<LegacyHello>() {
+        if ctx.legacy_hello.is_some() {
             return crate::handler::helpers::send_legacy_kick(ctx.stream_mut(), reason).await;
         }
         let version = ctx
-            .extensions
-            .get::<HandshakeData>()
+            .handshake
+            .as_ref()
             .map_or(ProtocolVersion::CURRENT, |h| h.protocol_version);
 
         crate::handler::helpers::send_login_disconnect(

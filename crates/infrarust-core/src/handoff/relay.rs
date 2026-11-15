@@ -15,8 +15,7 @@ use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::handoff_handshake;
 use crate::loadbalancer::{PendingTicket, select_backend_addresses};
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::BackendTargets;
-use crate::pipeline::types::{HandshakeData, RoutingData};
+use crate::pipeline::types::RoutingData;
 use crate::services::ProxyServices;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,14 +198,10 @@ impl HandoffRelay {
         let explicit = handoff.proxy_protocol;
         match &handoff.target {
             HandoffTarget::Route => {
-                let routing = ctx
-                    .extensions
-                    .get::<RoutingData>()
-                    .cloned()
-                    .ok_or(HandoffError::NoRoute)?;
+                let routing = ctx.routing.clone().ok_or(HandoffError::NoRoute)?;
                 let chosen = ctx
-                    .extensions
-                    .get::<BackendTargets>()
+                    .backend_targets
+                    .as_ref()
                     .map(|targets| targets.addresses.to_vec());
                 self.balanced(&routing, chosen, explicit)
             }
@@ -359,8 +354,8 @@ fn replay_bytes(
         return Ok(ctx.buffered_data.to_vec());
     }
     let handshake = ctx
-        .extensions
-        .get::<HandshakeData>()
+        .handshake
+        .as_ref()
         .ok_or(HandoffError::MissingHandshake)?;
     let mut replay = handoff_handshake(handshake, server)
         .map_err(|error| HandoffError::Handshake(Box::new(error)))?;
@@ -416,7 +411,7 @@ mod tests {
             .domain_router
             .find_route_by_server_id("modded")
             .unwrap();
-        ctx.extensions.insert(RoutingData {
+        ctx.routing = Some(RoutingData {
             server_config,
             config_id: "modded".into(),
             load_balancer,

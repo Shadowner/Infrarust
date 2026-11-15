@@ -13,9 +13,7 @@ use crate::ban::BanManager;
 use crate::ban::manager::Refusal;
 use crate::event_bus::{CORE_OWNER, EventBusImpl};
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{
-    ConnectionIntent, HandshakeData, LegacyHello, LoginData, RoutingData,
-};
+use crate::pipeline::types::{ConnectionIntent, LegacyHello};
 
 pub const DENIED_MESSAGE: &str = "You are not allowed to connect to this server";
 
@@ -44,15 +42,13 @@ pub fn reject(
 
 pub fn virtual_host(ctx: &ConnectionContext) -> Option<String> {
     if ctx
-        .extensions
-        .get::<LegacyHello>()
+        .legacy_hello
+        .as_ref()
         .is_some_and(LegacyHello::is_hostless)
     {
         return None;
     }
-    ctx.extensions
-        .get::<HandshakeData>()
-        .map(|h| h.domain.clone())
+    ctx.handshake.as_ref().map(|h| h.domain.clone())
 }
 
 pub fn reject_connection(bus: &EventBusImpl, ctx: &ConnectionContext, reason: RejectReason) {
@@ -62,14 +58,11 @@ pub fn reject_connection(bus: &EventBusImpl, ctx: &ConnectionContext, reason: Re
 pub fn handoff_attempt(ctx: &ConnectionContext) -> LoginAttempt {
     let mut attempt = LoginAttempt::status(ctx.client_ip());
     attempt.stage = LoginStage::PreAuth;
-    attempt.username = ctx
-        .extensions
-        .get::<LoginData>()
-        .map(|login| login.username.clone());
-    if let Some(handshake) = ctx.extensions.get::<HandshakeData>() {
+    attempt.username = ctx.login.as_ref().map(|login| login.username.clone());
+    if let Some(handshake) = ctx.handshake.as_ref() {
         attempt = attempt.virtual_host(handshake.domain.clone());
     }
-    if let Some(routing) = ctx.extensions.get::<RoutingData>() {
+    if let Some(routing) = ctx.routing.as_ref() {
         attempt = attempt.server(ServerId::new(routing.config_id.clone()));
     }
     attempt
@@ -118,7 +111,7 @@ pub async fn screen(
 
 pub async fn screen_connection(bus: &EventBusImpl, ctx: &ConnectionContext) -> Admission {
     screen(bus, || {
-        let handshake = ctx.extensions.get::<HandshakeData>();
+        let handshake = ctx.handshake.as_ref();
         let intent = handshake.map_or(HandshakeIntent::Login, |h| match h.intent {
             ConnectionIntent::Status => HandshakeIntent::Status,
             ConnectionIntent::Login => HandshakeIntent::Login,
@@ -131,11 +124,11 @@ pub async fn screen_connection(bus: &EventBusImpl, ctx: &ConnectionContext) -> A
             ProtocolVersion::new(protocol_version),
         )
         .with_server(
-            ctx.extensions
-                .get::<RoutingData>()
+            ctx.routing
+                .as_ref()
                 .map(|routing| ServerId::new(routing.config_id.clone())),
         )
-        .with_legacy(ctx.extensions.contains::<LegacyHello>());
+        .with_legacy(ctx.legacy_hello.is_some());
         match handshake {
             Some(h) => event.with_host(h.raw_host.clone(), virtual_host(ctx), h.port),
             None => event,

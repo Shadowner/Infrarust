@@ -9,7 +9,6 @@ use super::forwarded::{Applicant, ForwardedLogin, Opening, Route, Wire};
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::BackendTargets;
-use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::services::ProxyServices;
 
 pub struct PassthroughHandler {
@@ -41,14 +40,12 @@ impl PassthroughHandler {
         mut ctx: ConnectionContext,
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
-        let routing = ctx.require_extension::<RoutingData>("RoutingData")?.clone();
-        let handshake = ctx
-            .require_extension::<HandshakeData>("HandshakeData")?
-            .clone();
-        let login_data = ctx.extensions.get::<LoginData>().cloned();
+        let routing = ctx.require_routing()?.clone();
+        let handshake = ctx.require_handshake()?.clone();
+        let login_data = ctx.login.clone();
         let origin = Route::forwarding(routing, |routing| {
             BackendTargets::addresses_or_config(
-                ctx.extensions.get::<BackendTargets>(),
+                ctx.backend_targets.as_ref(),
                 &routing.server_config,
             )
         })

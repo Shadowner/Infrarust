@@ -8,7 +8,7 @@ use crate::error::CoreError;
 use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{ConnectionIntent, HandshakeData};
+use crate::pipeline::types::ConnectionIntent;
 
 pub struct BanIpCheckMiddleware {
     ban_manager: Arc<BanManager>,
@@ -30,7 +30,7 @@ impl Middleware for BanIpCheckMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let Some(handshake) = ctx.extensions.get::<HandshakeData>() else {
+            let Some(handshake) = ctx.handshake.as_ref() else {
                 return Ok(MiddlewareResult::Continue);
             };
             if handshake.intent != ConnectionIntent::Status {

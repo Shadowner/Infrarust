@@ -55,7 +55,7 @@ async fn loopback(ip: IpAddr) -> ConnectionContext {
 
 async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContext {
     let mut ctx = loopback(ip).await;
-    ctx.extensions.insert(LoginData {
+    ctx.login = Some(LoginData {
         username: username.to_string(),
         player_uuid: None,
         profile_key: None,
@@ -67,7 +67,7 @@ async fn make_context_with_login(ip: IpAddr, username: &str) -> ConnectionContex
 
 async fn make_context_with_intent(ip: IpAddr, intent: ConnectionIntent) -> ConnectionContext {
     let mut ctx = loopback(ip).await;
-    ctx.extensions.insert(HandshakeData {
+    ctx.handshake = Some(HandshakeData {
         domain: "lobby.test".to_string(),
         raw_host: "lobby.test".to_string(),
         port: 25565,

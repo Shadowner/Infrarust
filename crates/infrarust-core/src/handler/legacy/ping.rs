@@ -24,7 +24,7 @@ impl LegacyHandler {
         raw: &[u8],
     ) -> Result<(), CoreError> {
         let virtual_host = admission::virtual_host(ctx);
-        let routing = ctx.extensions.get::<RoutingData>().cloned();
+        let routing = ctx.routing.clone();
         let (server, response) = match routing {
             Some(routing) => (
                 Some(ServerId::new(routing.server_config.effective_id())),

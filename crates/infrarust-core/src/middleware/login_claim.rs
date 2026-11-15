@@ -11,9 +11,7 @@ use crate::event_bus::EventBusImpl;
 use crate::pipeline::admission;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
-use crate::pipeline::types::{
-    HandshakeData, LayoutRefusal, LoginData, LoginStartLayout, RoutingData,
-};
+use crate::pipeline::types::LoginStartLayout;
 
 pub struct LoginClaimMiddleware {
     bus: Arc<EventBusImpl>,
@@ -36,7 +34,7 @@ impl Middleware for LoginClaimMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let refusal = ctx.extensions.remove::<LayoutRefusal>();
+            let refusal = ctx.layout_refusal.take();
             if self.bus.has_listeners::<LoginClaimEvent>()
                 && let Some(event) = claim_event(ctx)
             {
@@ -59,7 +57,7 @@ impl Middleware for LoginClaimMiddleware {
                 }
             }
             match refusal {
-                Some(LayoutRefusal(error)) => Err(error.into()),
+                Some(error) => Err(error.into()),
                 None => Ok(MiddlewareResult::Continue),
             }
         })
@@ -67,11 +65,11 @@ impl Middleware for LoginClaimMiddleware {
 }
 
 fn claim_event(ctx: &ConnectionContext) -> Option<LoginClaimEvent> {
-    let handshake = ctx.extensions.get::<HandshakeData>()?;
-    let login = ctx.extensions.get::<LoginData>()?;
+    let handshake = ctx.handshake.as_ref()?;
+    let login = ctx.login.as_ref()?;
     let server = ctx
-        .extensions
-        .get::<RoutingData>()
+        .routing
+        .as_ref()
         .map(|routing| ServerId::new(routing.config_id.clone()));
     Some(
         LoginClaimEvent::new(
@@ -111,7 +109,7 @@ mod tests {
 
     use super::*;
     use crate::ban::{BAN_CHECK_UNAVAILABLE, FileBanStorage};
-    use crate::pipeline::types::ConnectionIntent;
+    use crate::pipeline::types::{ConnectionIntent, HandshakeData, LoginData, RoutingData};
     use crate::registry::ConnectionRegistry;
 
     const UUID: Uuid = Uuid::from_u128(0xa7c3_5e10_9b2d_4f6e_8a01_c4d2_e3f4_a5b6);
@@ -137,7 +135,7 @@ mod tests {
         let client = TcpStream::connect(addr).await.unwrap();
         let (server, peer) = listener.accept().await.unwrap();
         let mut ctx = ConnectionContext::new_for_test(server, peer, addr);
-        ctx.extensions.insert(HandshakeData {
+        ctx.handshake = Some(HandshakeData {
             domain: "lobby.test".to_string(),
             raw_host: "Lobby.Test\0FML3\0".to_string(),
             port: 25577,
@@ -149,12 +147,12 @@ mod tests {
             toml::from_str("domains = [\"lobby.test\"]\naddresses = [\"127.0.0.1:25565\"]\n")
                 .unwrap();
         config.proxy_mode = ProxyMode::Offline;
-        ctx.extensions.insert(RoutingData {
+        ctx.routing = Some(RoutingData {
             server_config: Arc::new(config),
             config_id: "lobby".to_string(),
             load_balancer: Arc::new(crate::loadbalancer::FirstAvailable),
         });
-        ctx.extensions.insert(LoginData {
+        ctx.login = Some(LoginData {
             username: "probe".to_string(),
             player_uuid: Some(UUID),
             profile_key: None,
@@ -162,8 +160,7 @@ mod tests {
             layout,
         });
         if refused {
-            ctx.extensions
-                .insert(LayoutRefusal(ProtocolError::invalid("strict layout")));
+            ctx.layout_refusal = Some(ProtocolError::invalid("strict layout"));
         }
         (ctx, client)
     }
@@ -295,7 +292,7 @@ mod tests {
         assert!(
             matches!(result.unwrap(), MiddlewareResult::Claimed(claimed) if claimed == handoff)
         );
-        assert!(!ctx.extensions.contains::<LayoutRefusal>());
+        assert!(!ctx.layout_refusal.is_some());
         assert_eq!(
             *seen.lock().unwrap(),
             [Seen {

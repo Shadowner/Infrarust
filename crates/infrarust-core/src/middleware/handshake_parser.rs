@@ -127,7 +127,7 @@ impl Middleware for HandshakeParserMiddleware {
                     );
                 }
 
-                ctx.extensions.insert(HandshakeData {
+                ctx.handshake = Some(HandshakeData {
                     domain,
                     raw_host: handshake.server_address,
                     port,
@@ -209,7 +209,7 @@ mod tests {
         let result = HandshakeParserMiddleware::new().process(&mut ctx).await;
 
         assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-        let handshake = ctx.extensions.get::<HandshakeData>().unwrap();
+        let handshake = ctx.handshake.as_ref().unwrap();
         assert_eq!(handshake.domain, "mc.example.com");
         assert_eq!(handshake.raw_packets[0].as_ref(), frame.as_slice());
         assert_eq!(ctx.buffered_data.len(), 8192);

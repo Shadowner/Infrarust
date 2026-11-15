@@ -13,13 +13,12 @@ use smallvec::SmallVec;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_core::loadbalancer::{
     AddressConnectionCount, BackendCandidate, BackendHealthView, BackendState, HealthSnapshot,
-    LeastConnections, LoadBalancer, PendingRegistry, PendingTicket, SelectionMode,
-    peek_backend_addresses, select_backend_addresses,
+    LeastConnections, LoadBalancer, PendingRegistry, SelectionMode, peek_backend_addresses,
+    select_backend_addresses,
 };
 use infrarust_core::middleware::backend_selection::BackendSelectionMiddleware;
 use infrarust_core::pipeline::context::ConnectionContext;
 use infrarust_core::pipeline::middleware::{Middleware, MiddlewareResult};
-use infrarust_core::pipeline::types::BackendTargets;
 use infrarust_core::pipeline::types::RoutingData;
 
 async fn make_test_ctx() -> ConnectionContext {
@@ -169,7 +168,7 @@ fn insert_routing(
     config: ServerConfig,
     load_balancer: Arc<dyn LoadBalancer>,
 ) {
-    ctx.extensions.insert(RoutingData {
+    ctx.routing = Some(RoutingData {
         server_config: Arc::new(config),
         config_id: "test".to_string(),
         load_balancer,
@@ -186,7 +185,7 @@ async fn test_middleware_no_routing_data_continues() {
 
     let result = middleware.process(&mut ctx).await.unwrap();
     assert!(matches!(result, MiddlewareResult::Continue));
-    assert!(!ctx.extensions.contains::<BackendTargets>());
+    assert!(!ctx.backend_targets.is_some());
 }
 
 #[tokio::test]
@@ -201,7 +200,7 @@ async fn test_middleware_single_address_shortcut() {
 
     middleware.process(&mut ctx).await.unwrap();
 
-    let targets = ctx.extensions.get::<BackendTargets>().unwrap();
+    let targets = ctx.backend_targets.as_ref().unwrap();
     assert_eq!(targets.addresses.as_slice(), [addr("10.0.0.1")]);
     assert_eq!(lb.calls.load(Ordering::SeqCst), 0, "LB must not be called");
 }
@@ -256,7 +255,7 @@ async fn test_middleware_stores_ordered_targets() {
     let result = middleware.process(&mut ctx).await.unwrap();
     assert!(matches!(result, MiddlewareResult::Continue));
 
-    let targets = ctx.extensions.get::<BackendTargets>().unwrap();
+    let targets = ctx.backend_targets.as_ref().unwrap();
     assert_eq!(
         targets.addresses.as_slice(),
         [addr("10.0.0.2"), addr("10.0.0.3"), addr("10.0.0.1")]
@@ -284,7 +283,7 @@ async fn test_full_flow_least_conn_balances() {
         );
         middleware.process(&mut ctx).await.unwrap();
 
-        let targets = ctx.extensions.get::<BackendTargets>().unwrap();
+        let targets = ctx.backend_targets.as_ref().unwrap();
         let chosen = targets.addresses[0].clone();
         counts.bump(&chosen);
         *distribution.entry(chosen.host.clone()).or_insert(0) += 1;
@@ -420,7 +419,7 @@ async fn test_pending_reservations_spread_a_login_burst() {
 
     let picked: Vec<ServerAddress> = contexts
         .iter()
-        .map(|ctx| ctx.extensions.get::<BackendTargets>().unwrap().addresses[0].clone())
+        .map(|ctx| ctx.backend_targets.as_ref().unwrap().addresses[0].clone())
         .collect();
     let onto_one = picked.iter().filter(|a| **a == addr("10.0.0.2")).count();
     assert!(
@@ -435,7 +434,7 @@ async fn test_pending_reservations_spread_a_login_burst() {
 
     // Tickets released once the sessions attach.
     for ctx in &mut contexts {
-        ctx.extensions.remove::<PendingTicket>();
+        ctx.pending_ticket.take();
     }
     assert_eq!(pending.active_connections_for_address(&addr("10.0.0.2")), 0);
 }
@@ -476,7 +475,7 @@ async fn test_middleware_unhealthy_goes_last() {
 
     middleware.process(&mut ctx).await.unwrap();
 
-    let targets = ctx.extensions.get::<BackendTargets>().unwrap();
+    let targets = ctx.backend_targets.as_ref().unwrap();
     assert_eq!(
         targets.addresses.as_slice(),
         [addr("10.0.0.2"), addr("10.0.0.1")],

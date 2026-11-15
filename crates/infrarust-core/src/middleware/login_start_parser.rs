@@ -13,9 +13,7 @@ use crate::event_bus::EventBusImpl;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::preauth_frame::{MAX_LOGIN_START_FRAME, read_preauth_frame};
-use crate::pipeline::types::{
-    HandshakeData, LayoutRefusal, LoginData, LoginStartLayout, RoutingData,
-};
+use crate::pipeline::types::{LoginData, LoginStartLayout};
 
 /// Middleware that parses the `LoginStart` packet to extract username and UUID.
 ///
@@ -61,9 +59,7 @@ impl Middleware for LoginStartParserMiddleware {
         ctx: &'a mut ConnectionContext,
     ) -> BoxFuture<'a, Result<MiddlewareResult, CoreError>> {
         Box::pin(async move {
-            let protocol_version = ctx
-                .require_extension::<HandshakeData>("HandshakeData")?
-                .protocol_version;
+            let protocol_version = ctx.require_handshake()?.protocol_version;
 
             let mut decoder = PacketDecoder::new();
             if !ctx.buffered_data.is_empty() {
@@ -104,7 +100,7 @@ impl Middleware for LoginStartParserMiddleware {
                 "login start parsed"
             );
 
-            ctx.extensions.insert(LoginData {
+            ctx.login = Some(LoginData {
                 username: login_start.name.clone(),
                 player_uuid: login_start.uuid,
                 profile_key: login_start.profile_key,
@@ -115,13 +111,13 @@ impl Middleware for LoginStartParserMiddleware {
             let remaining = decoder.into_remaining();
             raw_data.truncate(raw_data.len() - remaining.len());
 
-            if let Some(handshake) = ctx.extensions.get_mut::<HandshakeData>() {
+            if let Some(handshake) = ctx.handshake.as_mut() {
                 handshake.raw_packets.push(raw_data);
             }
 
             ctx.buffered_data = remaining;
             if let Some(refusal) = refusal {
-                ctx.extensions.insert(LayoutRefusal(refusal));
+                ctx.layout_refusal = Some(refusal);
             }
 
             Ok(MiddlewareResult::Continue)
@@ -130,8 +126,8 @@ impl Middleware for LoginStartParserMiddleware {
 }
 
 fn routes_to_proxy_login(ctx: &ConnectionContext) -> bool {
-    ctx.extensions
-        .get::<RoutingData>()
+    ctx.routing
+        .as_ref()
         .is_none_or(|routing| routing.server_config.proxy_mode.is_intercepted())
 }
 
@@ -187,7 +183,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::pipeline::types::ConnectionIntent;
+    use crate::pipeline::types::{ConnectionIntent, HandshakeData, RoutingData};
 
     const NAME: &str = "k3x9q2m7a1";
     const UUID: Uuid = Uuid::from_u128(0xa7c3_5e10_9b2d_4f6e_8a01_c4d2_e3f4_a5b6);
@@ -236,7 +232,7 @@ mod tests {
         let (server, peer) = listener.accept().await.unwrap();
         let mut ctx = ConnectionContext::new_for_test(server, peer, addr);
         ctx.buffered_data.extend_from_slice(wire);
-        ctx.extensions.insert(HandshakeData {
+        ctx.handshake = Some(HandshakeData {
             domain: "lobby.test".to_string(),
             raw_host: "lobby.test".to_string(),
             port: 25565,
@@ -245,7 +241,7 @@ mod tests {
             raw_packets: vec![BytesMut::from(&b"handshake"[..])],
         });
         if let Some(mode) = mode {
-            ctx.extensions.insert(RoutingData {
+            ctx.routing = Some(RoutingData {
                 server_config: Arc::new(server_config(mode)),
                 config_id: "lobby".to_string(),
                 load_balancer: Arc::new(crate::loadbalancer::FirstAvailable),
@@ -307,20 +303,20 @@ mod tests {
             for mode in [Some(ProxyMode::Offline), Some(ProxyMode::ClientOnly), None] {
                 let (result, ctx) = parse_with(&parser, version, mode, &wire).await;
                 assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-                let login = ctx.extensions.get::<LoginData>().unwrap();
+                let login = ctx.login.as_ref().unwrap();
                 assert_eq!(login.username, NAME);
                 assert_eq!(login.layout, LoginStartLayout::Mismatched);
                 assert_eq!(login.raw_payload.as_ref(), payload.as_slice());
-                let refusal = ctx.extensions.get::<LayoutRefusal>().unwrap();
-                assert_eq!(refusal.0.to_string(), strict, "{version:?} {mode:?}");
-                let handshake = ctx.extensions.get::<HandshakeData>().unwrap();
+                let refusal = ctx.layout_refusal.as_ref().unwrap();
+                assert_eq!(refusal.to_string(), strict, "{version:?} {mode:?}");
+                let handshake = ctx.handshake.as_ref().unwrap();
                 assert_eq!(handshake.raw_packets[1].as_ref(), frame.as_slice());
                 assert_eq!(ctx.buffered_data.as_ref(), b"after");
             }
             for mode in FORWARDING_MODES {
                 let (result, ctx) = parse_with(&parser, version, Some(mode), &wire).await;
                 assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-                assert!(!ctx.extensions.contains::<LayoutRefusal>());
+                assert!(!ctx.layout_refusal.is_some());
             }
         }
     }
@@ -337,7 +333,7 @@ mod tests {
                 Err(CoreError::Protocol(error)) => assert_eq!(error.to_string(), strict),
                 other => panic!("{version:?} must be refused, got {other:?}"),
             }
-            assert!(!ctx.extensions.contains::<LoginData>());
+            assert!(!ctx.login.is_some());
         }
     }
 
@@ -362,10 +358,10 @@ mod tests {
         .await;
         assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
         assert_eq!(
-            ctx.extensions.get::<LoginData>().unwrap().layout,
+            ctx.login.as_ref().unwrap().layout,
             LoginStartLayout::Declared
         );
-        assert!(!ctx.extensions.contains::<LayoutRefusal>());
+        assert!(!ctx.layout_refusal.is_some());
     }
 
     #[tokio::test]
@@ -379,7 +375,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Err(CoreError::Protocol(_))));
-        assert!(!ctx.extensions.contains::<LoginData>());
+        assert!(!ctx.login.is_some());
     }
 
     #[tokio::test]
@@ -392,13 +388,13 @@ mod tests {
             for mode in FORWARDING_MODES {
                 let (result, ctx) = parse(version, Some(mode), &wire).await;
                 assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-                let login = ctx.extensions.get::<LoginData>().unwrap();
+                let login = ctx.login.as_ref().unwrap();
                 assert_eq!(login.username, NAME);
                 assert_eq!(login.player_uuid, Some(UUID));
                 assert!(login.profile_key.is_none());
                 assert_eq!(login.layout, LoginStartLayout::Mismatched, "{version:?}");
                 assert_eq!(login.raw_payload.as_ref(), payload.as_slice());
-                let handshake = ctx.extensions.get::<HandshakeData>().unwrap();
+                let handshake = ctx.handshake.as_ref().unwrap();
                 assert_eq!(handshake.raw_packets[1].as_ref(), frame.as_slice());
                 assert_eq!(ctx.buffered_data.as_ref(), b"after");
             }
@@ -419,7 +415,7 @@ mod tests {
                     Err(CoreError::Protocol(error)) => assert_eq!(error.to_string(), strict),
                     other => panic!("{version:?} {mode:?} must be refused, got {other:?}"),
                 }
-                assert!(!ctx.extensions.contains::<LoginData>());
+                assert!(!ctx.login.is_some());
             }
         }
     }
@@ -438,7 +434,7 @@ mod tests {
             for mode in [ProxyMode::Passthrough, ProxyMode::Offline] {
                 let (result, ctx) = parse(version, Some(mode), &wire).await;
                 assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-                let login = ctx.extensions.get::<LoginData>().unwrap();
+                let login = ctx.login.as_ref().unwrap();
                 assert_eq!(login.username, "Notch");
                 assert_eq!(login.layout, LoginStartLayout::Declared);
                 assert_eq!(login.raw_payload.as_ref(), payload.as_slice());
@@ -490,7 +486,7 @@ mod tests {
         let (result, ctx) = parse(ProtocolVersion::V1_19, Some(ProxyMode::Offline), &wire).await;
 
         assert!(matches!(result.unwrap(), MiddlewareResult::Continue));
-        let login = ctx.extensions.get::<LoginData>().unwrap();
+        let login = ctx.login.as_ref().unwrap();
         assert_eq!(login.raw_payload.as_ref(), payload.as_slice());
         assert!(login.profile_key.is_some());
         assert_eq!(ctx.buffered_data.len(), 8192);
@@ -511,7 +507,7 @@ mod tests {
             )
             .await;
             assert!(matches!(result, Err(CoreError::Protocol(_))), "{payload:?}");
-            assert!(!ctx.extensions.contains::<LoginData>());
+            assert!(!ctx.login.is_some());
         }
     }
 }
