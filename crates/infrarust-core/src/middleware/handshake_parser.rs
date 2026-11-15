@@ -39,6 +39,8 @@ impl HandshakeParserMiddleware {
 
 use crate::util::normalize_handshake;
 
+const FIRST_READ: usize = 1024;
+
 impl Middleware for HandshakeParserMiddleware {
     fn name(&self) -> &'static str {
         "handshake_parser"
@@ -50,16 +52,14 @@ impl Middleware for HandshakeParserMiddleware {
     ) -> Pin<Box<dyn Future<Output = Result<MiddlewareResult, CoreError>> + Send + 'a>> {
         Box::pin(async move {
             tokio::time::timeout(Duration::from_secs(10), async {
-                let first_byte = if ctx.buffered_data.is_empty() {
-                    let mut buf = [0u8; 1];
-                    let n = ctx.stream_mut().read(&mut buf).await?;
-                    if n == 0 {
-                        return Err(CoreError::ConnectionClosed);
-                    }
-                    ctx.buffered_data.extend_from_slice(&buf[..n]);
-                    buf[0]
-                } else {
-                    ctx.buffered_data[0]
+                if ctx.buffered_data.is_empty() {
+                    let mut head = std::mem::take(&mut ctx.buffered_data);
+                    head.reserve(FIRST_READ);
+                    ctx.stream_mut().read_buf(&mut head).await?;
+                    ctx.buffered_data = head;
+                }
+                let Some(&first_byte) = ctx.buffered_data.first() else {
+                    return Err(CoreError::ConnectionClosed);
                 };
 
                 match legacy::detect(first_byte) {
@@ -74,10 +74,10 @@ impl Middleware for HandshakeParserMiddleware {
                     legacy::LegacyDetection::Modern => {}
                 }
 
+                let mut raw_data = std::mem::take(&mut ctx.buffered_data);
                 let mut decoder = PacketDecoder::new();
-                decoder.queue_bytes(&ctx.buffered_data);
+                decoder.queue_bytes(&raw_data);
 
-                let mut raw_data = ctx.buffered_data.clone();
                 let frame = read_preauth_frame(
                     ctx.stream_mut(),
                     &mut decoder,
