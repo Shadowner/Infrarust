@@ -23,7 +23,7 @@ use crate::console::ConsoleServices;
 use crate::error::CoreError;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
-    PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginManagerHandle,
+    HostWiring, PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginManagerHandle,
     PluginPermissions, PluginRegistryImpl,
 };
 use crate::provider::plugin_adapter::PluginProviderActivator;
@@ -160,8 +160,12 @@ impl ProxyRuntimeBuilder {
         let server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
         register_server_providers(&server, server_providers)?;
 
-        let mut plugin_manager = PluginManager::new(loaders);
-        plugin_manager.set_event_bus(Arc::clone(&server.services().event_bus));
+        let plugin_registry = Arc::new(PluginRegistryImpl::new());
+        let mut plugin_manager = PluginManager::new(
+            loaders,
+            Arc::clone(&server.services().event_bus),
+            Arc::clone(&plugin_registry),
+        );
         plugin_manager.set_shutdown_limits(plugin_shutdown);
         plugin_manager.set_disabled_plugins(
             plugin_cfgs
@@ -174,8 +178,6 @@ impl ProxyRuntimeBuilder {
         plugin_manager.discover_all(&plugins_dir).await?;
 
         let services = server.services();
-        let plugin_registry = Arc::new(PluginRegistryImpl::new());
-        plugin_manager.set_plugin_registry(Arc::clone(&plugin_registry));
         let start_time = Instant::now();
 
         crate::commands::register_builtin_commands(
@@ -194,19 +196,17 @@ impl ProxyRuntimeBuilder {
             plugins_dir,
         );
         let provider_activator = Arc::clone(&plugin_services.provider_activator);
-        let context_factory = Arc::new(
-            PluginContextFactoryImpl::new(
-                plugin_services,
-                plugin_permissions(plugin_cfgs, trusted),
-            )
-            .with_ban_manager(Arc::clone(&services.ban_manager))
-            .with_permissions(Arc::clone(&services.permission_service))
-            .with_limbo_handlers(Arc::clone(&services.limbo_handler_registry))
-            .with_messaging(
-                Arc::clone(&services.plugin_messaging),
-                Arc::clone(&services.connection_registry),
-            ),
-        );
+        let context_factory = Arc::new(PluginContextFactoryImpl::new(
+            plugin_services,
+            plugin_permissions(plugin_cfgs, trusted),
+            HostWiring {
+                ban_manager: Arc::clone(&services.ban_manager),
+                permissions: Arc::clone(&services.permission_service),
+                limbo_handlers: Arc::clone(&services.limbo_handler_registry),
+                channels: Arc::clone(&services.plugin_messaging),
+                players: Arc::clone(&services.connection_registry),
+            },
+        ));
 
         let errors = plugin_manager
             .load_and_enable_all(Arc::clone(&context_factory))

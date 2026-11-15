@@ -181,7 +181,7 @@ async fn a_granted_guest_claims_prefixes_and_answers_every_new_hook() {
     let claims = Arc::clone(&env.connection_claims);
     let commands = Arc::clone(&env.command_manager);
     let factory = Arc::new(env.factory);
-    let mut manager = PluginManager::new(vec![Box::new(loader_from_toml(NETWORK))]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader_from_toml(NETWORK))]);
     manager.discover_all(&dir).await.unwrap();
     let errors = manager.load_and_enable_all(Arc::clone(&factory)).await;
     assert!(errors.is_empty(), "{errors:?}");
@@ -313,7 +313,7 @@ async fn a_guest_without_connection_handoff_cannot_claim_or_hand_off() {
     let bus = Arc::clone(&env.event_bus);
     let claims = Arc::clone(&env.connection_claims);
     let factory = Arc::new(env.factory);
-    let mut manager = PluginManager::new(vec![Box::new(loader_from_toml(""))]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader_from_toml(""))]);
     manager.discover_all(&dir).await.unwrap();
     let errors = manager.load_and_enable_all(Arc::clone(&factory)).await;
     assert!(errors.is_empty(), "{errors:?}");
@@ -351,7 +351,7 @@ async fn server_port_handoff(servers: MockConfigService) -> RawConnectionResult 
     );
     let bus = Arc::clone(&env.event_bus);
     let factory = Arc::new(env.factory);
-    let mut manager = PluginManager::new(vec![Box::new(loader_from_toml(FILES_ONLY))]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader_from_toml(FILES_ONLY))]);
     manager.discover_all(&dir).await.unwrap();
     let errors = manager.load_and_enable_all(Arc::clone(&factory)).await;
     assert!(errors.is_empty(), "{errors:?}");

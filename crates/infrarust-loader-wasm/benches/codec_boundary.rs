@@ -163,7 +163,7 @@ mod bench {
                 trusted: false,
             },
         );
-        let factory = PluginContextFactoryImpl::new(services, configs);
+        let factory = PluginContextFactoryImpl::for_tests(services, configs);
 
         let config: ProxyConfig = toml::from_str(wasm_section).unwrap();
         let loader = WasmPluginLoader::new(

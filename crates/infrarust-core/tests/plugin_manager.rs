@@ -9,7 +9,7 @@ use infrarust_api::plugin::PluginMetadata;
 use infrarust_core::event_bus::EventBusImpl;
 use infrarust_core::plugin::manager::{PluginManager, PluginServices};
 use infrarust_core::plugin::static_loader::StaticPluginLoader;
-use infrarust_core::plugin::{PluginContextFactoryImpl, PluginState};
+use infrarust_core::plugin::{PluginContextFactoryImpl, PluginRegistryImpl, PluginState};
 use infrarust_core::test_support::TestPlugin;
 
 fn registered(loader: &StaticPluginLoader, plugin: TestPlugin) -> TestPlugin {
@@ -18,7 +18,7 @@ fn registered(loader: &StaticPluginLoader, plugin: TestPlugin) -> TestPlugin {
 }
 
 fn factory() -> Arc<PluginContextFactoryImpl> {
-    Arc::new(PluginContextFactoryImpl::new(
+    Arc::new(PluginContextFactoryImpl::for_tests(
         PluginServices::for_tests(),
         HashMap::new(),
     ))
@@ -30,7 +30,7 @@ async fn test_enable_all_calls_on_enable() {
     let a = registered(&loader, TestPlugin::new("a"));
     let b = registered(&loader, TestPlugin::new("b"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -45,7 +45,7 @@ async fn test_config_disabled_plugin_is_skipped() {
     let on = registered(&loader, TestPlugin::new("on"));
     let off = registered(&loader, TestPlugin::new("off"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.set_disabled_plugins(std::collections::HashSet::from(["off".to_string()]));
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
@@ -69,7 +69,7 @@ async fn test_enable_respects_dependency_order() {
     );
     let b = registered(&loader, TestPlugin::new("b").sharing_order(&counter));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(factory()).await;
 
@@ -89,7 +89,7 @@ async fn test_disable_reverse_order() {
     );
     let b = registered(&loader, TestPlugin::new("b").sharing_order(&counter));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(factory()).await;
 
@@ -107,7 +107,7 @@ async fn test_failed_plugin_marked_error() {
     let loader = StaticPluginLoader::new();
     registered(&loader, TestPlugin::new("fail").fail_on_enable());
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -124,7 +124,7 @@ async fn test_failed_plugin_does_not_block_others() {
     registered(&loader, TestPlugin::new("fail").fail_on_enable());
     let ok = registered(&loader, TestPlugin::new("ok"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -139,7 +139,7 @@ async fn a_plugin_whose_id_breaks_the_rule_is_refused_and_the_others_enable() {
     let bad = registered(&loader, TestPlugin::new("Bad.Id"));
     let ok = registered(&loader, TestPlugin::new("ok"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -162,7 +162,7 @@ async fn a_missing_dependency_refuses_its_plugin_and_its_dependents_with_one_err
     let rider = registered(&loader, TestPlugin::new("rider").depends_on("needy"));
     let ok = registered(&loader, TestPlugin::new("ok"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -195,7 +195,7 @@ async fn a_plugin_is_not_enabled_when_a_hard_dependency_failed_to_enable() {
     let top = registered(&loader, TestPlugin::new("top").depends_on("mid"));
     let ok = registered(&loader, TestPlugin::new("ok"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -226,7 +226,7 @@ async fn a_plugin_is_not_enabled_when_a_hard_dependency_is_disabled_in_the_confi
     let base = registered(&loader, TestPlugin::new("base"));
     let dependent = registered(&loader, TestPlugin::new("dependent").depends_on("base"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.set_disabled_plugins(std::collections::HashSet::from(["base".to_string()]));
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
@@ -254,7 +254,7 @@ async fn an_optional_dependency_that_failed_does_not_keep_its_dependent_off() {
         move || Box::new(instance.clone()),
     );
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
 
@@ -267,7 +267,7 @@ async fn test_is_plugin_loaded() {
     let loader = StaticPluginLoader::new();
     registered(&loader, TestPlugin::new("test"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
 
     assert!(!manager.is_plugin_loaded("test"));
 
@@ -287,7 +287,7 @@ async fn test_cleanup_on_disable() {
 
     let event_bus = Arc::new(EventBusImpl::new());
     let call_count = Arc::new(AtomicUsize::new(0));
-    let factory = Arc::new(PluginContextFactoryImpl::new(
+    let factory = Arc::new(PluginContextFactoryImpl::for_tests(
         PluginServices::for_tests_with(Arc::clone(&event_bus)),
         HashMap::new(),
     ));
@@ -307,7 +307,7 @@ async fn test_cleanup_on_disable() {
         }),
     );
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(factory).await;
 
@@ -334,7 +334,7 @@ async fn test_list_plugins() {
     registered(&loader, TestPlugin::new("alpha"));
     registered(&loader, TestPlugin::new("beta"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(factory()).await;
 
@@ -378,8 +378,11 @@ async fn lifecycle_events_follow_enable_and_disable_order() {
     registered(&loader, TestPlugin::new("broken").fail_on_enable());
     registered(&loader, TestPlugin::new("extra"));
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
-    manager.set_event_bus(Arc::clone(&bus));
+    let mut manager = PluginManager::new(
+        vec![Box::new(loader)],
+        Arc::clone(&bus),
+        Arc::new(PluginRegistryImpl::new()),
+    );
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(factory()).await;
     assert_eq!(errors.len(), 1);
@@ -419,7 +422,7 @@ async fn disabling_a_plugin_evicts_its_context_from_the_factory() {
     registered(&loader, TestPlugin::new("stays"));
     let factory = factory();
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(Arc::clone(&factory)).await;
     let held = factory.context("gone");
@@ -440,7 +443,7 @@ async fn a_plugin_that_fails_to_enable_leaves_no_context_behind() {
     registered(&loader, TestPlugin::new("broken").fail_on_enable());
     let factory = factory();
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(Arc::clone(&factory)).await;
 

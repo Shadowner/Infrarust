@@ -90,7 +90,7 @@ async fn command_lookups_see_every_command_and_list_owned_answers_only_the_calle
     shared
         .command_manager
         .register_builtin(CommandSpec::new("infrarust").alias("ir"), Box::new(Builtin));
-    let factory = PluginContextFactoryImpl::new(shared, HashMap::new());
+    let factory = PluginContextFactoryImpl::for_tests(shared, HashMap::new());
     let mut guest = command_state(&factory, "guest");
     let mut other = command_state(&factory, "other");
     let warp = command_manager::CommandSpec {

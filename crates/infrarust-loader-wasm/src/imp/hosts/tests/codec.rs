@@ -55,7 +55,7 @@ async fn a_codec_filter_can_only_be_unregistered_by_the_plugin_that_owns_it() {
         };
         (plugin_id.to_owned(), permissions)
     };
-    let factory = PluginContextFactoryImpl::new(
+    let factory = PluginContextFactoryImpl::for_tests(
         PluginServices {
             codec_filter_registry: Arc::clone(&registry),
             ..services(vec![])

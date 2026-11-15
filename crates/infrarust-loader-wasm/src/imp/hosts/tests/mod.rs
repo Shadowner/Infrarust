@@ -49,7 +49,7 @@ use crate::config::SandboxLimits;
 use crate::store_state::{PluginStoreState, build_probe_state};
 
 fn context(players: Vec<Arc<dyn Player>>) -> Arc<dyn PluginContext> {
-    PluginContextFactoryImpl::new(services(players), HashMap::new()).create_context("test")
+    PluginContextFactoryImpl::for_tests(services(players), HashMap::new()).create_context("test")
 }
 
 fn services(players: Vec<Arc<dyn Player>>) -> PluginServices {
@@ -274,7 +274,7 @@ fn quota_state(quotas: WasmQuotasConfig, grants: &[Capability]) -> PluginStoreSt
         permissions: grants.iter().map(|c| c.to_kebab().to_owned()).collect(),
         ..PluginPermissions::default()
     };
-    let factory = PluginContextFactoryImpl::new(
+    let factory = PluginContextFactoryImpl::for_tests(
         services(vec![]),
         HashMap::from([("test".to_owned(), permissions)]),
     );

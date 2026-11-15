@@ -40,7 +40,9 @@ fn routed_state(capabilities: CapabilitySet) -> PluginStoreState {
     };
     build_probe_state("test".to_owned(), &SandboxLimits::default())
         .with_capabilities(capabilities)
-        .with_ctx(PluginContextFactoryImpl::new(services, HashMap::new()).create_context("test"))
+        .with_ctx(
+            PluginContextFactoryImpl::for_tests(services, HashMap::new()).create_context("test"),
+        )
 }
 
 async fn server_for(state: &mut PluginStoreState, domain: &str) -> Option<String> {

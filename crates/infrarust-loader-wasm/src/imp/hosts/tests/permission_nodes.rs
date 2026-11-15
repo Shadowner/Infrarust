@@ -26,7 +26,7 @@ struct NodeHost {
 impl NodeHost {
     fn new() -> Self {
         let permissions = Arc::new(PermissionService::new_sync(&PermissionsConfig::default()));
-        let factory = PluginContextFactoryImpl::new(services(vec![]), HashMap::new())
+        let factory = PluginContextFactoryImpl::for_tests(services(vec![]), HashMap::new())
             .with_permissions(Arc::clone(&permissions));
         Self {
             permissions,

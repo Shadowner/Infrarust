@@ -19,7 +19,7 @@ use infrarust_core::test_support::TestPlugin;
 async fn test_plugin_receives_events_end_to_end() {
     let handler_called = Arc::new(AtomicBool::new(false));
     let event_bus = Arc::new(EventBusImpl::new());
-    let factory = PluginContextFactoryImpl::new(
+    let factory = PluginContextFactoryImpl::for_tests(
         PluginServices::for_tests_with(Arc::clone(&event_bus)),
         HashMap::new(),
     );
@@ -36,7 +36,7 @@ async fn test_plugin_receives_events_end_to_end() {
         })
         .register(&loader);
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     let errors = manager.load_and_enable_all(Arc::new(factory)).await;
     assert!(errors.is_empty());
@@ -57,7 +57,7 @@ async fn test_plugin_receives_events_end_to_end() {
 
 #[tokio::test]
 async fn test_dependency_order_end_to_end() {
-    let factory = PluginContextFactoryImpl::new(PluginServices::for_tests(), HashMap::new());
+    let factory = PluginContextFactoryImpl::for_tests(PluginServices::for_tests(), HashMap::new());
     let order = Arc::new(AtomicUsize::new(0));
     let child = TestPlugin::new("child")
         .depends_on("parent")
@@ -68,7 +68,7 @@ async fn test_dependency_order_end_to_end() {
     child.register(&loader);
     parent.register(&loader);
 
-    let mut manager = PluginManager::new(vec![Box::new(loader)]);
+    let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
     manager.discover_all(Path::new("plugins")).await.unwrap();
     manager.load_and_enable_all(Arc::new(factory)).await;
 

@@ -493,7 +493,7 @@ mod tests {
             )),
             server_manager: None,
             config_service: Arc::clone(&config_service),
-            plugins: PluginManagerHandle::new(PluginManager::new(Vec::new())),
+            plugins: PluginManagerHandle::new(PluginManager::for_tests(Vec::new())),
             permission_service: Arc::clone(&permission_service),
             command_manager: Arc::clone(&command_manager),
             shutdown: CancellationToken::new(),

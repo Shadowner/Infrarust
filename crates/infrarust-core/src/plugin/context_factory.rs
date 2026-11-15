@@ -41,8 +41,44 @@ struct Messaging {
     players: Arc<ConnectionRegistry>,
 }
 
+pub(crate) struct HostWiring {
+    pub(crate) ban_manager: Arc<BanManager>,
+    pub(crate) permissions: Arc<PermissionService>,
+    pub(crate) limbo_handlers: Arc<LimboHandlerRegistry>,
+    pub(crate) channels: Arc<PluginMessaging>,
+    pub(crate) players: Arc<ConnectionRegistry>,
+}
+
 impl PluginContextFactoryImpl {
-    pub fn new(
+    pub(crate) fn new(
+        services: PluginServices,
+        plugin_configs: HashMap<String, PluginPermissions>,
+        wiring: HostWiring,
+    ) -> Self {
+        let HostWiring {
+            ban_manager,
+            permissions,
+            limbo_handlers,
+            channels,
+            players,
+        } = wiring;
+        let service_registry = Arc::new(ServiceRegistryImpl::new(Some(Arc::clone(
+            &services.event_bus,
+        ))));
+        Self {
+            services,
+            plugin_configs,
+            contexts: Mutex::new(HashMap::new()),
+            ban_manager: Some(ban_manager),
+            permissions,
+            limbo_handlers,
+            service_registry,
+            messaging: Some(Messaging { channels, players }),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests(
         services: PluginServices,
         plugin_configs: HashMap<String, PluginPermissions>,
     ) -> Self {
@@ -61,32 +97,18 @@ impl PluginContextFactoryImpl {
         }
     }
 
-    #[must_use]
-    pub fn with_messaging(
-        mut self,
-        channels: Arc<PluginMessaging>,
-        players: Arc<ConnectionRegistry>,
-    ) -> Self {
-        self.messaging = Some(Messaging { channels, players });
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_limbo_handlers(mut self, registry: Arc<LimboHandlerRegistry>) -> Self {
-        self.limbo_handlers = registry;
-        self
-    }
-
     pub fn service_registry(&self) -> &Arc<ServiceRegistryImpl> {
         &self.service_registry
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn with_ban_manager(mut self, bans: Arc<BanManager>) -> Self {
         self.ban_manager = Some(bans);
         self
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn with_permissions(mut self, permissions: Arc<PermissionService>) -> Self {
         self.permissions = permissions;

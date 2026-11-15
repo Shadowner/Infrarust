@@ -126,7 +126,24 @@ impl PluginStop {
 }
 
 impl PluginManager {
-    pub fn new(loaders: Vec<Box<dyn PluginLoader>>) -> Self {
+    pub fn new(
+        loaders: Vec<Box<dyn PluginLoader>>,
+        event_bus: Arc<EventBusImpl>,
+        registry: Arc<PluginRegistryImpl>,
+    ) -> Self {
+        Self::wired(loaders, Some(event_bus), Some(registry))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests(loaders: Vec<Box<dyn PluginLoader>>) -> Self {
+        Self::wired(loaders, None, None)
+    }
+
+    fn wired(
+        loaders: Vec<Box<dyn PluginLoader>>,
+        event_bus: Option<Arc<EventBusImpl>>,
+        registry: Option<Arc<PluginRegistryImpl>>,
+    ) -> Self {
         Self {
             loaders: loaders.into_iter().map(Arc::from).collect(),
             plugins: Vec::new(),
@@ -137,8 +154,8 @@ impl PluginManager {
             disabled: HashSet::new(),
             discovered: HashMap::new(),
             refused: Vec::new(),
-            event_bus: None,
-            registry: None,
+            event_bus,
+            registry,
             context_factory: None,
             shutdown_limits: ShutdownLimits::default(),
         }
@@ -146,14 +163,6 @@ impl PluginManager {
 
     pub fn set_shutdown_limits(&mut self, limits: ShutdownLimits) {
         self.shutdown_limits = limits;
-    }
-
-    pub fn set_event_bus(&mut self, event_bus: Arc<EventBusImpl>) {
-        self.event_bus = Some(event_bus);
-    }
-
-    pub fn set_plugin_registry(&mut self, registry: Arc<PluginRegistryImpl>) {
-        self.registry = Some(registry);
     }
 
     async fn announce<E: Event>(&self, event: E) {
@@ -617,7 +626,7 @@ mod tests {
     use super::*;
 
     fn factory() -> Arc<PluginContextFactoryImpl> {
-        Arc::new(PluginContextFactoryImpl::new(
+        Arc::new(PluginContextFactoryImpl::for_tests(
             PluginServices::for_tests(),
             HashMap::new(),
         ))
@@ -635,7 +644,7 @@ mod tests {
             Box::new(TestPlugin::new("plugin_b"))
         });
 
-        let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
+        let mut manager = PluginManager::for_tests(vec![Box::new(loader_a), Box::new(loader_b)]);
 
         let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
         assert_eq!(discovered.len(), 2);
@@ -653,7 +662,7 @@ mod tests {
             Box::new(TestPlugin::new("conflict"))
         });
 
-        let mut manager = PluginManager::new(vec![Box::new(loader_a), Box::new(loader_b)]);
+        let mut manager = PluginManager::for_tests(vec![Box::new(loader_a), Box::new(loader_b)]);
 
         let discovered = manager.discover_all(Path::new("plugins")).await.unwrap();
         assert_eq!(discovered.len(), 1);
@@ -673,7 +682,7 @@ mod tests {
         let plugin = TestPlugin::new("lifecycle_test");
         plugin.register(&loader);
 
-        let mut manager = PluginManager::new(vec![Box::new(loader)]);
+        let mut manager = PluginManager::for_tests(vec![Box::new(loader)]);
 
         manager.discover_all(Path::new("plugins")).await.unwrap();
         let errors = manager.load_and_enable_all(factory()).await;
@@ -805,7 +814,7 @@ mod tests {
             fail_on_load: false,
             on_enable: OnEnable::Ok,
         };
-        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        let mut mgr = PluginManager::for_tests(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
         let errors = mgr.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
@@ -833,7 +842,7 @@ mod tests {
             fail_on_load: false,
             on_enable: OnEnable::Ok,
         };
-        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        let mut mgr = PluginManager::for_tests(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
         let errors = mgr.load_and_enable_all(factory()).await;
         assert!(errors.is_empty());
@@ -861,7 +870,7 @@ mod tests {
             fail_on_load: false,
             on_enable: OnEnable::Ok,
         };
-        let mut mgr = PluginManager::new(vec![Box::new(bad), Box::new(good)]);
+        let mut mgr = PluginManager::for_tests(vec![Box::new(bad), Box::new(good)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
         let errors = mgr.load_and_enable_all(factory()).await;
 
@@ -895,7 +904,7 @@ mod tests {
             fail_on_load: false,
             on_enable,
         };
-        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        let mut mgr = PluginManager::for_tests(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
         let errors = mgr.load_and_enable_all(factory()).await;
         assert!(
@@ -1003,7 +1012,7 @@ mod tests {
         limits: ShutdownLimits,
     ) -> (Vec<(String, Duration)>, Duration, PluginManager) {
         let timeline: Timeline = Arc::new(Mutex::new(Vec::new()));
-        let mut manager = PluginManager::new(vec![Box::new(slow_loader(plugins, &timeline))]);
+        let mut manager = PluginManager::for_tests(vec![Box::new(slow_loader(plugins, &timeline))]);
         manager.set_shutdown_limits(limits);
         manager.discover_all(Path::new("plugins")).await.unwrap();
         assert!(manager.load_and_enable_all(factory()).await.is_empty());
@@ -1096,7 +1105,7 @@ mod tests {
             fail_on_load: false,
             on_enable: OnEnable::Ok,
         };
-        let mut mgr = PluginManager::new(vec![Box::new(loader)]);
+        let mut mgr = PluginManager::for_tests(vec![Box::new(loader)]);
         mgr.discover_all(Path::new("plugins")).await.unwrap();
         mgr.load_and_enable_all(factory()).await;
         mgr.shutdown().await;

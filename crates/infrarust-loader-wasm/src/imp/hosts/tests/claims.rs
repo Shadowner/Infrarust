@@ -14,7 +14,7 @@ use crate::store_state::build_probe_state;
 async fn a_plugin_claims_prefixes_until_its_instance_is_released() {
     let services = PluginServices::for_tests();
     let claims = Arc::clone(&services.connection_claims);
-    let factory = PluginContextFactoryImpl::new(
+    let factory = PluginContextFactoryImpl::for_tests(
         services,
         HashMap::from([(
             "claimer".to_owned(),

@@ -154,7 +154,7 @@ impl Lab {
             plugins_dir: plugins_dir.clone(),
             ..PluginServices::for_tests_with(Arc::clone(&event_bus))
         };
-        let mut factory = PluginContextFactoryImpl::new(services, grants);
+        let mut factory = PluginContextFactoryImpl::for_tests(services, grants);
         if let Some(manager) = options.ban_manager {
             factory = factory.with_ban_manager(manager);
         }

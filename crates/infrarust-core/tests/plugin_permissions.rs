@@ -39,7 +39,7 @@ fn factory_in(
         plugins_dir: plugins_dir.to_path_buf(),
         ..PluginServices::for_tests()
     };
-    PluginContextFactoryImpl::new(services, map)
+    PluginContextFactoryImpl::for_tests(services, map)
 }
 
 fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl {
@@ -50,7 +50,7 @@ fn factory(entries: Vec<(&str, PluginPermissions)>) -> PluginContextFactoryImpl 
 fn connection_claims_need_the_connection_handoff_capability() {
     let services = PluginServices::for_tests();
     let claims = Arc::clone(&services.connection_claims);
-    let f = PluginContextFactoryImpl::new(
+    let f = PluginContextFactoryImpl::for_tests(
         services,
         HashMap::from([
             ("granted".to_string(), perms(&["connection-handoff"], false)),
