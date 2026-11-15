@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -7,6 +8,7 @@ use infrarust_api::filter::TransportContext;
 use infrarust_api::handoff::Handoff;
 use infrarust_api::types::{Component, Extensions};
 use infrarust_config::{ProxyMode, UnknownDomainBehavior};
+use infrarust_protocol::ProtocolError;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{Listener, PendingConnection, TransportError};
 
@@ -22,6 +24,33 @@ use crate::pipeline::types::{
     ClaimedLogin, ConnectionIntent, HandshakeData, LegacyHello, Refused, RoutingData, UnknownDomain,
 };
 use crate::player::SHUTDOWN_REASON;
+
+enum ConnectionError {
+    BeforeLogin(CoreError),
+    Session(CoreError),
+}
+
+impl From<CoreError> for ConnectionError {
+    fn from(error: CoreError) -> Self {
+        Self::BeforeLogin(error)
+    }
+}
+
+fn client_gave_up(error: &CoreError) -> bool {
+    let io = match error {
+        CoreError::ConnectionClosed | CoreError::ClientLeft | CoreError::Timeout(_) => return true,
+        CoreError::Io(io) | CoreError::Protocol(ProtocolError::Io(io)) => io,
+        _ => return false,
+    };
+    matches!(
+        io.kind(),
+        ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::UnexpectedEof
+            | ErrorKind::TimedOut
+    )
+}
 
 impl ProxyServer {
     pub async fn serve(self: Arc<Self>, listener: Listener) -> Result<(), CoreError> {
@@ -74,8 +103,14 @@ impl ProxyServer {
 
             let server = Arc::clone(&self);
             self.connections.spawn(async move {
-                if let Err(e) = server.handle_connection(pending, sessions).await {
-                    tracing::warn!(peer = %peer, error = %e, "connection error");
+                match server.handle_connection(pending, sessions).await {
+                    Ok(()) => {}
+                    Err(ConnectionError::BeforeLogin(e)) if client_gave_up(&e) => {
+                        tracing::debug!(peer = %peer, error = %e, "client left before login");
+                    }
+                    Err(ConnectionError::BeforeLogin(e) | ConnectionError::Session(e)) => {
+                        tracing::warn!(peer = %peer, error = %e, "connection error");
+                    }
                 }
             });
         }
@@ -87,7 +122,7 @@ impl ProxyServer {
         &self,
         pending: PendingConnection,
         shutdown: CancellationToken,
-    ) -> Result<(), CoreError> {
+    ) -> Result<(), ConnectionError> {
         let accepted = tokio::select! {
             biased;
             () = shutdown.cancelled() => return Ok(()),
@@ -101,7 +136,7 @@ impl ProxyServer {
                     tracing::debug!(%peer, "closing connection from a peer outside trusted_proxies");
                     return Ok(());
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(CoreError::from(e).into()),
             },
         };
         let mut ctx = ConnectionContext::from_accepted(accepted);
@@ -207,16 +242,16 @@ impl ProxyServer {
 
         if let Some(hello) = ctx.extensions.get::<LegacyHello>().cloned() {
             return match hello {
-                LegacyHello::Ping { request, raw } => {
-                    self.legacy_handler
-                        .handle_ping(&mut ctx, &request, &raw)
-                        .await
-                }
-                LegacyHello::Login { request, raw } => {
-                    self.legacy_handler
-                        .handle_login(&mut ctx, &request, &raw)
-                        .await
-                }
+                LegacyHello::Ping { request, raw } => self
+                    .legacy_handler
+                    .handle_ping(&mut ctx, &request, &raw)
+                    .await
+                    .map_err(ConnectionError::BeforeLogin),
+                LegacyHello::Login { request, raw } => self
+                    .legacy_handler
+                    .handle_login(&mut ctx, &request, &raw)
+                    .await
+                    .map_err(ConnectionError::Session),
             };
         }
 
@@ -272,13 +307,15 @@ impl ProxyServer {
                         self.offline_handler
                             .handle(ctx, shutdown.child_token())
                             .instrument(span)
-                            .await?;
+                            .await
+                            .map_err(ConnectionError::Session)?;
                     }
                     ProxyMode::ClientOnly => {
                         self.client_only_handler
                             .handle(ctx, shutdown.child_token())
                             .instrument(span)
-                            .await?;
+                            .await
+                            .map_err(ConnectionError::Session)?;
                     }
                     ProxyMode::Full => {
                         tracing::error!(
@@ -291,13 +328,15 @@ impl ProxyServer {
                         );
                         return Err(CoreError::InvalidState(
                             "reserved proxy_mode = \"full\" reached the session handler",
-                        ));
+                        )
+                        .into());
                     }
                     _ => {
                         self.passthrough_handler
                             .handle(ctx, shutdown.child_token())
                             .instrument(span)
-                            .await?;
+                            .await
+                            .map_err(ConnectionError::Session)?;
                     }
                 }
             }
