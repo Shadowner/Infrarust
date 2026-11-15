@@ -1,13 +1,13 @@
 //! Client message parsing for the Limbo loop.
 //!
-//! Wraps the shared [`decode_player_input`](crate::session::chat_utils::decode_player_input)
+//! Wraps the shared [`decode_player_input`](crate::session::chat_input::decode_player_input)
 //! helper and splits commands into name + arguments for handler dispatch.
 
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::registry::PacketRegistry;
 use infrarust_protocol::version::ProtocolVersion;
 
-use crate::session::chat_utils::{ChatIds, PlayerInput, decode_player_input};
+use crate::session::chat_input::{ChatIds, PlayerInput, decode_player_input};
 
 /// A parsed client message — either a command with arguments or plain chat.
 #[derive(Debug)]

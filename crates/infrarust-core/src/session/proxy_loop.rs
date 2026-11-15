@@ -89,8 +89,8 @@ pub enum ProxyLoopOutcome {
     },
 }
 
+use super::chat_input::{ChatIds, decode_player_input};
 use super::chat_intercept::{ChatScope, intercept};
-use super::chat_utils::{ChatIds, decode_player_input};
 
 #[inline]
 fn frame_to_raw(frame: &PacketFrame) -> RawPacket {
