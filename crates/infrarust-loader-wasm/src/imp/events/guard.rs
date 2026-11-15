@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use infrarust_api::event::bus::{EventBus, EventBusExt};
 use infrarust_api::event::{Event, EventPriority, ListenerHandle};
@@ -66,9 +66,7 @@ impl AccessListeners {
     }
 
     fn lock(&self) -> MutexGuard<'_, Vec<Subscribed>> {
-        self.subscribed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        crate::sync::lock(&self.subscribed)
     }
 }
 

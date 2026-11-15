@@ -1,5 +1,7 @@
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use crate::sync::lock;
 
 #[derive(Debug)]
 pub(crate) struct RateLimit {
@@ -45,10 +47,7 @@ impl SharedRateLimit {
     }
 
     pub(crate) fn admit(&self, now: Instant) -> Option<u64> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .admit(now)
+        lock(&self.0).admit(now)
     }
 }
 

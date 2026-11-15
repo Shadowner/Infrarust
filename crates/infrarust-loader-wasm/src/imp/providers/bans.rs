@@ -1,4 +1,4 @@
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use infrarust_api::error::ServiceError;
 use infrarust_api::event::BoxFuture;
@@ -11,6 +11,7 @@ use crate::actor::{GuestFn, InstanceRef};
 use crate::bindings::infrarust::plugin::ban_service as wb;
 use crate::component;
 use crate::convert;
+use crate::sync::lock;
 
 pub(crate) struct WasmBanProvider {
     instance: InstanceRef,
@@ -26,7 +27,7 @@ impl WasmBanProvider {
     }
 
     pub(crate) fn set_features(&self, features: BanFeatures) {
-        *self.features.lock().unwrap_or_else(PoisonError::into_inner) = features;
+        *lock(&self.features) = features;
     }
 
     fn plugin(&self) -> &str {
@@ -180,6 +181,6 @@ impl BanProvider for WasmBanProvider {
     }
 
     fn features(&self) -> BanFeatures {
-        *self.features.lock().unwrap_or_else(PoisonError::into_inner)
+        *lock(&self.features)
     }
 }

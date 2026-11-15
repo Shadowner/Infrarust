@@ -2,7 +2,7 @@ use std::fmt;
 use std::future::Future;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use infrarust_api::__private::caller_deadline;
@@ -32,6 +32,7 @@ use crate::status::StatusBoard;
 use crate::store_state::PluginStoreState;
 use crate::supervisor::Fault;
 use crate::supervisor::Supervisor;
+use crate::sync::lock;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CallFailure {
@@ -588,14 +589,9 @@ impl PluginActor {
     }
 
     pub(crate) fn runtime_status(&self) -> PluginRuntimeStatus {
-        let depth = self
-            .jobs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map_or(0, |jobs| {
-                jobs.max_capacity().saturating_sub(jobs.capacity())
-            });
+        let depth = lock(&self.jobs).as_ref().map_or(0, |jobs| {
+            jobs.max_capacity().saturating_sub(jobs.capacity())
+        });
         self.info.board.snapshot(depth)
     }
 
@@ -609,11 +605,7 @@ impl PluginActor {
         T: Send + 'static,
         F: GuestFn<T>,
     {
-        let jobs = self
-            .jobs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let jobs = lock(&self.jobs).clone();
         let Some(jobs) = jobs else {
             return Err(CallFailure::Stopped);
         };
@@ -639,21 +631,13 @@ impl PluginActor {
 
     pub(crate) fn stop(&self) {
         self.halt.stop();
-        let jobs = self
-            .jobs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let jobs = lock(&self.jobs).take();
         drop(jobs);
     }
 
     pub(crate) async fn shutdown(&self) {
         self.stop();
-        let task = self
-            .task
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let task = lock(&self.task).take();
         if let Some(task) = task
             && let Err(e) = task.await
         {

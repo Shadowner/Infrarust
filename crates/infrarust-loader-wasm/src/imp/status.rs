@@ -1,11 +1,13 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use infrarust_api::plugin::{
     PluginFault, PluginHealth, PluginQueueStats, PluginRestarts, PluginRuntimeStatus, QueueWindow,
 };
 use infrarust_config::WasmRecoveryConfig;
+
+use crate::sync::lock;
 
 const SLICE_MS: u64 = 10_000;
 const SLICES: usize = 6;
@@ -74,7 +76,7 @@ impl StatusBoard {
     }
 
     fn reported(&self) -> std::sync::MutexGuard<'_, Reported> {
-        self.reported.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.reported)
     }
 
     pub(crate) fn report(
