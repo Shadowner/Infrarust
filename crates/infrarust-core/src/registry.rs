@@ -239,10 +239,6 @@ impl ConnectionRegistry {
             .unwrap_or_default()
     }
 
-    pub fn find_by_uuid(&self, uuid: &Uuid) -> Option<Arc<PlayerSession>> {
-        self.get(uuid)
-    }
-
     pub(crate) fn find_all_by_uuid(&self, uuid: &Uuid) -> Vec<Arc<PlayerSession>> {
         self.uuid_index
             .entries
@@ -623,10 +619,7 @@ mod tests {
 
         assert_eq!(found_id(&registry, "Alice"), Some(2));
         assert_eq!(ids(&registry.find_by_ip(&new_ip)), [2]);
-        assert_eq!(
-            registry.find_by_uuid(&uuid).map(|s| s.id().as_u64()),
-            Some(2)
-        );
+        assert_eq!(registry.get(&uuid).map(|s| s.id().as_u64()), Some(2));
 
         drop(second);
 
@@ -737,7 +730,7 @@ mod tests {
         assert!(!verified.shutdown_token().is_cancelled());
         assert!(verified.is_connected());
         assert_eq!(registry.count(), 2);
-        assert_eq!(registry.find_by_uuid(&uuid).unwrap().id().as_u64(), 1);
+        assert_eq!(registry.get(&uuid).unwrap().id().as_u64(), 1);
         assert_eq!(found_id(&registry, "Steve"), Some(1));
         assert_eq!(ids(&registry.find_all_by_uuid(&uuid)), [1, 2]);
         assert_eq!(

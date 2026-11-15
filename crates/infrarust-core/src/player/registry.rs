@@ -31,9 +31,7 @@ impl PlayerRegistry for PlayerRegistryImpl {
     }
 
     fn get_player_by_uuid(&self, uuid: &uuid::Uuid) -> Option<Arc<dyn Player>> {
-        self.registry
-            .find_by_uuid(uuid)
-            .map(|s| s as Arc<dyn Player>)
+        self.registry.get(uuid).map(|s| s as Arc<dyn Player>)
     }
 
     fn get_player_by_id(&self, id: PlayerId) -> Option<Arc<dyn Player>> {
