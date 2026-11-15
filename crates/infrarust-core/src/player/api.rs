@@ -21,8 +21,8 @@ use infrarust_api::types::{
 
 use super::{
     BOSS_BAR_SINCE, BossBarCommand, COOKIES_SINCE, ClientCommand, ClientPacket, HeaderFooter,
-    MAX_TRANSFER_HOST, MessageTarget, PACK_STACK_SINCE, PlayerCommand, PlayerSession,
-    RESOURCE_PACK_SINCE, TAB_LIST_SINCE, TRANSFER_SINCE,
+    MAX_TRANSFER_HOST, MessageTarget, PACK_STACK_SINCE, PendingConnect, PlayerCommand,
+    PlayerSession, RESOURCE_PACK_SINCE, TAB_LIST_SINCE, TRANSFER_SINCE,
 };
 use crate::session::presentation::BarControl;
 use crate::util::sync::{lock, read};
@@ -167,7 +167,10 @@ impl Player for PlayerSession {
             self.ready()?;
             self.refuse_self_wait("connect")?;
             let (reply, result) = oneshot::channel();
-            lock(&self.connects).push((target.clone(), reply));
+            lock(&self.connects).push(PendingConnect {
+                target: target.clone(),
+                reply,
+            });
             self.send_command(PlayerCommand::SwitchServer(target, ConnectCause::Switch))
                 .await?;
             Ok(result.await.unwrap_or(ConnectionResult::Cancelled))

@@ -64,6 +64,11 @@ const SELF_WAIT_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
 pub const SHUTDOWN_REASON: &str = "Proxy is shutting down";
 
+pub(crate) struct PendingConnect {
+    pub(crate) target: ServerId,
+    pub(crate) reply: oneshot::Sender<ConnectionResult>,
+}
+
 #[derive(Debug)]
 pub enum PlayerCommand {
     Packet(ClientPacket),
@@ -206,7 +211,7 @@ pub struct PlayerSession {
     presentation: Arc<Presentation>,
     events: Option<Arc<EventBusImpl>>,
     shared: Weak<Self>,
-    connects: Mutex<Vec<(ServerId, oneshot::Sender<ConnectionResult>)>>,
+    connects: Mutex<Vec<PendingConnect>>,
     typed_commands: CommandQueue,
     self_waits: Mutex<WarnWindow>,
 }
@@ -399,12 +404,12 @@ impl PlayerSession {
             let mut connects = lock(&self.connects);
             let (settled, waiting) = std::mem::take(&mut *connects)
                 .into_iter()
-                .partition(|(server, _)| server == target);
+                .partition(|pending| pending.target == *target);
             *connects = waiting;
             settled
         };
-        for (_, reply) in settled {
-            let _ = reply.send(result.clone());
+        for pending in settled {
+            let _ = pending.reply.send(result.clone());
         }
     }
 

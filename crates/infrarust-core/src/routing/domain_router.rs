@@ -92,13 +92,8 @@ pub struct RoutingChanges {
     pub left: Vec<(ProviderId, Arc<ServerConfig>)>,
 }
 
-/// Pre-compiled wildcard pattern entry.
 struct WildcardEntry {
-    /// The original pattern string (for debug / rebuild).
-    _raw: String,
-    /// Compiled matcher.
     matcher: WildMatch,
-    /// The provider that owns this pattern.
     provider_id: ProviderId,
 }
 
@@ -210,7 +205,6 @@ impl DomainRouter {
             for domain in &entry.domains {
                 if is_wildcard(domain) {
                     wildcards.push(WildcardEntry {
-                        _raw: domain.clone(),
                         matcher: WildMatch::new(domain),
                         provider_id: (*id).clone(),
                     });
