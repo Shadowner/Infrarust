@@ -475,12 +475,21 @@ impl ServerManagerService {
         let service = Arc::clone(self);
         let server_id = server_id.to_string();
         Ok(tokio::spawn(async move {
-            let started = provider.start().await;
-            if let Err(e) = &started {
-                service.record_failed_start(&server_id, attempt, e.clone());
-            }
-            started
+            service.run_start(&*provider, &server_id, attempt).await
         }))
+    }
+
+    async fn run_start(
+        &self,
+        provider: &dyn ServerProvider,
+        server_id: &str,
+        attempt: u64,
+    ) -> Result<(), ServerManagerError> {
+        let started = provider.start().await;
+        if let Err(e) = &started {
+            self.record_failed_start(server_id, attempt, e.clone());
+        }
+        started
     }
 
     fn record_failed_start(&self, server_id: &str, attempt: u64, error: ServerManagerError) {
@@ -505,7 +514,7 @@ impl ServerManagerService {
     /// [`ServerManagerError::InvalidState`] if the server is not in a startable state,
     /// or a provider-specific error if the start command fails.
     pub async fn start_server(&self, server_id: &str) -> Result<(), ServerManagerError> {
-        let (provider, old_state) = {
+        let (provider, old_state, attempt) = {
             let mut entry = self.entries.get_mut(server_id).ok_or_else(|| {
                 ServerManagerError::ServerNotFound {
                     server_id: server_id.to_string(),
@@ -522,11 +531,11 @@ impl ServerManagerService {
 
             let old = entry.state;
             entry.begin_start();
-            (Arc::clone(&entry.provider), old)
+            (Arc::clone(&entry.provider), old, entry.generation)
         };
 
         self.fire_state_change(server_id, old_state, ServerState::Starting);
-        provider.start().await
+        self.run_start(&*provider, server_id, attempt).await
     }
 
     /// Stops a server manually.

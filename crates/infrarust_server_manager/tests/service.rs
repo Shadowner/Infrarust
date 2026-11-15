@@ -360,6 +360,46 @@ fn provider_message(result: &Result<(), ServerManagerError>) -> Option<&str> {
 }
 
 #[tokio::test]
+async fn test_failed_manual_start_leaves_the_server_crashed() {
+    let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
+    let provider = Arc::new(FailingStartProvider {
+        release: tokio::sync::Notify::new(),
+    });
+
+    service.register_server(
+        "test".to_string(),
+        provider.clone(),
+        None,
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+    );
+
+    let svc = Arc::clone(&service);
+    let manual = tokio::spawn(async move { svc.start_server("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(service.get_state("test"), Some(ServerState::Starting));
+
+    let svc = Arc::clone(&service);
+    let player = tokio::spawn(async move { svc.ensure_started("test").await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    provider.release.notify_one();
+
+    let manual = tokio::time::timeout(Duration::from_secs(5), manual)
+        .await
+        .expect("should not timeout")
+        .expect("task should not panic");
+    assert_eq!(provider_message(&manual), Some("docker daemon unreachable"));
+    assert_eq!(service.get_state("test"), Some(ServerState::Crashed));
+
+    let player = tokio::time::timeout(Duration::from_secs(1), player)
+        .await
+        .expect("the waiting player is released as soon as the start fails")
+        .expect("task should not panic");
+    assert_eq!(provider_message(&player), Some("docker daemon unreachable"));
+}
+
+#[tokio::test]
 async fn test_joined_waiter_receives_the_provider_start_error() {
     let service = Arc::new(ServerManagerService::new(&[], reqwest::Client::new()));
     let provider = Arc::new(FailingStartProvider {
