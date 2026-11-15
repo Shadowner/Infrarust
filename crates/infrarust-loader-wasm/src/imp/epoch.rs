@@ -1,9 +1,44 @@
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use wasmtime::Engine;
 
+use crate::error::WasmLoaderError;
+use crate::sync::lock;
+
 const MIN_TICK: Duration = Duration::from_millis(1);
+
+pub(crate) struct TickedEngine {
+    engine: Engine,
+    tick: Duration,
+    ticker: Mutex<Option<EpochTicker>>,
+}
+
+impl TickedEngine {
+    pub(crate) const fn new(engine: Engine, tick: Duration) -> Self {
+        Self {
+            engine,
+            tick,
+            ticker: Mutex::new(None),
+        }
+    }
+
+    pub(crate) fn ticking(&self) -> Result<&Engine, WasmLoaderError> {
+        let mut ticker = lock(&self.ticker);
+        if ticker.is_none() {
+            let spawned = EpochTicker::spawn(&self.engine, self.tick)
+                .map_err(|error| WasmLoaderError::Engine(wasmtime::Error::from(error)))?;
+            *ticker = Some(spawned);
+        }
+        Ok(&self.engine)
+    }
+
+    #[cfg(test)]
+    fn is_ticking(&self) -> bool {
+        lock(&self.ticker).is_some()
+    }
+}
 
 pub(crate) struct EpochTicker {
     _thread: JoinHandle<()>,
@@ -58,6 +93,19 @@ mod tests {
             Ok(()) => false,
             Err(error) => error.downcast_ref::<Trap>() == Some(&Trap::Interrupt),
         }
+    }
+
+    #[test]
+    fn the_clock_starts_with_the_first_use_of_the_engine() {
+        let mut config = Config::new();
+        config.epoch_interruption(true);
+        let engine = TickedEngine::new(Engine::new(&config).unwrap(), MIN_TICK);
+        assert!(!engine.is_ticking());
+
+        let module = Module::new(engine.ticking().unwrap(), COUNTDOWN).unwrap();
+        assert!(engine.is_ticking());
+        let mut store = Store::new(engine.ticking().unwrap(), ());
+        assert!(ticks_under(&mut store, &module));
     }
 
     #[test]

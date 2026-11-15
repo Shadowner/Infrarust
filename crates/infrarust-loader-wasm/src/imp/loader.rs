@@ -15,7 +15,7 @@ use crate::cache::AotCache;
 use crate::config::WasmLoaderConfig;
 use crate::consts::LEGACY_CACHE_SUBDIR;
 use crate::contract::check as check_contract;
-use crate::epoch::EpochTicker;
+use crate::epoch::TickedEngine;
 use crate::error::{WasmLoaderError, bounded};
 use crate::gates::check_imports;
 use crate::instance::InstanceFactory;
@@ -27,14 +27,13 @@ use crate::store_state::{PluginSetup, PluginStoreState};
 use crate::sync::{lock, read, write};
 
 pub struct WasmPluginLoader {
-    engine: Engine,
+    engine: TickedEngine,
     linker: Linker<PluginStoreState>,
     config: WasmLoaderConfig,
     cache: AotCache,
     legacy_cache_noted: AtomicBool,
     discovered: RwLock<HashMap<String, DiscoveredWasm>>,
     actors: Mutex<HashMap<String, Weak<PluginActor>>>,
-    _ticker: EpochTicker,
 }
 
 #[derive(Clone)]
@@ -47,17 +46,15 @@ struct DiscoveredWasm {
 impl WasmPluginLoader {
     pub fn new(engine: Engine, config: WasmLoaderConfig) -> std::io::Result<Self> {
         let linker = build_linker(&engine, "host").map_err(std::io::Error::other)?;
-        let ticker = EpochTicker::spawn(&engine, config.epoch_tick())?;
         let cache = AotCache::new(&engine, config.cache_dir().map(Path::to_path_buf));
         Ok(Self {
-            engine,
+            engine: TickedEngine::new(engine, config.epoch_tick()),
             linker,
             config,
             cache,
             legacy_cache_noted: AtomicBool::new(false),
             discovered: RwLock::new(HashMap::new()),
             actors: Mutex::new(HashMap::new()),
-            _ticker: ticker,
         })
     }
 
@@ -80,8 +77,9 @@ impl WasmPluginLoader {
         path: &Path,
         live: &mut HashSet<String>,
     ) -> Result<DiscoveredWasm, WasmLoaderError> {
+        let engine = self.engine.ticking()?;
         let component = {
-            let engine = self.engine.clone();
+            let engine = engine.clone();
             let cache = self.cache.clone();
             let owned = path.to_path_buf();
             let dispatch = tracing::dispatcher::get_default(Clone::clone);
@@ -105,9 +103,9 @@ impl WasmPluginLoader {
             live.extend(key);
             component?
         };
-        check_contract(&self.engine, &component, path)?;
+        check_contract(engine, &component, path)?;
         let metadata = extract_metadata(
-            &self.engine,
+            engine,
             &self.linker,
             &component,
             path,
@@ -216,6 +214,11 @@ impl PluginLoader for WasmPluginLoader {
                     plugin_id: plugin_id.to_owned(),
                 })?;
 
+            let engine = self
+                .engine
+                .ticking()
+                .map_err(|e| e.into_loader_error(plugin_id))?;
+
             let ctx = context_factory.create_context(plugin_id);
             let capabilities = ctx.capabilities().clone();
             let data_dir = ctx.data_dir();
@@ -234,7 +237,7 @@ impl PluginLoader for WasmPluginLoader {
             .map_err(|e| e.into_loader_error(plugin_id))?;
 
             check_imports(
-                &self.engine,
+                engine,
                 &entry.component,
                 plugin_id,
                 &capabilities,
@@ -244,7 +247,7 @@ impl PluginLoader for WasmPluginLoader {
 
             let codec = if capabilities.has(Capability::CodecFilter) {
                 let instantiator = crate::codec::CodecInstantiator::new(
-                    self.engine.clone(),
+                    engine.clone(),
                     &entry.component,
                     plugin_id.to_owned(),
                     &sandbox,
@@ -269,7 +272,7 @@ impl PluginLoader for WasmPluginLoader {
                 mounts: mounts.into(),
             };
             let factory =
-                InstanceFactory::new(self.engine.clone(), &entry.component, &self.linker, setup)
+                InstanceFactory::new(engine.clone(), &entry.component, &self.linker, setup)
                     .map_err(|e| e.into_loader_error(plugin_id))?;
             let actor = PluginActor::start(factory)
                 .await
