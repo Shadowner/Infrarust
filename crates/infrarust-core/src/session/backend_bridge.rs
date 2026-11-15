@@ -1,28 +1,19 @@
 use std::ops::{Deref, DerefMut};
-use std::time::Duration;
 
 use tokio::net::TcpStream;
 
 use infrarust_config::ServerConfig;
 use infrarust_protocol::Packet;
 use infrarust_protocol::packets::handshake::SHandshake;
-use infrarust_protocol::packets::login::{
-    CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
-    SLoginStart,
-};
-use infrarust_protocol::registry::{DecodedPacket, PacketRegistry};
-use infrarust_protocol::version::{ConnectionState, Direction, ProtocolVersion};
+use infrarust_protocol::packets::login::SLoginStart;
+use infrarust_protocol::registry::PacketRegistry;
+use infrarust_protocol::version::ProtocolVersion;
 
 use crate::auth::game_profile::offline_uuid;
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
-use crate::forwarding::velocity::{
-    VelocityForwarding, answer_velocity_request, is_velocity_request,
-};
 use crate::pipeline::types::HandshakeData;
 use crate::session::framed_stream::FramedStream;
-use crate::session::kick::BackendKick;
-use crate::session::login_messages::LoginMessages;
 
 const ONLINE_BACKEND: &str =
     "the backend is in online mode; intercepted modes need online-mode=false";
@@ -105,81 +96,5 @@ impl BackendBridge {
             profile_key: None,
         };
         self.send_packet(&login_start, registry).await
-    }
-
-    pub async fn consume_backend_login(
-        &mut self,
-        registry: &PacketRegistry,
-        version: ProtocolVersion,
-        velocity: Option<VelocityForwarding<'_>>,
-        messages: &LoginMessages<'_>,
-    ) -> Result<(), CoreError> {
-        let encryption_request = registry.get_packet_id::<CEncryptionRequest>(version);
-        tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let frame = self
-                    .read_frame()
-                    .await?
-                    .ok_or(CoreError::ConnectionClosed)?;
-
-                if Some(frame.id) == encryption_request {
-                    return Err(self.online_mode_refusal());
-                }
-
-                let decoded = registry.decode_frame(
-                    &frame,
-                    ConnectionState::Login,
-                    Direction::Clientbound,
-                    version,
-                )?;
-
-                match decoded {
-                    DecodedPacket::Typed { packet, .. } => {
-                        if let Some(set_comp) = packet.as_any().downcast_ref::<CSetCompression>() {
-                            self.set_compression(set_comp.threshold.0);
-                            tracing::debug!(
-                                threshold = set_comp.threshold.0,
-                                "backend compression activated"
-                            );
-                            continue;
-                        }
-
-                        if packet.as_any().downcast_ref::<CLoginSuccess>().is_some() {
-                            if version.less_than(ProtocolVersion::V1_20_2) {
-                                self.set_state(ConnectionState::Play);
-                            }
-                            tracing::debug!("consumed backend LoginSuccess");
-                            break;
-                        }
-
-                        if packet.as_any().downcast_ref::<CLoginDisconnect>().is_some() {
-                            return Err(CoreError::BackendKick(Box::new(BackendKick::new(
-                                frame,
-                                ConnectionState::Login,
-                                version,
-                            ))));
-                        }
-
-                        if let Some(request) = packet.as_any().downcast_ref::<CLoginPluginRequest>()
-                        {
-                            let response = if is_velocity_request(request) {
-                                answer_velocity_request(request, velocity)?
-                            } else {
-                                messages.answer(&frame, request).await
-                            };
-                            self.send_packet(&response, registry).await?;
-                            continue;
-                        }
-                    }
-                    DecodedPacket::Opaque { id, .. } => {
-                        tracing::debug!(id, "ignoring opaque packet during backend login");
-                    }
-                }
-            }
-
-            Ok(())
-        })
-        .await
-        .map_err(|_| CoreError::Rejected("backend login timed out".to_string()))?
     }
 }

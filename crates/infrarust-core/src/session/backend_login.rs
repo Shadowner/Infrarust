@@ -1,4 +1,3 @@
-use infrarust_api::types::ServerId;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_protocol::packets::login::SLoginAcknowledged;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
@@ -10,7 +9,6 @@ use crate::forwarding::{ForwardingHandler, build_handshake_for_backend};
 use crate::session::backend_bridge::BackendBridge;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::login_bridge::bridge_login;
-use crate::session::login_messages::LoginMessages;
 
 pub(crate) enum Login<'a> {
     Relay,
@@ -45,31 +43,27 @@ pub(crate) async fn connect_backend(
         Login::Relay => {
             backend.send_initial_packets(&ctx.handshake, config).await?;
         }
-        Login::Proxied => {
-            let handler = start_login(ctx, config, &mut backend).await?;
-            let data = ctx.forwarding_data();
-            let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {
-                data: &data,
-                secret,
-            });
-            let messages = LoginMessages::new(ctx, ServerId::new(server));
-            backend
-                .consume_backend_login(ctx.registry(), version, velocity, &messages)
-                .await?;
-            acknowledge_login(ctx, &mut backend).await?;
-        }
-        Login::Bridged(io) => {
-            let handler = start_login(ctx, config, &mut backend).await?;
-            let data = ctx.forwarding_data();
-            let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {
-                data: &data,
-                secret,
-            });
-            bridge_login(ctx, io, &mut backend, server, config, velocity).await?;
-        }
+        Login::Proxied => log_in(ctx, None, &mut backend, server, config).await?,
+        Login::Bridged(io) => log_in(ctx, Some(io), &mut backend, server, config).await?,
     }
 
     Ok(backend)
+}
+
+async fn log_in(
+    ctx: &SessionContext<'_>,
+    io: Option<&mut SessionIo>,
+    backend: &mut BackendBridge,
+    server: &str,
+    config: &ServerConfig,
+) -> Result<(), CoreError> {
+    let handler = start_login(ctx, config, backend).await?;
+    let data = ctx.forwarding_data();
+    let velocity = velocity_secret(ctx, &handler).map(|secret| VelocityForwarding {
+        data: &data,
+        secret,
+    });
+    bridge_login(ctx, io, backend, server, config, velocity).await
 }
 
 async fn start_login(

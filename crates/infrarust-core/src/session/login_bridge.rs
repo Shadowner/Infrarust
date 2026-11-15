@@ -80,7 +80,7 @@ impl LoginClock {
 
 pub(crate) async fn bridge_login(
     ctx: &SessionContext<'_>,
-    io: &mut SessionIo,
+    mut io: Option<&mut SessionIo>,
     backend: &mut BackendBridge,
     server: &str,
     config: &ServerConfig,
@@ -95,8 +95,9 @@ pub(crate) async fn bridge_login(
         cookie_requests: 0,
         messages: LoginMessages::new(ctx, ServerId::new(server)),
     };
+    let client = io.as_deref_mut().map(|io| &mut io.client);
     relay
-        .run(ctx, &mut io.client, backend, LoginClock::start(idle))
+        .run(ctx, client, backend, LoginClock::start(idle))
         .await?;
     if relay.messages.awaits_client() {
         tracing::warn!(
@@ -105,12 +106,22 @@ pub(crate) async fn bridge_login(
         );
     }
     acknowledge_login(ctx, backend).await?;
+    let Some(io) = io else {
+        return Ok(());
+    };
     if let Some(threshold) = backend.compression_threshold() {
         io.server_codec.notify_compression_change(threshold);
     }
     complete_login_within(ctx, io, idle)
         .await
         .map_err(client_gone)
+}
+
+async fn client_frame(client: Option<&mut ClientBridge>) -> Result<Option<PacketFrame>, CoreError> {
+    match client {
+        Some(client) => client.read_frame().await,
+        None => std::future::pending().await,
+    }
 }
 
 struct LoginIds {
@@ -168,7 +179,7 @@ impl Relay<'_> {
     async fn run(
         &mut self,
         ctx: &SessionContext<'_>,
-        client: &mut ClientBridge,
+        mut client: Option<&mut ClientBridge>,
         backend: &mut BackendBridge,
         mut clock: LoginClock,
     ) -> Result<(), CoreError> {
@@ -180,7 +191,7 @@ impl Relay<'_> {
                 () = ctx.token.cancelled() => Event::Cancelled,
                 () = &mut deadline => Event::Expired,
                 frame = backend.read_frame() => Event::Backend(frame),
-                frame = client.read_frame() => Event::Client(frame),
+                frame = client_frame(client.as_deref_mut()) => Event::Client(frame),
             };
             match event {
                 Event::Cancelled => {
@@ -190,7 +201,10 @@ impl Relay<'_> {
                 }
                 Event::Expired => return Err(clock.expired()),
                 Event::Backend(Ok(Some(frame))) => {
-                    if let Progress::LoggedIn = self.on_backend(frame, client, backend).await? {
+                    let progress = self
+                        .on_backend(frame, client.as_deref_mut(), backend)
+                        .await?;
+                    if let Progress::LoggedIn = progress {
                         return Ok(());
                     }
                     clock.backend_spoke(self.waiting_on_client());
@@ -213,7 +227,7 @@ impl Relay<'_> {
     async fn on_backend(
         &mut self,
         frame: PacketFrame,
-        client: &mut ClientBridge,
+        client: Option<&mut ClientBridge>,
         backend: &mut BackendBridge,
     ) -> Result<Progress, CoreError> {
         let id = Some(frame.id);
@@ -246,6 +260,11 @@ impl Relay<'_> {
                 backend.send_packet(&response, self.registry).await?;
                 return Ok(Progress::Continue);
             }
+            let Some(client) = client else {
+                let answer = self.messages.answer(&frame, &request).await;
+                backend.send_packet(&answer, self.registry).await?;
+                return Ok(Progress::Continue);
+            };
             match self.messages.relay(&frame, &request).await {
                 Routed::Client(replaced) => {
                     client
@@ -260,7 +279,9 @@ impl Relay<'_> {
                 }
                 Routed::Backend(answer) => backend.send_packet(&answer, self.registry).await?,
             }
-        } else if id == self.ids.cookie_request {
+        } else if id == self.ids.cookie_request
+            && let Some(client) = client
+        {
             client.write_frame(&frame).await.map_err(client_gone)?;
             self.cookie_requests += 1;
             tracing::debug!("relayed a login cookie request to the client");
@@ -601,6 +622,35 @@ mod tests {
 
         let result =
             tokio::time::timeout(Duration::from_secs(5), bridge(&ctx, &mut io, &config)).await;
+
+        assert!(
+            matches!(result, Ok(Err(CoreError::Timeout(_)))),
+            "{:?}",
+            result.map(|r| r.err())
+        );
+        assert!(backend_side.await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_silent_backend_times_out_a_login_run_without_the_client() {
+        let backend = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = server_config(&backend, "[timeouts]\nread = \"150ms\"");
+        let addresses = vec![config.addresses[0].address.clone()];
+        let services = test_proxy_services();
+        let connector = test_connector();
+        let (player, _commands) = PlayerSession::new_test(true);
+        let ctx = with_handshake(test_context(&services, &connector, player));
+
+        let backend_side = tokio::spawn(async move {
+            let (mut conn, _) = backend_login(&backend).await;
+            conn.next().await
+        });
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_backend(&ctx, "origin", &config, &addresses, Login::Proxied),
+        )
+        .await;
 
         assert!(
             matches!(result, Ok(Err(CoreError::Timeout(_)))),
