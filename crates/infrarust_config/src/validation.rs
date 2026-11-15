@@ -242,7 +242,7 @@ pub fn balance_warnings(config: &ServerConfig) -> Vec<String> {
     warnings
 }
 
-pub(crate) const MAX_IDENTIFIER_LEN: usize = 64;
+pub const MAX_IDENTIFIER_LEN: usize = 64;
 
 fn validate_identifier(
     value: &str,

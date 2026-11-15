@@ -9,8 +9,8 @@ use axum::response::IntoResponse;
 use infrarust_api::provider::{PluginProviderEvent, ServerDocument};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::ServerId;
-use infrarust_config::ServerConfig;
 use infrarust_config::secrets::{SERVER_SECRETS, redact, reinject, still_redacted};
+use infrarust_config::{MAX_IDENTIFIER_LEN, ServerConfig};
 use toml_edit::DocumentMut;
 
 use crate::address::format_address;
@@ -20,7 +20,7 @@ use crate::dto::server::{
 };
 use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
-use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
+use crate::server_dir::{Committed, DocumentId, Ownership, to_document_text};
 use crate::state::ApiState;
 use crate::vocab::{ProxyModeName, server_state_str};
 
@@ -246,7 +246,7 @@ fn settle_id(config: &mut ServerConfig, expected: &str) -> Result<DocumentId, Ap
     }
     let document = DocumentId::new(expected).ok_or_else(|| {
         ApiError::BadRequest(format!(
-            "server ID '{expected}' must be 1 to {MAX_ID_LEN} characters of \
+            "server ID '{expected}' must be 1 to {MAX_IDENTIFIER_LEN} characters of \
              [a-z0-9._-], must not start with '.' and must not contain '..'"
         ))
     })?;

@@ -14,7 +14,7 @@ mod tests;
 mod watch;
 
 pub use store::{
-    Committed, DirChange, DocumentId, MAX_ID_LEN, Ownership, ServerDir, StoreError, WriteLock,
-    parse_document, to_document_text,
+    Committed, DirChange, DocumentId, Ownership, ServerDir, StoreError, WriteLock, parse_document,
+    to_document_text,
 };
 pub use watch::{ProviderSenderSlot, ReloadSummary, reload, watch};

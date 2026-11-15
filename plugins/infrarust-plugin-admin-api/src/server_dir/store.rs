@@ -4,7 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use infrarust_api::provider::{PluginProviderEvent, ServerDocument};
 use infrarust_api::types::ServerId;
-use infrarust_config::ServerConfig;
+use infrarust_config::{MAX_IDENTIFIER_LEN, ServerConfig};
 
 use super::legacy::migrate_legacy_store;
 
@@ -46,10 +46,6 @@ impl From<crate::fs::WriteError> for StoreError {
     }
 }
 
-/// Longest id that fits a document name, matching
-/// `infrarust_config::validate_server_config`.
-pub const MAX_ID_LEN: usize = 64;
-
 /// The name a document is filed under. It is at once the file stem, the id
 /// the proxy knows the document by, and — for every document this plugin
 /// writes — the config's own `effective_id()`: [`ServerDir`] derives it from
@@ -62,7 +58,7 @@ impl DocumentId {
     /// that would not survive a round trip through a file name.
     pub fn new(id: &str) -> Option<Self> {
         let usable = !id.is_empty()
-            && id.len() <= MAX_ID_LEN
+            && id.len() <= MAX_IDENTIFIER_LEN
             && !id.starts_with('.')
             && !id.contains("..")
             && id.bytes().all(|b| {

@@ -296,7 +296,10 @@ fn document_ids_reject_anything_a_file_name_cannot_carry() {
     ] {
         assert_eq!(DocumentId::new(candidate), None, "{candidate}");
     }
-    assert_eq!(DocumentId::new(&"a".repeat(MAX_ID_LEN + 1)), None);
+    assert_eq!(
+        DocumentId::new(&"a".repeat(infrarust_config::MAX_IDENTIFIER_LEN + 1)),
+        None
+    );
 }
 
 #[test]
