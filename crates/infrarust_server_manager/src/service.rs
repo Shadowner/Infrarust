@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_config::ServerManagerConfig;
+use infrarust_config::{ManagerLifecycle, ServerManagerConfig};
 
 use crate::crafty::CraftyProvider;
 use crate::error::ServerManagerError;
@@ -139,6 +139,21 @@ pub(crate) struct ServerEntry {
 }
 
 impl ServerEntry {
+    fn new(provider: Arc<dyn ServerProvider>, lifecycle: ManagerLifecycle) -> Self {
+        Self {
+            state: ServerState::Sleeping,
+            generation: 0,
+            provider,
+            shutdown_after: lifecycle.shutdown_after,
+            start_timeout: lifecycle.start_timeout,
+            poll_interval: lifecycle.poll_interval,
+            last_player_seen: None,
+            waiters: Vec::new(),
+            unconfirmed_start_until: None,
+            throttle: StartThrottle::new(),
+        }
+    }
+
     /// Sole mutation point for `state`: keeps the generation in sync.
     pub(crate) fn set_state(&mut self, new_state: ServerState) {
         if new_state == ServerState::Crashed && self.state != ServerState::Crashed {
@@ -175,46 +190,19 @@ impl ServerManagerService {
         let entries = DashMap::new();
 
         for (server_id, config) in server_configs {
-            let (provider, shutdown_after, start_timeout, poll_interval): (
-                Arc<dyn ServerProvider>,
-                Option<Duration>,
-                Duration,
-                Duration,
-            ) = match config {
-                ServerManagerConfig::Local(cfg) => (
-                    Arc::new(LocalProvider::new(cfg.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::Pterodactyl(cfg) => (
-                    Arc::new(PterodactylProvider::new(cfg, http_client.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
-                ServerManagerConfig::Crafty(cfg) => (
-                    Arc::new(CraftyProvider::new(cfg, http_client.clone())),
-                    cfg.shutdown_after,
-                    cfg.start_timeout,
-                    cfg.poll_interval,
-                ),
+            let provider: Arc<dyn ServerProvider> = match config {
+                ServerManagerConfig::Local(cfg) => Arc::new(LocalProvider::new(cfg.clone())),
+                ServerManagerConfig::Pterodactyl(cfg) => {
+                    Arc::new(PterodactylProvider::new(cfg, http_client.clone()))
+                }
+                ServerManagerConfig::Crafty(cfg) => {
+                    Arc::new(CraftyProvider::new(cfg, http_client.clone()))
+                }
             };
 
             entries.insert(
                 server_id.clone(),
-                ServerEntry {
-                    state: ServerState::Sleeping,
-                    generation: 0,
-                    provider,
-                    shutdown_after,
-                    start_timeout,
-                    poll_interval,
-                    last_player_seen: None,
-                    waiters: Vec::new(),
-                    unconfirmed_start_until: None,
-                    throttle: StartThrottle::new(),
-                },
+                ServerEntry::new(provider, config.lifecycle()),
             );
 
             tracing::info!(server = %server_id, "registered managed server");
@@ -238,18 +226,14 @@ impl ServerManagerService {
     ) {
         self.entries.insert(
             server_id,
-            ServerEntry {
-                state: ServerState::Sleeping,
-                generation: 0,
+            ServerEntry::new(
                 provider,
-                shutdown_after,
-                start_timeout,
-                poll_interval,
-                last_player_seen: None,
-                waiters: Vec::new(),
-                unconfirmed_start_until: None,
-                throttle: StartThrottle::new(),
-            },
+                ManagerLifecycle {
+                    shutdown_after,
+                    start_timeout,
+                    poll_interval,
+                },
+            ),
         );
     }
 
