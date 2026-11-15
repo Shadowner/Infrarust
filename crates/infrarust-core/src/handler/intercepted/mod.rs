@@ -10,6 +10,7 @@ use infrarust_api::player::Player;
 use infrarust_api::types::{Component, PlayerId, ServerId};
 use infrarust_protocol::registry::PacketRegistry;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use infrarust_transport::BackendConnector;
 
@@ -293,7 +294,7 @@ impl InterceptedHandler {
             mode_label,
         );
 
-        super::helpers::log_proxy_loop_outcome(&session_id, &outcome);
+        log_proxy_loop_outcome(&session_id, &outcome);
 
         Ok(())
     }
@@ -330,6 +331,43 @@ fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) ->
         ProxyLoopOutcome::Shutdown => cancelled_cause(shutdown, None),
         ProxyLoopOutcome::Error(_) | ProxyLoopOutcome::SwitchRequested { .. } => {
             DisconnectCause::Error
+        }
+    }
+}
+
+fn log_proxy_loop_outcome(session_id: &Uuid, outcome: &ProxyLoopOutcome) {
+    match outcome {
+        ProxyLoopOutcome::ClientDisconnected => {
+            tracing::info!(session = %session_id, "client disconnected");
+        }
+        ProxyLoopOutcome::BackendDisconnected { reason } => {
+            tracing::info!(session = %session_id, ?reason, "backend disconnected");
+        }
+        ProxyLoopOutcome::Shutdown => {
+            tracing::debug!(session = %session_id, "shutdown");
+        }
+        ProxyLoopOutcome::Error(e) => {
+            if e.is_expected_disconnect() {
+                tracing::debug!(session = %session_id, error = %e, "session ended (expected)");
+            } else {
+                tracing::warn!(session = %session_id, error = %e, "session error");
+            }
+        }
+        ProxyLoopOutcome::SwitchRequested { target, .. } => {
+            tracing::info!(session = %session_id, %target, "server switch requested");
+        }
+        ProxyLoopOutcome::Kicked { reason } => {
+            tracing::info!(session = %session_id, reason = %reason.to_plain(), "player kicked");
+        }
+        ProxyLoopOutcome::BackendKick(kick) => {
+            tracing::info!(session = %session_id, reason = %kick, "backend kicked the player");
+        }
+        ProxyLoopOutcome::BackendClosed { reason } => {
+            tracing::info!(
+                session = %session_id,
+                reason = reason.as_ref().map(Component::to_plain),
+                "backend dropped the player"
+            );
         }
     }
 }

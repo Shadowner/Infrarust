@@ -21,13 +21,12 @@ use crate::session::client_bridge::ClientBridge;
 use crate::session::client_login::complete_login;
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::frame_chain::FrameChain;
-use crate::session::kick::Kick;
+use crate::session::kick::{Kick, MAX_KICK_REDIRECTS};
 use crate::session::proxy_loop::{ProxyLoopOutcome, proxy_loop};
 use crate::session::server_join::ServerJoin;
 use crate::session::server_switch::{SwitchResult, SwitchTarget};
 
 use super::initial_connect::{ConnectionMode, Initial};
-use crate::handler::helpers::MAX_KICK_REDIRECTS;
 
 const UNREACHABLE_MESSAGE: &str = "Server is currently unreachable. Please try again later.";
 

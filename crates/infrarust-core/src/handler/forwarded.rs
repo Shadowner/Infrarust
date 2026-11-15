@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::helpers::{MAX_KICK_REDIRECTS, cancelled_cause};
+use super::helpers::cancelled_cause;
 use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
@@ -34,6 +34,7 @@ use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
 use crate::session::admission::{self, Admission, Admitted, PreLogin, pre_login};
 use crate::session::kick::Kick;
+use crate::session::kick::MAX_KICK_REDIRECTS;
 use crate::session::server_join::pre_connect;
 use crate::session::wake::{WakeFailure, wake};
 use crate::util::domain_rewrite::rewrite_handshake;

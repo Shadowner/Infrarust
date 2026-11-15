@@ -9,6 +9,8 @@ use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use crate::error::CoreError;
 use crate::util::text::{decode_text_component, uses_nbt};
 
+pub(crate) const MAX_KICK_REDIRECTS: usize = 3;
+
 #[derive(Debug, Clone)]
 pub struct BackendKick {
     pub frame: PacketFrame,
