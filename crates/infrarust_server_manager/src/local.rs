@@ -7,7 +7,7 @@ use tokio::process::{Child, ChildStdin};
 use tokio::task::JoinHandle;
 
 use crate::error::ServerManagerError;
-use crate::provider::{ProviderStatus, ServerProvider};
+use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
 /// Provider that manages a local Java/Minecraft process.
 pub struct LocalProvider {
@@ -46,9 +46,7 @@ impl LocalProvider {
 }
 
 impl ServerProvider for LocalProvider {
-    fn start(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             if process_lock.is_some() {
@@ -117,9 +115,7 @@ impl ServerProvider for LocalProvider {
         })
     }
 
-    fn stop(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             let process = process_lock.as_mut().ok_or_else(|| {
@@ -157,11 +153,7 @@ impl ServerProvider for LocalProvider {
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
-    > {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let mut process_lock = self.process.lock().await;
             let result = match process_lock.as_mut() {

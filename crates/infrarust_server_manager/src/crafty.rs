@@ -2,7 +2,7 @@ use infrarust_config::CraftyManagerConfig;
 
 use crate::error::ServerManagerError;
 use crate::http::{HTTP_TIMEOUT, check_response};
-use crate::provider::{ProviderStatus, ServerProvider};
+use crate::provider::{ProviderFuture, ProviderStatus, ServerProvider};
 
 /// Provider for Crafty Controller servers via REST API.
 pub struct CraftyProvider {
@@ -44,23 +44,15 @@ impl CraftyProvider {
 }
 
 impl ServerProvider for CraftyProvider {
-    fn start(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(self.send_action("start_server"))
     }
 
-    fn stop(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(self.send_action("stop_server"))
     }
 
-    fn check_status(
-        &self,
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>,
-    > {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let url = format!("{}/api/v2/servers/{}/stats", self.api_url, self.server_id);
 

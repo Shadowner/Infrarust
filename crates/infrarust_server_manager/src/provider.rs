@@ -4,6 +4,9 @@ use std::pin::Pin;
 use crate::error::ServerManagerError;
 use crate::state::ServerState;
 
+pub type ProviderFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, ServerManagerError>> + Send + 'a>>;
+
 /// Provider that knows how to start, stop, and check the status of a server.
 ///
 /// This trait is **non-sealed**: users can implement their own provider for
@@ -17,18 +20,16 @@ pub trait ServerProvider: Send + Sync {
     /// Non-blocking: returns as soon as the start request is sent.
     /// The actual "Online" detection is handled by `check_status()` or
     /// internal monitoring (e.g., `ready_pattern` for Local).
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>>;
+    fn start(&self) -> ProviderFuture<'_, ()>;
 
     /// Stops the server gracefully.
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>>;
+    fn stop(&self) -> ProviderFuture<'_, ()>;
 
     /// Checks the current server status.
     ///
     /// Called periodically by `ServerManagerService` to detect state transitions
     /// (Starting → Online, Online → Crashed, etc.).
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>>;
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus>;
 
     /// Name of the provider type (for logging).
     fn provider_type(&self) -> &'static str;

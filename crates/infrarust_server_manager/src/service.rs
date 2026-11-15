@@ -724,26 +724,21 @@ impl ServerManagerService {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::future::Future;
-    use std::pin::Pin;
-
     use super::*;
+    use crate::provider::ProviderFuture;
 
     struct NoopProvider;
 
     impl ServerProvider for NoopProvider {
-        fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send>> {
+        fn start(&self) -> ProviderFuture<'_, ()> {
             Box::pin(async { Ok(()) })
         }
 
-        fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send>> {
+        fn stop(&self) -> ProviderFuture<'_, ()> {
             Box::pin(async { Ok(()) })
         }
 
-        fn check_status(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send>>
-        {
+        fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
             Box::pin(async { Ok(ProviderStatus::Running) })
         }
 

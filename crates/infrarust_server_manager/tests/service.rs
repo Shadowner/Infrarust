@@ -1,12 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use infrarust_server_manager::{
-    PlayerCounter, ProviderStatus, ServerManagerError, ServerManagerService, ServerProvider,
-    ServerState,
+    PlayerCounter, ProviderFuture, ProviderStatus, ServerManagerError, ServerManagerService,
+    ServerProvider, ServerState,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -41,7 +40,7 @@ impl MockProvider {
 }
 
 impl ServerProvider for MockProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.start_called.store(true, Ordering::Release);
             *self.status.lock().await = self.status_after_start;
@@ -49,7 +48,7 @@ impl ServerProvider for MockProvider {
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.stop_called.store(true, Ordering::Release);
             *self.status.lock().await = ProviderStatus::Stopped;
@@ -57,9 +56,7 @@ impl ServerProvider for MockProvider {
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let status = *self.status.lock().await;
             self.polls.fetch_add(1, Ordering::AcqRel);
@@ -327,7 +324,7 @@ struct FailingStartProvider {
 }
 
 impl ServerProvider for FailingStartProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.release.notified().await;
             Err(ServerManagerError::Provider {
@@ -337,13 +334,11 @@ impl ServerProvider for FailingStartProvider {
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async { Ok(ProviderStatus::Stopped) })
     }
 
@@ -558,20 +553,18 @@ impl CountingProvider {
 }
 
 impl ServerProvider for CountingProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.starts.fetch_add(1, Ordering::AcqRel);
             (self.outcome)()
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             Ok(if self.starts() == 0 {
                 ProviderStatus::Stopped
@@ -780,7 +773,7 @@ struct LateFailingProvider {
 }
 
 impl ServerProvider for LateFailingProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.release.notified().await;
             Err(ServerManagerError::Provider {
@@ -790,13 +783,11 @@ impl ServerProvider for LateFailingProvider {
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move { Ok(self.status) })
     }
 
@@ -874,14 +865,14 @@ struct LaggingStopProvider {
 }
 
 impl ServerProvider for LaggingStopProvider {
-    fn start(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn start(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             self.running.store(true, Ordering::Release);
             Ok(())
         })
     }
 
-    fn stop(&self) -> Pin<Box<dyn Future<Output = Result<(), ServerManagerError>> + Send + '_>> {
+    fn stop(&self) -> ProviderFuture<'_, ()> {
         Box::pin(async move {
             *self.stopped_at.lock().unwrap() = Some(std::time::Instant::now());
             self.running.store(false, Ordering::Release);
@@ -889,9 +880,7 @@ impl ServerProvider for LaggingStopProvider {
         })
     }
 
-    fn check_status(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<ProviderStatus, ServerManagerError>> + Send + '_>> {
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
         Box::pin(async move {
             let still_reported = self
                 .stopped_at
