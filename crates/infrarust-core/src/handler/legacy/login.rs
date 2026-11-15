@@ -6,7 +6,7 @@ use infrarust_protocol::legacy::LegacyHandshakeRequest;
 use super::LegacyHandler;
 use crate::error::CoreError;
 use crate::handler::forwarded::{
-    Arrival, ForwardedLogin, Opening, PROXY_LOGIN_SERVER, Route, Wire,
+    Applicant, ForwardedLogin, Opening, PROXY_LOGIN_SERVER, Route, Wire,
 };
 use crate::handler::helpers::send_legacy_kick;
 use crate::pipeline::admission;
@@ -61,7 +61,7 @@ impl LegacyHandler {
                 .ok();
             return Ok(());
         };
-        let arrival = Arrival {
+        let applicant = Applicant {
             username: request.username.clone(),
             claimed_uuid: None,
             protocol_version: infrarust_api::types::ProtocolVersion::new(i32::from(
@@ -70,7 +70,7 @@ impl LegacyHandler {
             domain,
         };
         let Some(ready) = login
-            .open(ctx, arrival, origin, Opening::Legacy(raw))
+            .open(ctx, applicant, origin, Opening::Legacy(raw))
             .await?
         else {
             return Ok(());

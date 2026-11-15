@@ -1,4 +1,3 @@
-pub(crate) mod admission;
 pub(crate) mod backend_bridge;
 pub(crate) mod backend_login;
 pub(crate) mod bounded_write;
@@ -10,6 +9,7 @@ pub(crate) mod context;
 pub(crate) mod frame_chain;
 pub(crate) mod initial_connect;
 pub mod kick;
+pub(crate) mod login_admission;
 pub(crate) mod login_bridge;
 pub(crate) mod login_messages;
 pub(crate) mod presentation;

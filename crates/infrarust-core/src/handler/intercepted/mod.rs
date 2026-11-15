@@ -22,8 +22,8 @@ use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::commands::CommandInbox;
 use crate::player::{SHUTDOWN_REASON, SessionKind};
 use crate::services::ProxyServices;
-use crate::session::admission::{Admission, Admitted, Arrival, admit};
 use crate::session::client_bridge::ClientBridge;
+use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
 use crate::session::proxy_loop::ProxyLoopOutcome;
 
 use crate::session::context::{SessionContext, SessionIo};
@@ -151,8 +151,8 @@ impl InterceptedHandler {
             token: session_token,
             rewritten,
         } = match admit(&self.services, &conn, &shutdown, arrival, kind).await {
-            Admission::Admitted(admitted) => admitted,
-            Admission::Refused(reason) => {
+            LoginAdmission::Admitted(admitted) => admitted,
+            LoginAdmission::Refused(reason) => {
                 client.disconnect(&reason, registry).await.ok();
                 return Ok(());
             }

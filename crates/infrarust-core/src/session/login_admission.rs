@@ -58,7 +58,7 @@ pub(crate) struct Admitted {
     pub(crate) rewritten: bool,
 }
 
-pub(crate) enum Admission {
+pub(crate) enum LoginAdmission {
     Admitted(Admitted),
     Refused(Component),
 }
@@ -69,7 +69,7 @@ pub(crate) async fn admit(
     shutdown: &CancellationToken,
     arrival: Arrival,
     kind: SessionKind,
-) -> Admission {
+) -> LoginAdmission {
     let bus = &services.event_bus;
     let remote_addr = ctx.client_addr();
     let online_mode = kind.online_mode();
@@ -85,7 +85,7 @@ pub(crate) async fn admit(
         .await;
     if let Some(reason) = request.denied() {
         tracing::info!(username = %request.profile.username, "login denied by a plugin at the game profile request");
-        return Admission::Refused(reason.clone());
+        return LoginAdmission::Refused(reason.clone());
     }
     let rewritten = request.is_modified();
     let profile = request.profile;
@@ -99,7 +99,7 @@ pub(crate) async fn admit(
     .virtual_host(arrival.domain.clone())
     .server(arrival.origin);
     if let Some(reason) = services.ban_manager.refusal(&attempt).await {
-        return Admission::Refused(reason);
+        return LoginAdmission::Refused(reason);
     }
 
     let token = shutdown.child_token();
@@ -129,11 +129,11 @@ pub(crate) async fn admit(
         .await;
     if let LoginResult::Denied { reason } = login.result() {
         tracing::info!(username = %session.profile().username, "login denied by a plugin");
-        return Admission::Refused(reason.clone());
+        return LoginAdmission::Refused(reason.clone());
     }
 
     let lifecycle = PlayerLifecycle::begin(services, Arc::clone(&session)).await;
-    Admission::Admitted(Admitted {
+    LoginAdmission::Admitted(Admitted {
         session,
         lifecycle,
         commands,
@@ -216,7 +216,7 @@ mod tests {
         )
         .await;
 
-        let Admission::Refused(reason) = admission else {
+        let LoginAdmission::Refused(reason) = admission else {
             panic!("a banned player must be refused");
         };
         assert!(reason.to_plain().contains("nope"), "{reason:?}");
@@ -244,7 +244,7 @@ mod tests {
         )
         .await;
 
-        let Admission::Refused(reason) = admission else {
+        let LoginAdmission::Refused(reason) = admission else {
             panic!("a denied profile request must refuse the player");
         };
         assert_eq!(reason.to_plain(), "not today");
@@ -257,7 +257,7 @@ mod tests {
         let logins = record_logins(&services);
         let (ctx, _peer) = connection().await;
         let admission = admit(&services, &ctx, &CancellationToken::new(), arrival(), kind).await;
-        let Admission::Admitted(admitted) = admission else {
+        let LoginAdmission::Admitted(admitted) = admission else {
             panic!("the player must be admitted");
         };
         let session_online = admitted.session.is_online_mode();

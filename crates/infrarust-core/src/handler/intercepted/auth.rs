@@ -11,8 +11,8 @@ use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::types::LoginData;
 use crate::services::ProxyServices;
-use crate::session::admission::{PreLogin, pre_login};
 use crate::session::client_bridge::ClientBridge;
+use crate::session::login_admission::{PreLogin, pre_login};
 
 pub(crate) enum Authenticated {
     Denied(Component),

@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
 
-use super::forwarded::{Arrival, ForwardedLogin, Opening, Route, Wire};
+use super::forwarded::{Applicant, ForwardedLogin, Opening, Route, Wire};
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::BackendTargets;
@@ -56,7 +56,7 @@ impl PassthroughHandler {
             "a server where the proxy runs the login reached the passthrough handler",
         ))?;
 
-        let arrival = Arrival {
+        let applicant = Applicant {
             username: login_data
                 .as_ref()
                 .map(|d| d.username.clone())
@@ -74,7 +74,7 @@ impl PassthroughHandler {
             wire: Wire::Modern(handshake.protocol_version),
         };
         let Some(ready) = login
-            .open(&mut ctx, arrival, origin, Opening::Modern(&handshake))
+            .open(&mut ctx, applicant, origin, Opening::Modern(&handshake))
             .await?
         else {
             return Ok(());
