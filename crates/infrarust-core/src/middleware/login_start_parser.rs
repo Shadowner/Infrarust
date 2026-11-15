@@ -82,7 +82,7 @@ impl Middleware for LoginStartParserMiddleware {
                 ),
             )
             .await
-            .map_err(|_| CoreError::ConnectionClosed)??;
+            .map_err(|_| CoreError::Timeout("login start read timed out".into()))??;
 
             if frame.id != 0x00 {
                 return Err(CoreError::Protocol(ProtocolError::invalid(format!(
@@ -290,6 +290,13 @@ mod tests {
         SLoginStart::decode(&mut &payload[..], version)
             .unwrap_err()
             .to_string()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_client_that_never_sends_its_login_start_times_out() {
+        let (mut ctx, _client) = login_ctx(ProtocolVersion::V1_20_2, None, &[]).await;
+        let result = LoginStartParserMiddleware::new().process(&mut ctx).await;
+        assert!(matches!(result, Err(CoreError::Timeout(_))), "{result:?}");
     }
 
     #[tokio::test]
