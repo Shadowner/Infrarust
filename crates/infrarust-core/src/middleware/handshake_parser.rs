@@ -10,7 +10,7 @@ use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 
 use crate::error::CoreError;
-use crate::handler::legacy::hello;
+use crate::middleware::legacy_hello;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::preauth_frame::{MAX_HANDSHAKE_FRAME, read_preauth_frame};
@@ -63,11 +63,11 @@ impl Middleware for HandshakeParserMiddleware {
 
                 match legacy::detect(first_byte) {
                     legacy::LegacyDetection::LegacyPing => {
-                        hello::read_ping_hello(ctx).await?;
+                        legacy_hello::read_ping_hello(ctx).await?;
                         return Ok(MiddlewareResult::Continue);
                     }
                     legacy::LegacyDetection::LegacyLogin => {
-                        hello::read_login_hello(ctx).await?;
+                        legacy_hello::read_login_hello(ctx).await?;
                         return Ok(MiddlewareResult::Continue);
                     }
                     legacy::LegacyDetection::Modern => {}

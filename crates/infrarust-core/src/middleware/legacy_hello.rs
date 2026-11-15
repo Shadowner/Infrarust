@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+use bytes::{Buf, BytesMut};
+use tokio::io::AsyncReadExt;
+
 use infrarust_protocol::ProtocolError;
 use infrarust_protocol::ProtocolVersion;
 use infrarust_protocol::legacy::{
@@ -7,13 +10,53 @@ use infrarust_protocol::legacy::{
     parse_legacy_handshake, parse_legacy_ping,
 };
 
-use super::LegacyReader;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{ConnectionIntent, HandshakeData, LegacyHello};
 use crate::util::normalize_handshake;
 
 const PING_WAIT: Duration = Duration::from_millis(100);
+
+struct LegacyReader<'a> {
+    ctx: &'a mut ConnectionContext,
+    read_ahead: BytesMut,
+}
+
+impl<'a> LegacyReader<'a> {
+    fn new(ctx: &'a mut ConnectionContext) -> Self {
+        let first = ctx.buffered_data.len().min(1);
+        let read_ahead = ctx.buffered_data.split_off(first);
+        Self { ctx, read_ahead }
+    }
+
+    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        let buffered = buf.len().min(self.read_ahead.len());
+        self.read_ahead.copy_to_slice(&mut buf[..buffered]);
+        if buffered < buf.len() {
+            self.ctx
+                .stream_mut()
+                .read_exact(&mut buf[buffered..])
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn read_u8(&mut self) -> std::io::Result<u8> {
+        let mut byte = [0u8; 1];
+        self.read_exact(&mut byte).await?;
+        Ok(byte[0])
+    }
+
+    async fn read_vec(&mut self, len: usize) -> std::io::Result<Vec<u8>> {
+        let mut bytes = vec![0u8; len];
+        self.read_exact(&mut bytes).await?;
+        Ok(bytes)
+    }
+
+    fn unread(self) -> BytesMut {
+        self.read_ahead
+    }
+}
 
 pub(crate) async fn read_ping_hello(ctx: &mut ConnectionContext) -> Result<(), CoreError> {
     let raw = read_ping_bytes(ctx).await?;

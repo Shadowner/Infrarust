@@ -111,9 +111,9 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::handler::legacy::hello;
     use crate::limbo::test_helpers::test_proxy_services;
     use crate::loadbalancer::AddressConnectionCount;
+    use crate::middleware::legacy_hello;
     use crate::pipeline::types::LegacyHello;
     use crate::provider::ProviderId;
     use crate::status::StatusCache;
@@ -168,7 +168,7 @@ mod tests {
         handler: &LegacyHandler,
         ctx: &mut ConnectionContext,
     ) -> Result<(), CoreError> {
-        hello::read_login_hello(ctx).await?;
+        legacy_hello::read_login_hello(ctx).await?;
         let (_, server_config, load_balancer) = handler
             .services
             .domain_router
