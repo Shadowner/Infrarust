@@ -261,15 +261,14 @@ impl LimboHandler for AuthHandler {
                         last_premium_login: Some(now),
                     };
 
-                    let storage = Arc::clone(&self.storage);
-                    let u = username.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = storage.update_premium_info(&u, Some(premium_info)).await {
-                            tracing::error!("Premium info update failed: {e}");
-                        }
-                    });
+                    if let Err(e) = self
+                        .storage
+                        .update_premium_info(&username, Some(premium_info))
+                    {
+                        tracing::error!("Premium info update failed: {e}");
+                    }
                 }
-                _ => {
+                Ok(None) => {
                     let ip = self
                         .player_registry
                         .get_player_by_id(player_id)
@@ -283,7 +282,7 @@ impl LimboHandler for AuthHandler {
                     };
 
                     let account = AuthAccount {
-                        username: username.clone(),
+                        username,
                         display_name: DisplayName::new(display_name.clone()),
                         password_hash: None,
                         registered_at: now,
@@ -292,13 +291,11 @@ impl LimboHandler for AuthHandler {
                         login_count: 1,
                         premium_info: Some(premium_info),
                     };
-                    let storage = Arc::clone(&self.storage);
-                    tokio::spawn(async move {
-                        if let Err(e) = storage.create_account(&account).await {
-                            tracing::error!("Premium account creation failed: {e}");
-                        }
-                    });
+                    if let Err(e) = self.storage.create_account(&account) {
+                        tracing::error!("Premium account creation failed: {e}");
+                    }
                 }
+                Err(e) => tracing::error!("Premium account lookup failed: {e}"),
             }
 
             let msg = self
@@ -415,11 +412,15 @@ impl LimboHandler for AuthHandler {
                         password_hash: Some(h),
                         ..
                     })) => h,
-                    _ => self.dummy_hash.clone(),
+                    Ok(_) => self.dummy_hash.clone(),
+                    Err(e) => {
+                        tracing::error!("Account lookup failed: {e}");
+                        let _ = session.send_message(Component::error(
+                            "An internal error occurred. Please try again.",
+                        ));
+                        return Box::pin(async {});
+                    }
                 };
-
-                let storage = Arc::clone(&self.storage);
-                let player_registry = Arc::clone(&self.player_registry);
 
                 Box::pin(async move {
                     let result =
@@ -427,27 +428,21 @@ impl LimboHandler for AuthHandler {
 
                     match result {
                         Ok((true, migrated_hash)) => {
-                            if let Some(new_hash) = migrated_hash {
-                                let s = Arc::clone(&storage);
-                                let u = username.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = s.update_password_hash(&u, new_hash).await {
-                                        tracing::error!("Hash migration failed: {e}");
-                                    }
-                                });
+                            if let Some(new_hash) = migrated_hash
+                                && let Err(e) =
+                                    self.storage.update_password_hash(&username, new_hash)
+                            {
+                                tracing::error!("Hash migration failed: {e}");
                             }
 
-                            if let Some(player) = player_registry.get_player_by_id(player_id) {
-                                let ip = player.remote_addr().ip();
-                                let s = Arc::clone(&storage);
-                                let u = username.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) =
-                                        s.update_last_login(&u, ip, chrono::Utc::now()).await
-                                    {
-                                        tracing::error!("Last login update failed: {e}");
-                                    }
-                                });
+                            if let Some(player) = self.player_registry.get_player_by_id(player_id)
+                                && let Err(e) = self.storage.update_last_login(
+                                    &username,
+                                    player.remote_addr().ip(),
+                                    chrono::Utc::now(),
+                                )
+                            {
+                                tracing::error!("Last login update failed: {e}");
                             }
 
                             self.accept(
@@ -518,9 +513,6 @@ impl LimboHandler for AuthHandler {
                     return Box::pin(async {});
                 }
 
-                let storage = Arc::clone(&self.storage);
-                let player_registry = Arc::clone(&self.player_registry);
-
                 Box::pin(async move {
                     let hash = match password::hash_password(&password, &self.config.hashing).await
                     {
@@ -535,19 +527,20 @@ impl LimboHandler for AuthHandler {
                     };
 
                     let account = AuthAccount {
-                        username: username.clone(),
+                        username,
                         display_name: DisplayName::new(display_name),
                         password_hash: Some(hash),
                         registered_at: chrono::Utc::now(),
                         last_login: None,
-                        last_ip: player_registry
+                        last_ip: self
+                            .player_registry
                             .get_player_by_id(player_id)
                             .map(|p| p.remote_addr().ip()),
                         login_count: 0,
                         premium_info: None,
                     };
 
-                    match storage.create_account(&account).await {
+                    match self.storage.create_account(&account) {
                         Ok(()) => {
                             self.accept(
                                 session,
@@ -611,7 +604,12 @@ impl LimboHandler for AuthHandler {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use infrarust_api::test_util::MockPlayerRegistry;
+
     use crate::account::Username;
+    use crate::error::AuthStorageError;
     use crate::test_support::{
         TestEnv, fast_config, limbo_session, limbo_session_with, premium_profile, session_text,
     };
@@ -708,20 +706,129 @@ mod tests {
         let result = env.handler.on_player_enter(&*session).await;
         assert!(matches!(result, HandlerResult::Accept));
 
-        let username = Username::new("Notch");
-        for _ in 0..200 {
-            if env.storage.has_account(&username) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
         let account = env
             .storage
-            .get_account(&username)
+            .get_account(&Username::new("Notch"))
             .unwrap()
-            .expect("premium account created in background");
+            .expect("the account exists as soon as the handler returns");
         assert!(account.premium_info.is_some());
         assert!(account.password_hash.is_none());
+    }
+
+    struct UnreadableStorage {
+        writes: AtomicUsize,
+    }
+
+    impl UnreadableStorage {
+        fn unreadable() -> AuthStorageError {
+            AuthStorageError::Io(std::io::Error::other("backend unreachable"))
+        }
+
+        fn written(&self) -> Result<(), AuthStorageError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    impl AuthStorage for UnreadableStorage {
+        fn has_account(&self, _: &Username) -> bool {
+            true
+        }
+
+        fn get_account(&self, _: &Username) -> Result<Option<AuthAccount>, AuthStorageError> {
+            Err(Self::unreadable())
+        }
+
+        fn is_force_cracked(&self, _: &Username) -> bool {
+            false
+        }
+
+        fn create_account(&self, _: &AuthAccount) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn update_password_hash(
+            &self,
+            _: &Username,
+            _: crate::account::PasswordHash,
+        ) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn delete_account(&self, _: &Username) -> Result<bool, AuthStorageError> {
+            self.written().map(|()| true)
+        }
+
+        fn update_last_login(
+            &self,
+            _: &Username,
+            _: std::net::IpAddr,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn update_premium_info(
+            &self,
+            _: &Username,
+            _: Option<PremiumInfo>,
+        ) -> Result<(), AuthStorageError> {
+            self.written()
+        }
+
+        fn flush(&self) -> BoxFuture<'_, Result<(), AuthStorageError>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    async fn handler_over_unreadable_storage(
+        config: AuthConfig,
+    ) -> (AuthHandler, Arc<UnreadableStorage>) {
+        let storage = Arc::new(UnreadableStorage {
+            writes: AtomicUsize::new(0),
+        });
+        let dummy_hash = password::generate_dummy_hash(&config.hashing)
+            .await
+            .unwrap();
+        let handler = AuthHandler::new(
+            Arc::clone(&storage) as Arc<dyn AuthStorage>,
+            Arc::new(config),
+            Arc::new(MockPlayerRegistry::new()),
+            dummy_hash,
+            HashSet::new(),
+            None,
+        );
+        (handler, storage)
+    }
+
+    #[tokio::test]
+    async fn premium_login_does_not_create_an_account_when_the_lookup_fails() {
+        let mut config = fast_config();
+        config.premium.enabled = true;
+        let (handler, storage) = handler_over_unreadable_storage(config).await;
+        let session = limbo_session_with(1, premium_profile(1, "Notch"));
+
+        let result = handler.on_player_enter(&*session).await;
+        tokio::task::yield_now().await;
+
+        assert!(matches!(result, HandlerResult::Accept));
+        assert_eq!(storage.writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn login_reports_a_storage_error_instead_of_a_wrong_password() {
+        let (handler, _storage) = handler_over_unreadable_storage(fast_config()).await;
+        let session = limbo_session(1, "Steve");
+        handler.on_player_enter(&*session).await;
+
+        handler
+            .on_command(&*session, "login", &["hunter2hunter2"])
+            .await;
+
+        let text = session_text(&session);
+        assert!(text.contains("internal error"), "got: {text}");
+        assert!(!text.contains("Wrong password"), "got: {text}");
+        assert!(session.completions().is_empty());
     }
 
     #[tokio::test]

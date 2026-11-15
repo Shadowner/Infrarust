@@ -15,34 +15,28 @@ pub trait AuthStorage: Send + Sync {
 
     fn is_force_cracked(&self, username: &Username) -> bool;
 
-    fn create_account<'a>(
-        &'a self,
-        account: &'a AuthAccount,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
+    fn create_account(&self, account: &AuthAccount) -> Result<(), AuthStorageError>;
 
-    fn update_password_hash<'a>(
-        &'a self,
-        username: &'a Username,
+    fn update_password_hash(
+        &self,
+        username: &Username,
         new_hash: PasswordHash,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
+    ) -> Result<(), AuthStorageError>;
 
-    fn delete_account<'a>(
-        &'a self,
-        username: &'a Username,
-    ) -> BoxFuture<'a, Result<bool, AuthStorageError>>;
+    fn delete_account(&self, username: &Username) -> Result<bool, AuthStorageError>;
 
-    fn update_last_login<'a>(
-        &'a self,
-        username: &'a Username,
+    fn update_last_login(
+        &self,
+        username: &Username,
         ip: IpAddr,
         now: DateTime<Utc>,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
+    ) -> Result<(), AuthStorageError>;
 
-    fn update_premium_info<'a>(
-        &'a self,
-        username: &'a Username,
+    fn update_premium_info(
+        &self,
+        username: &Username,
         premium_info: Option<PremiumInfo>,
-    ) -> BoxFuture<'a, Result<(), AuthStorageError>>;
+    ) -> Result<(), AuthStorageError>;
 
     fn flush(&self) -> BoxFuture<'_, Result<(), AuthStorageError>>;
 }

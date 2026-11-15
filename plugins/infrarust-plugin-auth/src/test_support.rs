@@ -146,7 +146,6 @@ impl TestEnv {
         };
         self.storage
             .create_account(&account)
-            .await
             .expect("create account");
     }
 
@@ -170,7 +169,6 @@ impl TestEnv {
         };
         self.storage
             .update_premium_info(&Username::new(username), Some(info))
-            .await
             .expect("premium info");
     }
 }

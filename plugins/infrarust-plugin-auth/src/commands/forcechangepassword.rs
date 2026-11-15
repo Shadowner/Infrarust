@@ -48,7 +48,7 @@ impl CommandHandler for ForceChangePasswordCommand {
 
             match password::hash_password(new_password, &config.hashing).await {
                 Ok(new_hash) => {
-                    if let Err(e) = storage.update_password_hash(&username, new_hash).await {
+                    if let Err(e) = storage.update_password_hash(&username, new_hash) {
                         tracing::error!("Password update error: {e}");
                         ctx.source.send_message(Component::error(INTERNAL_ERROR));
                         return;

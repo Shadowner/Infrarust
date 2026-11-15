@@ -41,7 +41,7 @@ impl CommandHandler for UnregisterCommand {
                 return;
             };
 
-            if let Err(e) = storage.delete_account(&username).await {
+            if let Err(e) = storage.delete_account(&username) {
                 tracing::error!("Account deletion error: {e}");
                 let _ = player.send_message(Component::error(INTERNAL_ERROR));
                 return;

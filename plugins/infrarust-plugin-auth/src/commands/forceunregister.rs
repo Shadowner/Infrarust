@@ -33,7 +33,7 @@ impl CommandHandler for ForceUnregisterCommand {
             let storage = self.handler.storage();
             let config = self.handler.config();
 
-            match storage.delete_account(&username).await {
+            match storage.delete_account(&username) {
                 Ok(true) => {
                     let msg = config.messages.format_message(
                         &config.messages.forceunregister_success,
