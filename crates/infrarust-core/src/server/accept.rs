@@ -123,122 +123,22 @@ impl ProxyServer {
         pending: PendingConnection,
         shutdown: CancellationToken,
     ) -> Result<(), ConnectionError> {
-        let accepted = tokio::select! {
-            biased;
-            () = shutdown.cancelled() => return Ok(()),
-            accepted = pending.resolve() => match accepted {
-                Ok(accepted) => accepted,
-                Err(TransportError::IpLimitReached { ip }) => {
-                    tracing::debug!(%ip, "closing connection over the per-IP limit");
-                    return Ok(());
-                }
-                Err(TransportError::UntrustedProxyPeer { peer }) => {
-                    tracing::debug!(%peer, "closing connection from a peer outside trusted_proxies");
-                    return Ok(());
-                }
-                Err(e) => return Err(CoreError::from(e).into()),
-            },
-        };
-        let mut ctx = ConnectionContext::from_accepted(accepted);
-        if !self.open_transport(&mut ctx, &shutdown).await {
+        let Some(ctx) = self.accept(pending, &shutdown).await? else {
             return Ok(());
-        }
-
-        if !self.services.connection_claims.is_empty() {
-            match raw_claim::claim_raw(
-                &self.services,
-                &mut ctx,
-                RawClaimLimits::default(),
-                &shutdown,
-            )
-            .await
-            {
-                RawClaim::Minecraft => {}
-                RawClaim::Closed => return Ok(()),
-                RawClaim::Handoff(handoff) => {
-                    self.hand_off(ctx, handoff, HandoffLevel::Raw, &shutdown)
-                        .await;
-                    return Ok(());
-                }
-            }
-        }
-
-        let common = tokio::select! {
-            biased;
-            () = shutdown.cancelled() => return Ok(()),
-            result = self.common_pipeline.execute(&mut ctx) => result?,
         };
-
-        match common {
-            MiddlewareResult::Continue => {}
-            MiddlewareResult::ShortCircuit => {
-                admission::reject_refused(&self.services.event_bus, &ctx);
-                return Ok(());
-            }
-            MiddlewareResult::Reject(msg) => {
-                let intent = ctx.extensions.get::<HandshakeData>().map(|h| h.intent);
-                let unknown_domain = ctx.extensions.contains::<UnknownDomain>();
-                let dropped =
-                    unknown_domain && self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
-                if dropped || !unknown_domain || intent != Some(ConnectionIntent::Status) {
-                    admission::reject_refused(&self.services.event_bus, &ctx);
-                    match intent {
-                        Some(ConnectionIntent::Login | ConnectionIntent::Transfer) if !dropped => {
-                            self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
-                        }
-                        _ => tracing::debug!("closing rejected connection: {msg}"),
-                    }
-                    return Ok(());
-                }
-            }
-            MiddlewareResult::Kick(reason) => {
-                admission::reject_refused(&self.services.event_bus, &ctx);
-                self.send_kick(&mut ctx, &reason).await.ok();
-                return Ok(());
-            }
+        let Some(mut ctx) = self.claim_raw(ctx, &shutdown).await else {
+            return Ok(());
+        };
+        if !self.passes_common_pipeline(&mut ctx, &shutdown).await? {
+            return Ok(());
         }
 
         let intent = ctx
             .require_extension::<HandshakeData>("HandshakeData")?
             .intent;
-
-        let screened = tokio::select! {
-            biased;
-            () = shutdown.cancelled() => return Ok(()),
-            screened = admission::screen_connection(&self.services.event_bus, &ctx) => screened,
+        let Some(mut ctx) = self.screen(ctx, intent, &shutdown).await else {
+            return Ok(());
         };
-        match screened {
-            Admission::Admitted => {}
-            Admission::Denied(reason) => {
-                if intent != ConnectionIntent::Status {
-                    self.send_kick(&mut ctx, &reason).await.ok();
-                }
-                return Ok(());
-            }
-            Admission::Dropped => return Ok(()),
-            Admission::Handoff(_) if ctx.extensions.contains::<LegacyHello>() => {
-                tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
-                return Ok(());
-            }
-            Admission::Handoff(handoff) => {
-                let refused = tokio::select! {
-                    biased;
-                    () = shutdown.cancelled() => return Ok(()),
-                    refused = admission::refuse_handoff(&self.services.ban_manager, &ctx) => refused,
-                };
-                if let Some(refusal) = refused {
-                    ctx.extensions.insert(Refused(refusal.reason));
-                    admission::reject_refused(&self.services.event_bus, &ctx);
-                    if intent != ConnectionIntent::Status {
-                        self.send_kick(&mut ctx, &refusal.message).await.ok();
-                    }
-                    return Ok(());
-                }
-                self.hand_off(ctx, handoff, HandoffLevel::Handshake, &shutdown)
-                    .await;
-                return Ok(());
-            }
-        }
 
         if let Some(hello) = ctx.extensions.get::<LegacyHello>().cloned() {
             return match hello {
@@ -256,93 +156,245 @@ impl ProxyServer {
         }
 
         match intent {
-            ConnectionIntent::Status => self.answer_status(&mut ctx, &shutdown).await?,
+            ConnectionIntent::Status => Ok(self.answer_status(&mut ctx, &shutdown).await?),
             ConnectionIntent::Login | ConnectionIntent::Transfer => {
-                let login = tokio::select! {
-                    biased;
-                    () = shutdown.cancelled() => None,
-                    result = self.login_pipeline.execute(&mut ctx) => Some(result?),
-                };
-                let Some(login) = login else {
-                    self.send_kick(&mut ctx, &Component::text(SHUTDOWN_REASON))
-                        .await
-                        .ok();
+                let Some(ctx) = self.passes_login_pipeline(ctx, &shutdown).await? else {
                     return Ok(());
                 };
-
-                match login {
-                    MiddlewareResult::Continue => {}
-                    MiddlewareResult::ShortCircuit => {
-                        if let Some(ClaimedLogin(handoff)) = ctx.extensions.remove::<ClaimedLogin>()
-                        {
-                            self.hand_off(ctx, handoff, HandoffLevel::Login, &shutdown)
-                                .await;
-                        }
-                        return Ok(());
-                    }
-                    MiddlewareResult::Reject(msg) => {
-                        admission::reject_refused(&self.services.event_bus, &ctx);
-                        self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
-                        return Ok(());
-                    }
-                    MiddlewareResult::Kick(reason) => {
-                        admission::reject_refused(&self.services.event_bus, &ctx);
-                        self.send_kick(&mut ctx, &reason).await.ok();
-                        return Ok(());
-                    }
-                }
-
-                let proxy_mode = ctx
-                    .require_extension::<RoutingData>("RoutingData")?
-                    .server_config
-                    .proxy_mode;
-
-                let span = ctx
-                    .extensions
-                    .remove::<ConnectionSpan>()
-                    .map_or_else(tracing::Span::none, |cs| cs.0);
-
-                match proxy_mode {
-                    ProxyMode::Offline => {
-                        self.offline_handler
-                            .handle(ctx, shutdown.child_token())
-                            .instrument(span)
-                            .await
-                            .map_err(ConnectionError::Session)?;
-                    }
-                    ProxyMode::ClientOnly => {
-                        self.client_only_handler
-                            .handle(ctx, shutdown.child_token())
-                            .instrument(span)
-                            .await
-                            .map_err(ConnectionError::Session)?;
-                    }
-                    ProxyMode::Full => {
-                        tracing::error!(
-                            server = %ctx
-                                .require_extension::<RoutingData>("RoutingData")?
-                                .server_config
-                                .effective_id(),
-                            "server configured with the reserved proxy_mode = \"full\", \
-                             which configuration validation rejects"
-                        );
-                        return Err(CoreError::InvalidState(
-                            "reserved proxy_mode = \"full\" reached the session handler",
-                        )
-                        .into());
-                    }
-                    _ => {
-                        self.passthrough_handler
-                            .handle(ctx, shutdown.child_token())
-                            .instrument(span)
-                            .await
-                            .map_err(ConnectionError::Session)?;
-                    }
-                }
+                self.run_session(ctx, &shutdown).await
             }
         }
+    }
 
-        Ok(())
+    async fn accept(
+        &self,
+        pending: PendingConnection,
+        shutdown: &CancellationToken,
+    ) -> Result<Option<ConnectionContext>, CoreError> {
+        let accepted = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Ok(None),
+            accepted = pending.resolve() => match accepted {
+                Ok(accepted) => accepted,
+                Err(TransportError::IpLimitReached { ip }) => {
+                    tracing::debug!(%ip, "closing connection over the per-IP limit");
+                    return Ok(None);
+                }
+                Err(TransportError::UntrustedProxyPeer { peer }) => {
+                    tracing::debug!(%peer, "closing connection from a peer outside trusted_proxies");
+                    return Ok(None);
+                }
+                Err(e) => return Err(CoreError::from(e)),
+            },
+        };
+        let mut ctx = ConnectionContext::from_accepted(accepted);
+        if !self.open_transport(&mut ctx, shutdown).await {
+            return Ok(None);
+        }
+        Ok(Some(ctx))
+    }
+
+    async fn claim_raw(
+        &self,
+        mut ctx: ConnectionContext,
+        shutdown: &CancellationToken,
+    ) -> Option<ConnectionContext> {
+        if self.services.connection_claims.is_empty() {
+            return Some(ctx);
+        }
+        match raw_claim::claim_raw(
+            &self.services,
+            &mut ctx,
+            RawClaimLimits::default(),
+            shutdown,
+        )
+        .await
+        {
+            RawClaim::Minecraft => Some(ctx),
+            RawClaim::Closed => None,
+            RawClaim::Handoff(handoff) => {
+                self.hand_off(ctx, handoff, HandoffLevel::Raw, shutdown)
+                    .await;
+                None
+            }
+        }
+    }
+
+    async fn passes_common_pipeline(
+        &self,
+        ctx: &mut ConnectionContext,
+        shutdown: &CancellationToken,
+    ) -> Result<bool, CoreError> {
+        let common = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return Ok(false),
+            result = self.common_pipeline.execute(ctx) => result?,
+        };
+
+        match common {
+            MiddlewareResult::Continue => Ok(true),
+            MiddlewareResult::ShortCircuit => {
+                admission::reject_refused(&self.services.event_bus, ctx);
+                Ok(false)
+            }
+            MiddlewareResult::Reject(msg) => {
+                let intent = ctx.extensions.get::<HandshakeData>().map(|h| h.intent);
+                let unknown_domain = ctx.extensions.contains::<UnknownDomain>();
+                let dropped =
+                    unknown_domain && self.unknown_domain_behavior == UnknownDomainBehavior::Drop;
+                if !dropped && unknown_domain && intent == Some(ConnectionIntent::Status) {
+                    return Ok(true);
+                }
+                admission::reject_refused(&self.services.event_bus, ctx);
+                match intent {
+                    Some(ConnectionIntent::Login | ConnectionIntent::Transfer) if !dropped => {
+                        self.send_kick(ctx, &Component::text(msg)).await.ok();
+                    }
+                    _ => tracing::debug!("closing rejected connection: {msg}"),
+                }
+                Ok(false)
+            }
+            MiddlewareResult::Kick(reason) => {
+                admission::reject_refused(&self.services.event_bus, ctx);
+                self.send_kick(ctx, &reason).await.ok();
+                Ok(false)
+            }
+        }
+    }
+
+    async fn screen(
+        &self,
+        mut ctx: ConnectionContext,
+        intent: ConnectionIntent,
+        shutdown: &CancellationToken,
+    ) -> Option<ConnectionContext> {
+        let screened = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => return None,
+            screened = admission::screen_connection(&self.services.event_bus, &ctx) => screened,
+        };
+        match screened {
+            Admission::Admitted => Some(ctx),
+            Admission::Denied(reason) => {
+                if intent != ConnectionIntent::Status {
+                    self.send_kick(&mut ctx, &reason).await.ok();
+                }
+                None
+            }
+            Admission::Dropped => None,
+            Admission::Handoff(_) if ctx.extensions.contains::<LegacyHello>() => {
+                tracing::debug!("a client older than 1.7 cannot be handed off, closing it");
+                None
+            }
+            Admission::Handoff(handoff) => {
+                let refused = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return None,
+                    refused = admission::refuse_handoff(&self.services.ban_manager, &ctx) => refused,
+                };
+                if let Some(refusal) = refused {
+                    ctx.extensions.insert(Refused(refusal.reason));
+                    admission::reject_refused(&self.services.event_bus, &ctx);
+                    if intent != ConnectionIntent::Status {
+                        self.send_kick(&mut ctx, &refusal.message).await.ok();
+                    }
+                    return None;
+                }
+                self.hand_off(ctx, handoff, HandoffLevel::Handshake, shutdown)
+                    .await;
+                None
+            }
+        }
+    }
+
+    async fn passes_login_pipeline(
+        &self,
+        mut ctx: ConnectionContext,
+        shutdown: &CancellationToken,
+    ) -> Result<Option<ConnectionContext>, CoreError> {
+        let login = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => None,
+            result = self.login_pipeline.execute(&mut ctx) => Some(result?),
+        };
+        let Some(login) = login else {
+            self.send_kick(&mut ctx, &Component::text(SHUTDOWN_REASON))
+                .await
+                .ok();
+            return Ok(None);
+        };
+
+        match login {
+            MiddlewareResult::Continue => return Ok(Some(ctx)),
+            MiddlewareResult::ShortCircuit => {
+                if let Some(ClaimedLogin(handoff)) = ctx.extensions.remove::<ClaimedLogin>() {
+                    self.hand_off(ctx, handoff, HandoffLevel::Login, shutdown)
+                        .await;
+                }
+            }
+            MiddlewareResult::Reject(msg) => {
+                admission::reject_refused(&self.services.event_bus, &ctx);
+                self.send_kick(&mut ctx, &Component::text(msg)).await.ok();
+            }
+            MiddlewareResult::Kick(reason) => {
+                admission::reject_refused(&self.services.event_bus, &ctx);
+                self.send_kick(&mut ctx, &reason).await.ok();
+            }
+        }
+        Ok(None)
+    }
+
+    async fn run_session(
+        &self,
+        mut ctx: ConnectionContext,
+        shutdown: &CancellationToken,
+    ) -> Result<(), ConnectionError> {
+        let proxy_mode = ctx
+            .require_extension::<RoutingData>("RoutingData")?
+            .server_config
+            .proxy_mode;
+
+        let span = ctx
+            .extensions
+            .remove::<ConnectionSpan>()
+            .map_or_else(tracing::Span::none, |cs| cs.0);
+
+        let session = shutdown.child_token();
+        match proxy_mode {
+            ProxyMode::Offline => {
+                self.offline_handler
+                    .handle(ctx, session)
+                    .instrument(span)
+                    .await
+            }
+            ProxyMode::ClientOnly => {
+                self.client_only_handler
+                    .handle(ctx, session)
+                    .instrument(span)
+                    .await
+            }
+            ProxyMode::Full => {
+                tracing::error!(
+                    server = %ctx
+                        .require_extension::<RoutingData>("RoutingData")?
+                        .server_config
+                        .effective_id(),
+                    "server configured with the reserved proxy_mode = \"full\", \
+                     which configuration validation rejects"
+                );
+                return Err(CoreError::InvalidState(
+                    "reserved proxy_mode = \"full\" reached the session handler",
+                )
+                .into());
+            }
+            _ => {
+                self.passthrough_handler
+                    .handle(ctx, session)
+                    .instrument(span)
+                    .await
+            }
+        }
+        .map_err(ConnectionError::Session)
     }
 
     async fn hand_off(
