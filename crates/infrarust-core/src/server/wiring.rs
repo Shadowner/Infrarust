@@ -23,6 +23,7 @@ use crate::forwarding::secret::load_or_generate_secret;
 use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
+use crate::loadbalancer::PassiveBackendHealth;
 use crate::middleware::backend_selection::BackendSelectionMiddleware;
 use crate::middleware::ban_check::BanCheckMiddleware;
 use crate::middleware::ban_ip_check::BanIpCheckMiddleware;
@@ -36,7 +37,7 @@ use crate::middleware::telemetry::TelemetryMiddleware;
 use crate::pipeline::Pipeline;
 use crate::player::registry::PlayerRegistryImpl;
 use crate::provider::file::FileProvider;
-use crate::provider::registry::ProviderRegistry;
+use crate::provider::registry::{PluginRoutes, ProviderRegistry};
 use crate::registry::ConnectionRegistry;
 use crate::routing::DomainRouter;
 use crate::services::ProxyServices;
@@ -65,19 +66,12 @@ impl ProxyServer {
         #[cfg(feature = "telemetry")]
         let proxy_metrics = Arc::new(crate::telemetry::ProxyMetrics::new());
 
-        let backend_health = crate::loadbalancer::PassiveBackendHealth::new();
-        #[cfg(feature = "telemetry")]
-        let backend_health = backend_health.with_listener(Arc::new(
-            super::health_observer::HealthTransitionMetrics(Arc::clone(&proxy_metrics)),
-        ));
-        let backend_health = Arc::new(backend_health);
-        backend_health.add_listener(Arc::new(
-            super::health_observer::HealthTransitionEvents::new(
-                Arc::clone(&domain_router),
-                Arc::clone(&event_bus),
-            ),
-        ));
-
+        let backend_health = observed_backend_health(
+            &domain_router,
+            &event_bus,
+            #[cfg(feature = "telemetry")]
+            &proxy_metrics,
+        );
         let backend_observer = Arc::new(super::health_observer::BackendAttemptObserver::new(
             Arc::clone(&backend_health),
             #[cfg(feature = "telemetry")]
@@ -102,106 +96,25 @@ impl ProxyServer {
         let favicon_cache =
             Arc::new(FaviconCache::load_from_configs(&[], config.default_motd.as_ref()).await?);
 
-        let proxy_wide_forwarding = config
-            .forwarding
-            .as_ref()
-            .map(|forwarding| forwarding.mode.clone())
-            .unwrap_or_default();
-        let mut provider_registry = ProviderRegistry::new(
-            Arc::clone(&domain_router),
-            Arc::clone(&event_bus),
-            Arc::new(StatusCacheRefresh {
-                router: Arc::clone(&domain_router),
-                status_cache: Arc::clone(&status_cache),
-                favicon_cache: Arc::clone(&favicon_cache),
-            }),
-            background.clone(),
-            proxy_wide_forwarding.clone(),
-        );
-
-        provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
-
-        #[cfg(feature = "docker")]
-        if let Some(ref docker_config) = config.docker {
-            provider_registry.add_provider(Box::new(crate::provider::docker::DockerProvider::new(
-                docker_config,
-                proxy_wide_forwarding,
-            )));
-        }
-
-        #[cfg(not(feature = "docker"))]
-        if config.docker.is_some() {
-            tracing::warn!(
-                "docker configuration found but docker feature is not enabled, ignoring"
-            );
-        }
-
-        let (provider_handle, plugin_routes) = provider_registry.start().await?;
-        tokio::spawn(async move {
-            if let Err(e) = provider_handle.await
-                && e.is_panic()
-            {
-                tracing::error!(
-                    error = %e,
-                    "provider event loop panicked, configuration hot-reload is no longer active"
-                );
-            }
-        });
-
-        let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
-            .list_all()
-            .iter()
-            .filter_map(|(_pid, c)| {
-                c.server_manager
-                    .as_ref()
-                    .map(|sm| (c.effective_id(), sm.clone()))
-            })
-            .collect();
-
-        let server_manager = if managed_configs.is_empty() {
-            None
-        } else {
-            let http_client = reqwest::Client::new();
-            let service = ServerManagerService::new(&managed_configs, http_client);
-
-            let bus = Arc::clone(&event_bus);
-            service.add_on_state_change(Arc::new(move |server_id, old, new| {
-                let api_old = convert_server_state(old);
-                let api_new = convert_server_state(new);
-                bus.post(ServerStateChangeEvent::new(
-                    ServerId::new(server_id),
-                    api_old,
-                    api_new,
-                ));
-            }));
-
-            tracing::info!(count = managed_configs.len(), "server manager initialized");
-            Some(Arc::new(service))
+        let refresh = StatusCacheRefresh {
+            router: Arc::clone(&domain_router),
+            status_cache: Arc::clone(&status_cache),
+            favicon_cache: Arc::clone(&favicon_cache),
         };
-
-        let favicon_configs: Vec<(String, Arc<infrarust_config::ServerConfig>)> = domain_router
-            .list_all()
-            .into_iter()
-            .map(|(_pid, cfg)| (cfg.effective_id(), cfg))
-            .collect();
-        if let Err(e) = favicon_cache
-            .reload(&favicon_configs, config.default_motd.as_ref())
-            .await
-        {
-            tracing::warn!(error = %e, "failed to load initial favicons");
-        }
-
-        let relay_client = StatusRelayClient::new(
-            Arc::clone(&backend_connector),
-            Arc::clone(&packet_registry),
-            Duration::from_secs(5),
-        );
+        let plugin_routes =
+            start_providers(&config, &domain_router, &event_bus, refresh, &background).await?;
+        let server_manager = managed_servers(&domain_router, &event_bus);
+        load_favicons(&favicon_cache, &domain_router, &config).await;
 
         let relay_gate = Arc::new(RelayGate::default());
         let status_handler = StatusHandler::new(StatusDeps {
-            relay_client,
+            relay_client: StatusRelayClient::new(
+                Arc::clone(&backend_connector),
+                Arc::clone(&packet_registry),
+                Duration::from_secs(5),
+            ),
             cache: Arc::clone(&status_cache),
-            favicon_cache: Arc::clone(&favicon_cache),
+            favicon_cache,
             server_manager: server_manager.clone(),
             registry: Arc::clone(&packet_registry),
             default_motd: config.default_motd.clone(),
@@ -210,7 +123,6 @@ impl ProxyServer {
             health: Arc::clone(&backend_health) as _,
             relay_gate: Arc::clone(&relay_gate),
         });
-
         #[cfg(feature = "telemetry")]
         let status_handler = status_handler.with_metrics(Arc::clone(&proxy_metrics));
 
@@ -218,48 +130,40 @@ impl ProxyServer {
             BanManager::from_config(&config.ban, Arc::clone(&registry), Arc::clone(&event_bus))
                 .await?,
         );
-
-        let player_registry = Arc::new(PlayerRegistryImpl::new(Arc::clone(&registry)));
-        let command_manager = Arc::new(CommandManagerImpl::new());
-
-        let codec_filter_registry =
-            Arc::new(crate::filter::codec_registry::CodecFilterRegistryImpl::new());
-
-        let limbo_handler_registry = Arc::new(crate::limbo::registry::LimboHandlerRegistry::new());
-
         let forwarding_mode = Arc::new(resolve_forwarding_mode(&config));
         let forwarding_secret = load_forwarding_secret(&config, &forwarding_mode);
-
         let permission_service =
             Arc::new(crate::permissions::PermissionService::new(&config.permissions).await);
 
         let services = ProxyServices {
-            event_bus: Arc::clone(&event_bus),
-            player_registry,
-            command_manager,
-            connection_registry: Arc::clone(&registry),
+            event_bus,
+            player_registry: Arc::new(PlayerRegistryImpl::new(Arc::clone(&registry))),
+            command_manager: Arc::new(CommandManagerImpl::new()),
+            connection_registry: registry,
             backend_load: Arc::clone(&backend_load),
-            pending_backends: Arc::clone(&pending_backends),
-            packet_registry: Arc::clone(&packet_registry),
-            server_manager: server_manager.clone(),
-            ban_manager: Arc::clone(&ban_manager),
+            pending_backends,
+            packet_registry,
+            server_manager,
+            ban_manager,
             config: Arc::new(config.clone()),
             config_path,
             domain_router: Arc::clone(&domain_router),
             backend_health: Arc::clone(&backend_health) as _,
             load_balancer_service: Arc::new(
                 crate::services::load_balancer_service::LoadBalancerServiceImpl::new(
-                    Arc::clone(&domain_router),
+                    domain_router,
                     Arc::clone(&backend_health),
-                    Arc::clone(&backend_load) as _,
+                    backend_load as _,
                 ),
             ),
-            codec_filter_registry: Arc::clone(&codec_filter_registry),
+            codec_filter_registry: Arc::new(
+                crate::filter::codec_registry::CodecFilterRegistryImpl::new(),
+            ),
             transport_filter_registry: Arc::new(
                 crate::filter::transport_registry::TransportFilterRegistryImpl::new(),
             ),
             connection_claims: Arc::new(crate::handoff::ConnectionClaims::new()),
-            limbo_handler_registry,
+            limbo_handler_registry: Arc::new(crate::limbo::registry::LimboHandlerRegistry::new()),
             registry_codec_cache: Arc::new(crate::limbo::registry_cache::RegistryCodecCache::new(
                 Arc::new(crate::registry_data::embedded::EmbeddedRegistryDataProvider),
             )),
@@ -272,42 +176,11 @@ impl ProxyServer {
             )),
         };
 
-        let mut common_pipeline = Pipeline::new();
-        common_pipeline.add(Box::new(IpFilterMiddleware::new(config.ip_filter.clone())));
-        common_pipeline.add(Box::new(HandshakeParserMiddleware::new()));
-        common_pipeline.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(
-            &ban_manager,
-        ))));
-        let rate_limiter = RateLimiterMiddleware::new(&config.rate_limit);
-        common_pipeline.add(Box::new(rate_limiter.clone()));
-        common_pipeline.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
-            &domain_router,
-        ))));
-
-        let mut login_pipeline = Pipeline::new();
-        login_pipeline.add(Box::new(LoginStartParserMiddleware::with_login_claims(
-            Arc::clone(&event_bus),
-        )));
-        login_pipeline.add(Box::new(LoginClaimMiddleware::new(
-            Arc::clone(&event_bus),
-            Arc::clone(&ban_manager),
-        )));
-        login_pipeline.add(Box::new(BanCheckMiddleware::new(Arc::clone(&ban_manager))));
-        login_pipeline.add(Box::new(
-            config
-                .telemetry
-                .as_ref()
-                .map_or_else(TelemetryMiddleware::default, |telemetry| {
-                    TelemetryMiddleware::new(&telemetry.traces)
-                }),
-        ));
-        login_pipeline.add(Box::new(
-            BackendSelectionMiddleware::new(
-                Arc::clone(&backend_load) as _,
-                Arc::clone(&backend_health) as _,
-            )
-            .with_pending(Arc::clone(&pending_backends)),
-        ));
+        let Pipelines {
+            common: common_pipeline,
+            login: login_pipeline,
+            rate_limiter,
+        } = build_pipelines(&config, &services, &backend_health);
 
         let handoff =
             crate::handoff::HandoffRelay::new(services.clone(), Arc::clone(&backend_connector));
@@ -318,7 +191,7 @@ impl ProxyServer {
             services.clone(),
             Arc::clone(&backend_connector),
             sessions.clone(),
-            Arc::clone(&status_cache),
+            status_cache,
             relay_gate,
         );
 
@@ -340,9 +213,9 @@ impl ProxyServer {
         let offline_handler = offline_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         let client_only_handler =
-            InterceptedHandler::client_only(Arc::clone(&backend_connector), services.clone(), auth);
+            InterceptedHandler::client_only(backend_connector, services.clone(), auth);
         #[cfg(feature = "telemetry")]
-        let client_only_handler = client_only_handler.with_metrics(Arc::clone(&proxy_metrics));
+        let client_only_handler = client_only_handler.with_metrics(proxy_metrics);
 
         Ok(Self {
             common_pipeline,
@@ -362,6 +235,180 @@ impl ProxyServer {
             background,
             connections: TaskTracker::new(),
         })
+    }
+}
+
+fn observed_backend_health(
+    domain_router: &Arc<DomainRouter>,
+    event_bus: &Arc<EventBusImpl>,
+    #[cfg(feature = "telemetry")] metrics: &Arc<crate::telemetry::ProxyMetrics>,
+) -> Arc<PassiveBackendHealth> {
+    let backend_health = PassiveBackendHealth::new();
+    #[cfg(feature = "telemetry")]
+    let backend_health = backend_health.with_listener(Arc::new(
+        super::health_observer::HealthTransitionMetrics(Arc::clone(metrics)),
+    ));
+    let backend_health = Arc::new(backend_health);
+    backend_health.add_listener(Arc::new(
+        super::health_observer::HealthTransitionEvents::new(
+            Arc::clone(domain_router),
+            Arc::clone(event_bus),
+        ),
+    ));
+    backend_health
+}
+
+async fn start_providers(
+    config: &ProxyConfig,
+    domain_router: &Arc<DomainRouter>,
+    event_bus: &Arc<EventBusImpl>,
+    refresh: StatusCacheRefresh,
+    background: &CancellationToken,
+) -> Result<PluginRoutes, CoreError> {
+    let proxy_wide_forwarding = config
+        .forwarding
+        .as_ref()
+        .map(|forwarding| forwarding.mode.clone())
+        .unwrap_or_default();
+    let mut provider_registry = ProviderRegistry::new(
+        Arc::clone(domain_router),
+        Arc::clone(event_bus),
+        Arc::new(refresh),
+        background.clone(),
+        proxy_wide_forwarding.clone(),
+    );
+
+    provider_registry.add_provider(Box::new(FileProvider::new(config.servers_dir.clone())));
+
+    #[cfg(feature = "docker")]
+    if let Some(ref docker_config) = config.docker {
+        provider_registry.add_provider(Box::new(crate::provider::docker::DockerProvider::new(
+            docker_config,
+            proxy_wide_forwarding,
+        )));
+    }
+
+    #[cfg(not(feature = "docker"))]
+    if config.docker.is_some() {
+        tracing::warn!("docker configuration found but docker feature is not enabled, ignoring");
+    }
+
+    let (provider_handle, plugin_routes) = provider_registry.start().await?;
+    tokio::spawn(async move {
+        if let Err(e) = provider_handle.await
+            && e.is_panic()
+        {
+            tracing::error!(
+                error = %e,
+                "provider event loop panicked, configuration hot-reload is no longer active"
+            );
+        }
+    });
+    Ok(plugin_routes)
+}
+
+fn managed_servers(
+    domain_router: &DomainRouter,
+    event_bus: &Arc<EventBusImpl>,
+) -> Option<Arc<ServerManagerService>> {
+    let managed_configs: Vec<(String, infrarust_config::ServerManagerConfig)> = domain_router
+        .list_all()
+        .iter()
+        .filter_map(|(_pid, c)| {
+            c.server_manager
+                .as_ref()
+                .map(|sm| (c.effective_id(), sm.clone()))
+        })
+        .collect();
+    if managed_configs.is_empty() {
+        return None;
+    }
+
+    let service = ServerManagerService::new(&managed_configs, reqwest::Client::new());
+    let bus = Arc::clone(event_bus);
+    service.add_on_state_change(Arc::new(move |server_id, old, new| {
+        bus.post(ServerStateChangeEvent::new(
+            ServerId::new(server_id),
+            convert_server_state(old),
+            convert_server_state(new),
+        ));
+    }));
+
+    tracing::info!(count = managed_configs.len(), "server manager initialized");
+    Some(Arc::new(service))
+}
+
+async fn load_favicons(
+    favicon_cache: &FaviconCache,
+    domain_router: &DomainRouter,
+    config: &ProxyConfig,
+) {
+    let favicon_configs: Vec<(String, Arc<infrarust_config::ServerConfig>)> = domain_router
+        .list_all()
+        .into_iter()
+        .map(|(_pid, cfg)| (cfg.effective_id(), cfg))
+        .collect();
+    if let Err(e) = favicon_cache
+        .reload(&favicon_configs, config.default_motd.as_ref())
+        .await
+    {
+        tracing::warn!(error = %e, "failed to load initial favicons");
+    }
+}
+
+struct Pipelines {
+    common: Pipeline,
+    login: Pipeline,
+    rate_limiter: RateLimiterMiddleware,
+}
+
+fn build_pipelines(
+    config: &ProxyConfig,
+    services: &ProxyServices,
+    backend_health: &Arc<PassiveBackendHealth>,
+) -> Pipelines {
+    let event_bus = &services.event_bus;
+    let ban_manager = &services.ban_manager;
+
+    let mut common = Pipeline::new();
+    common.add(Box::new(IpFilterMiddleware::new(config.ip_filter.clone())));
+    common.add(Box::new(HandshakeParserMiddleware::new()));
+    common.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(ban_manager))));
+    let rate_limiter = RateLimiterMiddleware::new(&config.rate_limit);
+    common.add(Box::new(rate_limiter.clone()));
+    common.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
+        &services.domain_router,
+    ))));
+
+    let mut login = Pipeline::new();
+    login.add(Box::new(LoginStartParserMiddleware::with_login_claims(
+        Arc::clone(event_bus),
+    )));
+    login.add(Box::new(LoginClaimMiddleware::new(
+        Arc::clone(event_bus),
+        Arc::clone(ban_manager),
+    )));
+    login.add(Box::new(BanCheckMiddleware::new(Arc::clone(ban_manager))));
+    login.add(Box::new(
+        config
+            .telemetry
+            .as_ref()
+            .map_or_else(TelemetryMiddleware::default, |telemetry| {
+                TelemetryMiddleware::new(&telemetry.traces)
+            }),
+    ));
+    login.add(Box::new(
+        BackendSelectionMiddleware::new(
+            Arc::clone(&services.backend_load) as _,
+            Arc::clone(backend_health) as _,
+        )
+        .with_pending(Arc::clone(&services.pending_backends)),
+    ));
+
+    Pipelines {
+        common,
+        login,
+        rate_limiter,
     }
 }
 
