@@ -240,12 +240,11 @@ fn observed_backend_health(
     event_bus: &Arc<EventBusImpl>,
     #[cfg(feature = "telemetry")] metrics: &Arc<crate::telemetry::ProxyMetrics>,
 ) -> Arc<PassiveBackendHealth> {
-    let backend_health = PassiveBackendHealth::new();
+    let backend_health = Arc::new(PassiveBackendHealth::new());
     #[cfg(feature = "telemetry")]
-    let backend_health = backend_health.with_listener(Arc::new(
-        super::health_observer::HealthTransitionMetrics(Arc::clone(metrics)),
-    ));
-    let backend_health = Arc::new(backend_health);
+    backend_health.add_listener(Arc::new(super::health_observer::HealthTransitionMetrics(
+        Arc::clone(metrics),
+    )));
     backend_health.add_listener(Arc::new(
         super::health_observer::HealthTransitionEvents::new(
             Arc::clone(domain_router),

@@ -172,12 +172,6 @@ impl PassiveBackendHealth {
         }
     }
 
-    #[must_use]
-    pub fn with_listener(self, listener: Arc<dyn HealthTransitionListener>) -> Self {
-        self.add_listener(listener);
-        self
-    }
-
     pub fn add_listener(&self, listener: Arc<dyn HealthTransitionListener>) {
         write(&self.listeners).push(listener);
     }
@@ -766,8 +760,8 @@ mod tests {
     #[test]
     fn a_drained_address_still_reports_its_health_transitions() {
         let recorder = Arc::new(Recorder::default());
-        let health = PassiveBackendHealth::with_threshold(1)
-            .with_listener(Arc::clone(&recorder) as Arc<dyn HealthTransitionListener>);
+        let health = PassiveBackendHealth::with_threshold(1);
+        health.add_listener(Arc::clone(&recorder) as Arc<dyn HealthTransitionListener>);
         let a = addr("a");
 
         health.set_drained(&a, true);
