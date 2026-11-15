@@ -241,6 +241,38 @@ async fn an_offline_player_is_player_gone_and_a_bad_text_is_an_argument_error() 
 }
 
 #[tokio::test]
+async fn a_disconnect_still_pending_is_dropped_with_the_host_resources() {
+    let player = stalled_player();
+    let mut state = state_with(CapabilitySet::baseline(), vec![Arc::clone(&player)]);
+    let idle = Arc::strong_count(&player);
+
+    players::Host::disconnect(&mut state, 1, text_of("bye"))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert_eq!(Arc::strong_count(&player), idle + 1);
+
+    state.release_host_resources();
+    tokio::task::yield_now().await;
+    assert_eq!(Arc::strong_count(&player), idle);
+}
+
+#[tokio::test]
+async fn a_disconnect_that_completes_at_once_outlives_the_host_resources() {
+    let player: Arc<dyn Player> = MockPlayer::new(1, "tester").into_arc();
+    let mut state = state_with(CapabilitySet::baseline(), vec![Arc::clone(&player)]);
+
+    players::Host::disconnect(&mut state, 1, text_of("bye"))
+        .await
+        .unwrap()
+        .unwrap();
+    state.release_host_resources();
+
+    assert!(!player.is_connected());
+}
+
+#[tokio::test]
 async fn switch_server_gives_up_long_before_the_host_call_timeout() {
     let mut state = state_with(CapabilitySet::baseline(), vec![stalled_player()]);
 

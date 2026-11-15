@@ -1,7 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Waker};
 use std::time::{Duration, Instant};
 
 use infrarust_api::event::ListenerHandle;
@@ -11,6 +13,7 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::services::scheduler::TaskHandle;
 use infrarust_config::WasmQuotasConfig;
 use infrarust_plugin_common::guest_panic::bounded_guest_panic;
+use tokio::task::JoinSet;
 use wasmtime::component::ResourceTable;
 use wasmtime::{Store, StoreLimits, UpdateDeadline};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -182,6 +185,7 @@ struct HostResources {
     tasks: Arc<LiveTasks>,
     boss_bars: HashMap<uuid::Uuid, BossBarHandle>,
     claim_prefixes: BTreeSet<Vec<u8>>,
+    disconnects: JoinSet<()>,
 }
 
 impl HostResources {
@@ -194,6 +198,7 @@ impl HostResources {
             tasks: Arc::default(),
             boss_bars: HashMap::new(),
             claim_prefixes: BTreeSet::new(),
+            disconnects: JoinSet::new(),
         }
     }
 }
@@ -448,8 +453,22 @@ impl PluginStoreState {
         self.resources.claim_prefixes.len()
     }
 
+    pub(crate) fn run_disconnect(&mut self, disconnect: impl Future<Output = ()> + Send + 'static) {
+        let disconnects = &mut self.resources.disconnects;
+        while disconnects.try_join_next().is_some() {}
+        let mut disconnect = Box::pin(disconnect);
+        if disconnect
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+            .is_pending()
+        {
+            disconnects.spawn(disconnect);
+        }
+    }
+
     pub(crate) fn release_host_resources(&mut self) {
         let resources = &mut self.resources;
+        resources.disconnects.abort_all();
         let prefixes = std::mem::take(&mut resources.claim_prefixes);
         let listeners: Vec<ListenerHandle> =
             resources.listeners.drain().flat_map(|(_, h)| h).collect();
