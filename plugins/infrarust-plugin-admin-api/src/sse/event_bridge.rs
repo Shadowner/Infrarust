@@ -7,8 +7,10 @@ use infrarust_api::plugin::PluginContext;
 use infrarust_api::types::ServerId;
 use tokio::sync::broadcast;
 
+use crate::address::format_address;
 use crate::state::ApiEvent;
-use crate::util::{format_address, now_iso8601, server_state_str};
+use crate::util::now_iso8601;
+use crate::vocab::server_state_str;
 
 /// Bridges proxy EventBus events to the API broadcast channel.
 ///

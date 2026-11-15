@@ -2,7 +2,8 @@ use infrarust_api::services::ban_service::BanEntry;
 use serde::Serialize;
 
 use crate::error::ApiError;
-use crate::util::{BanTargetParts, format_duration, format_system_time};
+use crate::util::{format_duration, format_system_time};
+use crate::vocab::BanTargetParts;
 
 #[derive(Serialize)]
 pub struct BanResponse {

@@ -1,3 +1,4 @@
+pub mod address;
 pub mod api_provider;
 pub mod auth;
 pub mod config;
@@ -5,6 +6,7 @@ pub mod drain_store;
 pub mod dto;
 pub mod error;
 pub mod frontend;
+pub mod fs;
 pub mod handlers;
 pub mod health_cache;
 pub mod health_checker;
@@ -16,6 +18,7 @@ pub mod server_dir;
 pub mod sse;
 pub mod state;
 pub mod util;
+pub mod vocab;
 
 use std::collections::VecDeque;
 use std::future::Future;

@@ -62,8 +62,8 @@ pub(super) fn migrate_legacy_store(data_dir: &Path, dir: &Path) {
 
         let proxy_mode = server
             .proxy_mode
-            .parse::<crate::util::ProxyModeName>()
-            .unwrap_or(crate::util::ProxyModeName::Passthrough)
+            .parse::<crate::vocab::ProxyModeName>()
+            .unwrap_or(crate::vocab::ProxyModeName::Passthrough)
             .as_str();
         let document = match toml::to_string_pretty(&MigratedServer {
             id: &server.id,

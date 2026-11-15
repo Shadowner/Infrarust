@@ -13,6 +13,7 @@ use infrarust_config::ServerConfig;
 use infrarust_config::secrets::{SERVER_SECRETS, redact, reinject, still_redacted};
 use toml_edit::DocumentMut;
 
+use crate::address::format_address;
 use crate::dto::player::PlayerSummary;
 use crate::dto::server::{
     HealthCheckResponse, ServerDetailResponse, ServerResponse, ValidationResponse,
@@ -21,7 +22,7 @@ use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::server_dir::{Committed, DocumentId, MAX_ID_LEN, Ownership, to_document_text};
 use crate::state::ApiState;
-use crate::util::{ProxyModeName, format_address, server_state_str};
+use crate::vocab::{ProxyModeName, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
 

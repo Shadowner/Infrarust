@@ -13,8 +13,9 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::address::format_address;
 use crate::dto::server::{HealthCheckResponse, PlayerSampleResponse};
-use crate::util::{format_address, now_iso8601};
+use crate::util::now_iso8601;
 
 const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 const PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V1_21;

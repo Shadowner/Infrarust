@@ -6,11 +6,11 @@ use axum::extract::{Path, State};
 
 use infrarust_api::types::ServerId;
 
+use crate::address::{format_address, parse_address};
 use crate::dto::server::{BackendStatusResponse, ServerBackendsResponse};
 use crate::error::ApiError;
 use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
 use crate::state::ApiState;
-use crate::util::{format_address, parse_address};
 
 fn server_backends(state: &ApiState, id: &str) -> Option<ServerBackendsResponse> {
     let server = ServerId::new(id);

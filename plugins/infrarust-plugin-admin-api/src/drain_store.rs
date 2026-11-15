@@ -14,7 +14,7 @@ use infrarust_api::services::load_balancer::LoadBalancerService;
 use infrarust_api::types::{ServerAddress, ServerId};
 use tokio_util::sync::CancellationToken;
 
-use crate::util::{format_address, parse_address};
+use crate::address::{format_address, parse_address};
 
 const STORE_FILE: &str = "drained.json";
 
@@ -31,7 +31,7 @@ pub enum DrainStoreError {
     Serialize(#[from] serde_json::Error),
 
     #[error("{0}")]
-    Write(#[from] crate::util::WriteError),
+    Write(#[from] crate::fs::WriteError),
 }
 
 pub struct DrainStore {
@@ -123,7 +123,7 @@ impl DrainStore {
     }
 
     async fn persist(&self, bytes: Vec<u8>) -> Result<(), DrainStoreError> {
-        crate::util::write_atomic(&self.path, &bytes).await?;
+        crate::fs::write_atomic(&self.path, &bytes).await?;
         Ok(())
     }
 

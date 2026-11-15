@@ -14,7 +14,7 @@ use crate::response::{
     ApiResponse, MutationResult, PaginatedResponse, PaginationParams, mutation_ok, ok,
 };
 use crate::state::ApiState;
-use crate::util::ProxyModeName;
+use crate::vocab::ProxyModeName;
 
 const MAX_TEXT_LEN: usize = 256;
 

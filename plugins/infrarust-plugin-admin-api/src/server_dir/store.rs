@@ -37,8 +37,8 @@ pub enum StoreError {
     },
 }
 
-impl From<crate::util::WriteError> for StoreError {
-    fn from(error: crate::util::WriteError) -> Self {
+impl From<crate::fs::WriteError> for StoreError {
+    fn from(error: crate::fs::WriteError) -> Self {
         StoreError::Io {
             path: error.path,
             source: error.source,
@@ -298,7 +298,7 @@ impl ServerDir {
         text: String,
         config: ServerConfig,
     ) -> Result<(), StoreError> {
-        crate::util::write_atomic(&path, text.as_bytes()).await?;
+        crate::fs::write_atomic(&path, text.as_bytes()).await?;
 
         self.snapshot().insert(path, Entry { text, config });
 
