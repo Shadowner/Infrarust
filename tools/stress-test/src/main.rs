@@ -9,12 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-fn write_varint(value: i32) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(VarInt::MAX_SIZE);
-    VarInt(value)
-        .encode(&mut buf)
-        .expect("writing to a Vec cannot fail");
-    buf
+fn write_varint(buf: &mut Vec<u8>, value: i32) -> io::Result<()> {
+    VarInt(value).encode(buf).map_err(io::Error::other)
 }
 
 async fn read_varint(stream: &mut TcpStream) -> io::Result<i32> {
@@ -30,33 +26,28 @@ async fn read_varint(stream: &mut TcpStream) -> io::Result<i32> {
     Err(io::Error::new(io::ErrorKind::InvalidData, "VarInt too big"))
 }
 
-fn build_packet(packet_id: i32, data: &[u8]) -> Vec<u8> {
-    let id_bytes = write_varint(packet_id);
-    let length = id_bytes.len() + data.len();
-    let length_prefix = write_varint(length as i32);
-    let mut packet = Vec::with_capacity(length_prefix.len() + length);
-    packet.extend_from_slice(&length_prefix);
-    packet.extend_from_slice(&id_bytes);
-    packet.extend_from_slice(data);
-    packet
+fn build_packet(packet_id: i32, data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut body = Vec::with_capacity(VarInt::MAX_SIZE + data.len());
+    write_varint(&mut body, packet_id)?;
+    body.extend_from_slice(data);
+
+    let mut packet = Vec::with_capacity(VarInt::MAX_SIZE + body.len());
+    write_varint(&mut packet, body.len() as i32)?;
+    packet.extend_from_slice(&body);
+    Ok(packet)
 }
 
-fn build_handshake(host: &str, port: u16, protocol_version: i32) -> Vec<u8> {
+fn build_handshake(host: &str, port: u16, protocol_version: i32) -> io::Result<Vec<u8>> {
     let mut data = Vec::new();
-    // Protocol version
-    data.extend_from_slice(&write_varint(protocol_version));
-    // Server address (VarInt length prefix + UTF-8 bytes)
-    let host_bytes = host.as_bytes();
-    data.extend_from_slice(&write_varint(host_bytes.len() as i32));
-    data.extend_from_slice(host_bytes);
-    // Server port (u16 big-endian)
+    write_varint(&mut data, protocol_version)?;
+    write_varint(&mut data, host.len() as i32)?;
+    data.extend_from_slice(host.as_bytes());
     data.extend_from_slice(&port.to_be_bytes());
-    // Next state = 1 (Status)
-    data.extend_from_slice(&write_varint(1));
+    write_varint(&mut data, 1)?;
     build_packet(0x00, &data)
 }
 
-fn build_status_request() -> Vec<u8> {
+fn build_status_request() -> io::Result<Vec<u8>> {
     build_packet(0x00, &[])
 }
 
@@ -159,11 +150,11 @@ async fn do_slp(host: &str, port: u16, stats: &Stats) {
         let _ = stream.set_nodelay(true);
 
         // Send handshake
-        let handshake = build_handshake(host, port, PROTOCOL_VERSION);
+        let handshake = build_handshake(host, port, PROTOCOL_VERSION)?;
         stream.write_all(&handshake).await?;
 
         // Send status request
-        let status_req = build_status_request();
+        let status_req = build_status_request()?;
         stream.write_all(&status_req).await?;
 
         // Read response: VarInt length, then payload
@@ -244,9 +235,9 @@ async fn do_malformed(host: &str, port: u16, variant: MalformedType, stats: &Sta
             MalformedType::HugeHostname => {
                 // Handshake with 50,000 character hostname
                 let huge_host = "A".repeat(50_000);
-                let pkt = build_handshake(&huge_host, port, PROTOCOL_VERSION);
+                let pkt = build_handshake(&huge_host, port, PROTOCOL_VERSION)?;
                 stream.write_all(&pkt).await?;
-                let status_req = build_status_request();
+                let status_req = build_status_request()?;
                 stream.write_all(&status_req).await?;
                 // Try to read response
                 let mut buf = [0u8; 64];
@@ -270,13 +261,13 @@ async fn do_malformed(host: &str, port: u16, variant: MalformedType, stats: &Sta
             }
             MalformedType::EarlyClose => {
                 // Valid handshake, then close immediately (no status request)
-                let handshake = build_handshake(host, port, PROTOCOL_VERSION);
+                let handshake = build_handshake(host, port, PROTOCOL_VERSION)?;
                 stream.write_all(&handshake).await?;
                 // Drop / close immediately
             }
             MalformedType::RandomAfterHandshake => {
                 // Valid handshake, then random bytes instead of status request
-                let handshake = build_handshake(host, port, PROTOCOL_VERSION);
+                let handshake = build_handshake(host, port, PROTOCOL_VERSION)?;
                 stream.write_all(&handshake).await?;
                 let garbage: Vec<u8> = (0..128).map(|i| (i * 53 + 7) as u8).collect();
                 stream.write_all(&garbage).await?;
