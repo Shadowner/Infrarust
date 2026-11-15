@@ -311,9 +311,17 @@ pub(crate) fn register_codec_factory(
 ) {
     let id = take_id(&NEXT_CODEC_FACTORY);
     CODEC_FACTORIES.with(|factories| factories.insert(id, Rc::from(constructor)));
-    if notify && crate::host::register_codec_filter(&metadata, id).is_err() {
+    if !notify {
+        return;
+    }
+    if let Err(error) = crate::host::register_codec_filter(&metadata, id) {
         let refused = CODEC_FACTORIES.with(|factories| factories.remove(id));
         drop(refused);
+        crate::warn!(
+            "the proxy refused codec filter {}: {}",
+            metadata.id,
+            Error::from(error)
+        );
     }
 }
 
@@ -334,9 +342,13 @@ fn declare_codec_filters<P: Plugin>(notify: bool) {
 pub(crate) fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>) {
     let id = next_id();
     LIMBO_HANDLERS.with(|handlers| handlers.insert(id, Rc::from(handler)));
-    if crate::host::register_limbo_handler(name, id).is_err() {
+    if let Err(error) = crate::host::register_limbo_handler(name, id) {
         let refused = LIMBO_HANDLERS.with(|handlers| handlers.remove(id));
         drop(refused);
+        crate::warn!(
+            "the proxy refused limbo handler {name}: {}",
+            Error::from(error)
+        );
     }
 }
 
