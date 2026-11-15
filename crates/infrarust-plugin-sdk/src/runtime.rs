@@ -22,7 +22,7 @@ use crate::command::{
     CompletionClosure,
 };
 use crate::context::{Context, DisableReason, EnableReason};
-use crate::error::{Error, PluginError};
+use crate::error::{Error, ErrorKind, PluginError};
 use crate::event::{BanSource, EventPriority, GuestEvent};
 use crate::limbo::{HandlerOutcome, LimboHandler, LimboRegistrar, LimboSession, SessionEndReason};
 use crate::permissions::{PermissionProvider, PermissionSnapshot, PermissionSubject};
@@ -304,6 +304,14 @@ pub fn on_disable(reason: wg::DisableReason) -> Result<(), String> {
     }
 }
 
+fn warn_refused(what: &str, name: &str, error: crate::bindings::types::HostError) {
+    let error = Error::from(error);
+    let host_already_reported = error.kind() == ErrorKind::PermissionDenied;
+    if !host_already_reported {
+        crate::warn!("the proxy refused {what} {name}: {error}");
+    }
+}
+
 pub(crate) fn register_codec_factory(
     notify: bool,
     metadata: CodecFilterMetadata,
@@ -317,11 +325,7 @@ pub(crate) fn register_codec_factory(
     if let Err(error) = crate::host::register_codec_filter(&metadata, id) {
         let refused = CODEC_FACTORIES.with(|factories| factories.remove(id));
         drop(refused);
-        crate::warn!(
-            "the proxy refused codec filter {}: {}",
-            metadata.id,
-            Error::from(error)
-        );
+        warn_refused("codec filter", &metadata.id, error);
     }
 }
 
@@ -345,10 +349,7 @@ pub(crate) fn register_limbo_handler(name: &str, handler: Box<dyn LimboHandler>)
     if let Err(error) = crate::host::register_limbo_handler(name, id) {
         let refused = LIMBO_HANDLERS.with(|handlers| handlers.remove(id));
         drop(refused);
-        crate::warn!(
-            "the proxy refused limbo handler {name}: {}",
-            Error::from(error)
-        );
+        warn_refused("limbo handler", name, error);
     }
 }
 
