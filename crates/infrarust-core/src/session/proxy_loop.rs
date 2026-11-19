@@ -58,7 +58,7 @@ use crate::session::login_bridge::{LoginClock, read_timeout};
 use crate::session::login_messages::{LoginMessages, Routed};
 use crate::session::presentation;
 use crate::session::server_join::ServerJoin;
-use crate::util::packets::encode_for_state;
+use crate::util::packets::{announce_online_mode, encode_for_state};
 use crate::util::text::encode_text_component;
 
 #[derive(Debug)]
@@ -319,6 +319,7 @@ pub async fn proxy_loop(
         server,
         state: LoopState::new(),
         in_game,
+        relays_chat_session: relays_chat_session(ctx, server),
         backend_tree: None,
         join,
         codec_closed: None,
@@ -327,6 +328,16 @@ pub async fn proxy_loop(
     }
     .run()
     .await
+}
+
+fn relays_chat_session(ctx: &SessionContext<'_>, server: &ServerId) -> bool {
+    let services = ctx.services;
+    ctx.session.kind().online_mode()
+        && services
+            .domain_router
+            .find_by_server_id(server.as_str())
+            .and_then(|config| services.resolve_forwarding_handler(&config).ok())
+            .is_some_and(|handler| handler.carries_identity())
 }
 
 const LOGIN_TIMED_OUT: &str = "The login took too long";
@@ -375,6 +386,7 @@ struct Loop<'a> {
     chain: FrameChain<'a>,
     state: LoopState,
     in_game: bool,
+    relays_chat_session: bool,
     backend_tree: Option<CCommands>,
     join: &'a mut Option<ServerJoin>,
     codec_closed: Option<String>,
@@ -721,8 +733,10 @@ impl Loop<'_> {
                 None => return Ok(()),
             }
 
-            if Some(frame.id) == self.ids.s_chat_session {
-                tracing::debug!("dropping Chat Session Update (offline backend)");
+            if Some(frame.id) == self.ids.s_chat_session && !self.relays_chat_session {
+                tracing::debug!(
+                    "dropping Chat Session Update (the backend does not know the Mojang identity)"
+                );
                 return Ok(());
             }
 
@@ -909,6 +923,14 @@ impl Loop<'_> {
                 None => return Ok(BackendAction::Continue),
             }
 
+            if Some(frame.id) == self.ids.c_join_game {
+                announce_online_mode(
+                    &mut frame,
+                    self.ctx.session.kind().online_mode(),
+                    version,
+                    registry,
+                );
+            }
             if Some(frame.id) == self.ids.c_start_config {
                 self.io.client.queue_frame(&frame)?;
                 self.io.client.begin_reconfiguration();

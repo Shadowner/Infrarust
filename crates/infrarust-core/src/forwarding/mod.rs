@@ -81,6 +81,13 @@ impl ForwardingHandler {
         matches!(self, Self::Velocity(_))
     }
 
+    pub const fn carries_identity(&self) -> bool {
+        match self {
+            Self::None => false,
+            Self::Legacy(_) | Self::BungeeGuard(_) | Self::Velocity(_) => true,
+        }
+    }
+
     pub const fn modifies_handshake(&self) -> bool {
         matches!(self, Self::Legacy(_) | Self::BungeeGuard(_))
     }

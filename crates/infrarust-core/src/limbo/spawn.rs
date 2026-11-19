@@ -55,14 +55,21 @@ pub(crate) async fn send_spawn_sequence(
     version: ProtocolVersion,
     registry: &PacketRegistry,
     needs_join_game: bool,
+    online_mode: bool,
 ) -> Result<(), CoreError> {
     let era = Era::of(version);
     match (era, needs_join_game) {
-        (Era::Modern, true) => send_modern_with_join(client, version, registry).await?,
+        (Era::Modern, true) => {
+            send_modern_with_join(client, version, registry, online_mode).await?;
+        }
         (Era::Modern, false) => send_modern_switch(client, version, registry).await?,
-        (Era::Pre1_16, true) => send_pre_1_16_with_join(client, version, registry).await?,
+        (Era::Pre1_16, true) => {
+            send_pre_1_16_with_join(client, version, registry, online_mode).await?;
+        }
         (Era::Pre1_16, false) => send_pre_1_16_switch(client, version, registry).await?,
-        (Era::Legacy, true) => send_legacy_with_join(client, version, registry).await?,
+        (Era::Legacy, true) => {
+            send_legacy_with_join(client, version, registry, online_mode).await?;
+        }
         (Era::Legacy, false) => send_legacy_switch(client, version, registry).await?,
     }
 
@@ -92,8 +99,9 @@ async fn send_modern_with_join(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
+    online_mode: bool,
 ) -> Result<(), CoreError> {
-    send_join_game(client, version, registry).await?;
+    send_join_game(client, version, registry, online_mode).await?;
     send_spawn_position(client, version, registry).await?;
     send_player_position(client, version, registry).await?;
     send_modern_chunk_setup(client, version, registry).await
@@ -118,8 +126,9 @@ async fn send_pre_1_16_with_join(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
+    online_mode: bool,
 ) -> Result<(), CoreError> {
-    send_join_game(client, version, registry).await?;
+    send_join_game(client, version, registry, online_mode).await?;
     client
         .write_frame(&respawn_frame(
             &DimensionInfo::Legacy(0),
@@ -157,8 +166,9 @@ async fn send_legacy_with_join(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
+    online_mode: bool,
 ) -> Result<(), CoreError> {
-    send_join_game(client, version, registry).await?;
+    send_join_game(client, version, registry, online_mode).await?;
     send_player_position(client, version, registry).await?;
     send_chunk(client, version, registry).await
 }
@@ -192,8 +202,9 @@ async fn send_join_game(
     client: &mut ClientBridge,
     version: ProtocolVersion,
     registry: &PacketRegistry,
+    online_mode: bool,
 ) -> Result<(), CoreError> {
-    let join = build_limbo_join_game(version)?;
+    let join = build_limbo_join_game(version, online_mode)?;
     let frame = encode_packet(&join, version, registry)?;
     client.write_frame(&frame).await
 }
@@ -284,7 +295,10 @@ fn limbo_player_position(version: ProtocolVersion) -> CSynchronizePlayerPosition
     }
 }
 
-pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGame, CoreError> {
+pub(crate) fn build_limbo_join_game(
+    version: ProtocolVersion,
+    online_mode: bool,
+) -> Result<CJoinGame, CoreError> {
     if version.less_than(ProtocolVersion::V1_16) {
         let raw_payload = build_pre_1_16_join_game_payload(version)?;
         return Ok(CJoinGame {
@@ -323,7 +337,7 @@ pub(crate) fn build_limbo_join_game(version: ProtocolVersion) -> Result<CJoinGam
         dimension_type: LIMBO_DIMENSION_NAME.to_string(),
         portal_cooldown: 0,
         sea_level: 0, // End has no sea
-        online_mode: false,
+        online_mode,
         enforces_secure_chat: false,
         death_dimension: None,
         death_position: None,
@@ -499,7 +513,7 @@ mod tests {
             for needs_join_game in [true, false] {
                 let (mut client, mut peer) = client_pair(version).await;
                 let registry = infrarust_protocol::build_default_registry();
-                send_spawn_sequence(&mut client, version, &registry, needs_join_game)
+                send_spawn_sequence(&mut client, version, &registry, needs_join_game, false)
                     .await
                     .unwrap();
                 drop(client);
@@ -527,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_pre_1_16_join_game_v1_7() {
-        let result = build_limbo_join_game(ProtocolVersion::V1_7_2);
+        let result = build_limbo_join_game(ProtocolVersion::V1_7_2, false);
         assert!(
             result.is_ok(),
             "JoinGame 1.7 should build: {:?}",
@@ -541,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_pre_1_16_join_game_v1_8() {
-        let result = build_limbo_join_game(ProtocolVersion::V1_8);
+        let result = build_limbo_join_game(ProtocolVersion::V1_8, false);
         assert!(
             result.is_ok(),
             "JoinGame 1.8 should build: {:?}",
@@ -554,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_pre_1_16_join_game_v1_9() {
-        let result = build_limbo_join_game(ProtocolVersion::V1_9);
+        let result = build_limbo_join_game(ProtocolVersion::V1_9, false);
         assert!(
             result.is_ok(),
             "JoinGame 1.9 should build: {:?}",
@@ -567,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_pre_1_16_join_game_v1_14() {
-        let result = build_limbo_join_game(ProtocolVersion::V1_14);
+        let result = build_limbo_join_game(ProtocolVersion::V1_14, false);
         assert!(
             result.is_ok(),
             "JoinGame 1.14 should build: {:?}",
@@ -580,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_pre_1_16_join_game_v1_15() {
-        let result = build_limbo_join_game(ProtocolVersion::V1_15);
+        let result = build_limbo_join_game(ProtocolVersion::V1_15, false);
         assert!(
             result.is_ok(),
             "JoinGame 1.15 should build: {:?}",
@@ -603,7 +617,7 @@ mod tests {
             ProtocolVersion::V1_19_4,
             ProtocolVersion::V1_20,
         ] {
-            let result = build_limbo_join_game(version);
+            let result = build_limbo_join_game(version, false);
             assert!(
                 result.is_ok(),
                 "version {:?} should succeed: {:?}",
@@ -628,7 +642,7 @@ mod tests {
             ProtocolVersion::V1_21_5,
             ProtocolVersion::V26_3,
         ] {
-            let result = build_limbo_join_game(version);
+            let result = build_limbo_join_game(version, false);
             assert!(
                 result.is_ok(),
                 "version {:?} should succeed: {:?}",

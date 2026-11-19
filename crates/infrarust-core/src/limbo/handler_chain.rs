@@ -98,6 +98,7 @@ pub(crate) async fn run_handler_chain(
                         ctx.version(),
                         ctx.registry(),
                         needs_join_game,
+                        ctx.session.kind().online_mode(),
                     )
                     .await
                     {

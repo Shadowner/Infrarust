@@ -16,7 +16,7 @@ fn registry() -> &'static PacketRegistry {
 }
 
 pub fn join_game_frame(version: ProtocolVersion) -> Result<PacketFrame, CoreError> {
-    let join = build_limbo_join_game(version)?;
+    let join = build_limbo_join_game(version, false)?;
     encode_packet(&join, version, registry())
 }
 

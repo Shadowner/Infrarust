@@ -63,6 +63,20 @@ impl Default for CJoinGame {
     }
 }
 
+impl CJoinGame {
+    pub fn online_mode_offset(
+        payload: &[u8],
+        version: ProtocolVersion,
+    ) -> ProtocolResult<Option<usize>> {
+        if version.less_than(ProtocolVersion::V26_2) {
+            return Ok(None);
+        }
+        let mut rest = payload;
+        Self::decode(&mut rest, version)?;
+        Ok(Some(payload.len() - rest.len() - 2))
+    }
+}
+
 impl Packet for CJoinGame {
     const NAME: &'static str = "CJoinGame";
 
@@ -321,6 +335,65 @@ mod tests {
 
         assert_eq!(after.len(), before.len() + 1);
         assert_eq!(after[after.len() - 2..], [1, 0]);
+    }
+
+    #[test]
+    fn test_online_mode_offset_points_at_the_flag_from_26_2() {
+        for online_mode in [false, true] {
+            let pkt = CJoinGame {
+                online_mode,
+                enforces_secure_chat: !online_mode,
+                death_dimension: Some("minecraft:the_nether".to_string()),
+                death_position: Some(7),
+                ..modern_fixture()
+            };
+            let mut buf = Vec::new();
+            pkt.encode(&mut buf, ProtocolVersion::V26_3).unwrap();
+            buf.extend_from_slice(b"trailing");
+            let at = CJoinGame::online_mode_offset(&buf, ProtocolVersion::V26_3)
+                .unwrap()
+                .unwrap();
+            assert_eq!(buf[at], u8::from(online_mode));
+
+            buf[at] ^= 1;
+            let flipped = CJoinGame::decode(&mut buf.as_slice(), ProtocolVersion::V26_3).unwrap();
+            assert_eq!(flipped.online_mode, !online_mode);
+            assert_eq!(flipped.enforces_secure_chat, !online_mode);
+        }
+
+        let mut buf = Vec::new();
+        modern_fixture()
+            .encode(&mut buf, ProtocolVersion::V26_1)
+            .unwrap();
+        assert_eq!(
+            CJoinGame::online_mode_offset(&buf, ProtocolVersion::V26_1).unwrap(),
+            None
+        );
+        assert!(CJoinGame::online_mode_offset(&buf[..8], ProtocolVersion::V26_3).is_err());
+    }
+
+    #[test]
+    fn test_leaf_26_3_join_game_behind_velocity_decodes_to_the_last_byte() {
+        const CAPTURED: &str = "000002bb0003136d696e6563726166743a6f766572776f726c64146d696e6563726166743a7468655f6e6574686572116d696e6563726166743a7468655f656e6414060600010000136d696e6563726166743a6f766572776f726c642f6cca8b72902296010000010000c1ffffff0f0001";
+        let payload: Vec<u8> = (0..CAPTURED.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&CAPTURED[i..i + 2], 16).unwrap())
+            .collect();
+
+        let mut rest = payload.as_slice();
+        let join = CJoinGame::decode(&mut rest, ProtocolVersion::V26_3).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(join.entity_id, 699);
+        assert_eq!(join.level_names.len(), 3);
+        assert_eq!(join.level_name, "minecraft:overworld");
+        assert_eq!((join.gamemode, join.previous_gamemode), (1, -1));
+        assert_eq!(join.sea_level, -63);
+        assert!(!join.online_mode);
+        assert!(join.enforces_secure_chat);
+        assert_eq!(
+            CJoinGame::online_mode_offset(&payload, ProtocolVersion::V26_3).unwrap(),
+            Some(payload.len() - 2)
+        );
     }
 
     #[test]

@@ -33,6 +33,7 @@ use crate::session::kick::Kick;
 use crate::session::server_join::{ServerJoin, pre_connect};
 use crate::session::session_loop::LimboEntry;
 use crate::session::wake::{WakeFailure, wake};
+use crate::util::packets::announce_online_mode;
 
 use config_phase::PhaseError;
 use validation::SwitchRefusal;
@@ -322,7 +323,7 @@ async fn hand_over(
         )
         .await
     };
-    let join_game_frame = match first_frame {
+    let mut join_game_frame = match first_frame {
         Ok(frame) => frame,
         Err(PhaseError::Client(e)) => return Err(e),
         Err(PhaseError::Kicked(kick)) => return failed(ConnectError::Kicked(kick), stranded),
@@ -341,6 +342,12 @@ async fn hand_over(
         return failed(e.into(), stranded);
     }
 
+    announce_online_mode(
+        &mut join_game_frame,
+        session.kind().online_mode(),
+        version,
+        &services.packet_registry,
+    );
     switch_packets::send_switch_packets(
         client,
         &join_game_frame,
