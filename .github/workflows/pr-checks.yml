@@ -10,6 +10,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.cargo/**'
+      - 'deny.toml'
       - '.github/workflows/pr-checks.yml'
       - '.github/actions/build-frontend/**'
   push:
@@ -21,6 +22,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.cargo/**'
+      - 'deny.toml'
       - '.github/workflows/pr-checks.yml'
       - '.github/actions/build-frontend/**'
   schedule:
@@ -36,6 +38,22 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.99.0
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2.87.21
+        with:
+          tool: cargo-deny
+
+      - name: Check dependency advisories
+        run: cargo deny check advisories
+
   lint:
     runs-on: ubuntu-latest
     steps:

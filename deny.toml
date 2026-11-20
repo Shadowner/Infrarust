@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained; no known vulnerability and no replacement chosen yet" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime, used through humantime-serde for config durations, is unmaintained; no known vulnerability" },
+]
