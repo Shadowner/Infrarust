@@ -589,3 +589,25 @@ async fn test_servers_validate_reports_a_local_manager() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["valid"], false, "{body}");
 }
+
+#[tokio::test]
+async fn test_servers_raw_update_keeps_the_stored_key_away_from_another_panel() {
+    let api = TestApi::managed_server();
+    let (_, _, document) = api
+        .text(Method::GET, "/api/v1/servers/survival/raw", None)
+        .await;
+    let redirected = document.replace("https://panel.example.com", "https://attacker.example");
+
+    let (status, _, _) = api
+        .text(
+            Method::PUT,
+            "/api/v1/servers/survival/raw",
+            Some(&redirected),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let stored = std::fs::read_to_string(api.path().join("servers/survival.toml")).unwrap();
+    assert!(stored.contains("https://panel.example.com"));
+    assert!(!stored.contains("attacker.example"));
+}

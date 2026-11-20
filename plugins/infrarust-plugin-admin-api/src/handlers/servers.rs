@@ -387,7 +387,9 @@ fn restore_secrets(text: &str, stored: Option<String>) -> Result<String, ApiErro
         .parse::<DocumentMut>()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    if let Some(stored) = stored.and_then(|text| text.parse::<DocumentMut>().ok()) {
+    if let Some(stored) = stored.and_then(|text| text.parse::<DocumentMut>().ok())
+        && manager_target(&document) == manager_target(&stored)
+    {
         reinject(&mut document, &stored, SERVER_SECRETS);
     }
 
@@ -400,6 +402,16 @@ fn restore_secrets(text: &str, stored: Option<String>) -> Result<String, ApiErro
     }
 
     Ok(document.to_string())
+}
+
+/// Where the manager's API key is sent: a stored key is only put back for the
+/// panel it was issued for.
+fn manager_target(document: &DocumentMut) -> Option<(&str, &str)> {
+    let manager = document.get("server_manager")?.as_table_like()?;
+    Some((
+        manager.get("type")?.as_str()?,
+        manager.get("api_url")?.as_str()?,
+    ))
 }
 
 pub async fn get_raw(
