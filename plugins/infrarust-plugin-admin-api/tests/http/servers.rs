@@ -542,3 +542,50 @@ async fn test_server_stop_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["code"], "NOT_FOUND");
 }
+
+#[tokio::test]
+async fn test_servers_create_refuses_a_local_manager() {
+    let api = TestApi::new();
+
+    let (status, body) = api
+        .post(
+            "/api/v1/servers",
+            json!({
+                "id": "survival",
+                "domains": ["mc.example.com"],
+                "addresses": ["10.0.0.1:25565"],
+                "server_manager": {
+                    "type": "local",
+                    "command": "/bin/sh",
+                    "args": ["-c", "id"],
+                    "working_dir": "/tmp",
+                },
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(!api.path().join("servers/survival.toml").exists());
+}
+
+#[tokio::test]
+async fn test_servers_validate_reports_a_local_manager() {
+    let (status, body) = TestApi::new()
+        .post(
+            "/api/v1/servers/validate",
+            json!({
+                "id": "lobby",
+                "domains": ["lobby.example.com"],
+                "addresses": ["127.0.0.1:25565"],
+                "server_manager": {
+                    "type": "local",
+                    "command": "java",
+                    "working_dir": "/srv/lobby",
+                },
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["valid"], false, "{body}");
+}
