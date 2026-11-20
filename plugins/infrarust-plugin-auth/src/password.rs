@@ -48,25 +48,35 @@ pub async fn verify_password(password: &str, hash: &AuthPasswordHash) -> Result<
         .map_err(|e| AuthError::Hashing(format!("spawn_blocking failed: {e}")))?
 }
 
+pub async fn verify_stored(
+    password: &str,
+    stored: Option<&AuthPasswordHash>,
+    placeholder: &AuthPasswordHash,
+) -> Result<bool, AuthError> {
+    let matched = verify_password(password, stored.unwrap_or(placeholder)).await?;
+    Ok(matched && stored.is_some())
+}
+
 /// Verify and optionally migrate a bcrypt hash to Argon2id on success.
 pub async fn verify_and_migrate(
     password: &str,
-    hash: &AuthPasswordHash,
+    stored: Option<&AuthPasswordHash>,
+    placeholder: &AuthPasswordHash,
     config: &HashingConfig,
 ) -> Result<(bool, Option<AuthPasswordHash>), AuthError> {
-    let verified = verify_password(password, hash).await?;
+    let verified = verify_stored(password, stored, placeholder).await?;
 
-    if verified && config.migrate_legacy_hashes && is_bcrypt_hash(hash.as_str()) {
-        let new_hash = hash_password(password, config).await?;
-        Ok((true, Some(new_hash)))
-    } else {
-        Ok((verified, None))
+    match stored {
+        Some(hash) if verified && config.migrate_legacy_hashes && is_bcrypt_hash(hash.as_str()) => {
+            let new_hash = hash_password(password, config).await?;
+            Ok((true, Some(new_hash)))
+        }
+        _ => Ok((verified, None)),
     }
 }
 
-/// Pre-generated hash used when verifying non-existent accounts (timing-attack resistance).
 pub async fn generate_dummy_hash(config: &HashingConfig) -> Result<AuthPasswordHash, AuthError> {
-    hash_password("dummy-timing-attack-resistance-value", config).await
+    hash_password(&uuid::Uuid::new_v4().to_string(), config).await
 }
 
 fn verify_password_sync(password: &str, hash_str: &str) -> Result<bool, AuthError> {
@@ -140,7 +150,7 @@ mod tests {
         let bcrypt_hash = bcrypt::hash("migrate-me", 4).unwrap();
         let hash = AuthPasswordHash::new(bcrypt_hash);
 
-        let (verified, new_hash) = verify_and_migrate("migrate-me", &hash, &config)
+        let (verified, new_hash) = verify_and_migrate("migrate-me", Some(&hash), &hash, &config)
             .await
             .unwrap();
         assert!(verified);
@@ -158,11 +168,29 @@ mod tests {
         let config = test_config();
         let hash = hash_password("already-argon2", &config).await.unwrap();
 
-        let (verified, new_hash) = verify_and_migrate("already-argon2", &hash, &config)
-            .await
-            .unwrap();
+        let (verified, new_hash) =
+            verify_and_migrate("already-argon2", Some(&hash), &hash, &config)
+                .await
+                .unwrap();
         assert!(verified);
         assert!(new_hash.is_none()); // No migration needed
+    }
+
+    #[tokio::test]
+    async fn a_password_matching_the_placeholder_is_refused_without_a_stored_hash() {
+        let config = test_config();
+        let placeholder = hash_password("placeholder", &config).await.unwrap();
+
+        assert!(
+            !verify_stored("placeholder", None, &placeholder)
+                .await
+                .unwrap()
+        );
+        let (verified, migrated) = verify_and_migrate("placeholder", None, &placeholder, &config)
+            .await
+            .unwrap();
+        assert!(!verified);
+        assert!(migrated.is_none());
     }
 
     #[tokio::test]

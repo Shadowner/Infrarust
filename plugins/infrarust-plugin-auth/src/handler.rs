@@ -324,14 +324,8 @@ impl AuthHandler {
             return;
         };
 
-        // Passwordless (premium) accounts verify against the dummy hash so
-        // messaging and timing match unknown accounts (no account-type oracle).
-        let hash = match self.storage.get_account(&username) {
-            Ok(Some(AuthAccount {
-                password_hash: Some(h),
-                ..
-            })) => h,
-            Ok(_) => self.dummy_hash.clone(),
+        let stored = match self.storage.get_account(&username) {
+            Ok(account) => account.and_then(|account| account.password_hash),
             Err(e) => {
                 tracing::error!("Account lookup failed: {e}");
                 Self::send_internal_error(session);
@@ -339,7 +333,14 @@ impl AuthHandler {
             }
         };
 
-        match password::verify_and_migrate(password, &hash, &self.config.hashing).await {
+        match password::verify_and_migrate(
+            password,
+            stored.as_ref(),
+            &self.dummy_hash,
+            &self.config.hashing,
+        )
+        .await
+        {
             Ok((true, migrated_hash)) => {
                 if let Some(new_hash) = migrated_hash
                     && let Err(e) = self.storage.update_password_hash(&username, new_hash)
@@ -829,6 +830,33 @@ mod tests {
         let text = session_text(&session);
         assert!(text.contains("Wrong password"), "got: {text}");
         assert!(!text.to_lowercase().contains("premium"), "got: {text}");
+        assert!(session.completions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_placeholder_password_does_not_open_a_passwordless_account() {
+        let env = TestEnv::new().await;
+        env.create_account("Notch", None).await;
+        let placeholder = password::hash_password("placeholder", &env.config.hashing)
+            .await
+            .unwrap();
+        let handler = AuthHandler::new(
+            Arc::clone(&env.storage),
+            Arc::clone(&env.config),
+            Arc::clone(&env.registry) as Arc<dyn PlayerRegistry>,
+            placeholder,
+            HashSet::new(),
+            None,
+        );
+        let session = limbo_session(1, "Notch");
+        handler.on_player_enter(&*session).await;
+
+        handler
+            .on_command(&*session, "login", &["placeholder"])
+            .await;
+
+        let text = session_text(&session);
+        assert!(text.contains("Wrong password"), "got: {text}");
         assert!(session.completions().is_empty());
     }
 
