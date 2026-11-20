@@ -38,7 +38,7 @@ tokio-stream = "0.1.19"
 # Serialization
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-serde_yml = "0.0.13"
+serde_norway = "0.9.42"
 toml = "1.1.6"
 toml_edit = "0.25.15"
 fastnbt = "2.6.3"
@@ -93,7 +93,7 @@ libdeflater = "1.26.1"
 aes = "0.9.3"
 cfb8 = "0.9.1"
 cipher = "0.5.2"
-rsa = { version = "0.9.10", features = ["sha1", "sha2", "getrandom"] }
+rsa = { version = "0.10.0", features = ["pkcs1v15"] }
 md-5 = "0.11.0"
 sha1 = "0.11.0"
 sha2 = "0.11.0"
@@ -230,7 +230,7 @@ libdeflater = { opt-level = 2 }
 aes = { opt-level = 2 }
 cfb8 = { opt-level = 2 }
 rsa = { opt-level = 2 }
-num-bigint-dig = { opt-level = 2 }
+crypto-bigint = { opt-level = 2 }
 sha1 = { opt-level = 2 }
 sha2 = { opt-level = 2 }
 cranelift-assembler-x64 = { opt-level = 2 }

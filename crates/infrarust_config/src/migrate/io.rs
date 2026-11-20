@@ -92,7 +92,7 @@ fn migrate_file(
 ) -> Result<(), Skip> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| Skip::Failed(format!("Cannot read file: {e}")))?;
-    let v1: V1ServerConfig = serde_yml::from_str(&content)
+    let v1: V1ServerConfig = serde_norway::from_str(&content)
         .map_err(|e| Skip::Failed(format!("YAML parse error: {e}")))?;
 
     if v1.domains.is_empty() && v1.addresses.is_empty() {
@@ -121,7 +121,7 @@ pub fn migrate_proxy_config(
     })?;
 
     let v1: V1InfrarustConfig =
-        serde_yml::from_str(&content).map_err(|source| ConfigError::ParseYaml {
+        serde_norway::from_str(&content).map_err(|source| ConfigError::ParseYaml {
             path: input_file.to_path_buf(),
             source,
         })?;

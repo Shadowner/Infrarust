@@ -17,8 +17,7 @@ use infrarust_protocol::packets::login::{
 use infrarust_protocol::registry::{PacketRegistry, build_default_registry};
 use infrarust_protocol::version::ProtocolVersion;
 use rsa::pkcs8::DecodePublicKey;
-use rsa::rand_core::OsRng;
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
+use rsa::{Pkcs1v15Encrypt, PublicKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
@@ -54,10 +53,10 @@ async fn answer_encryption(peer: &mut TcpStream, registry: &PacketRegistry, trai
     };
     let request = CEncryptionRequest::decode(&mut frame.payload.as_ref(), V).unwrap();
 
-    let public_key = RsaPublicKey::from_public_key_der(&request.public_key).unwrap();
+    let public_key = PublicKey::from_public_key_der(&request.public_key).unwrap();
     let encrypt = |data: &[u8]| {
         public_key
-            .encrypt(&mut OsRng, Pkcs1v15Encrypt, data)
+            .encrypt(&mut rand::rng(), Pkcs1v15Encrypt, data)
             .unwrap()
     };
     let response = SEncryptionResponse {

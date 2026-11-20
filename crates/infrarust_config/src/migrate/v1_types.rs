@@ -162,7 +162,7 @@ pub struct V1InfrarustConfig {
     #[serde(default)]
     pub cache: Option<V1Cache>,
     #[serde(default)]
-    pub logging: Option<serde_yml::Value>,
+    pub logging: Option<serde_norway::Value>,
     #[serde(default)]
     pub telemetry: Option<V1Telemetry>,
     #[serde(default, alias = "managers_config")]
