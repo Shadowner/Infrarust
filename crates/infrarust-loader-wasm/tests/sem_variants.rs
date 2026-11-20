@@ -79,7 +79,8 @@ impl Dump {
             plugins_dir.clone(),
             EnvOptions::default()
                 .grant(PROBE, "chat-intercept")
-                .grant(PROBE, "plugin-messaging"),
+                .grant(PROBE, "plugin-messaging")
+                .grant(PROBE, "identity-override"),
         );
         before_load(&env);
         let loader = loader_from_toml("");
