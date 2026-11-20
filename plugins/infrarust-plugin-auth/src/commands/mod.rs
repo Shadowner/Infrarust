@@ -53,10 +53,8 @@ pub(crate) async fn verify_current_password(
         })) => Some(hash),
         _ => None,
     };
-    let hash = stored.as_ref().unwrap_or_else(|| handler.dummy_hash());
-
-    match password::verify_password(password, hash).await {
-        Ok(true) if stored.is_some() => {
+    match password::verify_stored(password, stored.as_ref(), handler.dummy_hash()).await {
+        Ok(true) => {
             handler.clear_failed_attempts(player.id());
             Some(username)
         }

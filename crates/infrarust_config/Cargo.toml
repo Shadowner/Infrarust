@@ -28,7 +28,7 @@ ipnet = { workspace = true }
 humantime = { workspace = true }
 humantime-serde = { workspace = true }
 wildmatch = { workspace = true }
-serde_yml = { workspace = true }
+serde_norway = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

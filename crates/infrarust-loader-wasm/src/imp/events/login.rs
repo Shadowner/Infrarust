@@ -7,7 +7,7 @@ use infrarust_api::events::lifecycle::{
 
 use std::sync::Arc;
 
-use infrarust_api::permissions::PermissionSnapshot;
+use infrarust_api::permissions::{Capability, PermissionSnapshot};
 
 use super::{Applied, Restore, Texts, WasmEvent, unavailable, unmatched};
 use crate::actor::InstanceRef;
@@ -15,6 +15,15 @@ use crate::bindings::infrarust::plugin::events::{self as we, EventKind};
 use crate::component;
 use crate::convert;
 use crate::snapshots::{snapshot_from_wit, snapshot_to_wit};
+
+pub(crate) const FORCED_AUTH_NEEDS_CAPABILITY: &str =
+    "forcing online or offline mode needs the identity-override capability";
+
+pub(crate) const PROFILE_CHANGE_NEEDS_CAPABILITY: &str =
+    "changing the game profile needs the identity-override capability";
+
+pub(crate) const CUSTOM_PERMISSIONS_NEED_CAPABILITY: &str =
+    "custom permissions need the permission-provider capability";
 
 impl WasmEvent for PreLoginEvent {
     const KIND: EventKind = EventKind::PreLogin;
@@ -50,6 +59,19 @@ impl WasmEvent for PreLoginEvent {
             we::PreLoginResult::ForceOnline => PreLoginResult::ForceOnline,
         });
         texts.applied()
+    }
+
+    fn apply_for(&mut self, outcome: we::EventOutcome, instance: &InstanceRef) -> Applied {
+        if matches!(
+            outcome,
+            we::EventOutcome::PreLogin(
+                we::PreLoginResult::ForceOffline | we::PreLoginResult::ForceOnline
+            )
+        ) && !instance.capabilities().has(Capability::IdentityOverride)
+        {
+            return Applied::Refused(FORCED_AUTH_NEEDS_CAPABILITY);
+        }
+        self.apply(outcome)
     }
 
     const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
@@ -135,6 +157,9 @@ impl WasmEvent for PermissionsSetupEvent {
         else {
             return self.apply(outcome);
         };
+        if !instance.capabilities().has(Capability::PermissionProvider) {
+            return Applied::Refused(CUSTOM_PERMISSIONS_NEED_CAPABILITY);
+        }
         let (snapshot, applied) = match snapshot_from_wit(&snapshot) {
             Ok(snapshot) => (snapshot, Applied::Set),
             Err(reason) => (PermissionSnapshot::new(), Applied::Degraded(reason)),
@@ -229,6 +254,16 @@ impl WasmEvent for GameProfileRequestEvent {
         texts.applied()
     }
 
+    fn apply_for(&mut self, outcome: we::EventOutcome, instance: &InstanceRef) -> Applied {
+        if let we::EventOutcome::GameProfileRequest(result) = &outcome
+            && !instance.capabilities().has(Capability::IdentityOverride)
+            && convert::game_profile_from_wit(result.profile.clone()) != self.profile
+        {
+            return Applied::Refused(PROFILE_CHANGE_NEEDS_CAPABILITY);
+        }
+        self.apply(outcome)
+    }
+
     const DENY_UNANSWERED: Option<fn(&mut Self) -> Restore<Self>> = Some(|event| {
         let previous = event.denied().cloned();
         event.deny(unavailable());
@@ -244,7 +279,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use std::sync::Arc;
 
-    use infrarust_api::permissions::DefaultPermissionChecker;
+    use infrarust_api::permissions::{CapabilitySet, DefaultPermissionChecker};
     use infrarust_api::types::{Component, ProtocolVersion, ServerId};
 
     use super::super::steve;
@@ -439,9 +474,106 @@ mod tests {
         );
     }
 
+    fn granted(capability: Capability) -> InstanceRef {
+        InstanceRef::detached_with(
+            CapabilitySet::baseline().with(capability),
+            crate::network::probe_policy(String::new()),
+        )
+    }
+
+    fn baseline() -> InstanceRef {
+        InstanceRef::detached_with(
+            CapabilitySet::baseline(),
+            crate::network::probe_policy(String::new()),
+        )
+    }
+
+    #[test]
+    fn forcing_the_auth_mode_needs_identity_override() {
+        for forced in [
+            we::PreLoginResult::ForceOffline,
+            we::PreLoginResult::ForceOnline,
+        ] {
+            let mut event = pre_login();
+            let applied = event.apply_for(we::EventOutcome::PreLogin(forced.clone()), &baseline());
+            assert_eq!(applied, Applied::Refused(FORCED_AUTH_NEEDS_CAPABILITY));
+            assert!(matches!(event.result(), PreLoginResult::Allowed));
+
+            let applied = event.apply_for(
+                we::EventOutcome::PreLogin(forced),
+                &granted(Capability::IdentityOverride),
+            );
+            assert_eq!(applied, Applied::Set);
+            assert!(!matches!(event.result(), PreLoginResult::Allowed));
+        }
+    }
+
+    #[test]
+    fn a_baseline_plugin_can_still_deny_a_pre_login() {
+        let mut event = pre_login();
+        let applied = event.apply_for(
+            we::EventOutcome::PreLogin(we::PreLoginResult::Denied(component::to_wit(
+                &Component::text("Closed"),
+            ))),
+            &baseline(),
+        );
+        assert_eq!(applied, Applied::Set);
+        assert!(matches!(event.result(), PreLoginResult::Denied { .. }));
+    }
+
+    #[test]
+    fn changing_the_profile_needs_identity_override() {
+        let mut event = profile_request();
+        let original = event.profile.clone();
+        let mut renamed = profile_result(&event);
+        renamed.profile.username = "Notch".into();
+
+        let applied = event.apply_for(
+            we::EventOutcome::GameProfileRequest(renamed.clone()),
+            &baseline(),
+        );
+        assert_eq!(applied, Applied::Refused(PROFILE_CHANGE_NEEDS_CAPABILITY));
+        assert_eq!(event.profile, original);
+
+        let applied = event.apply_for(
+            we::EventOutcome::GameProfileRequest(renamed),
+            &granted(Capability::IdentityOverride),
+        );
+        assert_eq!(applied, Applied::Set);
+        assert_eq!(event.profile.username, "Notch");
+    }
+
+    #[test]
+    fn a_baseline_plugin_can_deny_without_touching_the_profile() {
+        let mut event = profile_request();
+        let mut denied = profile_result(&event);
+        denied.denied = Some(component::to_wit(&Component::text("Closed")));
+        let applied = event.apply_for(we::EventOutcome::GameProfileRequest(denied), &baseline());
+        assert_eq!(applied, Applied::Set);
+        assert_eq!(event.denied(), Some(&Component::text("Closed")));
+    }
+
+    #[test]
+    fn custom_permissions_need_permission_provider() {
+        let mut event = PermissionsSetupEvent::new(steve(), true);
+        let snapshot = crate::bindings::infrarust::plugin::permissions::PermissionSnapshot {
+            rules: Vec::new(),
+            admin: true,
+        };
+        let applied = event.apply_for(
+            we::EventOutcome::PermissionsSetup(we::PermissionsSetupResult::Custom(snapshot)),
+            &baseline(),
+        );
+        assert_eq!(
+            applied,
+            Applied::Refused(CUSTOM_PERMISSIONS_NEED_CAPABILITY)
+        );
+        assert!(matches!(event.result(), PermissionsSetupResult::UseDefault));
+    }
+
     #[test]
     fn a_custom_snapshot_becomes_a_live_checker_held_for_the_player() {
-        let instance = InstanceRef::detached();
+        let instance = granted(Capability::PermissionProvider);
         let mut event = PermissionsSetupEvent::new(steve(), true);
         let snapshot = crate::bindings::infrarust::plugin::permissions::PermissionSnapshot {
             rules: vec![

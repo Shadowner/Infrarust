@@ -385,14 +385,18 @@ async fn a_native_custom_checker_reaches_a_wasm_listener_as_the_snapshot_it_desc
 async fn a_wasm_snapshot_given_at_permissions_setup_is_what_a_later_native_listener_sees() {
     let seen: Arc<Mutex<Option<bool>>> = Arc::default();
     let observed = Arc::clone(&seen);
-    let probe = Probe::start("permsetup 64 provide", EnvOptions::default(), move |env| {
-        let bus: &dyn EventBus = &*env.event_bus;
-        bus.subscribe::<PermissionsSetupEvent, _>(EventPriority::LATE, move |event| {
-            if let PermissionsSetupResult::Custom(checker) = event.result() {
-                *observed.lock().unwrap() = Some(checker.has_permission("probe.node"));
-            }
-        });
-    })
+    let probe = Probe::start(
+        "permsetup 64 provide",
+        EnvOptions::default().grant(PROBE, "permission-provider"),
+        move |env| {
+            let bus: &dyn EventBus = &*env.event_bus;
+            bus.subscribe::<PermissionsSetupEvent, _>(EventPriority::LATE, move |event| {
+                if let PermissionsSetupResult::Custom(checker) = event.result() {
+                    *observed.lock().unwrap() = Some(checker.has_permission("probe.node"));
+                }
+            });
+        },
+    )
     .await;
     probe
         .env

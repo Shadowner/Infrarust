@@ -13,6 +13,8 @@ use infrarust_config::{MotdConfig, ServerConfig};
 use crate::error::CoreError;
 
 const DATA_URI_PREFIX: &str = "data:image/png;base64,";
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+const MAX_FAVICON_BYTES: u64 = 64 * 1024;
 
 /// Loads a favicon value into a data URI string.
 ///
@@ -29,7 +31,7 @@ pub async fn load_favicon(value: &str) -> Result<String, CoreError> {
     }
 
     if is_file_path(value) {
-        let bytes = tokio::fs::read(value).await.map_err(|e| {
+        let bytes = read_png(value).await.map_err(|e| {
             std::io::Error::new(
                 e.kind(),
                 format!("failed to read favicon file '{value}': {e}"),
@@ -41,6 +43,28 @@ pub async fn load_favicon(value: &str) -> Result<String, CoreError> {
 
     // Treat as raw base64
     Ok(format!("{DATA_URI_PREFIX}{value}"))
+}
+
+async fn read_png(path: &str) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind};
+    use tokio::io::AsyncReadExt;
+
+    if !tokio::fs::metadata(path).await?.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    let mut bytes = Vec::new();
+    tokio::fs::File::open(path)
+        .await?
+        .take(MAX_FAVICON_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > MAX_FAVICON_BYTES {
+        return Err(Error::new(ErrorKind::InvalidData, "larger than 64 KiB"));
+    }
+    if !bytes.starts_with(PNG_SIGNATURE) {
+        return Err(Error::new(ErrorKind::InvalidData, "not a PNG image"));
+    }
+    Ok(bytes)
 }
 
 /// Heuristic: if it contains a path separator or ends with an image extension,
@@ -203,6 +227,35 @@ mod tests {
             .decode(b64)
             .unwrap();
         assert_eq!(decoded, b"\x89PNG\r\n\x1a\nfake");
+    }
+
+    #[tokio::test]
+    async fn a_file_that_is_not_a_png_is_never_read_into_the_favicon() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret");
+        tokio::fs::write(&path, b"forwarding-secret").await.unwrap();
+
+        let error = load_favicon(path.to_str().unwrap()).await.unwrap_err();
+        assert!(!error.to_string().contains("forwarding-secret"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_png_larger_than_the_limit_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("huge.png");
+        let mut bytes = PNG_SIGNATURE.to_vec();
+        bytes.resize(70 * 1024, 0);
+        tokio::fs::write(&path, bytes).await.unwrap();
+
+        assert!(load_favicon(path.to_str().unwrap()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_directory_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = format!("{}/", dir.path().display());
+
+        assert!(load_favicon(&path).await.is_err());
     }
 
     #[tokio::test]

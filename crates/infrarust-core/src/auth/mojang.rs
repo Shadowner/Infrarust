@@ -9,10 +9,9 @@ use std::time::Duration;
 use num_bigint::BigInt;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
-use rsa::rand_core::{OsRng, RngCore};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
-use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
+use rsa::{Pkcs1v15Encrypt, PrivateKey, PublicKey};
 use sha1::{Digest, Sha1};
 use tokio::sync::Semaphore;
 
@@ -58,7 +57,7 @@ impl Default for AuthLimits {
 /// A single instance is shared across all connections (via `Arc`).
 /// The RSA key and HTTP client are reused for every authentication.
 pub struct MojangAuth {
-    rsa_key: Arc<RsaPrivateKey>,
+    rsa_key: Arc<PrivateKey>,
     public_key_der: Vec<u8>,
     http_client: reqwest::Client,
     session_url: String,
@@ -82,8 +81,7 @@ impl MojangAuth {
     /// Returns `CoreError::Auth` if RSA key generation, DER encoding or the
     /// HTTP client setup fails.
     pub fn with_limits(session_url: String, limits: AuthLimits) -> Result<Self, CoreError> {
-        let mut rng = OsRng;
-        let rsa_key = RsaPrivateKey::new(&mut rng, 1024)
+        let rsa_key = PrivateKey::new(&mut rand::rng(), 1024)
             .map_err(|e| CoreError::Auth(format!("RSA key generation failed: {e}")))?;
 
         let public_key_der = rsa_key
@@ -149,8 +147,7 @@ impl MojangAuth {
         registry: &PacketRegistry,
     ) -> Result<GameProfile, CoreError> {
         // Generate random verify token
-        let mut verify_token = [0u8; 4];
-        OsRng.fill_bytes(&mut verify_token);
+        let verify_token: [u8; 4] = rand::random();
 
         // Send EncryptionRequest
         let version = client.protocol_version();
@@ -272,7 +269,7 @@ impl MojangAuth {
 }
 
 fn decrypt_and_check_freshness(
-    rsa_key: &RsaPrivateKey,
+    rsa_key: &PrivateKey,
     response: &SEncryptionResponse,
     profile_public_key: Option<&[u8]>,
     verify_token: &[u8; 4],
@@ -318,7 +315,7 @@ fn verify_challenge_signature(
     salt: i64,
     signature: &[u8],
 ) -> Result<(), CoreError> {
-    let key = RsaPublicKey::from_public_key_der(public_key_der)
+    let key = PublicKey::from_public_key_der(public_key_der)
         .map_err(|e| CoreError::Auth(format!("invalid profile public key: {e}")))?;
 
     let signature = Signature::try_from(signature)
@@ -398,8 +395,7 @@ mod tests {
         use rsa::pkcs1v15::SigningKey;
         use rsa::signature::{SignatureEncoding, Signer};
 
-        let mut rng = OsRng;
-        let key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let key = PrivateKey::new(&mut rand::rng(), 2048).unwrap();
         let der = key.to_public_key().to_public_key_der().unwrap().to_vec();
 
         let mut signed = nonce.to_vec();
@@ -435,7 +431,10 @@ mod tests {
         let (_, signature) = sign_challenge(&nonce, 7);
 
         let auth = MojangAuth::with_session_url(String::new()).unwrap();
-        assert!(auth.rsa_key.decrypt(Pkcs1v15Encrypt, &signature).is_err());
+        assert!(!matches!(
+            auth.rsa_key.decrypt(Pkcs1v15Encrypt, &signature),
+            Ok(plain) if plain == nonce
+        ));
     }
 
     #[test]

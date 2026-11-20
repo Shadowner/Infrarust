@@ -542,3 +542,72 @@ async fn test_server_stop_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["code"], "NOT_FOUND");
 }
+
+#[tokio::test]
+async fn test_servers_create_refuses_a_local_manager() {
+    let api = TestApi::new();
+
+    let (status, body) = api
+        .post(
+            "/api/v1/servers",
+            json!({
+                "id": "survival",
+                "domains": ["mc.example.com"],
+                "addresses": ["10.0.0.1:25565"],
+                "server_manager": {
+                    "type": "local",
+                    "command": "/bin/sh",
+                    "args": ["-c", "id"],
+                    "working_dir": "/tmp",
+                },
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(!api.path().join("servers/survival.toml").exists());
+}
+
+#[tokio::test]
+async fn test_servers_validate_reports_a_local_manager() {
+    let (status, body) = TestApi::new()
+        .post(
+            "/api/v1/servers/validate",
+            json!({
+                "id": "lobby",
+                "domains": ["lobby.example.com"],
+                "addresses": ["127.0.0.1:25565"],
+                "server_manager": {
+                    "type": "local",
+                    "command": "java",
+                    "working_dir": "/srv/lobby",
+                },
+            }),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["valid"], false, "{body}");
+}
+
+#[tokio::test]
+async fn test_servers_raw_update_keeps_the_stored_key_away_from_another_panel() {
+    let api = TestApi::managed_server();
+    let (_, _, document) = api
+        .text(Method::GET, "/api/v1/servers/survival/raw", None)
+        .await;
+    let redirected = document.replace("https://panel.example.com", "https://attacker.example");
+
+    let (status, _, _) = api
+        .text(
+            Method::PUT,
+            "/api/v1/servers/survival/raw",
+            Some(&redirected),
+        )
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let stored = std::fs::read_to_string(api.path().join("servers/survival.toml")).unwrap();
+    assert!(stored.contains("https://panel.example.com"));
+    assert!(!stored.contains("attacker.example"));
+}

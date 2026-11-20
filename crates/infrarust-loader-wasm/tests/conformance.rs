@@ -15,6 +15,8 @@ const LAST: u8 = 255;
 const CHAT_INTERCEPT: &str = "chat-intercept";
 const PLUGIN_MESSAGING: &str = "plugin-messaging";
 const RAW_PACKET: &str = "raw-packet";
+const IDENTITY_OVERRIDE: &str = "identity-override";
+const PERMISSION_PROVIDER: &str = "permission-provider";
 
 macro_rules! conformance {
     ($native:ident, $wasm:ident, $scenario:expr $(,)?) => {
@@ -58,6 +60,8 @@ fn grants_for(scenario: Scenario, id: &'static str, event: E) -> Scenario {
         E::ChatMessage | E::CommandExecute => scenario.grant(id, CHAT_INTERCEPT),
         E::PluginMessage => scenario.grant(id, PLUGIN_MESSAGING),
         E::RawPacket => scenario.grant(id, RAW_PACKET),
+        E::PreLogin | E::GameProfileRequest => scenario.grant(id, IDENTITY_OVERRIDE),
+        E::PermissionsSetup => scenario.grant(id, PERMISSION_PROVIDER),
         _ => scenario,
     }
 }
@@ -230,6 +234,7 @@ conformance!(
                 "on permissions-setup late record",
             ]
         )
+        .grant("scripted", PERMISSION_PROVIDER)
         .fire(E::PermissionsSetup, "custom:admin")
         .log(
             "scripted",

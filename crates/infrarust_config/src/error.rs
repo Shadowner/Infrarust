@@ -50,7 +50,7 @@ pub enum ConfigError {
     #[error("failed to parse YAML in {path}: {source}")]
     ParseYaml {
         path: PathBuf,
-        source: serde_yml::Error,
+        source: serde_norway::Error,
     },
 
     #[error("failed to serialize TOML for {path}: {source}")]

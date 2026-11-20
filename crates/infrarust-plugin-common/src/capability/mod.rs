@@ -46,6 +46,7 @@ capabilities! {
     BanProvider => "ban-provider",
     PluginMessaging => "plugin-messaging",
     ConnectionHandoff => "connection-handoff",
+    IdentityOverride => "identity-override",
 }
 
 impl Capability {
@@ -112,7 +113,7 @@ mod tests {
             assert_eq!(name.parse::<Capability>(), Ok(capability));
             assert_eq!(capability.to_string(), name);
         }
-        assert_eq!(Capability::ALL.len(), 21);
+        assert_eq!(Capability::ALL.len(), 22);
         assert_eq!(names.len(), Capability::ALL.len());
     }
 

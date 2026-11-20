@@ -32,8 +32,7 @@ use infrarust_protocol::packets::status::{
 };
 use infrarust_protocol::version::{ConnectionState, ProtocolVersion};
 use rsa::pkcs8::DecodePublicKey;
-use rsa::rand_core::{OsRng, RngCore};
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
+use rsa::{Pkcs1v15Encrypt, PublicKey};
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc};
@@ -481,12 +480,11 @@ impl Driver {
     }
 
     async fn answer_encryption(&mut self, request: &CEncryptionRequest) -> HarnessResult<()> {
-        let key = RsaPublicKey::from_public_key_der(&request.public_key)
+        let key = PublicKey::from_public_key_der(&request.public_key)
             .map_err(|e| HarnessError::Unexpected(format!("server public key: {e}")))?;
-        let mut secret = [0u8; 16];
-        OsRng.fill_bytes(&mut secret);
+        let secret: [u8; 16] = rand::random();
         let encrypt = |data: &[u8]| {
-            key.encrypt(&mut OsRng, Pkcs1v15Encrypt, data)
+            key.encrypt(&mut rand::rng(), Pkcs1v15Encrypt, data)
                 .map_err(|e| HarnessError::Unexpected(format!("RSA encryption failed: {e}")))
         };
         let response = SEncryptionResponse {

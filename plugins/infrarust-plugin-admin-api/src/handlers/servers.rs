@@ -10,7 +10,7 @@ use infrarust_api::provider::{PluginProviderEvent, ServerDocument};
 use infrarust_api::services::server_manager::ServerState;
 use infrarust_api::types::ServerId;
 use infrarust_config::secrets::{SERVER_SECRETS, redact, reinject, still_redacted};
-use infrarust_config::{MAX_IDENTIFIER_LEN, ServerConfig};
+use infrarust_config::{MAX_IDENTIFIER_LEN, ServerConfig, ServerManagerConfig};
 use toml_edit::DocumentMut;
 
 use crate::address::format_address;
@@ -26,6 +26,16 @@ use crate::state::ApiState;
 use crate::vocab::{ProxyModeName, server_state_str};
 
 const UNKNOWN_SOURCE: &str = "unknown";
+
+const LOCAL_MANAGER_REFUSED: &str =
+    "a local server manager runs a command on the proxy host and cannot be set through the API";
+
+fn refuse_local_manager(config: &ServerConfig) -> Result<(), String> {
+    match config.server_manager {
+        Some(ServerManagerConfig::Local(_)) => Err(LOCAL_MANAGER_REFUSED.to_owned()),
+        _ => Ok(()),
+    }
+}
 
 /// The providers claiming each server id. An id claimed more than once is
 /// routed with whichever copy the router iterates first, so the count matters
@@ -253,6 +263,7 @@ fn settle_id(config: &mut ServerConfig, expected: &str) -> Result<DocumentId, Ap
     })?;
     let _ = infrarust_config::validate_server_config(config)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    refuse_local_manager(config).map_err(ApiError::BadRequest)?;
 
     Ok(document)
 }
@@ -376,7 +387,9 @@ fn restore_secrets(text: &str, stored: Option<String>) -> Result<String, ApiErro
         .parse::<DocumentMut>()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-    if let Some(stored) = stored.and_then(|text| text.parse::<DocumentMut>().ok()) {
+    if let Some(stored) = stored.and_then(|text| text.parse::<DocumentMut>().ok())
+        && manager_target(&document) == manager_target(&stored)
+    {
         reinject(&mut document, &stored, SERVER_SECRETS);
     }
 
@@ -389,6 +402,16 @@ fn restore_secrets(text: &str, stored: Option<String>) -> Result<String, ApiErro
     }
 
     Ok(document.to_string())
+}
+
+/// Where the manager's API key is sent: a stored key is only put back for the
+/// panel it was issued for.
+fn manager_target(document: &DocumentMut) -> Option<(&str, &str)> {
+    let manager = document.get("server_manager")?.as_table_like()?;
+    Some((
+        manager.get("type")?.as_str()?,
+        manager.get("api_url")?.as_str()?,
+    ))
 }
 
 pub async fn get_raw(
@@ -466,7 +489,10 @@ pub async fn validate(headers: HeaderMap, body: String) -> Json<ApiResponse<Vali
             errors: vec![e],
             warnings: vec![],
         },
-        Ok(config) => match infrarust_config::validate_server_config(&config) {
+        Ok(config) => match infrarust_config::validate_server_config(&config)
+            .map_err(|e| e.to_string())
+            .and_then(|warnings| refuse_local_manager(&config).map(|()| warnings))
+        {
             Ok(warnings) => ValidationResponse {
                 valid: true,
                 errors: vec![],
@@ -474,7 +500,7 @@ pub async fn validate(headers: HeaderMap, body: String) -> Json<ApiResponse<Vali
             },
             Err(e) => ValidationResponse {
                 valid: false,
-                errors: vec![e.to_string()],
+                errors: vec![e],
                 warnings: vec![],
             },
         },

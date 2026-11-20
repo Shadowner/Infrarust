@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_unparseable_v1_bind_warns_and_falls_back() {
-        let v1: V1InfrarustConfig = serde_yml::from_str("bind: \"not an address\"").unwrap();
+        let v1: V1InfrarustConfig = serde_norway::from_str("bind: \"not an address\"").unwrap();
         let result = convert_v1_proxy_config(&v1);
         assert_eq!(result.config.bind, crate::defaults::bind());
         assert!(
@@ -821,7 +821,7 @@ mod tests {
 
     #[test]
     fn test_infrared_style_v1_bind_is_kept() {
-        let v1: V1InfrarustConfig = serde_yml::from_str("bind: \":25577\"").unwrap();
+        let v1: V1InfrarustConfig = serde_norway::from_str("bind: \":25577\"").unwrap();
         let result = convert_v1_proxy_config(&v1);
         assert_eq!(result.config.bind, "0.0.0.0:25577".parse().unwrap());
         assert!(result.warnings.is_empty());
