@@ -76,7 +76,7 @@ export default
         { text: 'Plugins', link: '/plugins/', activeMatch: '/plugins/' },
         { text: 'Reference', link: '/reference/', activeMatch: '/reference/' },
         {
-          text: 'v2.0.0-beta.4',
+          text: 'v2.0.0-beta.5',
           items: [
             {
               text: 'Release',
