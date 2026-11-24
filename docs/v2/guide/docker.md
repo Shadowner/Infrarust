@@ -1,6 +1,6 @@
 ---
 title: Docker Deployment
-description: Run Infrarust in Docker with volume mounts, exposed ports, environment variables, Docker Compose, and automatic server discovery from container labels.
+description: Run Infrarust in Docker with volume mounts, exposed ports, environment variables, Docker Compose, restarts that keep players connected, and automatic server discovery from container labels.
 ---
 
 # Docker Deployment
@@ -144,6 +144,24 @@ These flags are passed after the image name in `docker run`, or in the `command`
 | `-l, --log-level <LEVEL>` | `info` | Log level filter (overridden by `RUST_LOG`) |
 | `--plugins-dir <PATH>` | from config | Override the plugins directory path |
 | `--servers-dir <PATH>` | from config | Override the servers directory path |
+
+## Restarting without disconnecting players
+
+Send SIGUSR2 to the container to restart Infrarust in place:
+
+```bash
+docker kill --signal=USR2 infrarust
+```
+
+With Compose, run `docker compose kill -s USR2 infrarust`. The `restart` console command does the same from a console attached to the proxy: the console of a game panel, or `docker attach infrarust` when the container keeps its standard input open (`-i`, or `stdin_open: true` in Compose).
+
+The proxy keeps its PID, so Docker sees no exit and the container keeps running. Players on `passthrough`, `zero_copy` and `server_only` servers stay connected, and players on `offline` and `client_only` servers are disconnected with `Proxy is restarting, please reconnect`. The proxy reads `/app/config/infrarust.toml` and the server files again and loads the plugins again, which makes a hot restart the way to apply a change to `infrarust.toml` without disconnecting the forwarding players. [Restart without disconnecting players](./upgrading#restart-without-disconnecting-players) has the details.
+
+If the new image fails before it takes the sessions over, the proxy rolls back to the binary it was running, which it reads through `/proc`. Docker mounts `/proc` in every container by default.
+
+`docker restart`, `docker compose restart`, `docker stop` followed by a start, and the restart button of a game panel are cold restarts: they stop the container and start it again, and every player is disconnected.
+
+The binary inside the image never changes in place, so a hot restart runs the same version again. Moving to a new image still means pulling it and recreating the container, which is a cold restart, as the next section shows.
 
 ## Upgrading
 
