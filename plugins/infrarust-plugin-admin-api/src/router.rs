@@ -136,6 +136,12 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         )
         .route("/api/v1/config/reload", post(handlers::config::reload))
         .route("/api/v1/proxy/shutdown", post(handlers::proxy::shutdown))
+        .route("/api/v1/proxy/update", get(handlers::update::status))
+        .route("/api/v1/proxy/update/check", post(handlers::update::check))
+        .route(
+            "/api/v1/proxy/update/install",
+            post(handlers::update::install),
+        )
         // Rate limiting must wrap auth so failed-auth requests are throttled too.
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

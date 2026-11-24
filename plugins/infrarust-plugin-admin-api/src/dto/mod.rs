@@ -5,3 +5,4 @@ pub mod proxy;
 pub mod requests;
 pub mod server;
 pub mod stats;
+pub mod update;

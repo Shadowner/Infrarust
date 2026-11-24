@@ -40,6 +40,12 @@ pub fn created(
     (axum::http::StatusCode::CREATED, Json(ApiResponse { data }))
 }
 
+pub fn accepted(
+    data: MutationResult,
+) -> (axum::http::StatusCode, Json<ApiResponse<MutationResult>>) {
+    (axum::http::StatusCode::ACCEPTED, Json(ApiResponse { data }))
+}
+
 const fn default_page() -> usize {
     1
 }

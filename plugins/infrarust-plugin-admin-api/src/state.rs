@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::ban_service::BanService;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::load_balancer::LoadBalancerService;
@@ -33,6 +34,7 @@ pub struct ApiState {
     pub event_tx: broadcast::Sender<ApiEvent>,
     pub shutdown: CancellationToken,
     pub proxy_shutdown: CancellationToken,
+    pub updates: Option<Arc<dyn ProxyUpdates>>,
     pub logs: Option<LogBroadcast>,
     /// TOML documents for API-managed servers, under `<data_dir>/servers/`.
     pub server_dir: Arc<ServerDir>,

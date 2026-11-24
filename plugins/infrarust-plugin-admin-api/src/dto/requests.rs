@@ -34,3 +34,8 @@ pub enum BanTargetRequest {
     Username(String),
     Uuid(String),
 }
+
+#[derive(Debug, Default, Deserialize)]
+pub struct InstallUpdateRequest {
+    pub version: Option<String>,
+}

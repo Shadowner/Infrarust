@@ -8,3 +8,4 @@ pub mod plugins;
 pub mod proxy;
 pub mod servers;
 pub mod stats;
+pub mod update;
