@@ -1,4 +1,6 @@
+mod api;
 pub mod archive;
+mod background;
 pub mod channel;
 pub mod check;
 pub mod download;
@@ -8,6 +10,7 @@ pub mod install;
 pub mod keys;
 pub mod manifest;
 pub mod platform;
+mod service;
 pub mod source;
 #[cfg(test)]
 mod testing;
@@ -22,4 +25,5 @@ pub use install::{
 pub use keys::{SignatureError, TrustedKeys, VerifyError};
 pub use manifest::{Artifact, Manifest, ManifestError, VerifiedManifest};
 pub use platform::{BinaryPaths, Platform, SwapPlan, SwapStep};
+pub use service::UpdateService;
 pub use source::{Asset, Release, ReleaseSource};

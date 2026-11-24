@@ -95,6 +95,7 @@ pub(crate) struct Reply {
     headers: Vec<(String, String)>,
     body: Vec<u8>,
     stall: bool,
+    etag: Option<String>,
 }
 
 impl Reply {
@@ -104,6 +105,7 @@ impl Reply {
             headers: Vec::new(),
             body: body.into(),
             stall: false,
+            etag: None,
         }
     }
 
@@ -119,6 +121,11 @@ impl Reply {
             stall: true,
             ..Self::ok(Vec::new())
         }
+    }
+
+    pub(crate) fn with_etag(mut self, etag: &str) -> Self {
+        self.etag = Some(etag.to_string());
+        self.with_header("ETag", etag)
     }
 
     pub(crate) fn with_header(mut self, name: &str, value: &str) -> Self {
@@ -189,6 +196,16 @@ impl HttpServer {
             .insert(path.to_string(), reply);
     }
 
+    pub(crate) fn reply(&self, path: &str) -> Option<Reply> {
+        self.routes
+            .as_ref()
+            .expect("a routed server")
+            .lock()
+            .unwrap()
+            .get(path)
+            .cloned()
+    }
+
     pub(crate) fn publish(&self, tag: &str, assets: &[(&str, &[u8])]) -> serde_json::Value {
         let assets: Vec<serde_json::Value> = assets
             .iter()
@@ -233,7 +250,7 @@ impl HttpServer {
     pub(crate) fn list(&self, releases: &[serde_json::Value]) {
         self.route(
             "/releases",
-            Reply::ok(serde_json::to_vec(releases).unwrap()),
+            Reply::ok(serde_json::to_vec(releases).unwrap()).with_etag("\"releases\""),
         );
     }
 
@@ -288,9 +305,13 @@ async fn serve(
         headers,
     };
     log.lock().unwrap().push(request.clone());
-    let reply = handler(&request);
+    let mut reply = handler(&request);
     if reply.stall {
         std::future::pending::<()>().await;
+    }
+    if reply.etag.is_some() && reply.etag.as_deref() == request.header("if-none-match") {
+        reply.status = 304;
+        reply.body.clear();
     }
     let mut response = format!("HTTP/1.1 {} Test\r\n", reply.status);
     for (key, value) in &reply.headers {
