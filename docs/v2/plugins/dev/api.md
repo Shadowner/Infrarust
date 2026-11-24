@@ -643,7 +643,7 @@ for source in config.list_server_sources() {
 
 `ctx.proxy_restart()` and `ctx.proxy_updates()` give a plugin the controls behind the console `restart` and `update` commands. Both traits are sealed: a plugin calls them, and only the proxy implements them. No capability gates them. WASM plugins have no equivalent.
 
-`proxy_restart()` is `Some` when the proxy can [restart in place](../../guide/upgrading#restart-without-disconnecting-players), which takes Linux, and `None` elsewhere. `request_restart()` returns as soon as the restart is scheduled:
+`proxy_restart()` is `Some` on Linux, where the proxy can [restart in place](../../guide/upgrading#restart-without-disconnecting-players), and `None` on other platforms. `request_restart()` returns as soon as the restart is scheduled:
 
 ```rust
 use infrarust_api::services::RestartRequestError;

@@ -179,7 +179,7 @@ When you started Infrarust by hand in a terminal, type `stop` in its console and
 
 ## Restart without disconnecting players
 
-On Linux, the proxy can restart in place. The running program replaces itself with the binary at its own path, inside the same process, and hands its connections over. This page and the log call the program from before the restart the old or previous image, and the one after it the new image. The PID does not change, so systemd, Docker and game panels never see the proxy exit. Players on `passthrough`, `zero_copy` and `server_only` servers keep their connection.
+On Linux, the proxy can restart in place. The running program replaces itself with the binary at its own path, inside the same process, and hands its connections over. The log, like this page, calls the program from before the restart the old or previous image, and the one after it the new image. The PID does not change, so systemd, Docker and game panels never see the proxy exit. Players on `passthrough`, `zero_copy` and `server_only` servers keep their connection.
 
 The new image starts the way a fresh proxy does: it reads `infrarust.toml` and the server files again, and loads the plugins again. A hot restart is therefore also how you apply a change to `infrarust.toml` without disconnecting the players on forwarding servers. When `bind` changed, the new image listens on the new address.
 
@@ -219,7 +219,7 @@ Through the admin API, call `POST /api/v1/proxy/update/install`, wait until `GET
 - A connection that is still logging in gets up to 3 seconds to finish. A login on a forwarding server that completes in time is carried over like the others. One that does not is disconnected with the same message.
 - New connections, server list pings included, wait in the kernel's queue while the proxy restarts, and the new image accepts them.
 
-A forwarding session that cannot be handed over is closed, and the log says so. A carried-over player whose server is no longer in the configuration keeps the connection to its backend; the new image logs a warning for it.
+A forwarding session that cannot be handed over is closed, with a warning in the log. A carried-over player whose server is no longer in the configuration keeps the connection to its backend; the new image logs a warning for it.
 
 ### Preflight
 
@@ -246,7 +246,7 @@ If the new image fails before it has taken the sessions over, the proxy rolls ba
 
 The previous version starts from the binary the proxy was running, read through `/proc`, which works even after an install replaced the file on disk. `/proc` is mounted on any standard Linux system and in Docker containers. When that copy cannot be used, the proxy falls back to `infrarust.old` next to the binary, then to the binary at the original path, and never to the binary that just failed.
 
-::: warning A configuration problem stops the rollback too
+::: warning The rollback reads the same configuration
 The previous version reads `infrarust.toml` again, with the same command line. A failure that does not come from the new binary stops it as well: a new `bind` address that another process already uses, for example, or a ban file that cannot be parsed. The proxy then exits and every session is lost. Make sure a new `bind` address is free before you restart.
 :::
 
@@ -254,7 +254,7 @@ Once the new image has taken the sessions over, there is no way back. A failure 
 
 ### Stopping during a hot restart
 
-A SIGTERM or SIGINT, from `systemctl stop` or `docker stop` for example, that arrives during the preflight or while the proxy waits for the logins in flight cancels the restart. The proxy then stops gracefully, as it would at any other time.
+A SIGTERM or SIGINT that arrives during the preflight, or while the proxy waits for the logins in flight, cancels the restart. The proxy then stops gracefully, as it would at any other time. `systemctl stop` and `docker stop` send SIGTERM.
 
 From the moment the proxy starts disconnecting players for the restart, a stop waits for the handover: the new image starts, then stops gracefully. Sending the signal again in that phase does not make the proxy exit at once. See [Signals](../reference/cli#signals).
 

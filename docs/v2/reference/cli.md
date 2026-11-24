@@ -338,7 +338,7 @@ install it with `infrarust update install`
 
 When this binary cannot install the release, the last line gives the reason instead, starting with `this binary cannot install it:`. When nothing newer exists, the line after the version reads `up to date`. A failed check prints only the version on stdout, and `error: <reason>` on stderr.
 
-The `restart` line says how the new version takes over: `hot, players stay connected` on Linux when the release can take over the sessions of the running version, `full, players are disconnected` when it cannot or on macOS, and `manual, stop and start the proxy by hand` on Windows. See [Restart the proxy](../guide/upgrading#restart-the-proxy).
+The `restart` line says how the new version takes over: `hot, players stay connected` on Linux when the release can take over the sessions of the running version, `full, players are disconnected` when it cannot, or on macOS and other Unix systems, and `manual, stop and start the proxy by hand` on Windows. See [Restart the proxy](../guide/upgrading#restart-the-proxy).
 
 With `--json`:
 

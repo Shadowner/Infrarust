@@ -241,10 +241,10 @@ The request takes no body. It answers `202` once the restart is scheduled, befor
 | Response | When |
 |----------|------|
 | `202 Accepted` | The restart is scheduled |
-| `409 Conflict` | A restart is already in progress, the proxy is shutting down, or hot restart is not supported by this proxy. The message says which |
+| `409 Conflict` | A restart is already in progress, the proxy is shutting down, or the proxy refuses hot restarts (`hot restart is not supported here: <reason>`). The message says which |
 | `503 Service Unavailable` | The proxy has no hot restart, on macOS or Windows for example, with `hot restart is not available on this proxy` |
 
-A `202` does not mean the restart will happen. The proxy runs its [preflight](../../guide/upgrading#preflight) afterwards, and when the preflight refuses, the reason only shows in the proxy log, on a `hot restart failed` warning. The admin API itself is down during the restart: the old image stops its plugins, this one included, before the handover, and the new image starts the API again once it has loaded them.
+A `202` does not mean the restart will happen. The proxy runs its [preflight](../../guide/upgrading#preflight) afterwards, and when the preflight refuses, the reason only shows in the proxy log, on a `hot restart failed` warning. The admin API itself stops answering for part of the restart: the old image stops its plugins, this one included, before the handover, and the new image starts the API again once it has loaded them.
 
 `GET /api/v1/proxy` reports `restart_available`: `true` when this endpoint can schedule a restart, `false` when it answers `503`.
 

@@ -12,7 +12,7 @@ Every field has a default value. An empty file (or no file at all) starts the pr
 
 The config struct uses `serde(deny_unknown_fields)`, so unrecognized keys are a hard parse error rather than a silent no-op.
 
-The proxy reads `infrarust.toml` when it starts and does not watch it, so a change applies at the next start. On Linux, a [hot restart](../guide/upgrading#restart-without-disconnecting-players) counts as one: the proxy reads the file again while the players on forwarding servers stay connected. That is the way to apply a change to this file without disconnecting them.
+The proxy reads `infrarust.toml` when it starts and does not watch it, so a change applies at the next start. On Linux, a [hot restart](../guide/upgrading#restart-without-disconnecting-players) counts as one: the proxy reads the file again while the players on forwarding servers stay connected.
 
 ## Bind address and port
 

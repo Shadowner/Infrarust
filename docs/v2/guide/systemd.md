@@ -256,7 +256,7 @@ The same mechanism works with any activator that speaks the systemd protocol. [`
 
 ## Updating Infrarust
 
-A binary from a release archive installs the new release itself. Run the install as the service user, from the service's working directory, then reload the service to run the new binary without disconnecting the players on forwarding servers:
+A binary from a release archive installs the new release itself. Run the install as the service user, from the service's working directory, then reload the service to run the new binary in place:
 
 ```bash
 sudo -u infrarust sh -c 'cd /opt/infrarust && ./infrarust -c infrarust.toml update install'
