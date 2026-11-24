@@ -6,8 +6,9 @@ use infrarust_api::command::CommandInfo as PluginCommandInfo;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
+use infrarust_api::services::proxy_control::RestartRequestError;
 use infrarust_api::services::{
-    AvailableUpdate, InstallRequest, InstallState, ProxyUpdates, RestartRequirement,
+    AvailableUpdate, InstallRequest, InstallState, ProxyRestart, ProxyUpdates, RestartRequirement,
     UpdateRequestError, UpdateStatus,
 };
 use infrarust_protocol::version::ProtocolVersion;
@@ -284,22 +285,30 @@ fn install_output(install: &InstallState) -> CommandOutput {
     }
 }
 
+async fn advertised(updates: &dyn ProxyUpdates) -> Result<AvailableUpdate, CommandOutput> {
+    if let Some(available) = updates.status().available {
+        return Ok(available);
+    }
+    let status = updates.check_now().await;
+    match (status.available, status.last_error) {
+        (Some(available), _) => Ok(available),
+        (None, Some(error)) => Err(Failure::new(format!("Update check failed: {error}")).into()),
+        (None, None) => Err(CommandOutput::Note(format!(
+            "Infrarust {} is up to date",
+            status.current_version
+        ))),
+    }
+}
+
 async fn install(
     updates: &dyn ProxyUpdates,
     version: Option<&str>,
     shutdown: &CancellationToken,
 ) -> CommandOutput {
-    if version.is_none() && updates.status().available.is_none() {
-        let status = updates.check_now().await;
-        if status.available.is_none() {
-            return match status.last_error {
-                Some(error) => Failure::new(format!("Update check failed: {error}")).into(),
-                None => CommandOutput::Note(format!(
-                    "Infrarust {} is up to date",
-                    status.current_version
-                )),
-            };
-        }
+    if version.is_none()
+        && let Err(output) = advertised(updates).await
+    {
+        return output;
     }
 
     let before = updates.status().install;
@@ -319,6 +328,87 @@ async fn install(
     match finished_install(updates, &before, shutdown).await {
         Some(install) => install_output(&install),
         None => CommandOutput::Note("The proxy is stopping before the update finished".into()),
+    }
+}
+
+fn manual_restart_hint() -> Hint {
+    Hint::Note("type update install, then stop the proxy and start it again".to_string())
+}
+
+async fn apply(
+    updates: &dyn ProxyUpdates,
+    restart: Option<&dyn ProxyRestart>,
+    version: Option<&str>,
+    shutdown: &CancellationToken,
+) -> CommandOutput {
+    if restart.is_none() {
+        return Failure::new("Hot restart is unavailable on this platform")
+            .with_hint(manual_restart_hint())
+            .into();
+    }
+    let available = match advertised(updates).await {
+        Ok(available) => available,
+        Err(output) => return output,
+    };
+    if let Some(version) = version
+        && version.trim_start_matches('v') != available.version
+    {
+        return Failure::new(format!(
+            "Only the advertised update {} can be applied in place",
+            available.version
+        ))
+        .with_hint(Hint::Note(format!(
+            "type update install {version}, then stop the proxy and start it again"
+        )))
+        .into();
+    }
+    if available.restart != RestartRequirement::Hot {
+        return Failure::new(format!(
+            "{} needs a {}, nothing was installed",
+            available.version,
+            restart_text(available.restart)
+        ))
+        .with_hint(manual_restart_hint())
+        .into();
+    }
+
+    let before = updates.status().install;
+    let request = InstallRequest {
+        version: version.map(str::to_string),
+        then_restart: true,
+    };
+    if let Err(error) = updates.start_install(request) {
+        return install_refused(&error).into();
+    }
+    tracing::info!(
+        target: "console",
+        version = %available.version,
+        "Update apply started from console"
+    );
+
+    match finished_install(updates, &before, shutdown).await {
+        Some(InstallState::Installed { version }) => CommandOutput::Success(format!(
+            "Installed {version}, restarting in place; follow the restart in the logs"
+        )),
+        Some(install) => install_output(&install),
+        None => CommandOutput::Note("The proxy is stopping before the update finished".into()),
+    }
+}
+
+fn restart_output(answer: Result<(), RestartRequestError>) -> CommandOutput {
+    match answer {
+        Ok(()) => {
+            CommandOutput::Success("Hot restart requested, follow it in the logs".to_string())
+        }
+        Err(RestartRequestError::InProgress) => {
+            CommandOutput::Note("A restart is already in progress".to_string())
+        }
+        Err(RestartRequestError::ShuttingDown) => Failure::new("The proxy is shutting down").into(),
+        Err(RestartRequestError::Unsupported(reason)) => {
+            Failure::new(format!("Hot restart is unavailable: {reason}"))
+                .with_hint(Hint::Note("stop the proxy and start it again".to_string()))
+                .into()
+        }
     }
 }
 
@@ -462,8 +552,8 @@ impl ConsoleCommand for UpdateCommand {
         &ConsoleCommandSpec {
             name: "update",
             aliases: &[],
-            description: "Check for or install an update",
-            usage: "update [install [version]]",
+            description: "Check for, install or apply an update",
+            usage: "update [install|apply [version]]",
             category: CommandCategory::System,
         }
     }
@@ -484,8 +574,47 @@ impl ConsoleCommand for UpdateCommand {
                 {
                     install(updates, rest.first().copied(), &services.shutdown).await
                 }
+                [action, rest @ ..] if action.eq_ignore_ascii_case("apply") && rest.len() <= 1 => {
+                    apply(
+                        updates,
+                        services.restart.as_deref(),
+                        rest.first().copied(),
+                        &services.shutdown,
+                    )
+                    .await
+                }
                 _ => usage(self),
             }
+        })
+    }
+}
+
+pub struct RestartCommand;
+
+impl ConsoleCommand for RestartCommand {
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "restart",
+            aliases: &[],
+            description: "Restart in place, keeping forwarded players connected",
+            usage: "restart",
+            category: CommandCategory::System,
+        }
+    }
+
+    fn execute<'a>(
+        &'a self,
+        _args: &'a [&'a str],
+        services: &'a ConsoleServices,
+    ) -> BoxFuture<'a, CommandOutput> {
+        Box::pin(async move {
+            let Some(restart) = services.restart.as_deref() else {
+                return Failure::new("Hot restart is unavailable on this platform")
+                    .with_hint(Hint::Note("stop the proxy and start it again".to_string()))
+                    .into();
+            };
+            tracing::info!(target: "console", "Hot restart requested from console");
+            restart_output(restart.request_restart())
         })
     }
 }
@@ -861,10 +990,174 @@ mod tests {
         for args in [&["rollback"][..], &["install", "1.0.0", "now"]] {
             assert_eq!(
                 run(&UpdateCommand, args, &updates).await,
-                "error: Missing arguments\n  usage: update [install [version]]"
+                "error: Missing arguments\n  usage: update [install|apply [version]]"
             );
         }
         assert!(updates.requests().is_empty());
+    }
+
+    struct ScriptedRestart {
+        answer: Result<(), RestartRequestError>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl infrarust_api::__sealed::Sealed for ScriptedRestart {}
+
+    impl ProxyRestart for ScriptedRestart {
+        fn request_restart(&self) -> Result<(), RestartRequestError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.answer.clone()
+        }
+    }
+
+    fn answering(answer: Result<(), RestartRequestError>) -> Arc<ScriptedRestart> {
+        Arc::new(ScriptedRestart {
+            answer,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn console_with(
+        updates: Option<Arc<dyn ProxyUpdates>>,
+        restart: Option<Arc<dyn ProxyRestart>>,
+    ) -> ConsoleServices {
+        ConsoleServices {
+            restart,
+            ..console(updates)
+        }
+    }
+
+    fn hot_release() -> AvailableUpdate {
+        AvailableUpdate {
+            restart: RestartRequirement::Hot,
+            ..FakeUpdates::release("2.0.0-beta.6", false)
+        }
+    }
+
+    async fn apply_with(
+        args: &[&str],
+        updates: &Arc<FakeUpdates>,
+        restart: Option<Arc<dyn ProxyRestart>>,
+    ) -> String {
+        let services = console_with(Some(Arc::clone(updates) as Arc<dyn ProxyUpdates>), restart);
+        render(UpdateCommand.execute(args, &services).await)
+    }
+
+    #[tokio::test]
+    async fn restart_without_a_handle_says_hot_restart_is_unavailable() {
+        assert_eq!(
+            render(RestartCommand.execute(&[], &console(None)).await),
+            "error: Hot restart is unavailable on this platform\n  stop the proxy and start it again"
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_reports_how_the_request_was_answered() {
+        for (answer, expected) in [
+            (Ok(()), "ok: Hot restart requested, follow it in the logs"),
+            (
+                Err(RestartRequestError::InProgress),
+                "- A restart is already in progress",
+            ),
+            (
+                Err(RestartRequestError::ShuttingDown),
+                "error: The proxy is shutting down",
+            ),
+            (
+                Err(RestartRequestError::Unsupported("no restart loop".into())),
+                "error: Hot restart is unavailable: no restart loop\n  stop the proxy and start it again",
+            ),
+        ] {
+            let restart = answering(answer);
+            let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
+            assert_eq!(
+                render(RestartCommand.execute(&[], &services).await),
+                expected
+            );
+            assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_apply_without_hot_restart_installs_nothing() {
+        let updates = Arc::new(FakeUpdates::new(offering(hot_release())));
+        assert_eq!(
+            apply_with(&["apply"], &updates, None).await,
+            "error: Hot restart is unavailable on this platform\n  type update install, then stop the proxy and start it again"
+        );
+        assert!(updates.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_apply_of_a_release_needing_a_full_restart_installs_nothing() {
+        let updates = Arc::new(FakeUpdates::new(offering(FakeUpdates::release(
+            "2.0.0-beta.6",
+            false,
+        ))));
+        let restart = answering(Ok(()));
+        assert_eq!(
+            apply_with(
+                &["apply"],
+                &updates,
+                Some(restart.clone() as Arc<dyn ProxyRestart>)
+            )
+            .await,
+            "error: 2.0.0-beta.6 needs a full restart, nothing was installed\n  type update install, then stop the proxy and start it again"
+        );
+        assert!(updates.requests().is_empty());
+        assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn update_apply_installs_a_hot_release_and_asks_for_the_restart() {
+        let updates = Arc::new(FakeUpdates::new(offering(hot_release())).installs(
+            InstallState::Installed {
+                version: "2.0.0-beta.6".to_string(),
+            },
+        ));
+        let restart: Arc<dyn ProxyRestart> = answering(Ok(()));
+        assert_eq!(
+            apply_with(&["APPLY"], &updates, Some(Arc::clone(&restart))).await,
+            "ok: Installed 2.0.0-beta.6, restarting in place; follow the restart in the logs"
+        );
+        assert_eq!(
+            updates.requests(),
+            [InstallRequest {
+                version: None,
+                then_restart: true,
+            }]
+        );
+        assert_eq!(
+            apply_with(&["apply", "v2.0.0-beta.6"], &updates, Some(restart)).await,
+            "ok: Installed 2.0.0-beta.6, restarting in place; follow the restart in the logs"
+        );
+        assert_eq!(
+            updates.requests()[1].version.as_deref(),
+            Some("v2.0.0-beta.6")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_apply_only_takes_the_advertised_release() {
+        let updates = Arc::new(FakeUpdates::new(offering(hot_release())));
+        let restart: Arc<dyn ProxyRestart> = answering(Ok(()));
+        assert_eq!(
+            apply_with(
+                &["apply", "2.0.0-beta.4"],
+                &updates,
+                Some(Arc::clone(&restart))
+            )
+            .await,
+            "error: Only the advertised update 2.0.0-beta.6 can be applied in place\n  type update install 2.0.0-beta.4, then stop the proxy and start it again"
+        );
+        assert!(updates.requests().is_empty());
+
+        let current = Arc::new(FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.6")));
+        assert_eq!(
+            apply_with(&["apply"], &current, Some(restart)).await,
+            "- Infrarust 2.0.0-beta.6 is up to date"
+        );
+        assert_eq!(current.checks(), 1);
     }
 
     #[tokio::test]

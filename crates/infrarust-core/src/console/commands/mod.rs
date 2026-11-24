@@ -65,6 +65,7 @@ pub fn register_all(dispatcher: &mut CommandDispatcher) {
     dispatcher.register(Box::new(system::VersionCommand));
     dispatcher.register(Box::new(system::UpdateCommand));
     dispatcher.register(Box::new(system::StatusCommand));
+    dispatcher.register(Box::new(system::RestartCommand));
     dispatcher.register(Box::new(system::StopCommand));
     dispatcher.register(Box::new(system::ClearCommand));
     dispatcher.register(Box::new(system::GcCommand));
