@@ -1,3 +1,4 @@
+pub mod coordinator;
 pub mod freeze;
 pub mod package;
 pub mod platform;
@@ -5,6 +6,7 @@ pub mod preflight;
 pub mod relays;
 pub mod state;
 
+pub use coordinator::{RestartHandle, RestartHub, RestartPhase};
 pub use package::{DroppedSession, FrozenSession, Handle, HandleTable, HandoverPackage, Unpacked};
 pub use platform::{Handed, Inheritance, RestartPlan, Successor};
 pub use preflight::{BinaryPreflight, Preflight, PreflightError};
