@@ -41,6 +41,7 @@ tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+humantime = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 serde_json = { workspace = true }
@@ -68,4 +69,5 @@ tracing-opentelemetry = { workspace = true, optional = true }
 mimalloc = { workspace = true, optional = true }
 
 [dev-dependencies]
+minisign = { workspace = true }
 tempfile = { workspace = true }

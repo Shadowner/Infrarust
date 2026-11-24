@@ -24,6 +24,7 @@ use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 
 mod migrate;
 mod plugins;
+mod update_cli;
 mod wizard;
 
 /// Infrarust - A Minecraft reverse proxy
@@ -75,6 +76,11 @@ enum Command {
         #[arg(long, help = "Print the result as one JSON line")]
         json: bool,
     },
+    #[command(about = "Check for, install or roll back Infrarust releases")]
+    Update {
+        #[command(subcommand)]
+        action: update_cli::UpdateAction,
+    },
 }
 
 const BUILD: BuildInfo = BuildInfo {
@@ -96,6 +102,10 @@ fn main() -> ExitCode {
 
     if let Some(Command::CheckConfig { json }) = &cli.command {
         return check_config(&cli, *json);
+    }
+
+    if let Some(Command::Update { action }) = &cli.command {
+        return update_cli::run(&cli, action, exe);
     }
 
     if let Some(Command::Migrate {
@@ -554,7 +564,7 @@ mod tests {
 
     use super::*;
 
-    fn parse(args: &[&str]) -> Cli {
+    pub(crate) fn parse(args: &[&str]) -> Cli {
         Cli::parse_from(std::iter::once("infrarust").chain(args.iter().copied()))
     }
 
@@ -648,6 +658,122 @@ mod tests {
             ..infrarust_config::TelemetryConfig::default()
         });
         assert!(enabled_telemetry(&config).is_some_and(|tc| tc.enabled));
+    }
+
+    fn update_action(args: &[&str]) -> update_cli::UpdateAction {
+        match parse(args).command {
+            Some(Command::Update { action }) => action,
+            _ => panic!("{args:?} is not an update command"),
+        }
+    }
+
+    #[test]
+    fn the_command_line_definition_is_consistent() {
+        <Cli as clap::CommandFactory>::command().debug_assert();
+    }
+
+    #[test]
+    fn update_check_parses_its_channel_and_json_flags() {
+        use update_cli::{ChannelArg, UpdateAction};
+
+        assert_eq!(
+            update_action(&["update", "check"]),
+            UpdateAction::Check {
+                channel: None,
+                json: false
+            }
+        );
+        for (value, channel) in [
+            ("auto", ChannelArg::Auto),
+            ("stable", ChannelArg::Stable),
+            ("prerelease", ChannelArg::Prerelease),
+        ] {
+            assert_eq!(
+                update_action(&["update", "check", "--channel", value, "--json"]),
+                UpdateAction::Check {
+                    channel: Some(channel),
+                    json: true
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn update_check_rejects_an_unknown_channel() {
+        for args in [
+            ["infrarust", "update", "check", "--channel", "nightly"],
+            ["infrarust", "update", "check", "--channel", "Stable"],
+        ] {
+            let error = Cli::try_parse_from(args).err().unwrap();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::InvalidValue,
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn update_install_parses_its_version_and_confirmation() {
+        use update_cli::UpdateAction;
+
+        assert_eq!(
+            update_action(&["update", "install"]),
+            UpdateAction::Install {
+                version: None,
+                yes: false
+            }
+        );
+        assert_eq!(
+            update_action(&["update", "install", "--version", "2.0.0-beta.6", "--yes"]),
+            UpdateAction::Install {
+                version: Some("2.0.0-beta.6".to_string()),
+                yes: true
+            }
+        );
+        assert_eq!(
+            update_action(&["update", "install", "-y"]),
+            UpdateAction::Install {
+                version: None,
+                yes: true
+            }
+        );
+    }
+
+    #[test]
+    fn update_rollback_parses_its_confirmation() {
+        use update_cli::UpdateAction;
+
+        assert_eq!(
+            update_action(&["update", "rollback"]),
+            UpdateAction::Rollback { yes: false }
+        );
+        assert_eq!(
+            update_action(&["update", "rollback", "--yes"]),
+            UpdateAction::Rollback { yes: true }
+        );
+        assert_eq!(
+            update_action(&["update", "rollback", "-y"]),
+            UpdateAction::Rollback { yes: true }
+        );
+    }
+
+    #[test]
+    fn update_needs_an_action() {
+        for args in [
+            &["infrarust", "update"][..],
+            &["infrarust", "update", "apply"][..],
+            &["infrarust", "update", "check", "--yes"][..],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn global_options_before_update_are_kept() {
+        let cli = parse(&["-c", "/etc/infrarust.toml", "update", "check"]);
+        assert_eq!(cli.config, Path::new("/etc/infrarust.toml"));
+        assert!(matches!(cli.command, Some(Command::Update { .. })));
     }
 
     #[test]
