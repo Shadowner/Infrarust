@@ -1,11 +1,13 @@
 pub mod freeze;
 pub mod package;
 pub mod platform;
+pub mod preflight;
 pub mod relays;
 pub mod state;
 
 pub use package::{DroppedSession, FrozenSession, Handle, HandleTable, HandoverPackage, Unpacked};
 pub use platform::{Handed, Inheritance, RestartPlan, Successor};
+pub use preflight::{BinaryPreflight, Preflight, PreflightError};
 pub use relays::{InFlight, LoginLink, RelayRegistry, RelayTicket};
 pub use state::{HandleId, HandoverState, SessionMeta};
 
