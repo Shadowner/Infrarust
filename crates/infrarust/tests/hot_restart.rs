@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Write as _};
 use std::net::SocketAddr;
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,7 +18,8 @@ use infrarust_test_harness::{
     BackendConn, ClientSession, FakeBackend, FakeClient, ProtocolVersion,
 };
 use nix::sys::signal::{Signal, kill};
-use nix::unistd::Pid;
+use nix::sys::stat::Mode;
+use nix::unistd::{Pid, mkfifo};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -333,6 +335,14 @@ impl Site {
             listener: Some(listener),
             addr,
         }
+    }
+
+    fn hold_config(&mut self) -> (PathBuf, String) {
+        let text = std::fs::read_to_string(&self.config).unwrap();
+        let fifo = self.dir.path().join("held.toml");
+        mkfifo(&fifo, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+        self.config = fifo.clone();
+        (fifo, text)
     }
 
     fn replace_binary(&self) -> u64 {
@@ -789,4 +799,65 @@ async fn a_stop_during_a_restart_stops_the_proxy_gracefully() {
             proxy.count(READY),
         );
     }
+}
+
+async fn reader_of(fifo: PathBuf) -> std::fs::File {
+    let opened =
+        tokio::task::spawn_blocking(move || std::fs::OpenOptions::new().write(true).open(fifo));
+    tokio::time::timeout(T, opened)
+        .await
+        .expect("the proxy never opened its configuration")
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_signal_before_a_fresh_proxy_is_ready_is_ignored() {
+    let backend = RawBackend::spawn().await;
+    let mut site = forwarding_site(&backend);
+    let addr = site.addr;
+    let (fifo, config) = site.hold_config();
+    let mut proxy = Proxy::start(&mut site, &[]);
+    let mut held = reader_of(fifo).await;
+
+    proxy.signal(Signal::SIGUSR2);
+    held.write_all(config.as_bytes()).unwrap();
+    drop(held);
+    proxy.wait_for(READY, 1).await;
+
+    proxy
+        .wait_for(
+            "a restart request arrived while the proxy was starting and was ignored",
+            1,
+        )
+        .await;
+    assert_eq!(proxy.count("hot restart requested"), 0, "{}", proxy.tail());
+    let mut session = Raw::join(addr, "pipe", &backend, "Steve").await;
+    session.exchange(10).await;
+    proxy.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stop_signal_before_a_fresh_proxy_is_ready_keeps_its_default_action() {
+    let backend = RawBackend::spawn().await;
+    let mut site = forwarding_site(&backend);
+    let (fifo, _) = site.hold_config();
+    let mut proxy = Proxy::start(&mut site, &[]);
+    let held = reader_of(fifo).await;
+
+    proxy.signal(Signal::SIGTERM);
+
+    let deadline = tokio::time::Instant::now() + T;
+    let status = loop {
+        if let Some(status) = proxy.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "SIGTERM did not stop the proxy"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    drop(held);
+    assert_eq!(status.signal(), Some(Signal::SIGTERM as i32), "{status}");
 }

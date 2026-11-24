@@ -8,6 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(target_os = "linux")]
 const RACE: Duration = Duration::from_millis(200);
+const IGNORED_WHILE_STARTING: &str =
+    "a restart request arrived while the proxy was starting and was ignored";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StopSignal {
@@ -64,15 +66,16 @@ struct Replay {
 }
 
 impl OsSignals {
-    pub(crate) fn install() -> Self {
+    pub(crate) fn install(inherited: bool) -> Self {
         #[cfg(target_os = "linux")]
         {
             let (signals, early) =
                 infrarust_core::hot_restart::platform::linux::take_over_signals(Self::register);
-            signals.replaying(early)
+            signals.replaying(early, inherited)
         }
         #[cfg(not(target_os = "linux"))]
         {
+            let _ = inherited;
             Self::register()
         }
     }
@@ -112,11 +115,16 @@ impl OsSignals {
     fn replaying(
         mut self,
         early: infrarust_core::hot_restart::platform::linux::EarlySignals,
+        inherited: bool,
     ) -> Self {
         use infrarust_core::hot_restart::platform::linux::HandoverSignal;
 
-        if early.restart {
-            tracing::info!("a restart request arrived during the previous restart and was ignored");
+        match (early.restart, inherited) {
+            (true, true) => tracing::info!(
+                "a restart request arrived during the previous restart and was ignored"
+            ),
+            (true, false) => tracing::info!("{IGNORED_WHILE_STARTING}"),
+            (false, _) => {}
         }
         let Some(stop) = early.stop() else {
             return self;
@@ -233,11 +241,7 @@ fn handing_over(hub: &HubSlot) -> Option<RestartPhase> {
 
 fn request_restart(hub: &HubSlot) {
     match hub.get() {
-        None => {
-            tracing::info!(
-                "SIGUSR2 received while the proxy is starting; the restart request is ignored"
-            );
-        }
+        None => tracing::info!("{IGNORED_WHILE_STARTING}"),
         Some(None) => {
             tracing::warn!(
                 "SIGUSR2 received, but hot restart is unavailable here; stop the proxy and start it again"

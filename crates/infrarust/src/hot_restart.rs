@@ -89,6 +89,16 @@ pub(crate) fn hand_over(
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) fn record_early_restarts() {
+    if let Err(error) = platform::linux::record_early_restarts() {
+        eprintln!("warning: a SIGUSR2 sent before the proxy is ready may stop it: {error}");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) const fn record_early_restarts() {}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn defer_stop(stop: StopSignal) {
     use platform::linux::HandoverSignal;
 

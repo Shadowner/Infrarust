@@ -100,6 +100,7 @@ const BUILD: BuildInfo = BuildInfo {
 const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(3);
 
 fn main() -> ExitCode {
+    hot_restart::record_early_restarts();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => return hot_restart::refuse_command_line(error),
@@ -425,7 +426,7 @@ async fn run(launch: Launch) -> anyhow::Result<Exit> {
     let hub = HubSlot::default();
 
     tokio::spawn(signals::watch_signals(
-        OsSignals::install(),
+        OsSignals::install(inheritance.is_some()),
         Watch {
             shutdown: shutdown.clone(),
             hub: Arc::clone(&hub),
