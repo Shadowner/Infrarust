@@ -143,6 +143,44 @@ These flags are passed after the image name in `docker run`, or in the `command`
 | `-b, --bind <ADDR>` | from config | Override the bind address |
 | `-l, --log-level <LEVEL>` | `info` | Log level filter (overridden by `RUST_LOG`) |
 | `--plugins-dir <PATH>` | from config | Override the plugins directory path |
+| `--servers-dir <PATH>` | from config | Override the servers directory path |
+
+## Upgrading
+
+The binary inside the image is never replaced in place: `infrarust update install`, the console `update install` and the admin API install endpoint all refuse it. To upgrade, pull the new image and recreate the container, which starts the proxy on the new version. The configuration lives in the `/app/config` volume, so the new container picks it up as it is.
+
+With Compose:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+With `docker run`, pull the image, remove the container, and start it again with the same options:
+
+```bash
+docker pull ghcr.io/shadowner/infrarust:latest
+docker stop -t 45 infrarust
+docker rm infrarust
+docker run -d \
+  --name infrarust \
+  -p 25565:25565 \
+  -v ./config:/app/config \
+  ghcr.io/shadowner/infrarust:latest \
+  --config /app/config/infrarust.toml
+```
+
+To pin a version instead of following `latest`, use its tag, such as `ghcr.io/shadowner/infrarust:2.0.0`, and change the tag to upgrade.
+
+The background [update checks](../configuration/global#update-checks) still run in the container, and you can check by hand with `docker exec`:
+
+```bash
+docker exec infrarust /sbin/infrarust -c /app/config/infrarust.toml update check
+```
+
+It reports the new release; installing it goes through the image as above.
+
+A release binary from a GitHub archive that you run inside a container of your own is not refused. When `/.dockerenv` exists, the install logs a warning that the updated binary is lost when the container is recreated, since it lands in the container's writable layer unless its directory is a volume.
 
 ## Auto-discovery with Docker labels
 
