@@ -192,6 +192,20 @@ impl SwapPlan {
         Self { steps }
     }
 
+    pub fn replace_keeping_old(paths: &BinaryPaths, platform: Platform) -> Self {
+        let replace = SwapStep::Replace {
+            from: paths.staged.clone(),
+            to: paths.exe.clone(),
+        };
+        let steps = match platform {
+            Platform::Windows => vec![replace],
+            Platform::Linux | Platform::OtherUnix => {
+                vec![replace, SwapStep::SyncDir(paths.dir.clone())]
+            }
+        };
+        Self { steps }
+    }
+
     pub fn rollback(paths: &BinaryPaths, platform: Platform) -> Self {
         let steps = match platform {
             Platform::Windows => vec![
@@ -398,6 +412,35 @@ mod tests {
                 },
                 SwapStep::SyncDir(p.dir.clone()),
             ]
+        );
+    }
+
+    #[test]
+    fn a_second_install_only_replaces_the_exe() {
+        for platform in [Platform::Linux, Platform::Windows] {
+            let p = paths(platform);
+            let plan = SwapPlan::replace_keeping_old(&p, platform);
+            assert_eq!(
+                plan.steps()[0],
+                SwapStep::Replace {
+                    from: p.staged.clone(),
+                    to: p.exe.clone()
+                },
+                "{platform:?}"
+            );
+            assert!(
+                plan.steps()
+                    .iter()
+                    .all(|step| matches!(step, SwapStep::Replace { .. } | SwapStep::SyncDir(_))),
+                "{platform:?}"
+            );
+        }
+        let p = paths(Platform::Linux);
+        assert_eq!(
+            SwapPlan::replace_keeping_old(&p, Platform::Linux)
+                .steps()
+                .last(),
+            Some(&SwapStep::SyncDir(p.dir.clone()))
         );
     }
 

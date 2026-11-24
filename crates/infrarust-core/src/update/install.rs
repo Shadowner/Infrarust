@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
@@ -9,7 +8,7 @@ use infrarust_api::services::RestartRequirement;
 use infrarust_config::UpdateChannel;
 use semver::Version;
 
-use crate::binary::{self, ConfigCheck, HandoverProbe, RunningBinary};
+use crate::binary::{self, ConfigCheck, ExeIdentity, ExeSnapshot, HandoverProbe, RunningBinary};
 
 use super::archive::{self, ArchiveError, ArchiveFormat};
 use super::channel::{ChannelFilter, parse_version};
@@ -192,7 +191,7 @@ impl<'a> Installer<'a> {
             &candidate.manifest,
             artifact,
             format,
-            &self.binary.args,
+            self.binary,
             observer,
         )
         .await
@@ -248,7 +247,7 @@ pub(super) async fn apply(
     manifest: &VerifiedManifest,
     artifact: &Artifact,
     format: ArchiveFormat,
-    args: &[OsString],
+    binary: &RunningBinary,
     observer: &dyn InstallObserver,
 ) -> Result<Installed, UpdateError> {
     let _scratch = Scratch::new(paths);
@@ -268,7 +267,7 @@ pub(super) async fn apply(
     }
 
     observer.on_step(&InstallStep::CheckingConfig);
-    let config = binary::check_config(&paths.staged, args).await?;
+    let config = binary::check_config(&paths.staged, &binary.args).await?;
     if !config.ok {
         return Err(UpdateError::ConfigRejected {
             config: config.config,
@@ -279,7 +278,7 @@ pub(super) async fn apply(
     }
 
     observer.on_step(&InstallStep::Committing);
-    SwapPlan::commit(paths, Platform::current()).execute()?;
+    commit_plan(paths, &binary.exe, Platform::current()).execute()?;
     let restart = platform::restart_kind(&probe);
     observer.on_step(&InstallStep::Installed {
         version: manifest.version().clone(),
@@ -294,6 +293,22 @@ pub(super) async fn apply(
         exe: paths.exe.clone(),
         previous: paths.old.clone(),
     })
+}
+
+fn commit_plan(paths: &BinaryPaths, running: &ExeSnapshot, platform: Platform) -> SwapPlan {
+    if !running.changed_on_disk() {
+        return SwapPlan::commit(paths, platform);
+    }
+    if let Some(identity) = running.identity()
+        && ExeIdentity::of(&paths.old).is_ok_and(|old| old == identity)
+    {
+        return SwapPlan::replace_keeping_old(paths, platform);
+    }
+    tracing::warn!(
+        old = %paths.old.display(),
+        "the running binary is no longer on disk; a rollback will return to the version that is on disk now"
+    );
+    SwapPlan::commit(paths, platform)
 }
 
 pub async fn rollback(binary: &RunningBinary) -> Result<RolledBack, UpdateError> {
@@ -474,6 +489,7 @@ impl Drop for Scratch<'_> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use std::ffi::OsString;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -555,7 +571,7 @@ mod tests {
                 &manifest,
                 &artifact,
                 ArchiveFormat::TarGz,
-                &self.binary.args,
+                &self.binary,
                 &NoopObserver,
             )
             .await
@@ -588,6 +604,78 @@ mod tests {
         assert_eq!(sandbox.listing(), ["infrarust", "infrarust.old"]);
     }
 
+    #[tokio::test]
+    async fn a_second_install_before_a_restart_keeps_the_running_binary_as_old() {
+        let sandbox = Sandbox::new();
+        let running = std::fs::metadata(&sandbox.paths.exe).unwrap().ino();
+        let v2 = FakeBinary::new("2.0.0-beta.6");
+        let v3 = FakeBinary::new("2.0.0-beta.7");
+        sandbox.apply("2.0.0-beta.6", &v2).await.unwrap();
+        sandbox.apply("2.0.0-beta.7", &v3).await.unwrap();
+
+        assert_eq!(sandbox.exe(), v3.script());
+        assert_eq!(
+            std::fs::read(&sandbox.paths.old).unwrap(),
+            sandbox.old_script
+        );
+        assert_eq!(
+            std::fs::metadata(&sandbox.paths.old).unwrap().ino(),
+            running
+        );
+        assert_eq!(sandbox.listing(), ["infrarust", "infrarust.old"]);
+
+        let back = rollback(&sandbox.binary).await.unwrap();
+        assert_eq!(back.version, "2.0.0-beta.5");
+        assert_eq!(sandbox.exe(), sandbox.old_script);
+        assert_eq!(
+            std::fs::metadata(&sandbox.paths.exe).unwrap().ino(),
+            running
+        );
+        assert_eq!(std::fs::read(&sandbox.paths.old).unwrap(), v3.script());
+        assert!(!sandbox.binary.exe.changed_on_disk());
+    }
+
+    #[tokio::test]
+    async fn a_lost_running_binary_falls_back_to_the_usual_commit() {
+        for lose in [
+            (|old: &Path| std::fs::remove_file(old).unwrap()) as fn(&Path),
+            |old: &Path| {
+                std::fs::remove_file(old).unwrap();
+                std::fs::write(old, b"someone else's binary").unwrap();
+            },
+        ] {
+            let sandbox = Sandbox::new();
+            let v2 = FakeBinary::new("2.0.0-beta.6");
+            let v3 = FakeBinary::new("2.0.0-beta.7");
+            sandbox.apply("2.0.0-beta.6", &v2).await.unwrap();
+            lose(&sandbox.paths.old);
+            sandbox.apply("2.0.0-beta.7", &v3).await.unwrap();
+
+            assert_eq!(sandbox.exe(), v3.script());
+            assert_eq!(std::fs::read(&sandbox.paths.old).unwrap(), v2.script());
+            let back = rollback(&sandbox.binary).await.unwrap();
+            assert_eq!(back.version, "2.0.0-beta.6");
+            assert_eq!(sandbox.exe(), v2.script());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rolled_back_binary_is_linked_again_on_the_next_install() {
+        let sandbox = Sandbox::new();
+        let v2 = FakeBinary::new("2.0.0-beta.6");
+        let v3 = FakeBinary::new("2.0.0-beta.7");
+        sandbox.apply("2.0.0-beta.6", &v2).await.unwrap();
+        rollback(&sandbox.binary).await.unwrap();
+        assert!(!sandbox.binary.exe.changed_on_disk());
+        sandbox.apply("2.0.0-beta.7", &v3).await.unwrap();
+
+        assert_eq!(sandbox.exe(), v3.script());
+        assert_eq!(
+            std::fs::read(&sandbox.paths.old).unwrap(),
+            sandbox.old_script
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_exe_path_exists_at_every_instant() {
         let sandbox = Sandbox::new();
@@ -611,6 +699,10 @@ mod tests {
         };
         sandbox
             .apply("2.0.0-beta.6", &FakeBinary::new("2.0.0-beta.6"))
+            .await
+            .unwrap();
+        sandbox
+            .apply("2.0.0-beta.7", &FakeBinary::new("2.0.0-beta.7"))
             .await
             .unwrap();
         rollback(&sandbox.binary).await.unwrap();
@@ -706,7 +798,7 @@ mod tests {
             &manifest,
             &artifact,
             ArchiveFormat::TarGz,
-            &sandbox.binary.args,
+            &sandbox.binary,
             &NoopObserver,
         )
         .await;
