@@ -10,6 +10,7 @@ use infrarust_transport::handover::{
 static EARLY: AtomicU32 = AtomicU32::new(0);
 static EARLY_TAKEN: AtomicBool = AtomicBool::new(false);
 static EARLY_RECORDERS: Mutex<Vec<SignalRecorder>> = Mutex::new(Vec::new());
+static LATE: AtomicU32 = AtomicU32::new(0);
 static DEFERRED: AtomicU32 = AtomicU32::new(0);
 static STOP_RECORDERS: Once = Once::new();
 
@@ -20,6 +21,7 @@ pub struct EarlySignals {
     pub terminate: bool,
     pub interrupt: bool,
     pub restart: bool,
+    late: u32,
 }
 
 impl EarlySignals {
@@ -28,7 +30,12 @@ impl EarlySignals {
             terminate: bits & HandoverSignal::Terminate.bit() != 0,
             interrupt: bits & HandoverSignal::Interrupt.bit() != 0,
             restart: bits & HandoverSignal::Restart.bit() != 0,
+            late: 0,
         }
+    }
+
+    pub const fn racing(self, signal: HandoverSignal) -> bool {
+        self.late & signal.bit() != 0
     }
 
     pub const fn is_empty(self) -> bool {
@@ -57,6 +64,28 @@ pub fn early_signals() -> EarlySignals {
     }
     EARLY_TAKEN.store(true, Ordering::SeqCst);
     EarlySignals::from_bits(EARLY.load(Ordering::SeqCst))
+}
+
+pub fn take_over_signals<T>(install: impl FnOnce() -> T) -> (T, EarlySignals) {
+    let watching = !EARLY_RECORDERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_empty();
+    let late: Vec<SignalRecorder> = if watching {
+        HandoverSignal::ALL
+            .into_iter()
+            .filter_map(|signal| record_signal(signal, &LATE).ok())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let installed = install();
+    let mut early = early_signals();
+    for recorder in late {
+        recorder.stop();
+    }
+    early.late = LATE.load(Ordering::SeqCst);
+    (installed, early)
 }
 
 pub fn defer_stop(signal: HandoverSignal) {
@@ -135,8 +164,20 @@ mod tests {
                 terminate: true,
                 interrupt: true,
                 restart: true,
+                late: 0,
             }
         );
+    }
+
+    #[test]
+    fn a_signal_seen_after_the_handlers_went_in_is_racing() {
+        let early = EarlySignals {
+            late: HandoverSignal::Terminate.bit(),
+            ..EarlySignals::from_bits(0b011)
+        };
+        assert!(early.racing(HandoverSignal::Terminate));
+        assert!(!early.racing(HandoverSignal::Interrupt));
+        assert!(!EarlySignals::from_bits(0b111).racing(HandoverSignal::Restart));
     }
 
     #[test]

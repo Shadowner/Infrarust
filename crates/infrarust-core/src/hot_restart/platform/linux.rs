@@ -18,7 +18,7 @@ use infrarust_transport::handover::{
 };
 
 pub use launch::{ATTEMPT_VAR, FAILPOINT_VAR, HANDOVER_FD_VAR};
-pub use signals::{EarlySignals, HandoverSignal, defer_stop, early_signals};
+pub use signals::{EarlySignals, HandoverSignal, defer_stop, early_signals, take_over_signals};
 
 use self::envelope::{Envelope, EnvelopeHeader};
 use self::launch::{
