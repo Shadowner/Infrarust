@@ -48,6 +48,10 @@ With no argument, lists all subcommands visible to the caller (admin-only ones a
 
 Prints the proxy version, the current online player count, and the proxy uptime. The uptime drops leading zero units, so it shows `Xd Xh Xm`, `Xh Xm`, or `Xm` depending on how long the proxy has run.
 
+Admins, the players holding `infrarust.admin`, get one more line when the last [update check](../configuration/global#update-checks) found a newer release: `Update available: 2.0.0-beta.6` in yellow, or `Security update available: 2.0.0-beta.6` in red for a release that fixes a security issue. A player who only holds `infrarust.command.version`, through `player_commands` or a permission plugin, never sees it. The line comes from the last check; the command itself does not contact GitHub.
+
+Updates are installed from the proxy console with `update install`, from a shell with `infrarust update install`, or through the admin API. There is no in-game command for it. See [Upgrading](../guide/upgrading).
+
 ### list
 
 ```
