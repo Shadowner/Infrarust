@@ -5,6 +5,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
 use nix::fcntl::{FcntlArg, FdFlag, fcntl};
@@ -187,6 +188,26 @@ fn a_claim_of_a_udp_socket_leaves_the_fd_open() {
         assert_eq!(err.kind(), ErrorKind::InvalidInput, "{err}");
     }
     assert!(is_open(&udp));
+}
+
+#[test]
+fn a_stream_whose_peer_reset_can_still_be_claimed() {
+    let (_listener, client, server) = connected();
+    Socket::from(client)
+        .set_linger(Some(Duration::ZERO))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.peer_addr().is_ok() {
+        assert!(Instant::now() < deadline, "the reset never arrived");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let raw = dup(&server).unwrap().into_raw_fd();
+    drop(server);
+
+    let claimed = claim_inherited(raw, SocketKind::Stream).unwrap();
+
+    let err = socket_identity(claimed.as_fd()).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::NotConnected, "{err}");
 }
 
 #[test]

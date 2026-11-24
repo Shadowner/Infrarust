@@ -64,22 +64,13 @@ pub fn set_inheritable(fd: BorrowedFd<'_>, inheritable: bool) -> io::Result<()> 
 
 #[cfg(unix)]
 pub fn socket_identity(fd: BorrowedFd<'_>) -> io::Result<SocketIdentity> {
-    let raw = fd.as_raw_fd();
-    let sock_type = getsockopt(&fd, sockopt::SockType)?;
-    if sock_type != SockType::Stream {
-        return Err(mismatch(format_args!(
-            "fd {raw} is a {sock_type:?} socket, not a stream socket"
-        )));
-    }
-    let local = inet_address(raw, getsockname(raw)?)?;
-    let kind = if getsockopt(&fd, sockopt::AcceptConn)? {
-        SocketKind::Listener
-    } else {
-        SocketKind::Stream
-    };
+    let (kind, local) = socket_kind(fd)?;
     let peer = match kind {
         SocketKind::Listener => None,
-        SocketKind::Stream => Some(inet_address(raw, getpeername(raw)?)?),
+        SocketKind::Stream => {
+            let raw = fd.as_raw_fd();
+            Some(inet_address(raw, getpeername(raw)?)?)
+        }
     };
     Ok(SocketIdentity { kind, local, peer })
 }
@@ -92,11 +83,10 @@ pub fn claim_inherited(fd: RawFd, expect: SocketKind) -> io::Result<InheritedSoc
     }
     let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
     fcntl(borrowed, FcntlArg::F_GETFD)?;
-    let identity = socket_identity(borrowed)?;
-    if identity.kind != expect {
+    let (kind, _) = socket_kind(borrowed)?;
+    if kind != expect {
         return Err(mismatch(format_args!(
-            "fd {fd} is a {:?} socket, expected a {expect:?} socket",
-            identity.kind
+            "fd {fd} is a {kind:?} socket, expected a {expect:?} socket"
         )));
     }
     let owned = unsafe { OwnedFd::from_raw_fd(fd) };
@@ -146,6 +136,24 @@ pub fn read_sealed(fd: BorrowedFd<'_>) -> io::Result<Vec<u8>> {
 const IMMUTABLE: SealFlag = SealFlag::F_SEAL_SHRINK
     .union(SealFlag::F_SEAL_GROW)
     .union(SealFlag::F_SEAL_WRITE);
+
+#[cfg(unix)]
+fn socket_kind(fd: BorrowedFd<'_>) -> io::Result<(SocketKind, SocketAddr)> {
+    let raw = fd.as_raw_fd();
+    let sock_type = getsockopt(&fd, sockopt::SockType)?;
+    if sock_type != SockType::Stream {
+        return Err(mismatch(format_args!(
+            "fd {raw} is a {sock_type:?} socket, not a stream socket"
+        )));
+    }
+    let local = inet_address(raw, getsockname(raw)?)?;
+    let kind = if getsockopt(&fd, sockopt::AcceptConn)? {
+        SocketKind::Listener
+    } else {
+        SocketKind::Stream
+    };
+    Ok((kind, local))
+}
 
 #[cfg(unix)]
 fn inet_address(fd: RawFd, address: SockaddrStorage) -> io::Result<SocketAddr> {
