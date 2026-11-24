@@ -1,22 +1,32 @@
 use std::io::IsTerminal;
+use std::time::Duration;
 
 use console::measure_text_width;
 use infrarust_api::command::CommandInfo as PluginCommandInfo;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
+use infrarust_api::services::{
+    InstallRequest, InstallState, ProxyUpdates, RestartRequirement, UpdateRequestError,
+    UpdateStatus,
+};
 use infrarust_protocol::version::ProtocolVersion;
+use tokio_util::sync::CancellationToken;
 
 use crate::console::ConsoleServices;
 use crate::console::commands::servers::StateCounts;
+use crate::console::commands::usage;
 use crate::console::dispatcher::{ConsoleCommand, ConsoleCommandSpec};
 use crate::console::output::{
     Block, CommandCategory, CommandOutput, Failure, Fields, Hint, Line, Node, Span, Table,
 };
 use crate::console::parser::format_duration_short;
 use crate::console::render::usage_line;
+use crate::terminal::Mark;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const INSTALL_POLL: Duration = Duration::from_millis(200);
+const INSTALL_SETTLE: Duration = Duration::from_secs(2);
 
 fn product_title() -> String {
     format!("Infrarust {VERSION}")
@@ -149,6 +159,185 @@ pub(crate) fn version_block() -> Block {
     Block::new(product_title()).fields(fields)
 }
 
+fn security_fix() -> Span {
+    Span::err("security fix")
+}
+
+const fn restart_text(restart: RestartRequirement) -> &'static str {
+    match restart {
+        RestartRequirement::Hot => "hot restart",
+        RestartRequirement::Full => "full restart",
+        RestartRequirement::Manual => "stop and start the proxy by hand",
+    }
+}
+
+fn update_meta(status: &UpdateStatus) -> Span {
+    match (&status.available, &status.last_error) {
+        (Some(update), _) if update.security => Span::err("security update available"),
+        (Some(_), _) => Span::warn("update available"),
+        (None, Some(_)) => Span::err("check failed"),
+        (None, None) => Span::ok("up to date"),
+    }
+}
+
+fn install_span(install: &InstallState) -> Option<Span> {
+    match install {
+        InstallState::Idle => None,
+        InstallState::Running { version } => {
+            Some(Span::marked(Mark::Busy, format!("installing {version}")))
+        }
+        InstallState::Installed { version } => Some(Span::ok(format!(
+            "{version} installed, restart Infrarust to run it"
+        ))),
+        InstallState::Failed { reason } => Some(Span::err(format!("failed: {reason}"))),
+    }
+}
+
+pub(crate) fn update_block(status: &UpdateStatus) -> Block {
+    let mut fields = Fields::new();
+    if let Some(update) = &status.available {
+        let mut available = Line::from(Span::strong(update.version.as_str()));
+        if update.security {
+            available = available.push("  ").push(security_fix());
+        }
+        fields.push("available", available);
+        if let Some(published) = &update.published_at {
+            fields.push("published", published.as_str());
+        }
+        if let Some(notes) = &update.notes_url {
+            fields.push("notes", notes.as_str());
+        }
+        fields.push("restart", restart_text(update.restart));
+    }
+    if let Some(install) = install_span(&status.install) {
+        fields.push("install", install);
+    }
+    if status.binary_changed && !matches!(status.install, InstallState::Installed { .. }) {
+        fields.push(
+            "binary",
+            Span::warn("changed on disk, restart Infrarust to run it"),
+        );
+    }
+    if let Some(error) = &status.last_error {
+        fields.push("error", Span::err(error.as_str()));
+    }
+    if let Some(refusal) = &status.install_refusal {
+        fields.push("refused", Span::warn(refusal.as_str()));
+    }
+
+    let mut block =
+        Block::new(format!("Infrarust {}", status.current_version)).meta(update_meta(status));
+    if !fields.0.is_empty() {
+        block = block.fields(fields);
+    }
+    let installable = matches!(
+        status.install,
+        InstallState::Idle | InstallState::Failed { .. }
+    );
+    if status.available.is_some() && status.install_refusal.is_none() && installable {
+        block = block.gap().line(vec![
+            Span::muted("type "),
+            Span::plain("update install"),
+            Span::muted(" to install it"),
+        ]);
+    }
+    block
+}
+
+fn no_updates() -> Failure {
+    Failure::new("Updates are unavailable").with_hint(Hint::Note(
+        "Infrarust could not locate its own executable at startup".to_string(),
+    ))
+}
+
+fn install_refused(error: &UpdateRequestError) -> Failure {
+    let failure = Failure::new(format!("Cannot install: {error}"));
+    match error {
+        UpdateRequestError::NothingToInstall => {
+            failure.with_hint(Hint::Note("type update to check for one".to_string()))
+        }
+        UpdateRequestError::Busy => {
+            failure.with_hint(Hint::Note("type update to follow it".to_string()))
+        }
+        UpdateRequestError::Refused(_) => failure,
+    }
+}
+
+fn install_output(install: &InstallState) -> CommandOutput {
+    match install {
+        InstallState::Installed { version } => {
+            CommandOutput::Success(format!("Installed {version}, restart Infrarust to run it"))
+        }
+        InstallState::Failed { reason } => Failure::new(format!("Update failed: {reason}")).into(),
+        InstallState::Idle | InstallState::Running { .. } => {
+            CommandOutput::Note("The update is still installing, type update to follow it".into())
+        }
+    }
+}
+
+async fn install(
+    updates: &dyn ProxyUpdates,
+    version: Option<&str>,
+    shutdown: &CancellationToken,
+) -> CommandOutput {
+    if version.is_none() && updates.status().available.is_none() {
+        let status = updates.check_now().await;
+        if status.available.is_none() {
+            return match status.last_error {
+                Some(error) => Failure::new(format!("Update check failed: {error}")).into(),
+                None => CommandOutput::Note(format!(
+                    "Infrarust {} is up to date",
+                    status.current_version
+                )),
+            };
+        }
+    }
+
+    let before = updates.status().install;
+    let request = InstallRequest {
+        version: version.map(str::to_string),
+        then_restart: false,
+    };
+    if let Err(error) = updates.start_install(request) {
+        return install_refused(&error).into();
+    }
+    tracing::info!(
+        target: "console",
+        version = version.unwrap_or("latest"),
+        "Update install started from console"
+    );
+
+    match finished_install(updates, &before, shutdown).await {
+        Some(install) => install_output(&install),
+        None => CommandOutput::Note("The proxy is stopping before the update finished".into()),
+    }
+}
+
+async fn finished_install(
+    updates: &dyn ProxyUpdates,
+    before: &InstallState,
+    shutdown: &CancellationToken,
+) -> Option<InstallState> {
+    let started = tokio::time::Instant::now();
+    let mut seen_running = false;
+    loop {
+        match updates.status().install {
+            InstallState::Running { .. } => seen_running = true,
+            InstallState::Idle => {}
+            install
+                if seen_running || install != *before || started.elapsed() >= INSTALL_SETTLE =>
+            {
+                return Some(install);
+            }
+            _ => {}
+        }
+        tokio::select! {
+            () = shutdown.cancelled() => return None,
+            () = tokio::time::sleep(INSTALL_POLL) => {}
+        }
+    }
+}
+
 pub(crate) struct StatusReport {
     pub uptime: String,
     pub players: usize,
@@ -248,6 +437,41 @@ impl ConsoleCommand for VersionCommand {
         _services: &'a ConsoleServices,
     ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move { version_block().into() })
+    }
+}
+
+pub struct UpdateCommand;
+
+impl ConsoleCommand for UpdateCommand {
+    fn spec(&self) -> &'static ConsoleCommandSpec {
+        &ConsoleCommandSpec {
+            name: "update",
+            aliases: &[],
+            description: "Check for or install an update",
+            usage: "update [install [version]]",
+            category: CommandCategory::System,
+        }
+    }
+
+    fn execute<'a>(
+        &'a self,
+        args: &'a [&'a str],
+        services: &'a ConsoleServices,
+    ) -> BoxFuture<'a, CommandOutput> {
+        Box::pin(async move {
+            let Some(updates) = services.updates.as_deref() else {
+                return no_updates().into();
+            };
+            match args {
+                [] => update_block(&updates.check_now().await).into(),
+                [action, rest @ ..]
+                    if action.eq_ignore_ascii_case("install") && rest.len() <= 1 =>
+                {
+                    install(updates, rest.first().copied(), &services.shutdown).await
+                }
+                _ => usage(self),
+            }
+        })
     }
 }
 
@@ -376,13 +600,286 @@ impl ConsoleCommand for GcCommand {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Instant;
+
     use infrarust_api::command::CommandSpec;
+    use infrarust_api::services::AvailableUpdate;
+    use infrarust_config::PermissionsConfig;
 
     use super::*;
+    use crate::ban::manager::BanManager;
     use crate::console::render::Renderer;
+    use crate::event_bus::EventBusImpl;
+    use crate::permissions::PermissionService;
+    use crate::player::registry::PlayerRegistryImpl;
+    use crate::plugin::PluginManagerHandle;
+    use crate::plugin::manager::PluginManager;
+    use crate::registry::ConnectionRegistry;
+    use crate::routing::DomainRouter;
+    use crate::services::command_manager::CommandManagerImpl;
+    use crate::services::config_service::ConfigServiceImpl;
+    use crate::test_support::FakeUpdates;
 
     fn render(output: impl Into<CommandOutput>) -> String {
         Renderer::new(false, None).render(&output.into())
+    }
+
+    fn console(updates: Option<Arc<dyn ProxyUpdates>>) -> ConsoleServices {
+        let connection_registry = Arc::new(ConnectionRegistry::new());
+        ConsoleServices {
+            player_registry: Arc::new(PlayerRegistryImpl::new(Arc::clone(&connection_registry))),
+            ban_manager: Arc::new(BanManager::disabled(
+                Arc::clone(&connection_registry),
+                Arc::new(EventBusImpl::new()),
+            )),
+            connection_registry,
+            server_manager: None,
+            config_service: Arc::new(ConfigServiceImpl::new(
+                Arc::new(DomainRouter::new()),
+                PathBuf::from("infrarust.toml"),
+                Arc::new(toml::from_str("").unwrap()),
+            )),
+            plugins: PluginManagerHandle::new(PluginManager::for_tests(Vec::new())),
+            permission_service: Arc::new(
+                PermissionService::new_sync(&PermissionsConfig::default()),
+            ),
+            command_manager: Arc::new(CommandManagerImpl::new()),
+            shutdown: CancellationToken::new(),
+            start_time: Instant::now(),
+            updates,
+            restart: None,
+        }
+    }
+
+    async fn run(
+        command: &dyn ConsoleCommand,
+        args: &[&str],
+        updates: &Arc<FakeUpdates>,
+    ) -> String {
+        let services = console(Some(Arc::clone(updates) as Arc<dyn ProxyUpdates>));
+        render(command.execute(args, &services).await)
+    }
+
+    fn security_release() -> AvailableUpdate {
+        AvailableUpdate {
+            published_at: Some("2026-11-20T08:00:00Z".to_string()),
+            notes_url: Some("https://example.invalid/v2.0.0-beta.6".to_string()),
+            ..FakeUpdates::release("2.0.0-beta.6", true)
+        }
+    }
+
+    fn offering(update: AvailableUpdate) -> UpdateStatus {
+        UpdateStatus {
+            available: Some(update),
+            ..FakeUpdates::idle("2.0.0-beta.5")
+        }
+    }
+
+    const DOCKER: &str = "this binary comes from a container image; update the image with `docker pull ghcr.io/shadowner/infrarust:2.0.0-beta.6` and recreate the container";
+
+    #[tokio::test]
+    async fn update_without_a_service_says_updates_are_unavailable() {
+        let output = UpdateCommand.execute(&[], &console(None)).await;
+        assert_eq!(
+            render(output),
+            "error: Updates are unavailable\n  Infrarust could not locate its own executable at startup"
+        );
+        let output = UpdateCommand.execute(&["install"], &console(None)).await;
+        assert!(render(output).starts_with("error: Updates are unavailable"));
+    }
+
+    #[tokio::test]
+    async fn update_checks_now_and_flags_a_security_release() {
+        let updates = Arc::new(
+            FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.5"))
+                .on_check(offering(security_release())),
+        );
+        assert_eq!(
+            run(&UpdateCommand, &[], &updates).await,
+            "# Infrarust 2.0.0-beta.5 - security update available\n\
+             | available  2.0.0-beta.6  security fix\n\
+             | published  2026-11-20T08:00:00Z\n\
+             | notes      https://example.invalid/v2.0.0-beta.6\n\
+             | restart    full restart\n\
+             |\n\
+             | type update install to install it"
+        );
+        assert_eq!(updates.checks(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_says_when_the_proxy_is_up_to_date() {
+        let updates = Arc::new(FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.6")));
+        assert_eq!(
+            run(&UpdateCommand, &[], &updates).await,
+            "# Infrarust 2.0.0-beta.6 - up to date"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_shows_why_the_check_failed() {
+        let updates = Arc::new(FakeUpdates::new(UpdateStatus {
+            last_error: Some("the update server rate limit is reached".to_string()),
+            ..FakeUpdates::idle("2.0.0-beta.5")
+        }));
+        assert_eq!(
+            run(&UpdateCommand, &[], &updates).await,
+            "# Infrarust 2.0.0-beta.5 - check failed\n\
+             | error  the update server rate limit is reached"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_shows_the_install_refusal_instead_of_the_install_hint() {
+        let updates = Arc::new(FakeUpdates::new(UpdateStatus {
+            install_refusal: Some(DOCKER.to_string()),
+            ..offering(FakeUpdates::release("2.0.0-beta.6", false))
+        }));
+        assert_eq!(
+            run(&UpdateCommand, &[], &updates).await,
+            format!(
+                "# Infrarust 2.0.0-beta.5 - update available\n\
+                 | available  2.0.0-beta.6\n\
+                 | restart    full restart\n\
+                 | refused    {DOCKER}"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn update_shows_an_installed_release_waiting_for_a_restart() {
+        let updates = Arc::new(FakeUpdates::new(UpdateStatus {
+            install: InstallState::Installed {
+                version: "2.0.0-beta.6".to_string(),
+            },
+            binary_changed: true,
+            ..offering(FakeUpdates::release("2.0.0-beta.6", false))
+        }));
+        assert_eq!(
+            run(&UpdateCommand, &[], &updates).await,
+            "# Infrarust 2.0.0-beta.5 - update available\n\
+             | available  2.0.0-beta.6\n\
+             | restart    full restart\n\
+             | install    2.0.0-beta.6 installed, restart Infrarust to run it"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_install_waits_for_the_installed_version() {
+        let updates = Arc::new(
+            FakeUpdates::new(offering(FakeUpdates::release("2.0.0-beta.6", false))).installs(
+                InstallState::Installed {
+                    version: "2.0.0-beta.6".to_string(),
+                },
+            ),
+        );
+        assert_eq!(
+            run(&UpdateCommand, &["install"], &updates).await,
+            "ok: Installed 2.0.0-beta.6, restart Infrarust to run it"
+        );
+        assert_eq!(updates.requests(), [InstallRequest::default()]);
+        assert_eq!(updates.checks(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_install_of_a_version_reports_the_failure_and_its_instructions() {
+        let reason = "the binary rejects the configuration infrarust.toml: unknown field `update`";
+        let updates = Arc::new(
+            FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.5")).installs(InstallState::Failed {
+                reason: reason.to_string(),
+            }),
+        );
+        assert_eq!(
+            run(&UpdateCommand, &["INSTALL", "2.0.0-beta.4"], &updates).await,
+            format!("error: Update failed: {reason}")
+        );
+        assert_eq!(
+            updates.requests(),
+            [InstallRequest {
+                version: Some("2.0.0-beta.4".to_string()),
+                then_restart: false,
+            }]
+        );
+        assert_eq!(updates.checks(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_install_shows_a_refusal_with_its_instructions() {
+        let updates = Arc::new(
+            FakeUpdates::new(offering(FakeUpdates::release("2.0.0-beta.6", false)))
+                .refuses(UpdateRequestError::Refused(DOCKER.to_string())),
+        );
+        assert_eq!(
+            run(&UpdateCommand, &["install"], &updates).await,
+            format!("error: Cannot install: {DOCKER}")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_install_checks_first_when_no_update_is_known() {
+        let updates = Arc::new(FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.6")));
+        assert_eq!(
+            run(&UpdateCommand, &["install"], &updates).await,
+            "- Infrarust 2.0.0-beta.6 is up to date"
+        );
+        assert_eq!(updates.checks(), 1);
+        assert!(updates.requests().is_empty());
+
+        let found = Arc::new(
+            FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.5"))
+                .on_check(offering(security_release()))
+                .installs(InstallState::Installed {
+                    version: "2.0.0-beta.6".to_string(),
+                }),
+        );
+        assert_eq!(
+            run(&UpdateCommand, &["install"], &found).await,
+            "ok: Installed 2.0.0-beta.6, restart Infrarust to run it"
+        );
+        assert_eq!(found.checks(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_rejects_unknown_arguments_with_its_usage() {
+        let updates = Arc::new(FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.6")));
+        for args in [&["rollback"][..], &["install", "1.0.0", "now"]] {
+            assert_eq!(
+                run(&UpdateCommand, args, &updates).await,
+                "error: Missing arguments\n  usage: update [install [version]]"
+            );
+        }
+        assert!(updates.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn waiting_for_an_install_stops_with_the_proxy() {
+        let updates = FakeUpdates::new(offering(FakeUpdates::release("2.0.0-beta.6", false)))
+            .installs(InstallState::Installed {
+                version: "2.0.0-beta.6".to_string(),
+            });
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        assert_eq!(
+            render(install(&updates, None, &shutdown).await),
+            "- The proxy is stopping before the update finished"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_install_ending_like_the_previous_one_is_reported_after_a_pause() {
+        let failed = InstallState::Failed {
+            reason: "request to https://example.invalid failed".to_string(),
+        };
+        let updates = FakeUpdates::new(UpdateStatus {
+            install: failed.clone(),
+            ..FakeUpdates::idle("2.0.0-beta.5")
+        });
+        let started = tokio::time::Instant::now();
+        let finished = finished_install(&updates, &failed, &CancellationToken::new()).await;
+        assert_eq!(finished, Some(failed));
+        assert!(started.elapsed() >= INSTALL_SETTLE);
     }
 
     fn info(
@@ -578,14 +1075,8 @@ mod tests {
             panic!("status is a list of fields");
         };
         let (_, servers) = &fields.0[2];
-        assert_eq!(
-            servers.0[2],
-            Span::marked(crate::terminal::Mark::Up, "1 online")
-        );
-        assert_eq!(
-            servers.0[6],
-            Span::marked(crate::terminal::Mark::Down, "2 crashed")
-        );
+        assert_eq!(servers.0[2], Span::marked(Mark::Up, "1 online"));
+        assert_eq!(servers.0[6], Span::marked(Mark::Down, "2 crashed"));
         let (_, players) = &fields.0[0];
         assert_eq!(players.0[0], Span::ok("12 online"));
     }

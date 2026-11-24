@@ -63,6 +63,7 @@ pub fn register_all(dispatcher: &mut CommandDispatcher) {
     dispatcher.register(Box::new(plugins::PluginCommand));
 
     dispatcher.register(Box::new(system::VersionCommand));
+    dispatcher.register(Box::new(system::UpdateCommand));
     dispatcher.register(Box::new(system::StatusCommand));
     dispatcher.register(Box::new(system::StopCommand));
     dispatcher.register(Box::new(system::ClearCommand));
