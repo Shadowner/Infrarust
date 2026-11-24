@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -231,6 +232,7 @@ impl ProxyServer {
             unknown_domain_behavior: config.unknown_domain_behavior,
             shutdown,
             background,
+            listener_request: Notify::new(),
             connections: TaskTracker::new(),
         })
     }

@@ -30,7 +30,7 @@ use crate::plugin::{
 };
 use crate::provider::plugin_adapter::PluginProviderActivator;
 use crate::server::ProxyServices;
-use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer};
+use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer, ServeExit};
 use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
@@ -413,7 +413,7 @@ pub struct RunningProxy {
     plugins: PluginManagerHandle,
     plugin_registry: Arc<PluginRegistryImpl>,
     context_factory: Arc<PluginContextFactoryImpl>,
-    serve_task: JoinHandle<Result<(), CoreError>>,
+    serve_task: JoinHandle<Result<ServeExit, CoreError>>,
     local_addr: SocketAddr,
     start_time: Instant,
     shutdown: CancellationToken,
@@ -487,7 +487,8 @@ impl RunningProxy {
 
     pub async fn wait(mut self) -> Result<(), CoreError> {
         let result = match (&mut self.serve_task).await {
-            Ok(result) => result,
+            Ok(Ok(ServeExit::Stopped | ServeExit::Restart(_))) => Ok(()),
+            Ok(Err(e)) => Err(e),
             Err(e) => Err(CoreError::Startup(format!("proxy server task failed: {e}"))),
         };
 

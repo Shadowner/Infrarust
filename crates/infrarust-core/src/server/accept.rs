@@ -13,7 +13,7 @@ use infrarust_protocol::ProtocolError;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{Listener, PendingConnection, TransportError};
 
-use super::ProxyServer;
+use super::{ProxyServer, ServeExit};
 use crate::error::CoreError;
 use crate::handoff::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::handoff::{HandoffError, HandoffLevel};
@@ -51,7 +51,7 @@ fn client_gave_up(error: &CoreError) -> bool {
 }
 
 impl ProxyServer {
-    pub async fn serve(self: Arc<Self>, listener: Listener) -> Result<(), CoreError> {
+    pub async fn serve(self: Arc<Self>, listener: Listener) -> Result<ServeExit, CoreError> {
         let config = &self.services.config;
 
         if let Some(ref sm) = self.services.server_manager {
@@ -82,7 +82,11 @@ impl ProxyServer {
                 biased;
                 () = self.shutdown.cancelled() => {
                     tracing::info!("proxy server shutting down");
-                    break;
+                    return Ok(ServeExit::Stopped);
+                }
+                () = self.listener_request.notified() => {
+                    tracing::info!("proxy server stopped accepting connections, handing the listener over");
+                    return Ok(ServeExit::Restart(Box::new(listener)));
                 }
                 result = listener.accept() => {
                     match result {
@@ -113,8 +117,6 @@ impl ProxyServer {
                 }
             });
         }
-
-        Ok(())
     }
 
     async fn handle_connection(

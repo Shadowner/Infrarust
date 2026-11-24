@@ -9,6 +9,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -36,6 +37,12 @@ pub use proxy_services::ProxyServices;
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 const PIPELINE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+#[derive(Debug)]
+pub enum ServeExit {
+    Stopped,
+    Restart(Box<Listener>),
+}
+
 pub struct ProxyServer {
     common_pipeline: Pipeline,
     login_pipeline: Pipeline,
@@ -51,6 +58,7 @@ pub struct ProxyServer {
     unknown_domain_behavior: UnknownDomainBehavior,
     shutdown: CancellationToken,
     background: CancellationToken,
+    listener_request: Notify,
     connections: TaskTracker,
 }
 
@@ -67,7 +75,7 @@ impl ProxyServer {
         self.close_sessions(ShutdownKind::Stop);
         self.drain_connections(DEFAULT_DRAIN_TIMEOUT).await;
         self.stop_background_tasks();
-        result
+        result.map(|_| ())
     }
 
     pub async fn bind(&self) -> Result<Listener, CoreError> {
@@ -105,6 +113,10 @@ impl ProxyServer {
             ShutdownKind::Stop => relays.sessions().cancel(),
             ShutdownKind::Restart => relays.close_pipeline(),
         }
+    }
+
+    pub fn request_listener(&self) {
+        self.listener_request.notify_one();
     }
 
     pub async fn drain_pipeline(&self, timeout: Duration) -> usize {
@@ -212,6 +224,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use infrarust_config::ProxyConfig;
+    use tokio::net::TcpStream;
 
     use super::*;
 
@@ -228,6 +241,51 @@ mod tests {
             .await
             .unwrap();
         Arc::new(server)
+    }
+
+    #[tokio::test]
+    async fn a_listener_request_hands_back_a_listener_that_keeps_queueing() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = server(dir.path()).await;
+        let listener = server.bind().await.unwrap();
+        let addr = listener.local_addr();
+        let serving = tokio::spawn(Arc::clone(&server).serve(listener));
+
+        server.request_listener();
+        let exit = tokio::time::timeout(T, serving)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let ServeExit::Restart(listener) = exit else {
+            panic!("a listener request must hand the listener back, got {exit:?}");
+        };
+        assert_eq!(listener.local_addr(), addr);
+        let client = TcpStream::connect(addr).await.unwrap();
+        assert_eq!(server.active_connections(), 0);
+        let pending = tokio::time::timeout(T, listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.peer_addr(), client.local_addr().unwrap());
+    }
+
+    #[tokio::test]
+    async fn the_shutdown_token_stops_the_accept_loop() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = server(dir.path()).await;
+        let listener = server.bind().await.unwrap();
+        let serving = tokio::spawn(Arc::clone(&server).serve(listener));
+
+        server.shutdown().cancel();
+
+        let exit = tokio::time::timeout(T, serving)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(exit, ServeExit::Stopped), "{exit:?}");
     }
 
     #[tokio::test]
