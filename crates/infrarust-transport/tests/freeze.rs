@@ -27,6 +27,12 @@ macro_rules! forwarder_cases {
                 async fn copy() {
                     super::$case(super::Forwarder::Copy).await;
                 }
+
+                #[cfg(target_os = "linux")]
+                #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+                async fn splice() {
+                    super::$case(super::Forwarder::Splice).await;
+                }
             }
         )+
     };

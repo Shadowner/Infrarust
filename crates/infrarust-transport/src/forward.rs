@@ -163,7 +163,9 @@ impl Forwarder {
         match self {
             Self::Copy => copy_forward(client, backend, progress, shutdown, freeze).await,
             #[cfg(target_os = "linux")]
-            Self::Splice => splice_impl::splice_forward(client, backend, progress, shutdown).await,
+            Self::Splice => {
+                splice_impl::splice_forward(client, backend, progress, shutdown, freeze).await
+            }
         }
     }
 }
@@ -630,10 +632,22 @@ fn transferred(end: Option<&io::Result<u64>>) -> u64 {
 
 #[cfg(target_os = "linux")]
 mod splice_impl {
-    use super::{CancellationToken, ForwardResult, Progress, RelaySide, TcpStream, finish};
+    use std::io;
     use std::os::fd::{AsFd, OwnedFd};
+    use std::task::{Context, Poll, ready};
+
+    use bytes::Bytes;
+    use nix::fcntl::SpliceFFlags;
+    use tokio::io::Interest;
+
+    use super::{
+        CancellationToken, Delivery, ForwardResult, Freeze, Progress, PumpEnd, RelaySide,
+        TcpStream, deliver, finish, frozen,
+    };
 
     const PIPE_SIZE: usize = 64 * 1024;
+    const SPLICE_FLAGS: SpliceFFlags =
+        SpliceFFlags::SPLICE_F_NONBLOCK.union(SpliceFFlags::SPLICE_F_MOVE);
 
     struct KernelPipe {
         read_fd: OwnedFd,
@@ -642,7 +656,7 @@ mod splice_impl {
     }
 
     impl KernelPipe {
-        fn new(requested: usize) -> std::io::Result<Self> {
+        fn new(requested: usize) -> io::Result<Self> {
             use nix::fcntl::{FcntlArg, OFlag, fcntl};
 
             static UNDERSIZED: std::sync::Once = std::sync::Once::new();
@@ -655,7 +669,7 @@ mod splice_impl {
                 FcntlArg::F_SETPIPE_SZ(i32::try_from(requested).unwrap_or(i32::MAX)),
             );
             let size = fcntl(&write_fd, FcntlArg::F_GETPIPE_SZ).map_err(nix_to_io_error)?;
-            let size = usize::try_from(size).map_err(std::io::Error::other)?;
+            let size = usize::try_from(size).map_err(io::Error::other)?;
             if size < requested {
                 UNDERSIZED.call_once(|| {
                     tracing::warn!(
@@ -672,142 +686,234 @@ mod splice_impl {
                 size,
             })
         }
+
+        fn take(&self, len: usize) -> io::Result<Bytes> {
+            let mut tail = vec![0u8; len];
+            let mut filled = 0;
+            while filled < len {
+                match nix::unistd::read(&self.read_fd, &mut tail[filled..]) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "the splice pipe held fewer bytes than it received",
+                        ));
+                    }
+                    Ok(n) => filled += n,
+                    Err(nix::errno::Errno::EINTR) => {}
+                    Err(e) => return Err(nix_to_io_error(e)),
+                }
+            }
+            Ok(Bytes::from(tail))
+        }
     }
 
-    fn nix_to_io_error(e: nix::Error) -> std::io::Error {
-        std::io::Error::from_raw_os_error(e as i32)
+    fn nix_to_io_error(e: nix::Error) -> io::Error {
+        io::Error::from_raw_os_error(e as i32)
+    }
+
+    struct Spliced {
+        copied: u64,
+        end: PumpEnd,
+    }
+
+    impl Spliced {
+        const fn finished() -> Self {
+            Self {
+                copied: 0,
+                end: PumpEnd::Eof,
+            }
+        }
+    }
+
+    fn poll_send(dst: &TcpStream, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
+        loop {
+            ready!(dst.poll_write_ready(cx))?;
+            match dst.try_write(bytes) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                result => return Poll::Ready(result),
+            }
+        }
+    }
+
+    fn poll_splice(
+        pipe: &KernelPipe,
+        dst: &TcpStream,
+        cx: &mut Context<'_>,
+        len: usize,
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            ready!(dst.poll_write_ready(cx))?;
+            let spliced = dst.try_io(Interest::WRITABLE, || {
+                nix::fcntl::splice(&pipe.read_fd, None, dst.as_fd(), None, len, SPLICE_FLAGS)
+                    .map_err(nix_to_io_error)
+            });
+            match spliced {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                result => return Poll::Ready(result),
+            }
+        }
     }
 
     async fn splice_one_direction(
         src: &TcpStream,
         dst: &TcpStream,
         pipe: &KernelPipe,
-        shutdown: CancellationToken,
-    ) -> Result<Option<u64>, std::io::Error> {
-        use nix::fcntl::SpliceFFlags;
-        use tokio::io::Interest;
+        pending: Bytes,
+        freeze: Freeze,
+    ) -> Spliced {
+        let token = freeze.token().child_token();
+        let frozen = token.cancelled();
+        tokio::pin!(frozen);
+        let deadline = freeze.write_deadline();
+        let mut copied: u64 = 0;
 
-        let mut total: u64 = 0;
-        let flags = SpliceFFlags::SPLICE_F_NONBLOCK | SpliceFFlags::SPLICE_F_MOVE;
-        let mut eof_received = false;
-        let cancelled = shutdown.cancelled();
-        tokio::pin!(cancelled);
-
-        loop {
-            let drained = tokio::select! {
-                biased;
-                () = &mut cancelled => break,
-                result = src.ready(Interest::READABLE) => {
-                    let _ = result?;
-                    match src.try_io(Interest::READABLE, || {
-                        nix::fcntl::splice(
-                            src.as_fd(),
-                            None,
-                            &pipe.write_fd,
-                            None,
-                            pipe.size,
-                            flags,
-                        ).map_err(nix_to_io_error)
-                    }) {
-                        Ok(0) => { eof_received = true; break; }
-                        Ok(n) => n,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                        Err(e) => return Err(e),
-                    }
+        let end = 'splice: {
+            let delivery = deliver(
+                pending.len(),
+                |cx, at| poll_send(dst, cx, &pending[at..]),
+                frozen.as_mut(),
+                deadline,
+            )
+            .await;
+            match delivery {
+                Ok(Delivery::Done) => copied += pending.len() as u64,
+                Ok(Delivery::Frozen(at)) => {
+                    copied += at as u64;
+                    break 'splice PumpEnd::Frozen(pending.slice(at..));
                 }
-            };
-
-            let mut pumped = 0usize;
-            while pumped < drained {
-                tokio::select! {
-                    biased;
-                    () = &mut cancelled => {
-                        return Ok(None);
-                    }
-                    result = dst.ready(Interest::WRITABLE) => {
-                        let _ = result?;
-                        match dst.try_io(Interest::WRITABLE, || {
-                            nix::fcntl::splice(&pipe.read_fd, None, dst.as_fd(), None, drained - pumped, flags)
-                                .map_err(nix_to_io_error)
-                        }) {
-                            Ok(0) => {
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::WriteZero,
-                                    "splice pump returned 0",
-                                ));
-                            }
-                            Ok(n) => pumped += n,
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                            Err(e) => return Err(e),
-                        }
-                    }
-                }
+                Err(e) => break 'splice PumpEnd::Failed(e),
             }
 
-            total += pumped as u64;
-        }
+            loop {
+                let drained = tokio::select! {
+                    biased;
+                    () = frozen.as_mut() => break 'splice PumpEnd::Frozen(Bytes::new()),
+                    result = src.ready(Interest::READABLE) => {
+                        if let Err(e) = result {
+                            break 'splice PumpEnd::Failed(e);
+                        }
+                        match src.try_io(Interest::READABLE, || {
+                            nix::fcntl::splice(
+                                src.as_fd(),
+                                None,
+                                &pipe.write_fd,
+                                None,
+                                pipe.size,
+                                SPLICE_FLAGS,
+                            ).map_err(nix_to_io_error)
+                        }) {
+                            Ok(0) => break 'splice PumpEnd::Eof,
+                            Ok(n) => n,
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                            Err(e) => break 'splice PumpEnd::Failed(e),
+                        }
+                    }
+                };
 
-        if eof_received {
+                let delivery = deliver(
+                    drained,
+                    |cx, at| poll_splice(pipe, dst, cx, drained - at),
+                    frozen.as_mut(),
+                    deadline,
+                )
+                .await;
+                match delivery {
+                    Ok(Delivery::Done) => copied += drained as u64,
+                    Ok(Delivery::Frozen(at)) => {
+                        copied += at as u64;
+                        break 'splice pipe
+                            .take(drained - at)
+                            .map_or_else(PumpEnd::Failed, PumpEnd::Frozen);
+                    }
+                    Err(e) => break 'splice PumpEnd::Failed(e),
+                }
+            }
+        };
+
+        if matches!(end, PumpEnd::Eof) {
             let _ = socket2::SockRef::from(dst).shutdown(std::net::Shutdown::Write);
         }
-
-        Ok(eof_received.then_some(total))
+        Spliced { copied, end }
     }
 
     pub(super) async fn splice_forward(
-        mut client: TcpStream,
-        mut backend: TcpStream,
+        client: TcpStream,
+        backend: TcpStream,
         progress: Progress,
         shutdown: CancellationToken,
+        freeze: Freeze,
     ) -> ForwardResult {
-        use tokio::io::AsyncWriteExt;
-
-        for (to, tail) in [
-            (&mut backend, &progress.client_to_backend.tail),
-            (&mut client, &progress.backend_to_client.tail),
-        ] {
-            if let Err(e) = to.write_all(tail).await {
-                return progress.failed(e);
-            }
-        }
-        let pipe_c2b = match KernelPipe::new(PIPE_SIZE) {
-            Ok(pipe) => pipe,
+        let pipes =
+            KernelPipe::new(PIPE_SIZE).and_then(|c2b| Ok((c2b, KernelPipe::new(PIPE_SIZE)?)));
+        let (pipe_c2b, pipe_b2c) = match pipes {
+            Ok(pipes) => pipes,
             Err(e) => return progress.failed(e),
         };
-        let pipe_b2c = match KernelPipe::new(PIPE_SIZE) {
-            Ok(pipe) => pipe,
-            Err(e) => return progress.failed(e),
-        };
+        let Progress {
+            client_to_backend,
+            backend_to_client,
+            first_closed,
+        } = progress;
+        let bases = (client_to_backend.copied, backend_to_client.copied);
 
-        let c2b = splice_one_direction(&client, &backend, &pipe_c2b, shutdown.clone());
-        let b2c = splice_one_direction(&backend, &client, &pipe_b2c, shutdown.clone());
+        let mut first = first_closed;
+        let mut c2b_end = client_to_backend.source_eof.then(Spliced::finished);
+        let mut b2c_end = backend_to_client.source_eof.then(Spliced::finished);
+        let mut stopped = false;
+        {
+            let c2b = splice_one_direction(
+                &client,
+                &backend,
+                &pipe_c2b,
+                client_to_backend.tail,
+                freeze.clone(),
+            );
+            let b2c =
+                splice_one_direction(&backend, &client, &pipe_b2c, backend_to_client.tail, freeze);
+            let cancelled = shutdown.cancelled();
+            tokio::pin!(c2b, b2c, cancelled);
 
-        let cancelled = shutdown.cancelled();
-        tokio::pin!(c2b, b2c, cancelled);
-
-        let mut first = None;
-        let mut c2b_end = None;
-        let mut b2c_end = None;
-        while c2b_end.is_none() || b2c_end.is_none() {
-            let (side, ended) = tokio::select! {
-                biased;
-                () = &mut cancelled => break,
-                ended = &mut c2b, if c2b_end.is_none() => (RelaySide::Client, ended),
-                ended = &mut b2c, if b2c_end.is_none() => (RelaySide::Backend, ended),
-            };
-            let Some(ended) = ended.transpose() else {
-                break;
-            };
-            let failed = ended.is_err();
-            first.get_or_insert(side);
-            match side {
-                RelaySide::Client => c2b_end = Some(ended),
-                RelaySide::Backend => b2c_end = Some(ended),
-            }
-            if failed {
-                break;
+            while c2b_end.is_none() || b2c_end.is_none() {
+                let (side, ended) = tokio::select! {
+                    biased;
+                    () = &mut cancelled => {
+                        stopped = true;
+                        break;
+                    }
+                    ended = &mut c2b, if c2b_end.is_none() => (RelaySide::Client, ended),
+                    ended = &mut b2c, if b2c_end.is_none() => (RelaySide::Backend, ended),
+                };
+                let failed = ended.end.is_failed();
+                if !ended.end.is_frozen() {
+                    first.get_or_insert(side);
+                }
+                match side {
+                    RelaySide::Client => c2b_end = Some(ended),
+                    RelaySide::Backend => b2c_end = Some(ended),
+                }
+                if failed {
+                    break;
+                }
             }
         }
-        finish(first, c2b_end, b2c_end)
+
+        match (c2b_end, b2c_end) {
+            (Some(c2b), Some(b2c)) if !stopped && (c2b.end.is_frozen() || b2c.end.is_frozen()) => {
+                let streams = client
+                    .into_std()
+                    .and_then(|client| Ok((client, backend.into_std()?)));
+                frozen(
+                    streams,
+                    c2b.end.settled(bases.0 + c2b.copied),
+                    b2c.end.settled(bases.1 + b2c.copied),
+                    first,
+                )
+            }
+            (c2b, b2c) => finish(
+                first,
+                c2b.map(|ended| ended.end.counted(bases.0 + ended.copied)),
+                b2c.map(|ended| ended.end.counted(bases.1 + ended.copied)),
+            ),
+        }
     }
 }
