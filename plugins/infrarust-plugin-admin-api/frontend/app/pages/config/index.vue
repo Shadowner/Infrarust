@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowPathIcon,
+  ArrowPathRoundedSquareIcon,
   ArrowRightIcon,
   Cog6ToothIcon,
   ExclamationTriangleIcon,
@@ -11,6 +12,7 @@ import type { ProxyStatus, ProviderDto, ApiEnvelope, MutationResult } from '~/ty
 const { request } = useApi();
 const { push } = useToast();
 const { ask } = useConfirm();
+const { restart: hotRestart } = useHotRestart();
 const { pending: restartPending, clear: clearRestart } = useRestartRequired();
 
 const providers = ref<ProviderDto[]>([]);
@@ -34,6 +36,12 @@ const operations = [
     variant: 'accent' as const,
   },
   {
+    label: 'Hot Restart',
+    description: 'Restart in place. Players on passthrough servers stay connected.',
+    icon: ArrowPathRoundedSquareIcon,
+    variant: 'accent' as const,
+  },
+  {
     label: 'Shutdown Proxy',
     description: 'Gracefully terminate the proxy. This is irreversible.',
     icon: PowerIcon,
@@ -41,11 +49,17 @@ const operations = [
   },
 ];
 
+const visibleOperations = computed(() =>
+  operations.filter((op) => op.label !== 'Hot Restart' || proxyConfig.value?.restart_available),
+);
+
 async function handleOperation(op: typeof operations[number]) {
   try {
     if (op.label === 'Reload Config') {
       await request<ApiEnvelope<MutationResult>>('/config/reload', { method: 'POST', body: {} });
       push({ type: 'success', title: 'Config reload requested' });
+    } else if (op.label === 'Hot Restart') {
+      await hotRestart();
     } else if (op.label === 'Shutdown Proxy') {
       const first = await ask('Shutdown Proxy', 'Are you sure? This will disconnect all players.');
       if (!first) return;
@@ -122,7 +136,7 @@ async function handleOperation(op: typeof operations[number]) {
       <h3 class="mb-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--ir-text-muted)]">Operations</h3>
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <button
-          v-for="op in operations"
+          v-for="op in visibleOperations"
           :key="op.label"
           class="glass-pane glass-pane-interactive flex items-start gap-4 p-5 text-left"
           :class="op.variant === 'danger' ? 'hover:border-[rgba(204,62,56,0.4)]' : ''"

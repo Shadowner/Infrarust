@@ -37,6 +37,7 @@ export interface ProxyStatus {
   bind_address: string;
   features: string[];
   memory_rss_bytes: number | null;
+  restart_available: boolean;
 }
 
 export type RestartRequirement = 'hot' | 'full' | 'manual';

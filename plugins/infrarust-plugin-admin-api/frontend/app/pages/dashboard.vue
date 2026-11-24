@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowPathIcon,
+  ArrowPathRoundedSquareIcon,
   MegaphoneIcon,
   PowerIcon,
   ServerStackIcon,
@@ -13,6 +14,7 @@ import type { PlayerJoinPayload, PlayerLeavePayload, ServerStateChangePayload, B
 const { request } = useApi();
 const { push } = useToast();
 const { ask } = useConfirm();
+const { restart: hotRestart } = useHotRestart();
 const { onEvent } = useEventBus();
 const { now } = useTick();
 const proxyStatus = ref<ProxyStatus | null>(null);
@@ -129,6 +131,8 @@ async function handleAction(label: string) {
     } else if (label === 'Broadcast') {
       showBroadcast.value = true;
       return;
+    } else if (label === 'Hot Restart') {
+      await hotRestart();
     } else if (label === 'Shutdown') {
       const first = await ask('Shutdown Proxy', 'This will disconnect all players. Continue?');
       if (!first) return;
@@ -146,8 +150,13 @@ async function handleAction(label: string) {
 const quickActions = [
   { label: 'Reload Config', icon: ArrowPathIcon },
   { label: 'Broadcast', icon: MegaphoneIcon },
+  { label: 'Hot Restart', icon: ArrowPathRoundedSquareIcon },
   { label: 'Shutdown', icon: PowerIcon },
 ];
+
+const visibleActions = computed(() =>
+  quickActions.filter((action) => action.label !== 'Hot Restart' || proxyStatus.value?.restart_available),
+);
 </script>
 
 <template>
@@ -235,7 +244,7 @@ const quickActions = [
       <div class="glass-pane flex flex-col gap-1.5 p-4">
         <h2 class="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ir-text-muted)]">Actions</h2>
         <button
-          v-for="action in quickActions"
+          v-for="action in visibleActions"
           :key="action.label"
           class="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors duration-100 hover:bg-white/[0.04]"
           :class="action.label === 'Shutdown' ? 'hover:bg-[rgba(204,62,56,0.08)]' : ''"
