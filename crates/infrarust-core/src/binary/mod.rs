@@ -15,7 +15,7 @@ pub const PROBE_SCHEMA: u32 = 1;
 pub const PROBE_FLAG: &str = "--handover-probe";
 pub const CHECK_CONFIG_COMMAND: &str = "check-config";
 
-const HOT_RESTART_AVAILABLE: bool = false;
+const HOT_RESTART_AVAILABLE: bool = true;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildInfo {

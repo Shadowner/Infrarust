@@ -392,7 +392,12 @@ mod tests {
             restart_on(Platform::Windows, &capable, Some(&v1)),
             RestartRequirement::Manual
         );
-        assert_eq!(restart_kind(&capable), RestartRequirement::Full);
+        let here = match Platform::current() {
+            Platform::Linux => RestartRequirement::Hot,
+            Platform::OtherUnix => RestartRequirement::Full,
+            Platform::Windows => RestartRequirement::Manual,
+        };
+        assert_eq!(restart_kind(&capable), here);
     }
 
     #[test]
