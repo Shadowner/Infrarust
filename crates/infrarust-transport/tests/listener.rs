@@ -306,3 +306,128 @@ async fn the_per_ip_limit_counts_the_address_from_the_proxy_header() {
 
     shutdown.cancel();
 }
+
+const REFUSED: Duration = Duration::from_millis(200);
+const ADMITTED: Duration = Duration::from_secs(2);
+
+fn limited_config(max_connections: u32) -> ListenerConfig {
+    ListenerConfig {
+        max_connections,
+        ..test_config()
+    }
+}
+
+#[tokio::test]
+async fn restored_sessions_over_the_limit_hold_back_new_accepts() {
+    let shutdown = CancellationToken::new();
+    let listener = Listener::bind(limited_config(2), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
+    let restored_ip: IpAddr = "203.0.113.9".parse().unwrap();
+    let mut restored: Vec<_> = (0..3).map(|_| listener.reserve(restored_ip)).collect();
+
+    let _first_client = TcpStream::connect(addr).await.unwrap();
+    assert!(timeout(REFUSED, listener.accept()).await.is_err());
+
+    drop(restored.pop());
+    assert!(timeout(REFUSED, listener.accept()).await.is_err());
+
+    drop(restored.pop());
+    let first = timeout(ADMITTED, listener.accept()).await.unwrap().unwrap();
+
+    let _second_client = TcpStream::connect(addr).await.unwrap();
+    assert!(timeout(REFUSED, listener.accept()).await.is_err());
+
+    drop(restored.pop());
+    let second = timeout(ADMITTED, listener.accept()).await.unwrap().unwrap();
+
+    let _third_client = TcpStream::connect(addr).await.unwrap();
+    assert!(timeout(REFUSED, listener.accept()).await.is_err());
+
+    drop(first);
+    let _third = timeout(ADMITTED, listener.accept()).await.unwrap().unwrap();
+    drop(second);
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn a_waiting_accept_resumes_once_the_debt_is_paid() {
+    let shutdown = CancellationToken::new();
+    let listener = Listener::bind(limited_config(1), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
+    let restored_ip: IpAddr = "203.0.113.9".parse().unwrap();
+    let first = listener.reserve(restored_ip);
+    let second = listener.reserve(restored_ip);
+
+    let _client = TcpStream::connect(addr).await.unwrap();
+    let waiting = listener.accept();
+    tokio::pin!(waiting);
+    assert!(timeout(REFUSED, &mut waiting).await.is_err());
+
+    drop(second);
+    assert!(timeout(REFUSED, &mut waiting).await.is_err());
+
+    drop(first);
+    let accepted = timeout(ADMITTED, &mut waiting).await.unwrap().unwrap();
+    accepted.resolve().await.unwrap();
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn a_restored_session_counts_against_the_per_ip_limit() {
+    let shutdown = CancellationToken::new();
+    let config = ListenerConfig {
+        max_connections_per_ip: 1,
+        ..test_config()
+    };
+    let listener = Listener::bind(config, shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
+    let loopback: IpAddr = "127.0.0.1".parse().unwrap();
+    let first = listener.reserve(loopback);
+    let second = listener.reserve(loopback);
+    let _elsewhere = listener.reserve("203.0.113.9".parse().unwrap());
+
+    for held in [Some(first), None] {
+        let _client = TcpStream::connect(addr).await.unwrap();
+        let err = listener
+            .accept()
+            .await
+            .unwrap()
+            .resolve()
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, TransportError::IpLimitReached { ip } if ip.is_loopback()),
+            "{err:?}"
+        );
+        drop(held);
+    }
+
+    drop(second);
+    let _client = TcpStream::connect(addr).await.unwrap();
+    listener.accept().await.unwrap().resolve().await.unwrap();
+
+    shutdown.cancel();
+}
+
+#[tokio::test]
+async fn a_reserve_without_limits_never_blocks_accepts() {
+    let shutdown = CancellationToken::new();
+    let listener = Listener::bind(test_config(), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
+    let _restored: Vec<_> = (0..4)
+        .map(|_| listener.reserve("127.0.0.1".parse().unwrap()))
+        .collect();
+
+    let _client = TcpStream::connect(addr).await.unwrap();
+    timeout(ADMITTED, listener.accept())
+        .await
+        .unwrap()
+        .unwrap()
+        .resolve()
+        .await
+        .unwrap();
+
+    shutdown.cancel();
+}

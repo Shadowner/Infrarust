@@ -76,6 +76,15 @@ impl IpLimiter {
         None
     }
 
+    pub fn force_acquire(self: &Arc<Self>, ip: IpAddr) -> IpGuard {
+        let key = IpKey::from(ip);
+        *self.counts.entry(key).or_insert(0) += 1;
+        IpGuard {
+            limiter: Arc::clone(self),
+            key,
+        }
+    }
+
     pub fn tracked_keys(&self) -> usize {
         self.counts.len()
     }
@@ -151,6 +160,40 @@ mod tests {
 
         drop(second);
         drop(third);
+        assert_eq!(limiter.tracked_keys(), 0);
+    }
+
+    #[test]
+    fn a_forced_guard_counts_beyond_the_limit() {
+        let limiter = IpLimiter::new(1).unwrap();
+        let first = limiter.force_acquire(ip("10.0.0.1"));
+        let second = limiter.force_acquire(ip("::ffff:10.0.0.1"));
+        assert_eq!(
+            limiter.counts.get(&IpKey::from(ip("10.0.0.1"))).map(|c| *c),
+            Some(2)
+        );
+        assert!(limiter.try_acquire(ip("10.0.0.1")).is_none());
+        assert!(limiter.try_acquire(ip("10.0.0.2")).is_some());
+
+        drop(first);
+        assert!(limiter.try_acquire(ip("10.0.0.1")).is_none());
+
+        drop(second);
+        let after = limiter.try_acquire(ip("10.0.0.1")).unwrap();
+        assert!(limiter.try_acquire(ip("10.0.0.1")).is_none());
+        drop(after);
+        assert_eq!(limiter.tracked_keys(), 0);
+    }
+
+    #[test]
+    fn a_forced_guard_under_the_limit_counts_like_a_normal_one() {
+        let limiter = IpLimiter::new(2).unwrap();
+        let forced = limiter.force_acquire(ip("10.0.0.1"));
+        let normal = limiter.try_acquire(ip("10.0.0.1")).unwrap();
+        assert!(limiter.try_acquire(ip("10.0.0.1")).is_none());
+
+        drop(forced);
+        drop(normal);
         assert_eq!(limiter.tracked_keys(), 0);
     }
 }

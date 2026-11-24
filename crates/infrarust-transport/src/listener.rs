@@ -1,5 +1,5 @@
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use ipnet::IpNet;
 use tokio::net::TcpListener;
@@ -31,10 +31,75 @@ pub struct ListenerConfig {
 pub struct Listener {
     inner: TcpListener,
     local_addr: SocketAddr,
-    semaphore: Option<Arc<Semaphore>>,
+    budget: Option<Arc<ConnectionBudget>>,
     ip_limiter: Option<Arc<IpLimiter>>,
     config: ListenerConfig,
     shutdown: CancellationToken,
+}
+
+#[derive(Debug)]
+struct ConnectionBudget {
+    semaphore: Arc<Semaphore>,
+    debt: Mutex<usize>,
+}
+
+impl ConnectionBudget {
+    fn new(max_connections: u32) -> Option<Arc<Self>> {
+        (max_connections > 0).then(|| {
+            Arc::new(Self {
+                semaphore: Arc::new(Semaphore::new(max_connections as usize)),
+                debt: Mutex::new(0),
+            })
+        })
+    }
+
+    fn debt(&self) -> MutexGuard<'_, usize> {
+        self.debt.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    async fn acquire(self: &Arc<Self>) -> Result<Seat, TransportError> {
+        let permit = Arc::clone(&self.semaphore)
+            .acquire_owned()
+            .await
+            .map_err(|_| TransportError::Shutdown)?;
+        Ok(Seat {
+            budget: Arc::clone(self),
+            permit: Some(permit),
+        })
+    }
+
+    fn reserve(self: &Arc<Self>) -> Seat {
+        let mut debt = self.debt();
+        let permit = Arc::clone(&self.semaphore).try_acquire_owned().ok();
+        if permit.is_none() {
+            *debt += 1;
+        }
+        Seat {
+            budget: Arc::clone(self),
+            permit,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Seat {
+    budget: Arc<ConnectionBudget>,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        let mut debt = self.budget.debt();
+        match (self.permit.take(), *debt > 0) {
+            (Some(permit), true) => {
+                *debt -= 1;
+                permit.forget();
+            }
+            (None, true) => *debt -= 1,
+            (Some(permit), false) => drop(permit),
+            (None, false) => self.budget.semaphore.add_permits(1),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -63,7 +128,7 @@ pub struct PendingConnection {
     connection: ClientConnection,
     proxy_header: ProxyHeader,
     ip_limiter: Option<Arc<IpLimiter>>,
-    permit: Option<OwnedSemaphorePermit>,
+    seat: Option<Seat>,
 }
 
 impl PendingConnection {
@@ -76,7 +141,7 @@ impl PendingConnection {
             mut connection,
             proxy_header,
             ip_limiter,
-            permit,
+            seat,
         } = self;
         match proxy_header {
             ProxyHeader::NotExpected => {}
@@ -107,7 +172,7 @@ impl PendingConnection {
         Ok(AcceptedConnection {
             connection,
             slot: ConnectionSlot {
-                _permit: permit,
+                _seat: seat,
                 _ip_guard: ip_guard,
             },
         })
@@ -116,7 +181,7 @@ impl PendingConnection {
 
 #[derive(Debug, Default)]
 pub struct ConnectionSlot {
-    _permit: Option<OwnedSemaphorePermit>,
+    _seat: Option<Seat>,
     _ip_guard: Option<IpGuard>,
 }
 
@@ -159,12 +224,6 @@ impl Listener {
         let inner = into_tokio_listener(socket)?;
         let local_addr = inner.local_addr().map_err(TransportError::SocketConfig)?;
 
-        let semaphore = if config.max_connections > 0 {
-            Some(Arc::new(Semaphore::new(config.max_connections as usize)))
-        } else {
-            None
-        };
-
         tracing::info!(
             bind = %local_addr,
             max_connections = config.max_connections,
@@ -175,7 +234,7 @@ impl Listener {
         Ok(Self {
             inner,
             local_addr,
-            semaphore,
+            budget: ConnectionBudget::new(config.max_connections),
             ip_limiter: IpLimiter::new(config.max_connections_per_ip),
             config,
             shutdown,
@@ -185,17 +244,15 @@ impl Listener {
     pub async fn accept(&self) -> Result<PendingConnection, TransportError> {
         let mut backoff = std::time::Duration::from_millis(100);
         loop {
-            let permit = if let Some(sem) = &self.semaphore {
-                let permit = tokio::select! {
+            let seat = if let Some(budget) = &self.budget {
+                let seat = tokio::select! {
                     biased;
                     () = self.shutdown.cancelled() => {
                         return Err(TransportError::Shutdown);
                     }
-                    result = sem.clone().acquire_owned() => {
-                        result.map_err(|_| TransportError::Shutdown)?
-                    }
+                    result = budget.acquire() => result?,
                 };
-                Some(permit)
+                Some(seat)
             } else {
                 None
             };
@@ -225,8 +282,18 @@ impl Listener {
                 connection: ClientConnection::new(stream, peer_addr, self.local_addr),
                 proxy_header: ProxyHeader::for_peer(&self.config, peer_addr.ip()),
                 ip_limiter: self.ip_limiter.clone(),
-                permit,
+                seat,
             });
+        }
+    }
+
+    pub fn reserve(&self, ip: IpAddr) -> ConnectionSlot {
+        ConnectionSlot {
+            _seat: self.budget.as_ref().map(ConnectionBudget::reserve),
+            _ip_guard: self
+                .ip_limiter
+                .as_ref()
+                .map(|limiter| limiter.force_acquire(ip)),
         }
     }
 
@@ -378,6 +445,82 @@ mod tests {
             .unwrap();
 
         assert_eq!(started.elapsed(), delay);
+    }
+
+    fn state(budget: &ConnectionBudget) -> (usize, usize) {
+        (budget.semaphore.available_permits(), *budget.debt())
+    }
+
+    #[test]
+    fn a_reserve_under_the_limit_takes_a_permit() {
+        let budget = ConnectionBudget::new(2).unwrap();
+        let restored = budget.reserve();
+        assert_eq!(state(&budget), (1, 0));
+
+        drop(restored);
+        assert_eq!(state(&budget), (2, 0));
+    }
+
+    #[test]
+    fn restored_sessions_over_the_limit_are_paid_back_by_the_first_closes() {
+        let budget = ConnectionBudget::new(2).unwrap();
+        let first = budget.reserve();
+        let second = budget.reserve();
+        let third = budget.reserve();
+        assert!(first.permit.is_some() && second.permit.is_some() && third.permit.is_none());
+        assert_eq!(state(&budget), (0, 1));
+
+        drop(first);
+        assert_eq!(state(&budget), (0, 0));
+
+        drop(second);
+        assert_eq!(state(&budget), (1, 0));
+
+        drop(third);
+        assert_eq!(state(&budget), (2, 0));
+    }
+
+    #[test]
+    fn closing_the_permitless_slot_first_also_pays_the_debt() {
+        let budget = ConnectionBudget::new(2).unwrap();
+        let first = budget.reserve();
+        let second = budget.reserve();
+        let third = budget.reserve();
+
+        drop(third);
+        assert_eq!(state(&budget), (0, 0));
+
+        drop(first);
+        assert_eq!(state(&budget), (1, 0));
+
+        drop(second);
+        assert_eq!(state(&budget), (2, 0));
+    }
+
+    #[tokio::test]
+    async fn accepted_slots_pay_the_debt_of_restored_ones() {
+        let budget = ConnectionBudget::new(2).unwrap();
+        let first = budget.acquire().await.unwrap();
+        let second = budget.acquire().await.unwrap();
+        let restored = budget.reserve();
+        let over = budget.reserve();
+        assert_eq!(state(&budget), (0, 2));
+
+        drop(first);
+        assert_eq!(state(&budget), (0, 1));
+
+        drop(restored);
+        assert_eq!(state(&budget), (0, 0));
+
+        drop(second);
+        assert_eq!(state(&budget), (1, 0));
+
+        let third = budget.acquire().await.unwrap();
+        assert_eq!(state(&budget), (0, 0));
+
+        drop(over);
+        drop(third);
+        assert_eq!(state(&budget), (2, 0));
     }
 
     #[test]
