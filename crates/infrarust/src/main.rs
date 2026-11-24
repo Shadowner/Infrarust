@@ -98,6 +98,7 @@ const BUILD: BuildInfo = BuildInfo {
 };
 
 const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(3);
+const HANDOVER_LOG_FLUSH: Duration = Duration::from_millis(250);
 
 fn main() -> ExitCode {
     hot_restart::record_early_restarts();
@@ -200,7 +201,7 @@ fn serve(
         Ok(Exit::Stopped) => ExitCode::SUCCESS,
         Ok(Exit::Restart(handover)) => {
             runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
-            drop(tracing_guard);
+            release_within(tracing_guard, HANDOVER_LOG_FLUSH);
             hot_restart::hand_over(successor, *handover)
         }
         Err(e) => {
@@ -243,6 +244,19 @@ fn flush_logs() {
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     drop(worker);
+}
+
+fn release_within<T: Send + 'static>(value: T, deadline: Duration) {
+    let (done, released) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("infrarust-flush".into())
+        .spawn(move || {
+            drop(value);
+            let _ = done.send(());
+        });
+    if spawned.is_ok() {
+        let _ = released.recv_timeout(deadline);
+    }
 }
 
 struct LogFlush;
@@ -550,7 +564,49 @@ fn startup_banner(config: &ProxyConfig) -> Banner {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
+
+    struct SlowDrop {
+        delay: Duration,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for SlowDrop {
+        fn drop(&mut self) {
+            std::thread::sleep(self.delay);
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_slow_release_does_not_hold_the_handover_past_its_deadline() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let started = std::time::Instant::now();
+        release_within(
+            SlowDrop {
+                delay: Duration::from_secs(5),
+                dropped: Arc::clone(&dropped),
+            },
+            Duration::from_millis(50),
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_quick_release_finishes_before_returning() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        release_within(
+            SlowDrop {
+                delay: Duration::from_millis(1),
+                dropped: Arc::clone(&dropped),
+            },
+            Duration::from_secs(5),
+        );
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 
     pub(crate) fn parse(args: &[&str]) -> Cli {
         Cli::parse_from(std::iter::once("infrarust").chain(args.iter().copied()))
