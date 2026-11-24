@@ -147,6 +147,80 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 |--------|------|-------------|
 | GET | `/api/v1/proxy` | Proxy status: version, uptime, player count, server count, features, memory usage |
 | POST | `/api/v1/proxy/shutdown` | Graceful proxy shutdown |
+| GET | `/api/v1/proxy/update` | What the last update check found, without checking again |
+| POST | `/api/v1/proxy/update/check` | Check for a new release now |
+| POST | `/api/v1/proxy/update/install` | Install a release in the background |
+
+### Updates
+
+These three endpoints drive the [update checks](../../configuration/global#update-checks) and installs of the proxy. [Upgrading](../../guide/upgrading) covers the procedure as a whole.
+
+`GET /api/v1/proxy/update` answers from the result of the last check and never contacts GitHub:
+
+```json
+{
+  "data": {
+    "enabled": true,
+    "current_version": "2.0.0-beta.5",
+    "checks_enabled": true,
+    "last_check": "2026-11-24T10:02:41Z",
+    "last_error": null,
+    "available": {
+      "version": "2.0.0-beta.6",
+      "published_at": "2026-11-20T10:00:00Z",
+      "notes_url": "https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6",
+      "security": false,
+      "restart": "full"
+    },
+    "install": { "state": "idle" },
+    "install_refusal": null,
+    "binary_changed": false
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `enabled` | `false` when the proxy has no update service because it could not locate its own executable at startup. The other fields then hold `false`, `null` or `idle`, apart from `current_version` |
+| `current_version` | The running version |
+| `checks_enabled` | The `[update] check` setting |
+| `last_check` | When the last check ran, as an RFC 3339 timestamp. `null` before the first one |
+| `last_error` | Why the last check failed, `null` when it worked |
+| `available` | The newest release offered on the `[update]` channel, or `null`. `restart` is `full`, or `manual` on Windows where the proxy has to be stopped and started by hand |
+| `install` | `{"state": "idle"}`, `{"state": "running", "version": ...}`, `{"state": "installed", "version": ...}` or `{"state": "failed", "reason": ...}` |
+| `install_refusal` | Why this binary cannot install releases, with what to do instead. `null` when it can |
+| `binary_changed` | `true` when the executable on disk is no longer the one the proxy started from, so a restart would run another binary |
+
+`POST /api/v1/proxy/update/check` runs a check now, whatever `[update] check` says, and answers `200` with the new status in the same format. A check that fails still answers `200`, with the reason in `last_error`. The check has 25 seconds to finish; past that the request answers `503` with `the update check did not finish within 25s, the cached status is unchanged`.
+
+`POST /api/v1/proxy/update/install` starts an install and answers `202` without waiting for it. The body is optional:
+
+```json
+{ "version": "2.0.0-beta.6" }
+```
+
+Without `version`, it installs the release the last check found. It does not check by itself, so run `POST /api/v1/proxy/update/check` first when the status has no `available` release. The proxy is not restarted.
+
+```json
+{
+  "data": {
+    "success": true,
+    "message": "Installing Infrarust 2.0.0-beta.6"
+  }
+}
+```
+
+Follow the install through `GET /api/v1/proxy/update`, where `install.state` goes from `running` to `installed` or `failed`. A requested version is only looked up once the install runs, so one that does not exist is accepted with `202` and ends as `failed` with `no release <version> among the recent releases`.
+
+| Response | When |
+|----------|------|
+| `202 Accepted` | The install started |
+| `400 Bad Request` | `version` is blank or longer than 64 characters |
+| `404 Not Found` | No `version` given and no release found by a check |
+| `409 Conflict` | Another install is running, or this binary cannot install releases. The message says which, and what to do instead |
+| `503 Service Unavailable` | The proxy has no update service |
+
+When the proxy has an update service and the body is valid, each install request writes an info-level log line with the target `audit` before the proxy accepts or refuses the install. It carries `action=proxy_update_install`, `source=admin_api` and the requested version, or `latest` without one.
 
 ### Players
 
@@ -478,6 +552,8 @@ Streams log entries in real time. Filter by minimum `level` (`trace`, `debug`, `
 ## Web dashboard
 
 When `enable_webui` is `true`, the plugin serves an embedded web frontend at the root URL (`http://127.0.0.1:8080/`). The frontend is a Nuxt SPA bundled into the binary at compile time.
+
+The status bar at the top shows an `Update` badge with the version when the last check found a newer release, red and labelled `Security update` when the release fixes a security issue. When the release has a notes page, the badge links to it. A `Restart to apply` badge appears when the executable on disk is no longer the one the proxy started from, after an install for example. The dashboard reads `GET /api/v1/proxy/update` when it opens, every 30 minutes after that, and when the event stream reconnects. It never starts a check or an install.
 
 The Plugins page shows each plugin's state; it has no enable or disable action, since a plugin is turned on or off with `enabled` in its `[plugins.<id>]` table and a restart. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
 
