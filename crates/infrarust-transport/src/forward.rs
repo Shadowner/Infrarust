@@ -1,15 +1,20 @@
 use std::io;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
 
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::task::JoinError;
+use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use infrarust_config::ProxyMode;
+
+const COPY_BUFFER_SIZE: usize = 8 * 1024;
 
 #[derive(Debug)]
 pub struct ForwardResult {
@@ -110,13 +115,10 @@ impl Forwarder {
         client: TcpStream,
         backend: TcpStream,
         shutdown: CancellationToken,
-        _freeze: Freeze,
+        freeze: Freeze,
     ) -> ForwardResult {
-        match self {
-            Self::Copy => copy_forward(client, backend, shutdown).await,
-            #[cfg(target_os = "linux")]
-            Self::Splice => splice_impl::splice_forward(client, backend, shutdown).await,
-        }
+        self.relay(client, backend, Progress::default(), shutdown, freeze)
+            .await
     }
 
     pub async fn resume(
@@ -125,32 +127,44 @@ impl Forwarder {
         shutdown: CancellationToken,
         freeze: Freeze,
     ) -> ForwardResult {
-        use tokio::io::AsyncWriteExt;
-
-        let streams = adopt(relay.client).and_then(|client| Ok((client, adopt(relay.backend)?)));
-        let (mut client, mut backend) = match streams {
-            Ok(streams) => streams,
-            Err(e) => {
-                return ForwardResult {
-                    client_to_backend: 0,
-                    backend_to_client: 0,
-                    reason: ForwardEndReason::Error(e),
-                };
-            }
+        let FrozenRelay {
+            client,
+            backend,
+            client_to_backend,
+            backend_to_client,
+            first_closed,
+        } = relay;
+        let progress = Progress {
+            client_to_backend,
+            backend_to_client,
+            first_closed,
         };
-        for (to, tail) in [
-            (&mut backend, &relay.client_to_backend.tail),
-            (&mut client, &relay.backend_to_client.tail),
-        ] {
-            if let Err(e) = to.write_all(tail).await {
-                return ForwardResult {
-                    client_to_backend: 0,
-                    backend_to_client: 0,
-                    reason: ForwardEndReason::Error(e),
-                };
+        let streams = progress
+            .check()
+            .and_then(|()| adopt(client))
+            .and_then(|client| Ok((client, adopt(backend)?)));
+        match streams {
+            Ok((client, backend)) => {
+                self.relay(client, backend, progress, shutdown, freeze)
+                    .await
             }
+            Err(e) => progress.failed(e),
         }
-        self.forward(client, backend, shutdown, freeze).await
+    }
+
+    async fn relay(
+        self,
+        client: TcpStream,
+        backend: TcpStream,
+        progress: Progress,
+        shutdown: CancellationToken,
+        freeze: Freeze,
+    ) -> ForwardResult {
+        match self {
+            Self::Copy => copy_forward(client, backend, progress, shutdown, freeze).await,
+            #[cfg(target_os = "linux")]
+            Self::Splice => splice_impl::splice_forward(client, backend, progress, shutdown).await,
+        }
     }
 }
 
@@ -159,87 +173,436 @@ fn adopt(stream: std::net::TcpStream) -> io::Result<TcpStream> {
     TcpStream::from_std(stream)
 }
 
+#[derive(Debug, Default)]
+struct Progress {
+    client_to_backend: FrozenDirection,
+    backend_to_client: FrozenDirection,
+    first_closed: Option<RelaySide>,
+}
+
+impl Progress {
+    fn check(&self) -> io::Result<()> {
+        let closed_with_tail =
+            |direction: &FrozenDirection| direction.source_eof && !direction.tail.is_empty();
+        if closed_with_tail(&self.client_to_backend) || closed_with_tail(&self.backend_to_client) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a direction that reached end of stream cannot carry unwritten bytes",
+            ));
+        }
+        Ok(())
+    }
+
+    fn failed(&self, e: io::Error) -> ForwardResult {
+        ForwardResult {
+            client_to_backend: self.client_to_backend.copied,
+            backend_to_client: self.backend_to_client.copied,
+            reason: ForwardEndReason::Error(e),
+        }
+    }
+}
+
+enum PumpEnd {
+    Eof,
+    Failed(io::Error),
+    Frozen(Bytes),
+}
+
+impl PumpEnd {
+    const fn is_frozen(&self) -> bool {
+        matches!(self, Self::Frozen(_))
+    }
+
+    const fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed(_))
+    }
+
+    fn counted(self, copied: u64) -> io::Result<u64> {
+        match self {
+            Self::Failed(e) => Err(e),
+            Self::Eof | Self::Frozen(_) => Ok(copied),
+        }
+    }
+
+    fn settled(self, copied: u64) -> io::Result<FrozenDirection> {
+        match self {
+            Self::Eof => Ok(FrozenDirection {
+                tail: Bytes::new(),
+                source_eof: true,
+                copied,
+            }),
+            Self::Frozen(tail) => Ok(FrozenDirection {
+                tail,
+                source_eof: false,
+                copied,
+            }),
+            Self::Failed(e) => Err(e),
+        }
+    }
+}
+
+enum Delivery {
+    Done,
+    Frozen(usize),
+}
+
+async fn deliver<F>(
+    len: usize,
+    mut write: impl FnMut(&mut Context<'_>, usize) -> Poll<io::Result<usize>>,
+    frozen: Pin<&mut F>,
+    deadline: Duration,
+) -> io::Result<Delivery>
+where
+    F: Future<Output = ()>,
+{
+    let mut written = 0;
+    if write_until(len, &mut written, &mut write, frozen).await? {
+        return Ok(Delivery::Done);
+    }
+    let expiry = tokio::time::sleep(deadline);
+    tokio::pin!(expiry);
+    write_until(len, &mut written, &mut write, expiry).await?;
+    Ok(Delivery::Frozen(written))
+}
+
+async fn write_until<S>(
+    len: usize,
+    written: &mut usize,
+    write: &mut impl FnMut(&mut Context<'_>, usize) -> Poll<io::Result<usize>>,
+    mut stop: Pin<&mut S>,
+) -> io::Result<bool>
+where
+    S: Future<Output = ()>,
+{
+    while *written < len {
+        let at = *written;
+        let result = tokio::select! {
+            biased;
+            () = stop.as_mut() => return Ok(false),
+            result = std::future::poll_fn(|cx| write(cx, at)) => result,
+        };
+        match result {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "the destination accepted no bytes",
+                ));
+            }
+            Ok(n) => *written += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(true)
+}
+
+fn frozen(
+    streams: io::Result<(std::net::TcpStream, std::net::TcpStream)>,
+    client_to_backend: io::Result<FrozenDirection>,
+    backend_to_client: io::Result<FrozenDirection>,
+    first_closed: Option<RelaySide>,
+) -> ForwardResult {
+    let copied = |direction: &io::Result<FrozenDirection>| {
+        direction.as_ref().map_or(0, |direction| direction.copied)
+    };
+    let counts = (copied(&client_to_backend), copied(&backend_to_client));
+    let reason = match frozen_relay(streams, client_to_backend, backend_to_client, first_closed) {
+        Ok(relay) => ForwardEndReason::Frozen(Box::new(relay)),
+        Err(e) => ForwardEndReason::Error(e),
+    };
+    ForwardResult {
+        client_to_backend: counts.0,
+        backend_to_client: counts.1,
+        reason,
+    }
+}
+
+fn frozen_relay(
+    streams: io::Result<(std::net::TcpStream, std::net::TcpStream)>,
+    client_to_backend: io::Result<FrozenDirection>,
+    backend_to_client: io::Result<FrozenDirection>,
+    first_closed: Option<RelaySide>,
+) -> io::Result<FrozenRelay> {
+    let client_to_backend = client_to_backend?;
+    let backend_to_client = backend_to_client?;
+    let (client, backend) = streams?;
+    Ok(FrozenRelay {
+        client,
+        backend,
+        client_to_backend,
+        backend_to_client,
+        first_closed,
+    })
+}
+
+struct Pumped {
+    from: OwnedReadHalf,
+    to: OwnedWriteHalf,
+    copied: u64,
+    end: PumpEnd,
+}
+
+async fn pump(
+    mut from: OwnedReadHalf,
+    mut to: OwnedWriteHalf,
+    pending: Bytes,
+    freeze: Freeze,
+) -> Pumped {
+    let token = freeze.token().child_token();
+    let frozen = token.cancelled();
+    tokio::pin!(frozen);
+    let deadline = freeze.write_deadline();
+    let mut copied = 0;
+
+    let end = 'pump: {
+        let delivery = deliver(
+            pending.len(),
+            |cx, at| poll_write(&mut to, cx, &pending[at..]),
+            frozen.as_mut(),
+            deadline,
+        )
+        .await;
+        match delivery {
+            Ok(Delivery::Done) => copied += pending.len() as u64,
+            Ok(Delivery::Frozen(at)) => {
+                copied += at as u64;
+                break 'pump PumpEnd::Frozen(pending.slice(at..));
+            }
+            Err(e) => break 'pump PumpEnd::Failed(e),
+        }
+
+        let mut buf = vec![0u8; COPY_BUFFER_SIZE].into_boxed_slice();
+        loop {
+            let read = tokio::select! {
+                biased;
+                () = frozen.as_mut() => break 'pump PumpEnd::Frozen(Bytes::new()),
+                read = from.read(&mut buf) => read,
+            };
+            let filled = match read {
+                Ok(0) => break 'pump PumpEnd::Eof,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => break 'pump PumpEnd::Failed(e),
+            };
+            let chunk = &buf[..filled];
+            let delivery = deliver(
+                filled,
+                |cx, at| poll_write(&mut to, cx, &chunk[at..]),
+                frozen.as_mut(),
+                deadline,
+            )
+            .await;
+            match delivery {
+                Ok(Delivery::Done) => copied += filled as u64,
+                Ok(Delivery::Frozen(at)) => {
+                    copied += at as u64;
+                    break 'pump PumpEnd::Frozen(Bytes::copy_from_slice(&chunk[at..]));
+                }
+                Err(e) => break 'pump PumpEnd::Failed(e),
+            }
+        }
+    };
+
+    Pumped {
+        from,
+        to,
+        copied,
+        end,
+    }
+}
+
+fn poll_write(
+    to: &mut OwnedWriteHalf,
+    cx: &mut Context<'_>,
+    bytes: &[u8],
+) -> Poll<io::Result<usize>> {
+    Pin::new(to).poll_write(cx, bytes)
+}
+
+async fn copy_until_eof(
+    from: OwnedReadHalf,
+    to: OwnedWriteHalf,
+    pending: Bytes,
+    first: Arc<OnceLock<RelaySide>>,
+    side: RelaySide,
+    freeze: Freeze,
+) -> Pumped {
+    let mut pumped = pump(from, to, pending, freeze).await;
+    if !pumped.end.is_frozen() {
+        let _ = first.set(side);
+        let _ = pumped.to.shutdown().await;
+    }
+    pumped
+}
+
+enum Leg {
+    Running(JoinHandle<Pumped>),
+    Ended(io::Result<Pumped>),
+}
+
+impl Leg {
+    fn start(
+        from: OwnedReadHalf,
+        to: OwnedWriteHalf,
+        progress: FrozenDirection,
+        first: &Arc<OnceLock<RelaySide>>,
+        side: RelaySide,
+        freeze: &Freeze,
+    ) -> Self {
+        if progress.source_eof {
+            return Self::Ended(Ok(Pumped {
+                from,
+                to,
+                copied: 0,
+                end: PumpEnd::Eof,
+            }));
+        }
+        Self::Running(tokio::spawn(copy_until_eof(
+            from,
+            to,
+            progress.tail,
+            Arc::clone(first),
+            side,
+            freeze.clone(),
+        )))
+    }
+
+    const fn running(&self) -> bool {
+        matches!(self, Self::Running(_))
+    }
+
+    const fn failed(&self) -> bool {
+        match self {
+            Self::Running(_) => false,
+            Self::Ended(Ok(pumped)) => pumped.end.is_failed(),
+            Self::Ended(Err(_)) => true,
+        }
+    }
+
+    async fn join(&mut self) -> io::Result<Pumped> {
+        match self {
+            Self::Running(task) => joined(task.await),
+            Self::Ended(_) => std::future::pending().await,
+        }
+    }
+
+    fn abort(&self) {
+        if let Self::Running(task) = self {
+            task.abort();
+        }
+    }
+
+    async fn end(self) -> Option<io::Result<Pumped>> {
+        match self {
+            Self::Running(task) => task.await.ok().map(Ok),
+            Self::Ended(ended) => Some(ended),
+        }
+    }
+}
+
+fn joined(result: Result<Pumped, JoinError>) -> io::Result<Pumped> {
+    result.map_err(io::Error::other)
+}
+
 async fn copy_forward(
     client: TcpStream,
     backend: TcpStream,
+    progress: Progress,
     shutdown: CancellationToken,
+    freeze: Freeze,
 ) -> ForwardResult {
+    let Progress {
+        client_to_backend,
+        backend_to_client,
+        first_closed,
+    } = progress;
+    let bases = (client_to_backend.copied, backend_to_client.copied);
     let (client_read, client_write) = client.into_split();
     let (backend_read, backend_write) = backend.into_split();
     let first = Arc::new(OnceLock::new());
+    if let Some(side) = first_closed {
+        let _ = first.set(side);
+    }
 
-    let mut c2b = tokio::spawn(copy_until_eof(
+    let mut c2b = Leg::start(
         client_read,
         backend_write,
-        Arc::clone(&first),
-        Side::Client,
-    ));
-    let mut b2c = tokio::spawn(copy_until_eof(
+        client_to_backend,
+        &first,
+        RelaySide::Client,
+        &freeze,
+    );
+    let mut b2c = Leg::start(
         backend_read,
         client_write,
-        Arc::clone(&first),
-        Side::Backend,
-    ));
+        backend_to_client,
+        &first,
+        RelaySide::Backend,
+        &freeze,
+    );
 
-    let mut c2b_end = None;
-    let mut b2c_end = None;
-    while c2b_end.is_none() || b2c_end.is_none() {
+    let mut stopped = false;
+    while c2b.running() || b2c.running() {
         tokio::select! {
             biased;
-            () = shutdown.cancelled() => break,
-            ended = &mut c2b, if c2b_end.is_none() => c2b_end = Some(joined(ended)),
-            ended = &mut b2c, if b2c_end.is_none() => b2c_end = Some(joined(ended)),
+            () = shutdown.cancelled() => {
+                stopped = true;
+                break;
+            }
+            ended = c2b.join(), if c2b.running() => c2b = Leg::Ended(ended),
+            ended = b2c.join(), if b2c.running() => b2c = Leg::Ended(ended),
         }
-        if matches!(c2b_end, Some(Err(_))) || matches!(b2c_end, Some(Err(_))) {
+        if c2b.failed() || b2c.failed() {
             break;
         }
     }
 
     c2b.abort();
     b2c.abort();
-    if c2b_end.is_none() {
-        c2b_end = c2b.await.ok();
+    let c2b = c2b.end().await;
+    let b2c = b2c.end().await;
+    let first = first.get().copied();
+    match (c2b, b2c) {
+        (Some(Ok(c2b)), Some(Ok(b2c)))
+            if !stopped && (c2b.end.is_frozen() || b2c.end.is_frozen()) =>
+        {
+            freeze_copy(c2b, b2c, bases, first)
+        }
+        (c2b, b2c) => finish(first, settled(c2b, bases.0), settled(b2c, bases.1)),
     }
-    if b2c_end.is_none() {
-        b2c_end = b2c.await.ok();
-    }
-    finish(first.get().copied(), c2b_end, b2c_end)
 }
 
-async fn copy_until_eof(
-    mut from: OwnedReadHalf,
-    mut to: OwnedWriteHalf,
-    first: Arc<OnceLock<Side>>,
-    side: Side,
-) -> io::Result<u64> {
-    use tokio::io::AsyncWriteExt;
-
-    let copied = tokio::io::copy(&mut from, &mut to).await;
-    let _ = first.set(side);
-    let _ = to.shutdown().await;
-    copied
+fn settled(leg: Option<io::Result<Pumped>>, base: u64) -> Option<io::Result<u64>> {
+    leg.map(|ended| ended.and_then(|pumped| pumped.end.counted(base + pumped.copied)))
 }
 
-fn joined(result: Result<io::Result<u64>, JoinError>) -> io::Result<u64> {
-    result.unwrap_or_else(|e| Err(io::Error::other(e)))
+fn freeze_copy(
+    c2b: Pumped,
+    b2c: Pumped,
+    bases: (u64, u64),
+    first_closed: Option<RelaySide>,
+) -> ForwardResult {
+    let client_to_backend = c2b.end.settled(bases.0 + c2b.copied);
+    let backend_to_client = b2c.end.settled(bases.1 + b2c.copied);
+    let streams =
+        reunite(c2b.from, b2c.to).and_then(|client| Ok((client, reunite(b2c.from, c2b.to)?)));
+    frozen(streams, client_to_backend, backend_to_client, first_closed)
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Side {
-    Client,
-    Backend,
+fn reunite(read: OwnedReadHalf, write: OwnedWriteHalf) -> io::Result<std::net::TcpStream> {
+    read.reunite(write).map_err(io::Error::other)?.into_std()
 }
 
 fn finish(
-    first: Option<Side>,
+    first: Option<RelaySide>,
     c2b: Option<io::Result<u64>>,
     b2c: Option<io::Result<u64>>,
 ) -> ForwardResult {
     let client_to_backend = transferred(c2b.as_ref());
     let backend_to_client = transferred(b2c.as_ref());
     let reason = match first {
-        Some(Side::Client) => blame(c2b, ForwardEndReason::ClientClosed),
-        Some(Side::Backend) => blame(b2c, ForwardEndReason::BackendClosed),
+        Some(RelaySide::Client) => blame(c2b, ForwardEndReason::ClientClosed),
+        Some(RelaySide::Backend) => blame(b2c, ForwardEndReason::BackendClosed),
         None => match (c2b, b2c) {
             (Some(Err(e)), _) | (_, Some(Err(e))) => ForwardEndReason::Error(e),
             _ => ForwardEndReason::Shutdown,
@@ -267,7 +630,7 @@ fn transferred(end: Option<&io::Result<u64>>) -> u64 {
 
 #[cfg(target_os = "linux")]
 mod splice_impl {
-    use super::{CancellationToken, ForwardEndReason, ForwardResult, Side, TcpStream, finish};
+    use super::{CancellationToken, ForwardResult, Progress, RelaySide, TcpStream, finish};
     use std::os::fd::{AsFd, OwnedFd};
 
     const PIPE_SIZE: usize = 64 * 1024;
@@ -391,26 +754,29 @@ mod splice_impl {
         Ok(eof_received.then_some(total))
     }
 
-    fn pipe_failed(e: std::io::Error) -> ForwardResult {
-        ForwardResult {
-            client_to_backend: 0,
-            backend_to_client: 0,
-            reason: ForwardEndReason::Error(e),
-        }
-    }
-
     pub(super) async fn splice_forward(
-        client: TcpStream,
-        backend: TcpStream,
+        mut client: TcpStream,
+        mut backend: TcpStream,
+        progress: Progress,
         shutdown: CancellationToken,
     ) -> ForwardResult {
+        use tokio::io::AsyncWriteExt;
+
+        for (to, tail) in [
+            (&mut backend, &progress.client_to_backend.tail),
+            (&mut client, &progress.backend_to_client.tail),
+        ] {
+            if let Err(e) = to.write_all(tail).await {
+                return progress.failed(e);
+            }
+        }
         let pipe_c2b = match KernelPipe::new(PIPE_SIZE) {
             Ok(pipe) => pipe,
-            Err(e) => return pipe_failed(e),
+            Err(e) => return progress.failed(e),
         };
         let pipe_b2c = match KernelPipe::new(PIPE_SIZE) {
             Ok(pipe) => pipe,
-            Err(e) => return pipe_failed(e),
+            Err(e) => return progress.failed(e),
         };
 
         let c2b = splice_one_direction(&client, &backend, &pipe_c2b, shutdown.clone());
@@ -426,8 +792,8 @@ mod splice_impl {
             let (side, ended) = tokio::select! {
                 biased;
                 () = &mut cancelled => break,
-                ended = &mut c2b, if c2b_end.is_none() => (Side::Client, ended),
-                ended = &mut b2c, if b2c_end.is_none() => (Side::Backend, ended),
+                ended = &mut c2b, if c2b_end.is_none() => (RelaySide::Client, ended),
+                ended = &mut b2c, if b2c_end.is_none() => (RelaySide::Backend, ended),
             };
             let Some(ended) = ended.transpose() else {
                 break;
@@ -435,8 +801,8 @@ mod splice_impl {
             let failed = ended.is_err();
             first.get_or_insert(side);
             match side {
-                Side::Client => c2b_end = Some(ended),
-                Side::Backend => b2c_end = Some(ended),
+                RelaySide::Client => c2b_end = Some(ended),
+                RelaySide::Backend => b2c_end = Some(ended),
             }
             if failed {
                 break;
