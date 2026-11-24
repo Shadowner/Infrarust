@@ -746,3 +746,47 @@ async fn a_binary_replaced_on_disk_takes_the_sessions_over() {
     exchange_all(&mut sessions, 30).await;
     proxy.stop().await;
 }
+
+async fn stop_during_restart(trigger: &str) -> Proxy {
+    let backend = RawBackend::spawn().await;
+    let mut site = forwarding_site(&backend);
+    let addr = site.addr;
+    let mut proxy = Proxy::start(&mut site, &[]);
+    proxy.wait_for(READY, 1).await;
+    let mut sessions = join_all(addr, &backend, 2, 1).await;
+    exchange_all(&mut sessions, 10).await;
+    proxy.signal(Signal::SIGUSR2);
+    proxy.wait_for(trigger, 1).await;
+    proxy.signal(Signal::SIGTERM);
+    let deadline = tokio::time::Instant::now() + T;
+    loop {
+        if let Some(status) = proxy.child.try_wait().unwrap() {
+            assert!(status.success(), "{trigger}: {status}:\n{}", proxy.tail());
+            return proxy;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{trigger}: the proxy did not stop:\n{}",
+            proxy.tail()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stop_during_a_restart_stops_the_proxy_gracefully() {
+    for trigger in [
+        "hot restart requested",
+        "hot restart: closing the sessions",
+        "hands its sessions over to the next image",
+        "taking over from the previous image",
+    ] {
+        let proxy = stop_during_restart(trigger).await;
+        eprintln!(
+            "{trigger}: deferred {}, replayed {}, ready {}",
+            proxy.count("the next image stops as soon as it starts"),
+            proxy.count("a stop signal arrived during the restart"),
+            proxy.count(READY),
+        );
+    }
+}
