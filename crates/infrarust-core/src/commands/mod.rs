@@ -12,6 +12,7 @@ use infrarust_api::command::{
     CommandContext, CommandHandler, CommandSource, CommandSpec, SuggestContext, Suggestion,
 };
 use infrarust_api::event::BoxFuture;
+use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
@@ -71,6 +72,7 @@ pub(crate) struct CommandServices {
     pub command_manager: Arc<CommandManagerImpl>,
     pub permission_service: Arc<PermissionService>,
     pub start_time: Instant,
+    pub updates: Option<Arc<dyn ProxyUpdates>>,
 }
 
 impl CommandServices {
@@ -299,6 +301,7 @@ pub fn register_builtin_commands(
     proxy_services: &ProxyServices,
     plugin_registry: Arc<dyn PluginRegistry>,
     start_time: Instant,
+    updates: Option<Arc<dyn ProxyUpdates>>,
 ) {
     let services = Arc::new(CommandServices {
         player_registry: Arc::clone(&proxy_services.player_registry),
@@ -312,6 +315,7 @@ pub fn register_builtin_commands(
         command_manager: Arc::clone(&proxy_services.command_manager),
         permission_service: Arc::clone(&proxy_services.permission_service),
         start_time,
+        updates,
     });
 
     let root_cmd = InfrarustRootCommand::new(services);
@@ -364,6 +368,7 @@ mod tests {
             command_manager: Arc::new(CommandManagerImpl::new()),
             permission_service: Arc::clone(&permission_service),
             start_time: Instant::now(),
+            updates: None,
         });
 
         let root = InfrarustRootCommand::new(services);

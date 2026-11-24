@@ -201,6 +201,9 @@ impl ProxyRuntimeBuilder {
             services,
             Arc::clone(&plugin_registry) as Arc<dyn PluginRegistry>,
             start_time,
+            updates
+                .clone()
+                .map(|updates| updates as Arc<dyn ProxyUpdates>),
         );
 
         let plugin_services = plugin_services(

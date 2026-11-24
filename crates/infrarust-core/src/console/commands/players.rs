@@ -509,6 +509,7 @@ mod tests {
             command_manager,
             permission_service,
             start_time: Instant::now(),
+            updates: None,
         };
         Surfaces {
             console,
