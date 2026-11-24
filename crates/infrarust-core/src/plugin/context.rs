@@ -18,6 +18,7 @@ use infrarust_api::permissions::{
 };
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
+use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::Scheduler;
@@ -56,6 +57,7 @@ pub struct HostRegistries {
     pub limbo_handlers: Arc<LimboHandlerRegistry>,
     pub services: Arc<ServiceRegistryImpl>,
     pub channels: PluginChannels,
+    pub updates: Option<Arc<dyn ProxyUpdates>>,
 }
 
 pub struct PluginContextImpl {
@@ -85,6 +87,7 @@ pub struct PluginContextImpl {
     plugins_dir: PathBuf,
     capabilities: CapabilitySet,
     channels: PluginChannels,
+    updates: Option<Arc<dyn ProxyUpdates>>,
 }
 
 impl PluginContextImpl {
@@ -153,6 +156,7 @@ impl PluginContextImpl {
             plugins_dir: host.plugins_dir.clone(),
             capabilities,
             channels: registries.channels,
+            updates: registries.updates,
         }
     }
 
@@ -220,6 +224,7 @@ impl PluginContextImpl {
             plugins_dir: _,
             capabilities: _,
             channels,
+            updates: _,
         } = self;
 
         event_bus.unsubscribe_all();
@@ -436,6 +441,10 @@ impl PluginContext for PluginContextImpl {
 
     fn proxy_shutdown(&self) -> CancellationToken {
         self.proxy_shutdown.clone()
+    }
+
+    fn proxy_updates(&self) -> Option<Arc<dyn ProxyUpdates>> {
+        self.updates.clone()
     }
 
     fn proxy_info(&self) -> &ProxyInfo {

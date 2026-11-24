@@ -23,7 +23,9 @@ pub fn join_game_frame(version: ProtocolVersion) -> Result<PacketFrame, CoreErro
 mod plugin;
 mod plugin_context;
 mod services;
+mod updates;
 
 pub use crate::session::client_bridge::ClientBridge;
 pub use plugin::TestPlugin;
 pub use plugin_context::{MockPluginContext, MockPluginContextFactory};
+pub use updates::FakeUpdates;

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
+use infrarust_api::services::ProxyUpdates;
 
 pub use infrarust_api::loader::PluginContextFactory;
 
@@ -34,6 +35,7 @@ pub struct PluginContextFactoryImpl {
     limbo_handlers: Arc<LimboHandlerRegistry>,
     service_registry: Arc<ServiceRegistryImpl>,
     messaging: Option<Messaging>,
+    updates: Option<Arc<dyn ProxyUpdates>>,
 }
 
 struct Messaging {
@@ -47,6 +49,7 @@ pub(crate) struct HostWiring {
     pub(crate) limbo_handlers: Arc<LimboHandlerRegistry>,
     pub(crate) channels: Arc<PluginMessaging>,
     pub(crate) players: Arc<ConnectionRegistry>,
+    pub(crate) updates: Option<Arc<dyn ProxyUpdates>>,
 }
 
 impl PluginContextFactoryImpl {
@@ -61,6 +64,7 @@ impl PluginContextFactoryImpl {
             limbo_handlers,
             channels,
             players,
+            updates,
         } = wiring;
         let service_registry = Arc::new(ServiceRegistryImpl::new(Some(Arc::clone(
             &services.event_bus,
@@ -74,6 +78,7 @@ impl PluginContextFactoryImpl {
             limbo_handlers,
             service_registry,
             messaging: Some(Messaging { channels, players }),
+            updates,
         }
     }
 
@@ -94,6 +99,7 @@ impl PluginContextFactoryImpl {
             limbo_handlers: Arc::new(LimboHandlerRegistry::new()),
             service_registry,
             messaging: None,
+            updates: None,
         }
     }
 
@@ -115,6 +121,13 @@ impl PluginContextFactoryImpl {
         self
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn with_updates(mut self, updates: Arc<dyn ProxyUpdates>) -> Self {
+        self.updates = Some(updates);
+        self
+    }
+
     fn registries(&self, plugin_id: &str) -> HostRegistries {
         let channels = match &self.messaging {
             Some(Messaging { channels, players }) => {
@@ -128,6 +141,7 @@ impl PluginContextFactoryImpl {
             limbo_handlers: Arc::clone(&self.limbo_handlers),
             services: Arc::clone(&self.service_registry),
             channels,
+            updates: self.updates.clone(),
         }
     }
 
@@ -182,5 +196,41 @@ impl PluginContextFactory for PluginContextFactoryImpl {
 
     fn forget_context(&self, plugin_id: &str) {
         lock(&self.contexts).remove(plugin_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use crate::test_support::FakeUpdates;
+
+    #[test]
+    fn plugin_contexts_hand_out_the_wired_update_service() {
+        let updates: Arc<dyn ProxyUpdates> =
+            Arc::new(FakeUpdates::new(FakeUpdates::idle("2.0.0-beta.6")));
+        let factory =
+            PluginContextFactoryImpl::for_tests(PluginServices::for_tests(), HashMap::new())
+                .with_updates(Arc::clone(&updates));
+
+        let ctx = factory.create_context("admin_api");
+        let handed = ctx
+            .proxy_updates()
+            .expect("the context carries the service");
+        assert!(Arc::ptr_eq(&handed, &updates));
+        assert_eq!(handed.status().current_version, "2.0.0-beta.6");
+    }
+
+    #[test]
+    fn plugin_contexts_have_no_update_service_unless_one_is_wired() {
+        let factory =
+            PluginContextFactoryImpl::for_tests(PluginServices::for_tests(), HashMap::new());
+        assert!(
+            factory
+                .create_context("admin_api")
+                .proxy_updates()
+                .is_none()
+        );
     }
 }

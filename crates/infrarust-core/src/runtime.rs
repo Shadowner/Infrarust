@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
+use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 use infrarust_api::services::proxy_info::{
@@ -34,6 +35,7 @@ use crate::server::{DEFAULT_DRAIN_TIMEOUT, ProxyServer, ServeExit};
 use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
+use crate::update::UpdateService;
 
 pub struct ProxyRuntime;
 
@@ -167,6 +169,9 @@ impl ProxyRuntimeBuilder {
             .unwrap_or_else(|| proxy_info_from_config(&config, env!("CARGO_PKG_VERSION")));
         let plugins_dir = config.plugins_dir.clone();
         let plugin_cfgs = config.plugins.clone();
+        let updates = binary
+            .as_ref()
+            .map(|binary| UpdateService::new(config.update.clone(), Arc::clone(binary), None));
 
         let server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
         register_server_providers(&server, server_providers)?;
@@ -216,6 +221,9 @@ impl ProxyRuntimeBuilder {
                 limbo_handlers: Arc::clone(&services.limbo_handler_registry),
                 channels: Arc::clone(&services.plugin_messaging),
                 players: Arc::clone(&services.connection_registry),
+                updates: updates
+                    .clone()
+                    .map(|updates| updates as Arc<dyn ProxyUpdates>),
             },
         ));
 
@@ -245,6 +253,9 @@ impl ProxyRuntimeBuilder {
         server.event_bus().fire(ProxyInitializeEvent::new()).await;
 
         let serve_task = tokio::spawn(Arc::clone(&server).serve(listener));
+        if let Some(updates) = &updates {
+            updates.spawn_background(server.background_token().clone());
+        }
 
         Ok(RunningProxy {
             server,
@@ -258,6 +269,7 @@ impl ProxyRuntimeBuilder {
             drain_timeout,
             plugin_shutdown_timeout: plugin_shutdown.total,
             binary,
+            updates,
         })
     }
 }
@@ -420,11 +432,16 @@ pub struct RunningProxy {
     drain_timeout: Duration,
     plugin_shutdown_timeout: Duration,
     binary: Option<Arc<RunningBinary>>,
+    updates: Option<Arc<UpdateService>>,
 }
 
 impl RunningProxy {
     pub const fn binary(&self) -> Option<&Arc<RunningBinary>> {
         self.binary.as_ref()
+    }
+
+    pub const fn updates(&self) -> Option<&Arc<UpdateService>> {
+        self.updates.as_ref()
     }
 
     pub const fn local_addr(&self) -> SocketAddr {
@@ -460,7 +477,10 @@ impl RunningProxy {
             command_manager: Arc::clone(&services.command_manager),
             shutdown: self.shutdown.clone(),
             start_time: self.start_time,
-            updates: None,
+            updates: self
+                .updates
+                .clone()
+                .map(|updates| updates as Arc<dyn ProxyUpdates>),
             restart: None,
         }
     }
@@ -802,6 +822,75 @@ mod tests {
             took < Duration::from_secs(3),
             "a hanging ProxyShutdownEvent listener and on_disable held the shutdown {took:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn without_a_binary_no_update_service_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let running = ProxyRuntime::builder(test_config(dir.path()), dir.path().join("i.toml"))
+            .loader(Box::new(recording_loader("probe", &log)))
+            .trusted_plugins(["probe".to_string()])
+            .start()
+            .await
+            .unwrap();
+
+        assert!(running.updates().is_none());
+        assert!(running.console_services().updates.is_none());
+        let ctx = running.plugins().plugin_context("probe").await.unwrap();
+        assert!(ctx.proxy_updates().is_none());
+        running.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn with_a_binary_the_update_service_reaches_plugins_and_the_console() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("infrarust");
+        std::fs::write(&exe, b"binary").unwrap();
+        let binary = RunningBinary::new(
+            crate::binary::BuildInfo {
+                version: "2.0.0-beta.5",
+                target: "x86_64-unknown-linux-musl",
+                official: true,
+                docker: false,
+            },
+            crate::binary::ExeSnapshot::at(exe),
+            Vec::new(),
+        );
+        let mut config = test_config(dir.path());
+        config.update.check = false;
+        config.update.url = "http://127.0.0.1:9/releases".to_string();
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let running = ProxyRuntime::builder(config, dir.path().join("i.toml"))
+            .loader(Box::new(recording_loader("probe", &log)))
+            .trusted_plugins(["probe".to_string()])
+            .binary(Some(binary))
+            .start()
+            .await
+            .unwrap();
+
+        let service = running
+            .updates()
+            .expect("a binary brings an update service");
+        assert!(!service.config().check);
+        assert_eq!(service.status().current_version, "2.0.0-beta.5");
+        assert_eq!(service.status().last_check, None);
+
+        let ctx = running.plugins().plugin_context("probe").await.unwrap();
+        let handed = ctx.proxy_updates().expect("plugins receive the service");
+        assert!(std::ptr::addr_eq(
+            Arc::as_ptr(&handed),
+            Arc::as_ptr(service)
+        ));
+        let console = running
+            .console_services()
+            .updates
+            .expect("the console receives the service");
+        assert!(std::ptr::addr_eq(
+            Arc::as_ptr(&console),
+            Arc::as_ptr(service)
+        ));
+        running.shutdown().await.unwrap();
     }
 
     #[tokio::test]
