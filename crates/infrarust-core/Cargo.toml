@@ -39,7 +39,7 @@ infrarust_protocol = { workspace = true }
 infrarust-transport = { workspace = true }
 infrarust_server_manager = { workspace = true }
 
-tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["fs", "process", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["rt"] }
 futures-util = { workspace = true }
 bytes = { workspace = true }
@@ -52,6 +52,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 serde_json = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }

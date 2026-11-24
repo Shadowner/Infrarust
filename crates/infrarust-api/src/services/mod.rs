@@ -9,6 +9,7 @@ pub mod load_balancer;
 pub mod player_registry;
 pub mod plugin_registry;
 pub mod providers;
+pub mod proxy_control;
 pub mod proxy_info;
 pub mod scheduler;
 pub mod server_manager;
@@ -23,6 +24,10 @@ pub use load_balancer::{BackendState, BackendStatus, LbError, LoadBalancerServic
 pub use player_registry::PlayerRegistry;
 pub use plugin_registry::{PluginInfo, PluginRegistry};
 pub use providers::{ProviderKind, ProviderRejected};
+pub use proxy_control::{
+    AvailableUpdate, InstallRequest, InstallState, ProxyRestart, ProxyUpdates, RestartRequestError,
+    RestartRequirement, UpdateRequestError, UpdateStatus,
+};
 pub use proxy_info::{
     KeepaliveInfo, ProxyInfo, RateLimitInfo, StatusCacheInfo, UnknownDomainBehavior,
 };

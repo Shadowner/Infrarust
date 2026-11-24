@@ -498,6 +498,8 @@ mod tests {
             command_manager: Arc::clone(&command_manager),
             shutdown: CancellationToken::new(),
             start_time: Instant::now(),
+            updates: None,
+            restart: None,
         };
         let ir = CommandServices {
             player_registry,

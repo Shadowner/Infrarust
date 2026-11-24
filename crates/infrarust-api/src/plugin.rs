@@ -422,6 +422,14 @@ pub trait PluginContext: Send + Sync + crate::__sealed::Sealed {
 
     fn proxy_shutdown(&self) -> CancellationToken;
 
+    fn proxy_updates(&self) -> Option<Arc<dyn crate::services::ProxyUpdates>> {
+        None
+    }
+
+    fn proxy_restart(&self) -> Option<Arc<dyn crate::services::ProxyRestart>> {
+        None
+    }
+
     fn proxy_info(&self) -> &ProxyInfo;
 
     /// Capabilities granted to this plugin (source: Infrarust config).

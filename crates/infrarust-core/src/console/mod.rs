@@ -9,6 +9,8 @@ use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
 
+use infrarust_api::services::{ProxyRestart, ProxyUpdates};
+
 use infrarust_server_manager::ServerManagerService;
 
 use crate::ban::manager::BanManager;
@@ -30,6 +32,8 @@ pub struct ConsoleServices {
     pub command_manager: Arc<CommandManagerImpl>,
     pub shutdown: CancellationToken,
     pub start_time: Instant,
+    pub updates: Option<Arc<dyn ProxyUpdates>>,
+    pub restart: Option<Arc<dyn ProxyRestart>>,
 }
 
 pub struct ConsoleTask {

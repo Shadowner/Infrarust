@@ -13,6 +13,7 @@ pub mod auth;
 pub(crate) mod ban;
 #[cfg(feature = "test-support")]
 pub mod ban;
+pub mod binary;
 pub(crate) mod commands;
 pub mod console;
 pub mod error;

@@ -2,6 +2,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use std::ffi::OsString;
 use std::future::Future;
 use std::io::IsTerminal;
 use std::path::Path;
@@ -15,6 +16,7 @@ use tracing_appender::non_blocking::{NonBlockingBuilder, WorkerGuard};
 use tracing_subscriber::EnvFilter;
 
 use infrarust_config::ProxyConfig;
+use infrarust_core::binary::{BuildInfo, ConfigCheck, ExeSnapshot, RunningBinary};
 use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
 use infrarust_core::terminal::Banner;
 use infrarust_core::terminal::formatter::InfrarustFormatter;
@@ -50,6 +52,9 @@ struct Cli {
     /// Override the servers directory path
     #[arg(long)]
     servers_dir: Option<std::path::PathBuf>,
+
+    #[arg(long = "handover-probe", hide = true)]
+    handover_probe: bool,
 }
 
 #[derive(Subcommand)]
@@ -62,12 +67,36 @@ enum Command {
         #[arg(long)]
         config: Option<std::path::PathBuf>,
     },
+    #[command(
+        name = "check-config",
+        about = "Validate the proxy configuration without starting the proxy"
+    )]
+    CheckConfig {
+        #[arg(long, help = "Print the result as one JSON line")]
+        json: bool,
+    },
 }
+
+const BUILD: BuildInfo = BuildInfo {
+    version: env!("CARGO_PKG_VERSION"),
+    target: env!("INFRARUST_TARGET"),
+    official: matches!(env!("INFRARUST_OFFICIAL").as_bytes(), b"1"),
+    docker: cfg!(feature = "docker"),
+};
 
 #[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
 fn main() -> ExitCode {
+    let exe = ExeSnapshot::capture();
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let cli = Cli::parse();
+    if cli.handover_probe {
+        return print_probe();
+    }
     infrarust_core::terminal::color::init();
+
+    if let Some(Command::CheckConfig { json }) = &cli.command {
+        return check_config(&cli, *json);
+    }
 
     if let Some(Command::Migrate {
         input,
@@ -148,7 +177,21 @@ fn main() -> ExitCode {
         }
     };
 
-    match runtime.block_on(run(config, cli.config, log_broadcast, inherited_listener)) {
+    let binary = match exe {
+        Ok(exe) => Some(RunningBinary::new(BUILD, exe, args)),
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot locate the running executable; updates and hot restarts are unavailable");
+            None
+        }
+    };
+
+    match runtime.block_on(run(
+        config,
+        cli.config,
+        log_broadcast,
+        inherited_listener,
+        binary,
+    )) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             tracing::error!("{e:#}");
@@ -255,6 +298,60 @@ fn apply_cli_overrides(cli: &Cli, config: &mut ProxyConfig) {
     }
 }
 
+#[allow(clippy::print_stderr)]
+fn print_probe() -> ExitCode {
+    match serde_json::to_string(&BUILD.probe()) {
+        Ok(line) => {
+            println!("{line}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(clippy::print_stderr)]
+fn check_config(cli: &Cli, json: bool) -> ExitCode {
+    let check = match load_config(cli) {
+        Ok((_, warnings)) => ConfigCheck {
+            ok: true,
+            config: cli.config.display().to_string(),
+            warnings,
+            error: None,
+        },
+        Err(e) => ConfigCheck {
+            ok: false,
+            config: cli.config.display().to_string(),
+            warnings: Vec::new(),
+            error: Some(format!("{e:#}")),
+        },
+    };
+    if json {
+        match serde_json::to_string(&check) {
+            Ok(line) => println!("{line}"),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        for warning in &check.warnings {
+            eprintln!("warning: {warning}");
+        }
+        match &check.error {
+            None => println!("configuration is valid: {}", check.config),
+            Some(error) => eprintln!("error: {error}"),
+        }
+    }
+    if check.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
 fn finalize_config(
     cli: &Cli,
     mut config: ProxyConfig,
@@ -270,6 +367,7 @@ async fn run(
     config_path: std::path::PathBuf,
     log_broadcast: Option<LogBroadcast>,
     inherited_listener: Option<std::net::TcpListener>,
+    binary: Option<Arc<RunningBinary>>,
 ) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
 
@@ -299,6 +397,7 @@ async fn run(
         .proxy_info(proxy_info)
         .trusted_plugins(static_ids)
         .inherited_listener(inherited_listener)
+        .binary(binary)
         .loader(Box::new(static_loader));
 
     #[cfg(feature = "wasm")]

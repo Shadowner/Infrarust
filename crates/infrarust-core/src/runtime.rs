@@ -19,6 +19,7 @@ use infrarust_config::proxy::PluginConfig;
 use infrarust_server_manager::ServerProvider;
 use infrarust_transport::Listener;
 
+use crate::binary::RunningBinary;
 use crate::console::ConsoleServices;
 use crate::error::CoreError;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
@@ -48,6 +49,7 @@ impl ProxyRuntime {
             plugin_shutdown: ShutdownLimits::default(),
             server_providers: Vec::new(),
             inherited_listener: None,
+            binary: None,
         }
     }
 }
@@ -70,9 +72,16 @@ pub struct ProxyRuntimeBuilder {
     plugin_shutdown: ShutdownLimits,
     server_providers: Vec<ProviderOverride>,
     inherited_listener: Option<std::net::TcpListener>,
+    binary: Option<Arc<RunningBinary>>,
 }
 
 impl ProxyRuntimeBuilder {
+    #[must_use]
+    pub fn binary(mut self, binary: Option<Arc<RunningBinary>>) -> Self {
+        self.binary = binary;
+        self
+    }
+
     #[must_use]
     pub fn inherited_listener(mut self, listener: Option<std::net::TcpListener>) -> Self {
         self.inherited_listener = listener;
@@ -150,6 +159,7 @@ impl ProxyRuntimeBuilder {
             plugin_shutdown,
             server_providers,
             inherited_listener,
+            binary,
         } = self;
 
         let proxy_info = proxy_info
@@ -246,6 +256,7 @@ impl ProxyRuntimeBuilder {
             shutdown,
             drain_timeout,
             plugin_shutdown_timeout: plugin_shutdown.total,
+            binary,
         })
     }
 }
@@ -407,9 +418,14 @@ pub struct RunningProxy {
     shutdown: CancellationToken,
     drain_timeout: Duration,
     plugin_shutdown_timeout: Duration,
+    binary: Option<Arc<RunningBinary>>,
 }
 
 impl RunningProxy {
+    pub const fn binary(&self) -> Option<&Arc<RunningBinary>> {
+        self.binary.as_ref()
+    }
+
     pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -443,6 +459,8 @@ impl RunningProxy {
             command_manager: Arc::clone(&services.command_manager),
             shutdown: self.shutdown.clone(),
             start_time: self.start_time,
+            updates: None,
+            restart: None,
         }
     }
 
