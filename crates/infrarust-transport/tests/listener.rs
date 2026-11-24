@@ -431,3 +431,25 @@ async fn a_reserve_without_limits_never_blocks_accepts() {
 
     shutdown.cancel();
 }
+
+#[tokio::test]
+async fn into_std_hands_back_the_bound_socket() {
+    let shutdown = CancellationToken::new();
+    let listener = Listener::bind(test_config(), shutdown.clone()).unwrap();
+    let addr = listener.local_addr();
+
+    let std_listener = listener.into_std().unwrap();
+    assert_eq!(std_listener.local_addr().unwrap(), addr);
+
+    let readopted = Listener::adopt(std_listener, test_config(), shutdown.clone()).unwrap();
+    assert_eq!(readopted.local_addr(), addr);
+
+    let client = TcpStream::connect(addr).await.unwrap();
+    let pending = timeout(ADMITTED, readopted.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pending.peer_addr(), client.local_addr().unwrap());
+
+    shutdown.cancel();
+}

@@ -297,6 +297,10 @@ impl Listener {
         }
     }
 
+    pub fn into_std(self) -> std::io::Result<std::net::TcpListener> {
+        self.inner.into_std()
+    }
+
     pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
