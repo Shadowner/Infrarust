@@ -147,7 +147,8 @@ A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../p
 |---------|---------|-------|-------------|
 | `help` | `?` | `help [command]` | Show help |
 | `version` | `ver` | `version` | Show version info |
-| `update` | | `update [install [version]]` | Check for or install an update |
+| `update` | | `update [install\|apply [version]]` | Check for, install or apply an update |
+| `restart` | | `restart` | Restart in place, keeping the players on forwarding servers connected (Linux) |
 | `status` | `info` | `status` | Proxy overview |
 | `stop` | `shutdown`, `exit`, `quit` | `stop` | Shut down the proxy |
 | `clear` | `cls` | `clear` | Clear the screen |
@@ -162,18 +163,52 @@ A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../p
 │ available  2.0.0-beta.6  security fix
 │ published  2026-11-20T10:00:00Z
 │ notes      https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6
-│ restart    full restart
+│ restart    hot restart
 │
 │ type update install to install it
 ```
 
-The header ends with `up to date`, `update available`, `security update available` or `check failed`. A few lines appear only when they apply: `install` follows an install that is running, done or failed; `binary` says the file on disk changed since the proxy started; `error` gives the reason a check failed; and `refused` explains why this binary cannot install the release, in place of the `update install` hint.
+The header ends with `up to date`, `update available`, `security update available` or `check failed`. `restart` is `hot restart` when the release can take over the sessions in place, `full restart` when the proxy has to be stopped and started again, and `stop and start the proxy by hand` on Windows; see [Restart the proxy](../guide/upgrading#restart-the-proxy). A few lines appear only when they apply: `install` follows an install that is running, done or failed; `binary` says the file on disk changed since the proxy started; `error` gives the reason a check failed; and `refused` explains why this binary cannot install the release, in place of the `update install` hint.
 
 `update install` installs the newest release on the `[update]` channel, and `update install <version>` installs that version. With no version and no release found by an earlier check, it checks first, and stops with `Infrarust <version> is up to date` when there is nothing newer or `Update check failed: <reason>` when the check fails. The install runs in the background and the command waits for it, then prints `✓ Installed 2.0.0-beta.6, restart Infrarust to run it` or `✗ Update failed: <reason>`. It does not ask for confirmation and does not restart the proxy. A refusal prints `✗ Cannot install: <reason>`, for example `an installation is already running` while another install is in progress. The console has no rollback; run [`infrarust update rollback`](#update-rollback) from a shell. The [upgrading guide](../guide/upgrading) puts these steps in order, from the check to the restart.
+
+`update apply` installs the release the last check found and then restarts the proxy in place. With no release known, it checks first, like `update install`. `update apply <version>` must name that same release, with or without a leading `v`; any other version stops with `✗ Only the advertised update 2.0.0-beta.6 can be applied in place`, followed by the commands to install it and restart by hand. Nothing is installed when:
+
+- the proxy has no hot restart, as on macOS and Windows: `✗ Hot restart is unavailable on this platform`;
+- the release needs more than a hot restart: `✗ 2.0.0-beta.6 needs a full restart, nothing was installed`.
+
+Otherwise the command waits for the install and prints `✓ Installed 2.0.0-beta.6, restarting in place; follow the restart in the logs`, or `✗ Update failed: <reason>`. The restart that follows goes through the same [preflight](../guide/upgrading#preflight) as `restart`, so it can still be refused, with the new binary installed. See [Apply an update in place](../guide/upgrading#apply-an-update-in-place).
+
+`restart` asks for a [hot restart](../guide/upgrading#restart-without-disconnecting-players) and returns at once with `✓ Hot restart requested, follow it in the logs`. The restart runs its preflight afterwards, so a refusal only shows in the log, on a `hot restart failed` warning. The command answers instead:
+
+| Reply | When |
+|-------|------|
+| `A restart is already in progress` | Another restart has not finished |
+| `The proxy is shutting down` | The proxy is stopping |
+| `Hot restart is unavailable on this platform` | The proxy has no hot restart, as on macOS and Windows. Stop the proxy and start it again |
 
 #### Plugin commands
 
 A line that is not one of the console commands above runs as a proxy command: a plugin command by its name, an alias, or its `<plugin_id>:<name>` form, or the built-in `ir` command. A leading `/` is ignored. The console holds every permission, and plugin replies appear as log lines under the `infrarust::console` target. When a plugin command shares a name with a console command, use the `<plugin_id>:<name>` form. `help` lists the plugin commands at the end.
+
+### Signals
+
+| Signal | Effect |
+|--------|--------|
+| `SIGTERM` | Graceful stop: the proxy stops accepting connections, ends the sessions and waits up to 30 seconds for them, then gives the plugins up to 10 seconds. It exits with `0` |
+| `SIGINT` (Ctrl-C) | The same graceful stop |
+| `SIGUSR2` | A [hot restart](../guide/upgrading#restart-without-disconnecting-players), on Linux. On other Unix systems the proxy logs that hot restart is unavailable and goes on running |
+
+A second `SIGTERM` or `SIGINT` while the proxy is stopping makes it exit at once, without waiting for the sessions or the plugins, with code `143` for `SIGTERM` or `130` for `SIGINT`. A `stop` typed in the console counts as the first request.
+
+A `SIGUSR2` that arrives while the proxy is still starting, or while a hot restart is already running, is ignored, and the log says so.
+
+During a hot restart, a stop signal depends on how far the restart has gone:
+
+| Phase | `SIGTERM` or `SIGINT` |
+|-------|-----------------------|
+| The preflight, and the wait of up to 3 seconds for the logins in flight | Cancels the restart. The proxy stops gracefully, as above |
+| From the moment the proxy disconnects the players it cannot hand over, until the new image runs | Deferred. The new image starts, logs `a stop signal arrived during the restart; this image stops now`, and stops gracefully. Further signals in this phase do not force an immediate exit |
 
 ---
 
@@ -297,18 +332,18 @@ update available: 2.0.0-beta.6
   security fix: no
   published:    2026-11-20T10:00:00Z
   notes:        https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6
-  restart:      full, players are disconnected
+  restart:      hot, players stay connected
 install it with `infrarust update install`
 ```
 
 When this binary cannot install the release, the last line gives the reason instead, starting with `this binary cannot install it:`. When nothing newer exists, the line after the version reads `up to date`. A failed check prints only the version on stdout, and `error: <reason>` on stderr.
 
-The `restart` line says how the new version takes over: `full, players are disconnected` on Linux and macOS, `manual, stop and start the proxy by hand` on Windows.
+The `restart` line says how the new version takes over: `hot, players stay connected` on Linux when the release can take over the sessions of the running version, `full, players are disconnected` when it cannot or on macOS, and `manual, stop and start the proxy by hand` on Windows. See [Restart the proxy](../guide/upgrading#restart-the-proxy).
 
 With `--json`:
 
 ```json
-{"current_version":"2.0.0-beta.5","last_check":"2026-11-24T10:00:00Z","last_error":null,"available":{"version":"2.0.0-beta.6","published_at":"2026-11-20T10:00:00Z","notes_url":"https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6","security":false,"restart":"full"},"install_refusal":null}
+{"current_version":"2.0.0-beta.5","last_check":"2026-11-24T10:00:00Z","last_error":null,"available":{"version":"2.0.0-beta.6","published_at":"2026-11-20T10:00:00Z","notes_url":"https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6","security":false,"restart":"hot"},"install_refusal":null}
 ```
 
 | Field | Meaning |
@@ -319,7 +354,7 @@ With `--json`:
 | `available` | The newest release offered on the channel, `null` when there is none |
 | `available.version`, `available.published_at`, `available.notes_url` | Its version, publication time and release notes page |
 | `available.security` | `true` when the release fixes a security issue |
-| `available.restart` | `full` or `manual`, as on the `restart` line |
+| `available.restart` | `hot`, `full` or `manual`, as on the `restart` line |
 | `install_refusal` | Why this binary cannot install releases, with what to do instead. `null` when it can |
 
 `install_refusal` includes the write test on the binary's directory, so it depends on the user who runs the command.
@@ -380,7 +415,7 @@ installed Infrarust 2.0.0-beta.6 at /opt/infrarust/infrarust, the previous binar
 restart Infrarust to run it; a proxy already running from this binary notices the change and says so in its logs
 ```
 
-The install does not restart a running proxy. [What an install does](../guide/upgrading#what-an-install-does) details each step.
+The install does not restart a running proxy; on Linux, a [hot restart](../guide/upgrading#restart-without-disconnecting-players) runs the new binary without disconnecting the players on forwarding servers. [What an install does](../guide/upgrading#what-an-install-does) details each step.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -525,6 +560,8 @@ The tool prints live stats every 5 seconds (successes, errors, connection failur
 | `NO_COLOR` | Any non-empty value turns colors off. |
 | `FORCE_COLOR`, `CLICOLOR_FORCE` | Any value other than `0` turns colors on, even without a terminal. |
 | `COLORTERM` | `truecolor` or `24bit` enables 24-bit colors when colors are forced; otherwise the 256-color palette is used. |
+
+During a [hot restart](../guide/upgrading#restart-without-disconnecting-players), the proxy passes `INFRARUST_HANDOVER_FD` and `INFRARUST_HANDOVER_ATTEMPT` to the new image. They are internal: never set them yourself.
 
 ### Colors
 
