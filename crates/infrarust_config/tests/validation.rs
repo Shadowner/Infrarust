@@ -1296,3 +1296,51 @@ fn test_the_removed_offline_motd_still_loads_with_a_warning() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn update_interval_of_zero_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("[update]\ninterval = \"0s\"\n", dir.path());
+    assert!(matches!(
+        validate_proxy_config(&config),
+        Err(ConfigError::Proxy(ProxyValidationError::ZeroDuration {
+            key: "update.interval"
+        }))
+    ));
+}
+
+#[test]
+fn update_url_must_be_http_or_https() {
+    let dir = tempfile::tempdir().unwrap();
+    for url in [
+        "ftp://mirror.example/releases",
+        "mirror.example",
+        "https://",
+    ] {
+        let config = proxy_from_toml(&format!("[update]\nurl = \"{url}\"\n"), dir.path());
+        assert!(
+            matches!(
+                validate_proxy_config(&config),
+                Err(ConfigError::Proxy(ProxyValidationError::UpdateUrl { .. }))
+            ),
+            "{url} should be rejected"
+        );
+    }
+    let config = proxy_from_toml(
+        "[update]\nurl = \"HTTPS://mirror.example/releases\"\n",
+        dir.path(),
+    );
+    assert!(validate_proxy_config(&config).is_ok());
+}
+
+#[test]
+fn a_short_update_interval_only_warns() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("[update]\ninterval = \"10m\"\n", dir.path());
+    let warnings = validate_proxy_config(&config).unwrap();
+    assert!(warnings.iter().any(|w| w.contains("update.interval")));
+
+    let config = proxy_from_toml("[update]\ncheck = false\ninterval = \"10m\"\n", dir.path());
+    let warnings = validate_proxy_config(&config).unwrap();
+    assert!(!warnings.iter().any(|w| w.contains("update.interval")));
+}

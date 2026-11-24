@@ -381,6 +381,7 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
             config.events.transport_filter_timeout,
         ),
         ("ban.check_timeout", config.ban.check_timeout),
+        ("update.interval", config.update.interval),
     ] {
         if value.is_zero() {
             return Err(zero_duration(key));
@@ -401,7 +402,8 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
         ));
     }
 
-    let warnings = validate_wasm_config(config)?;
+    let mut warnings = validate_wasm_config(config)?;
+    warnings.extend(validate_update(&config.update)?);
 
     if config.rate_limit.enabled {
         if config.rate_limit.window.is_zero() {
@@ -429,6 +431,29 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
         }
     }
 
+    Ok(warnings)
+}
+
+fn validate_update(update: &crate::types::UpdateConfig) -> Result<Vec<String>, ConfigError> {
+    let url = update.url.trim();
+    let scheme_ok = ["https://", "http://"].iter().any(|scheme| {
+        url.len() > scheme.len()
+            && url
+                .get(..scheme.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
+    });
+    if !scheme_ok {
+        return Err(ConfigError::Proxy(ProxyValidationError::UpdateUrl {
+            url: update.url.clone(),
+        }));
+    }
+    let mut warnings = Vec::new();
+    if update.check && update.interval < Duration::from_secs(3600) {
+        warnings.push(format!(
+            "update.interval is {}; checking GitHub more than once an hour can hit its rate limit",
+            humantime::format_duration(update.interval)
+        ));
+    }
     Ok(warnings)
 }
 

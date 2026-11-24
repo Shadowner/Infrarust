@@ -198,6 +198,9 @@ pub enum ProxyValidationError {
     #[error("{0}")]
     WebApiKey(String),
 
+    #[error("update.url must be an http or https URL (got {url:?})")]
+    UpdateUrl { url: String },
+
     #[error(
         "receive_proxy_protocol requires trusted_proxies: list the addresses of your \
          load balancers, or [\"0.0.0.0/0\", \"::/0\"] to trust every peer"

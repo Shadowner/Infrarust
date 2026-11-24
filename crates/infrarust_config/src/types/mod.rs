@@ -17,6 +17,7 @@ mod rate_limit;
 mod server_manager;
 mod status;
 mod telemetry;
+mod update;
 mod wasm;
 mod wasm_network;
 mod web;
@@ -43,6 +44,7 @@ pub use status::{MotdConfig, MotdEntry, StatusCacheConfig};
 pub use telemetry::{
     MetricsConfig, OtlpProtocol, ResourceConfig, TelemetryConfig, TraceClientIp, TracesConfig,
 };
+pub use update::{DEFAULT_UPDATE_URL, UpdateChannel, UpdateConfig};
 pub use wasm::{
     PluginWasmCodecQuarantineConfig, PluginWasmConfig, PluginWasmQuotasConfig,
     PluginWasmRecoveryConfig, WasmCodecQuarantineConfig, WasmConfig, WasmLimits, WasmQuotasConfig,
