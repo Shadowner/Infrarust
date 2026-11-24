@@ -233,6 +233,8 @@ The `infrarust.toml` global config is **not** hot-reloaded. Changes to these set
 - `keepalive`
 - `so_reuseport`
 
+On Linux, a [hot restart](./upgrading#restart-without-disconnecting-players) applies these changes without disconnecting the players on `passthrough`, `zero_copy` and `server_only` servers.
+
 ### Config parse errors don't break existing servers
 
 If you save a `.toml` file with a syntax error, Infrarust logs a warning and keeps the previous version of that server's config:

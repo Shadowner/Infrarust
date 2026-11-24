@@ -154,7 +154,7 @@ The file watcher waits until the directory has been quiet for 300ms (and at most
 - File deleted: server is removed from the router
 
 ::: tip
-Only server config files (in `servers_dir`) are hot-reloaded. Changes to `infrarust.toml` require a proxy restart.
+Only server config files (in `servers_dir`) are hot-reloaded. Changes to `infrarust.toml` require a proxy restart. On Linux, a [hot restart](../guide/upgrading#restart-without-disconnecting-players) applies them without disconnecting the players on forwarding servers.
 :::
 
 The status cache is automatically invalidated when a server's configuration changes, so players see updated MOTDs right away.

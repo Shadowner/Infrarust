@@ -59,6 +59,8 @@ Spawns a process on the same host as the proxy. The process's stdout is scanned 
 
 The local provider sends the `stop` command on stdin for graceful shutdown, then waits up to `shutdown_timeout` before killing the process.
 
+The server process is a child of the proxy, so a local server that is starting, online or stopping blocks a [hot restart](./upgrading#preflight) of the proxy. Stop it first with `stop-server <id>`.
+
 ```toml
 # servers/survival.toml
 name = "survival"

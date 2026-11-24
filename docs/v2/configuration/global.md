@@ -12,6 +12,8 @@ Every field has a default value. An empty file (or no file at all) starts the pr
 
 The config struct uses `serde(deny_unknown_fields)`, so unrecognized keys are a hard parse error rather than a silent no-op.
 
+The proxy reads `infrarust.toml` when it starts and does not watch it, so a change applies at the next start. On Linux, a [hot restart](../guide/upgrading#restart-without-disconnecting-players) counts as one: the proxy reads the file again while the players on forwarding servers stay connected. That is the way to apply a change to this file without disconnecting them.
+
 ## Bind address and port
 
 ```toml
@@ -33,6 +35,8 @@ To run on a non-standard port:
 ```toml
 bind = "0.0.0.0:25577"
 ```
+
+A hot restart that finds a new `bind` listens on the new address, and closes the old listener once the sessions are handed over. Make sure the new address is free first: when it cannot be bound, the previous version cannot start on it either, and the proxy exits. See [Rollback](../guide/upgrading#rollback).
 
 ## Worker threads
 
@@ -390,7 +394,7 @@ Enables the HTTP admin API (and optional web UI) used by management tools and th
 
 `cors_origins` accepts a list of allowed CORS origins (empty by default, meaning no cross-origin access).
 
-The API can rewrite this file through `PUT /api/v1/config/proxy/raw`. Nothing is hot-applied: the proxy keeps running on the configuration it started with until you restart it. Reads replace `api_key` with `<redacted>` and a write puts the stored value back, so editing the config through the dashboard cannot destroy the key. A write is refused when it carries `<redacted>` and there is no stored key to restore, and the proxy refuses to start if `<redacted>` ever reaches the file itself. See [Admin API & Web UI](../plugins/builtin/admin-api).
+The API can rewrite this file through `PUT /api/v1/config/proxy/raw`. Nothing is applied while the proxy runs: it keeps the configuration it started with until it restarts, and a [hot restart](../plugins/builtin/admin-api#hot-restart) applies the new file without disconnecting the players on forwarding servers. Reads replace `api_key` with `<redacted>` and a write puts the stored value back, so editing the config through the dashboard cannot destroy the key. A write is refused when it carries `<redacted>` and there is no stored key to restore, and the proxy refuses to start if `<redacted>` ever reaches the file itself. See [Admin API & Web UI](../plugins/builtin/admin-api).
 
 ::: danger
 Never expose the admin API on a public interface without a strong `api_key`. There is no second authentication layer.
