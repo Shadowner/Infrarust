@@ -245,6 +245,7 @@ impl Plugin for AdminApiPlugin {
                 shutdown: self.shutdown.clone(),
                 proxy_shutdown: ctx.proxy_shutdown(),
                 updates: ctx.proxy_updates(),
+                restart: ctx.proxy_restart(),
                 logs: self.logs.clone(),
                 server_dir,
                 provider_sender,

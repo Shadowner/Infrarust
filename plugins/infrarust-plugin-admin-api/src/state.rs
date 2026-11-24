@@ -2,13 +2,13 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::ban_service::BanService;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::load_balancer::LoadBalancerService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
 use infrarust_api::services::server_manager::ServerManager;
+use infrarust_api::services::{ProxyRestart, ProxyUpdates};
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
@@ -35,6 +35,7 @@ pub struct ApiState {
     pub shutdown: CancellationToken,
     pub proxy_shutdown: CancellationToken,
     pub updates: Option<Arc<dyn ProxyUpdates>>,
+    pub restart: Option<Arc<dyn ProxyRestart>>,
     pub logs: Option<LogBroadcast>,
     /// TOML documents for API-managed servers, under `<data_dir>/servers/`.
     pub server_dir: Arc<ServerDir>,

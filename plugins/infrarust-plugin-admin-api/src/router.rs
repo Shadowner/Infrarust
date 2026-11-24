@@ -136,6 +136,7 @@ pub fn build_router(state: Arc<ApiState>, enable_webui: bool) -> Router {
         )
         .route("/api/v1/config/reload", post(handlers::config::reload))
         .route("/api/v1/proxy/shutdown", post(handlers::proxy::shutdown))
+        .route("/api/v1/proxy/restart", post(handlers::proxy::restart))
         .route("/api/v1/proxy/update", get(handlers::update::status))
         .route("/api/v1/proxy/update/check", post(handlers::update::check))
         .route(

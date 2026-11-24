@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::StatusCode;
+use infrarust_api::services::RestartRequestError;
 
 use crate::dto::proxy::ProxyStatus;
 use crate::error::ApiError;
-use crate::response::{ApiResponse, MutationResult, mutation_ok, ok};
+use crate::response::{ApiResponse, MutationResult, accepted, mutation_ok, ok};
 use crate::state::ApiState;
 use crate::util;
 
@@ -41,4 +43,35 @@ pub async fn shutdown(
     state.proxy_shutdown.cancel();
 
     Ok(mutation_ok("Proxy shutdown initiated"))
+}
+
+pub async fn restart(
+    State(state): State<Arc<ApiState>>,
+) -> Result<(StatusCode, Json<ApiResponse<MutationResult>>), ApiError> {
+    let restart = state.restart.as_ref().ok_or_else(|| {
+        ApiError::ServiceUnavailable("hot restart is not available on this proxy".into())
+    })?;
+
+    tracing::info!(
+        target: "audit",
+        action = "proxy_restart",
+        source = "admin_api",
+        "Proxy hot restart requested via Admin API"
+    );
+
+    restart.request_restart().map_err(restart_error)?;
+
+    Ok(accepted(MutationResult {
+        success: true,
+        message: "Hot restart scheduled".to_owned(),
+        details: None,
+    }))
+}
+
+fn restart_error(error: RestartRequestError) -> ApiError {
+    match error {
+        RestartRequestError::InProgress
+        | RestartRequestError::ShuttingDown
+        | RestartRequestError::Unsupported(_) => ApiError::Conflict(error.to_string()),
+    }
 }

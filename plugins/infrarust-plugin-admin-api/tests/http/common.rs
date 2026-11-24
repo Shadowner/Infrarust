@@ -267,6 +267,7 @@ impl TestApiBuilder {
             shutdown: CancellationToken::new(),
             proxy_shutdown: CancellationToken::new(),
             updates: self.updates,
+            restart: None,
             logs: self.logs,
             server_dir: Arc::new(ServerDir::open(dir.path()).unwrap()),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
