@@ -5,6 +5,8 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
@@ -14,8 +16,13 @@ use nix::unistd::{dup, pipe};
 use rusty_fork::rusty_fork_test;
 use socket2::{Domain, Socket, Type};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use infrarust_transport::handover::{
-    InheritedSocket, SocketIdentity, SocketKind, claim_inherited, set_inheritable, socket_identity,
+    HandoverSignal, block_signals, is_blocked, raise_signal, record_signal, unblock_signals,
+};
+use infrarust_transport::handover::{
+    InheritedSocket, SocketIdentity, SocketKind, claim_inherited, close_on_exec_raw,
+    is_inheritable, set_inheritable, socket_identity,
 };
 
 fn close_on_exec(fd: impl AsFd) -> bool {
@@ -191,6 +198,26 @@ fn a_claim_of_a_udp_socket_leaves_the_fd_open() {
 }
 
 #[test]
+fn is_inheritable_reads_the_close_on_exec_flag() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    assert!(!is_inheritable(listener.as_fd()).unwrap());
+    set_inheritable(listener.as_fd(), true).unwrap();
+    assert!(is_inheritable(listener.as_fd()).unwrap());
+}
+
+#[test]
+fn close_on_exec_raw_sets_the_flag_by_number() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    set_inheritable(listener.as_fd(), true).unwrap();
+
+    close_on_exec_raw(listener.as_raw_fd()).unwrap();
+
+    assert!(close_on_exec(&listener));
+    let err = close_on_exec_raw(-1).unwrap_err();
+    assert_eq!(err.raw_os_error(), Some(Errno::EBADF as i32), "{err}");
+}
+
+#[test]
 fn a_stream_whose_peer_reset_can_still_be_claimed() {
     let (_listener, client, server) = connected();
     Socket::from(client)
@@ -229,6 +256,43 @@ rusty_fork_test! {
         assert_eq!(err.raw_os_error(), Some(Errno::EBADF as i32), "{err}");
         assert!(is_open(&listener));
     }
+
+    #[test]
+    fn a_blocked_signal_is_recorded_once_it_is_unblocked() {
+        static RECEIVED: AtomicU32 = AtomicU32::new(0);
+        let recorder = record_signal(HandoverSignal::Restart, &RECEIVED).unwrap();
+
+        block_signals(&[HandoverSignal::Restart]).unwrap();
+        assert!(is_blocked(HandoverSignal::Restart).unwrap());
+        assert!(!is_blocked(HandoverSignal::Terminate).unwrap());
+        raise_signal(HandoverSignal::Restart).unwrap();
+        assert_eq!(RECEIVED.load(Ordering::SeqCst), 0);
+
+        unblock_signals(&[HandoverSignal::Restart]).unwrap();
+        assert!(!is_blocked(HandoverSignal::Restart).unwrap());
+        assert_eq!(RECEIVED.load(Ordering::SeqCst), HandoverSignal::Restart.bit());
+
+        assert!(recorder.stop());
+    }
+
+    #[test]
+    fn every_recorded_signal_sets_its_own_bit() {
+        static RECEIVED: AtomicU32 = AtomicU32::new(0);
+        let recorders: Vec<_> = HandoverSignal::ALL
+            .into_iter()
+            .map(|signal| record_signal(signal, &RECEIVED).unwrap())
+            .collect();
+
+        for signal in HandoverSignal::ALL {
+            raise_signal(signal).unwrap();
+            assert_ne!(RECEIVED.load(Ordering::SeqCst) & signal.bit(), 0, "{}", signal.name());
+        }
+        assert_eq!(RECEIVED.load(Ordering::SeqCst), 0b111);
+
+        for recorder in recorders {
+            assert!(recorder.stop());
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -241,9 +305,14 @@ mod memfd {
     use nix::sys::uio::pwrite;
     use nix::unistd::{Whence, ftruncate, lseek, write};
 
-    use infrarust_transport::handover::{read_sealed, sealed_memfd};
+    use std::net::TcpListener;
+    use std::os::fd::{AsRawFd, IntoRawFd};
 
-    use super::close_on_exec;
+    use nix::unistd::dup;
+
+    use infrarust_transport::handover::{claim_file, claim_sealed, read_sealed, sealed_memfd};
+
+    use super::{close_on_exec, is_open};
 
     #[test]
     fn a_sealed_memfd_reads_back_the_same_bytes_twice() {
@@ -291,5 +360,61 @@ mod memfd {
         write(&fd, b"state").unwrap();
         let err = read_sealed(fd.as_fd()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
+    }
+
+    #[test]
+    fn a_sealed_memfd_is_claimed_by_number() {
+        let fd = sealed_memfd("infrarust-handover-claim", b"state").unwrap();
+        let raw = fd.into_raw_fd();
+
+        let claimed = claim_sealed(raw).unwrap();
+
+        assert_eq!(claimed.as_raw_fd(), raw);
+        assert_eq!(read_sealed(claimed.as_fd()).unwrap(), b"state");
+    }
+
+    #[test]
+    fn only_a_sealed_memfd_is_claimed_as_one() {
+        let unsealed = memfd_create("infrarust-handover-unsealed", MFdFlags::MFD_CLOEXEC).unwrap();
+        let err = claim_sealed(unsealed.as_raw_fd()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
+        assert!(is_open(&unsealed));
+
+        let file = std::fs::File::open("/proc/self/exe").unwrap();
+        assert!(claim_sealed(file.as_raw_fd()).is_err());
+        assert!(is_open(&file));
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let err = claim_sealed(listener.as_raw_fd()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
+        assert!(is_open(&listener));
+
+        let err = claim_sealed(-1).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(Errno::EBADF as i32), "{err}");
+    }
+
+    #[test]
+    fn a_regular_file_is_claimed_by_number() {
+        let file = std::fs::File::open("/proc/self/exe").unwrap();
+        let raw = dup(&file).unwrap().into_raw_fd();
+
+        let claimed = claim_file(raw).unwrap();
+
+        assert_eq!(claimed.as_raw_fd(), raw);
+        assert_eq!(
+            claimed.metadata().unwrap().len(),
+            file.metadata().unwrap().len()
+        );
+    }
+
+    #[test]
+    fn a_socket_is_not_claimed_as_a_file() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let err = claim_file(listener.as_raw_fd()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
+        assert!(is_open(&listener));
+
+        let err = claim_file(-1).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(Errno::EBADF as i32), "{err}");
     }
 }

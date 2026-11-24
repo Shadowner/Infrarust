@@ -31,6 +31,7 @@ infrarust_config = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }
+signal-hook-registry = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 listenfd = { workspace = true }
@@ -43,6 +44,10 @@ divan = { workspace = true }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 command-fds = { workspace = true }
 rusty-fork = { workspace = true }
+
+[[test]]
+name = "handover_env"
+harness = false
 
 [[bench]]
 name = "forward_throughput"

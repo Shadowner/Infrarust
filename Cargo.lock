@@ -2315,6 +2315,7 @@ dependencies = [
  "nix",
  "ppp",
  "rusty-fork",
+ "signal-hook-registry",
  "socket2",
  "thiserror 2.0.21",
  "tokio",

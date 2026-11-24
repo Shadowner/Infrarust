@@ -130,6 +130,7 @@ wildmatch = "2.6.1"
 # Platform-specific
 nix = { version = "0.31.3", features = ["fs", "net", "signal", "zerocopy"] }
 listenfd = "1.0.2"
+signal-hook-registry = "1.4.8"
 mimalloc = "0.1.52"
 
 # Testing
