@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use infrarust_api::permissions::CapabilitySet;
 use infrarust_api::plugin::PluginContext;
-use infrarust_api::services::ProxyUpdates;
+use infrarust_api::services::{ProxyRestart, ProxyUpdates};
 
 pub use infrarust_api::loader::PluginContextFactory;
 
@@ -36,6 +36,7 @@ pub struct PluginContextFactoryImpl {
     service_registry: Arc<ServiceRegistryImpl>,
     messaging: Option<Messaging>,
     updates: Option<Arc<dyn ProxyUpdates>>,
+    restart: Option<Arc<dyn ProxyRestart>>,
 }
 
 struct Messaging {
@@ -50,6 +51,7 @@ pub(crate) struct HostWiring {
     pub(crate) channels: Arc<PluginMessaging>,
     pub(crate) players: Arc<ConnectionRegistry>,
     pub(crate) updates: Option<Arc<dyn ProxyUpdates>>,
+    pub(crate) restart: Option<Arc<dyn ProxyRestart>>,
 }
 
 impl PluginContextFactoryImpl {
@@ -65,6 +67,7 @@ impl PluginContextFactoryImpl {
             channels,
             players,
             updates,
+            restart,
         } = wiring;
         let service_registry = Arc::new(ServiceRegistryImpl::new(Some(Arc::clone(
             &services.event_bus,
@@ -79,6 +82,7 @@ impl PluginContextFactoryImpl {
             service_registry,
             messaging: Some(Messaging { channels, players }),
             updates,
+            restart,
         }
     }
 
@@ -100,6 +104,7 @@ impl PluginContextFactoryImpl {
             service_registry,
             messaging: None,
             updates: None,
+            restart: None,
         }
     }
 
@@ -128,6 +133,13 @@ impl PluginContextFactoryImpl {
         self
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn with_restart(mut self, restart: Arc<dyn ProxyRestart>) -> Self {
+        self.restart = Some(restart);
+        self
+    }
+
     fn registries(&self, plugin_id: &str) -> HostRegistries {
         let channels = match &self.messaging {
             Some(Messaging { channels, players }) => {
@@ -142,6 +154,7 @@ impl PluginContextFactoryImpl {
             services: Arc::clone(&self.service_registry),
             channels,
             updates: self.updates.clone(),
+            restart: self.restart.clone(),
         }
     }
 
@@ -232,5 +245,38 @@ mod tests {
                 .proxy_updates()
                 .is_none()
         );
+    }
+
+    struct CountingRestart(std::sync::atomic::AtomicUsize);
+
+    impl infrarust_api::__sealed::Sealed for CountingRestart {}
+
+    impl ProxyRestart for CountingRestart {
+        fn request_restart(
+            &self,
+        ) -> Result<(), infrarust_api::services::proxy_control::RestartRequestError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn plugin_contexts_hand_out_the_wired_restart_handle_only() {
+        let restart = Arc::new(CountingRestart(std::sync::atomic::AtomicUsize::new(0)));
+        let handle: Arc<dyn ProxyRestart> = restart.clone();
+        let wired =
+            PluginContextFactoryImpl::for_tests(PluginServices::for_tests(), HashMap::new())
+                .with_restart(handle);
+        let bare = PluginContextFactoryImpl::for_tests(PluginServices::for_tests(), HashMap::new());
+
+        wired
+            .create_context("admin_api")
+            .proxy_restart()
+            .expect("the context carries the handle")
+            .request_restart()
+            .unwrap();
+
+        assert_eq!(restart.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(bare.create_context("admin_api").proxy_restart().is_none());
     }
 }

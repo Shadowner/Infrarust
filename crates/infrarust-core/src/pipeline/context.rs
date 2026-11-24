@@ -21,7 +21,6 @@ fn next_connection_id() -> u64 {
     NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-#[allow(dead_code)]
 pub(crate) fn connection_id_watermark() -> u64 {
     NEXT_CONNECTION_ID.load(Ordering::Relaxed)
 }

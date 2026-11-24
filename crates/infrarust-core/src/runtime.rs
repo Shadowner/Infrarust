@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use infrarust_api::events::proxy::{ProxyInitializeEvent, ProxyShutdownEvent};
+use infrarust_api::player::Player;
 use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::plugin_registry::PluginRegistry;
@@ -23,6 +24,12 @@ use infrarust_transport::Listener;
 use crate::binary::RunningBinary;
 use crate::console::ConsoleServices;
 use crate::error::CoreError;
+use crate::hot_restart::restore::{self, Inherited, Restored};
+use crate::hot_restart::{
+    HandoverPackage, Inheritance, ListenerHandover, Preflight, PreflightError, RestartHub,
+    RestartPhase, RestartPlan, UnpackFailure,
+};
+use crate::pipeline::context::connection_id_watermark;
 use crate::player::ShutdownKind;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
@@ -53,6 +60,8 @@ impl ProxyRuntime {
             server_providers: Vec::new(),
             inherited_listener: None,
             binary: None,
+            hot_restart: None,
+            restored: None,
         }
     }
 }
@@ -76,12 +85,26 @@ pub struct ProxyRuntimeBuilder {
     server_providers: Vec<ProviderOverride>,
     inherited_listener: Option<std::net::TcpListener>,
     binary: Option<Arc<RunningBinary>>,
+    hot_restart: Option<Arc<dyn Preflight>>,
+    restored: Option<Box<dyn Inheritance>>,
 }
 
 impl ProxyRuntimeBuilder {
     #[must_use]
     pub fn binary(mut self, binary: Option<Arc<RunningBinary>>) -> Self {
         self.binary = binary;
+        self
+    }
+
+    #[must_use]
+    pub fn hot_restart(mut self, preflight: Arc<dyn Preflight>) -> Self {
+        self.hot_restart = Some(preflight);
+        self
+    }
+
+    #[must_use]
+    pub fn restored(mut self, inheritance: Box<dyn Inheritance>) -> Self {
+        self.restored = Some(inheritance);
         self
     }
 
@@ -150,7 +173,33 @@ impl ProxyRuntimeBuilder {
         self
     }
 
-    pub async fn start(self) -> Result<RunningProxy, CoreError> {
+    pub async fn start(mut self) -> Result<RunningProxy, CoreError> {
+        let Some(mut inheritance) = self.restored.take() else {
+            return self.boot(None).await;
+        };
+        let package = match inheritance.take_package() {
+            Ok(package) => package,
+            Err(error) => return Err(Succession { inheritance }.abort(error.into(), ())),
+        };
+        let succession = Succession { inheritance };
+        match Inherited::unpack(package) {
+            Ok(inherited) => {
+                tracing::info!(
+                    from = inherited.from_version(),
+                    sessions = inherited.session_count(),
+                    "taking over from the previous image"
+                );
+                self.boot(Some(Takeover {
+                    succession,
+                    inherited,
+                }))
+                .await
+            }
+            Err(UnpackFailure { error, package }) => Err(succession.abort(error.into(), package)),
+        }
+    }
+
+    async fn boot(self, takeover: Option<Takeover>) -> Result<RunningProxy, CoreError> {
         let Self {
             config,
             config_path,
@@ -161,20 +210,38 @@ impl ProxyRuntimeBuilder {
             drain_timeout,
             plugin_shutdown,
             server_providers,
-            inherited_listener,
+            mut inherited_listener,
             binary,
+            hot_restart,
+            restored: _,
         } = self;
 
         let proxy_info = proxy_info
             .unwrap_or_else(|| proxy_info_from_config(&config, env!("CARGO_PKG_VERSION")));
         let plugins_dir = config.plugins_dir.clone();
         let plugin_cfgs = config.plugins.clone();
-        let updates = binary
-            .as_ref()
-            .map(|binary| UpdateService::new(config.update.clone(), Arc::clone(binary), None));
+        let hub = restart_hub(binary.as_ref(), hot_restart);
+        let restart = hub.as_ref().map(RestartHub::handle);
+        let updates = binary.as_ref().map(|binary| {
+            UpdateService::new(config.update.clone(), Arc::clone(binary), restart.clone())
+        });
 
-        let server = ProxyServer::new(config, config_path, shutdown.clone()).await?;
-        register_server_providers(&server, server_providers)?;
+        let server = match ProxyServer::new(config, config_path, shutdown.clone()).await {
+            Ok(server) => server,
+            Err(error) => return Err(Takeover::abandon(takeover, error)),
+        };
+        if let Err(error) = register_server_providers(&server, server_providers) {
+            return Err(Takeover::abandon(takeover, error));
+        }
+        let (early_listener, restored) = match takeover {
+            Some(takeover) => {
+                let (listener, restored) = takeover
+                    .complete(&server, inherited_listener.take())
+                    .await?;
+                (Some(listener), Some(restored))
+            }
+            None => (None, None),
+        };
 
         let plugin_registry = Arc::new(PluginRegistryImpl::new());
         let mut plugin_manager = PluginManager::new(
@@ -191,7 +258,15 @@ impl ProxyRuntimeBuilder {
                 .collect(),
         );
 
-        plugin_manager.discover_all(&plugins_dir).await?;
+        if let Err(error) = plugin_manager.discover_all(&plugins_dir).await {
+            if restored.is_none() {
+                return Err(error.into());
+            }
+            tracing::error!(
+                %error,
+                "plugin discovery failed; the restored proxy keeps its sessions and runs without the plugins it could not load"
+            );
+        }
 
         let services = server.services();
         let start_time = Instant::now();
@@ -227,6 +302,7 @@ impl ProxyRuntimeBuilder {
                 updates: updates
                     .clone()
                     .map(|updates| updates as Arc<dyn ProxyUpdates>),
+                restart,
             },
         ));
 
@@ -241,16 +317,25 @@ impl ProxyRuntimeBuilder {
 
         provider_activator.start();
         plugin_manager.activate_config_providers().await;
+        if let Some(restored) = &restored {
+            set_up_restored_permissions(services, restored).await;
+        }
 
         let plugins = PluginManagerHandle::new(plugin_manager);
         let server = Arc::new(server);
 
-        let (listener, local_addr) = match bind_listener(&server, inherited_listener).await {
-            Ok(bound) => bound,
-            Err(e) => {
-                plugins.shutdown().await;
-                return Err(e);
+        let (listener, local_addr) = match early_listener {
+            Some(listener) => {
+                let local_addr = listener.local_addr();
+                (listener, local_addr)
             }
+            None => match bind_listener(&server, inherited_listener).await {
+                Ok(bound) => bound,
+                Err(e) => {
+                    plugins.shutdown().await;
+                    return Err(e);
+                }
+            },
         };
 
         server.event_bus().fire(ProxyInitializeEvent::new()).await;
@@ -273,7 +358,114 @@ impl ProxyRuntimeBuilder {
             plugin_shutdown_timeout: plugin_shutdown.total,
             binary,
             updates,
+            hub,
         })
+    }
+}
+
+fn restart_hub(
+    binary: Option<&Arc<RunningBinary>>,
+    preflight: Option<Arc<dyn Preflight>>,
+) -> Option<Arc<RestartHub>> {
+    let preflight = preflight?;
+    let Some(binary) = binary else {
+        tracing::warn!(
+            "hot restart needs the path of the running executable, which is unknown; it stays unavailable"
+        );
+        return None;
+    };
+    let plan = RestartPlan {
+        binary: Arc::clone(binary),
+        target: binary.exe.path().to_path_buf(),
+    };
+    Some(RestartHub::new(plan, preflight))
+}
+
+async fn set_up_restored_permissions(services: &ProxyServices, restored: &Restored) {
+    for player in restored
+        .players
+        .iter()
+        .filter(|player| player.is_connected())
+    {
+        player.setup_permissions(&services.event_bus).await;
+        player.refresh_permissions().await;
+    }
+}
+
+struct Succession {
+    inheritance: Box<dyn Inheritance>,
+}
+
+impl Succession {
+    fn abort<T>(self, error: CoreError, held: T) -> CoreError {
+        let reason = error.to_string();
+        tracing::error!(%reason, "this image cannot take over, handing the sessions back to the previous one");
+        let returned = self.inheritance.roll_back(&reason);
+        drop(held);
+        CoreError::Handover(returned)
+    }
+
+    fn commit(self) {
+        match self.inheritance.commit() {
+            Ok(()) => tracing::info!("handover committed, this image owns the inherited sessions"),
+            Err(error) => tracing::error!(
+                %error,
+                "the handover commit failed; resuming the inherited sessions anyway"
+            ),
+        }
+    }
+}
+
+struct Takeover {
+    succession: Succession,
+    inherited: Inherited,
+}
+
+impl Takeover {
+    fn abandon(takeover: Option<Self>, error: CoreError) -> CoreError {
+        match takeover {
+            Some(Self {
+                succession,
+                inherited,
+            }) => succession.abort(error, inherited),
+            None => error,
+        }
+    }
+
+    async fn complete(
+        self,
+        server: &ProxyServer,
+        activated: Option<std::net::TcpListener>,
+    ) -> Result<(Listener, Restored), CoreError> {
+        let Self {
+            succession,
+            mut inherited,
+        } = self;
+        let bind = server.services().config.bind;
+        let adopted = inherited.take_listener(bind);
+        if adopted.is_none()
+            && let Some(previous) = inherited.previous_bind()
+        {
+            tracing::info!(
+                %previous,
+                %bind,
+                "the configured bind changed; binding the new address and closing the inherited listener after the handover"
+            );
+        }
+        let listener = match server.bind_or_adopt(adopted.or(activated)).await {
+            Ok(listener) => listener,
+            Err(error) => return Err(succession.abort(error, inherited)),
+        };
+        let prepared = match restore::prepare(server, inherited) {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                let error = CoreError::Startup(failure.to_string());
+                return Err(succession.abort(error, (failure, listener)));
+            }
+        };
+        succession.commit();
+        let restored = restore::launch(server, &listener, prepared);
+        Ok((listener, restored))
     }
 }
 
@@ -423,6 +615,37 @@ pub fn proxy_info_from_config(config: &ProxyConfig, version: &str) -> ProxyInfo 
     }
 }
 
+const RESTART_GRACE: Duration = Duration::from_secs(3);
+const RESTART_PIPELINE_DRAIN: Duration = Duration::from_secs(5);
+const FREEZE_MARGIN: Duration = Duration::from_millis(400);
+const FROZEN_TASKS: Duration = Duration::from_secs(1);
+const WITHOUT_RESTART_LOOP: &str =
+    "this proxy was started without its restart loop; restart it by hand";
+
+#[derive(Debug)]
+pub enum ProxyExit {
+    Stopped,
+    Restart(Box<RestartHandover>),
+}
+
+#[derive(Debug)]
+pub struct RestartHandover {
+    pub package: HandoverPackage,
+    pub plan: RestartPlan,
+}
+
+enum Next {
+    Served(Result<(), CoreError>),
+    Requested,
+}
+
+enum Attempt {
+    Aborted,
+    Stop(Result<(), CoreError>),
+    Handed(Box<RestartHandover>),
+    Failed(CoreError),
+}
+
 pub struct RunningProxy {
     server: Arc<ProxyServer>,
     plugins: PluginManagerHandle,
@@ -436,6 +659,7 @@ pub struct RunningProxy {
     plugin_shutdown_timeout: Duration,
     binary: Option<Arc<RunningBinary>>,
     updates: Option<Arc<UpdateService>>,
+    hub: Option<Arc<RestartHub>>,
 }
 
 impl RunningProxy {
@@ -445,6 +669,10 @@ impl RunningProxy {
 
     pub const fn updates(&self) -> Option<&Arc<UpdateService>> {
         self.updates.as_ref()
+    }
+
+    pub fn restart_hub(&self) -> Option<Arc<RestartHub>> {
+        self.hub.clone()
     }
 
     pub const fn local_addr(&self) -> SocketAddr {
@@ -484,7 +712,7 @@ impl RunningProxy {
                 .updates
                 .clone()
                 .map(|updates| updates as Arc<dyn ProxyUpdates>),
-            restart: None,
+            restart: self.hub.as_ref().map(RestartHub::handle),
         }
     }
 
@@ -509,15 +737,184 @@ impl RunningProxy {
     }
 
     pub async fn wait(mut self) -> Result<(), CoreError> {
-        let result = match (&mut self.serve_task).await {
-            Ok(Ok(ServeExit::Stopped | ServeExit::Restart(_))) => Ok(()),
-            Ok(Err(e)) => Err(e),
-            Err(e) => Err(CoreError::Startup(format!("proxy server task failed: {e}"))),
+        if let Some(hub) = &self.hub {
+            hub.refuse_requests(WITHOUT_RESTART_LOOP);
+        }
+        let served = served((&mut self.serve_task).await);
+        self.stop(served).await
+    }
+
+    pub async fn shutdown(self) -> Result<(), CoreError> {
+        self.shutdown.cancel();
+        self.wait().await
+    }
+
+    pub async fn run_to_exit(mut self) -> Result<ProxyExit, CoreError> {
+        let Some(hub) = self.hub.clone() else {
+            return self.wait().await.map(|()| ProxyExit::Stopped);
+        };
+        loop {
+            let next = tokio::select! {
+                biased;
+                joined = &mut self.serve_task => Next::Served(served(joined)),
+                () = hub.requested() => Next::Requested,
+            };
+            let served = match next {
+                Next::Served(served) => served,
+                Next::Requested => match self.restart(&hub).await {
+                    Attempt::Aborted => continue,
+                    Attempt::Stop(served) => served,
+                    Attempt::Handed(handover) => return Ok(ProxyExit::Restart(handover)),
+                    Attempt::Failed(error) => return Err(error),
+                },
+            };
+            return self.stop(served).await.map(|()| ProxyExit::Stopped);
+        }
+    }
+
+    async fn restart(&mut self, hub: &RestartHub) -> Attempt {
+        let requested_at = Instant::now();
+        hub.set_phase(RestartPhase::Preflight);
+        tracing::info!(
+            target_binary = %hub.plan().target.display(),
+            "hot restart requested, checking the new binary"
+        );
+        let checked = tokio::select! {
+            biased;
+            () = self.shutdown.cancelled() => {
+                hub.fail("the proxy is stopping");
+                return Attempt::Stop(served((&mut self.serve_task).await));
+            }
+            checked = self.preflight(hub) => checked,
+        };
+        match checked {
+            Ok(probe) => tracing::info!(
+                version = %probe.version,
+                "the new binary can take over the sessions"
+            ),
+            Err(error) => {
+                hub.fail(error.to_string());
+                return Attempt::Aborted;
+            }
+        }
+
+        hub.set_phase(RestartPhase::Draining);
+        tracing::info!(
+            "hot restart: the proxy stops accepting, new connections wait in the kernel queue"
+        );
+        self.server.request_listener();
+        let listener = match (&mut self.serve_task).await {
+            Ok(Ok(ServeExit::Restart(listener))) => listener,
+            joined => {
+                hub.fail("the accept loop ended before handing its listener back");
+                return Attempt::Stop(served(joined));
+            }
+        };
+        let relays = Arc::clone(self.server.relays());
+        tracing::info!(
+            logins = relays.in_flight(),
+            grace = ?RESTART_GRACE,
+            "hot restart: waiting for the logins in flight"
+        );
+        let unsettled = tokio::select! {
+            biased;
+            () = self.shutdown.cancelled() => {
+                hub.fail("the proxy is stopping");
+                drop(listener);
+                return Attempt::Stop(Ok(()));
+            }
+            left = relays.settled(tokio::time::Instant::now() + RESTART_GRACE) => left,
         };
 
+        hub.set_phase(RestartPhase::Closing);
+        tracing::info!(
+            unsettled,
+            "hot restart: closing the sessions the new image cannot take over"
+        );
+        self.server.close_sessions(ShutdownKind::Restart);
+        self.server.drain_pipeline(RESTART_PIPELINE_DRAIN).await;
+        self.stop_plugins().await;
+        self.server.stop_background_tasks();
+
+        hub.set_phase(RestartPhase::Freezing);
+        let freeze = relays.freeze();
+        tracing::info!(
+            sessions = relays.active(),
+            "hot restart: freezing the forwarding sessions"
+        );
+        relays.begin_freeze();
+        let deadline = tokio::time::Instant::now() + freeze.write_deadline() + FREEZE_MARGIN;
+        let unfrozen = relays.drained(deadline).await;
+        let lingering = self.server.settle_connections(FROZEN_TASKS).await;
+        if unfrozen > 0 || lingering > 0 {
+            tracing::warn!(
+                unfrozen,
+                lingering,
+                "hot restart: some connections did not freeze in time and are lost"
+            );
+        }
+
+        hub.set_phase(RestartPhase::HandingOver);
+        let bind = self.services().config.bind;
+        let socket = match listener.into_std() {
+            Ok(socket) => Some(ListenerHandover { socket, bind }),
+            Err(error) => {
+                tracing::warn!(%error, "the listener cannot be handed over, the new image binds its own");
+                None
+            }
+        };
+        let plan = hub.plan().clone();
+        let built = HandoverPackage::build(
+            plan.binary.build.version,
+            connection_id_watermark(),
+            socket,
+            relays.take_frozen(),
+        );
+        let (package, dropped) = match built {
+            Ok(built) => built,
+            Err(error) => return Attempt::Failed(error.into()),
+        };
+        for session in &dropped {
+            tracing::warn!(
+                player = %session.meta.profile.username,
+                error = %session.error,
+                "a frozen session cannot be handed over"
+            );
+        }
+        tracing::info!(
+            frozen = package.state.sessions.len(),
+            dropped = dropped.len() + unfrozen,
+            elapsed_ms = u64::try_from(requested_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "hot restart: the handover package is ready"
+        );
+        Attempt::Handed(Box::new(RestartHandover { package, plan }))
+    }
+
+    async fn preflight(
+        &self,
+        hub: &RestartHub,
+    ) -> Result<crate::binary::HandoverProbe, PreflightError> {
+        if let Some(manager) = &self.services().server_manager {
+            let running = manager.running_child_processes();
+            if !running.is_empty() {
+                return Err(PreflightError::ChildServers(running));
+            }
+        }
+        hub.preflight().check(hub.plan()).await
+    }
+
+    async fn stop(&mut self, served: Result<(), CoreError>) -> Result<(), CoreError> {
+        if let Some(hub) = &self.hub {
+            hub.mark_stopping();
+        }
         self.server.close_sessions(ShutdownKind::Stop);
         self.server.drain_connections(self.drain_timeout).await;
+        self.stop_plugins().await;
+        self.server.stop_background_tasks();
+        served
+    }
 
+    async fn stop_plugins(&self) {
         let deadline = tokio::time::Instant::now() + self.plugin_shutdown_timeout;
         let bus = self.server.event_bus();
         let announced = async {
@@ -528,16 +925,17 @@ impl RunningProxy {
             tracing::warn!(limit = ?self.plugin_shutdown_timeout,
                 "ProxyShutdownEvent listeners used up the plugin shutdown time; stopping the plugins without waiting for them");
         }
-
         self.plugins.shutdown_until(deadline).await;
-        self.server.stop_background_tasks();
-
-        result
     }
+}
 
-    pub async fn shutdown(self) -> Result<(), CoreError> {
-        self.shutdown.cancel();
-        self.wait().await
+fn served(
+    joined: Result<Result<ServeExit, CoreError>, tokio::task::JoinError>,
+) -> Result<(), CoreError> {
+    match joined {
+        Ok(Ok(ServeExit::Stopped | ServeExit::Restart(_))) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(CoreError::Startup(format!("proxy server task failed: {e}"))),
     }
 }
 
@@ -894,6 +1292,206 @@ mod tests {
             Arc::as_ptr(service)
         ));
         running.shutdown().await.unwrap();
+    }
+
+    fn restartable_config(dir: &std::path::Path) -> ProxyConfig {
+        std::fs::create_dir_all(dir.join("servers")).unwrap();
+        std::fs::create_dir_all(dir.join("plugins")).unwrap();
+        let mut config: ProxyConfig = toml::from_str("bind = \"127.0.0.1:0\"\n").unwrap();
+        config.servers_dir = dir.join("servers");
+        config.plugins_dir = dir.join("plugins");
+        config.ban.file = dir.join("bans.json");
+        config.update.check = false;
+        config
+    }
+
+    fn restartable(dir: &std::path::Path, preflight: Arc<dyn Preflight>) -> ProxyRuntimeBuilder {
+        ProxyRuntime::builder(restartable_config(dir), dir.join("infrarust.toml"))
+            .binary(Some(crate::test_support::test_binary(
+                &dir.join("infrarust"),
+            )))
+            .hot_restart(preflight)
+            .drain_timeout(Duration::from_secs(1))
+    }
+
+    async fn eventually(what: &str, mut done: impl FnMut() -> bool) {
+        let waited = tokio::time::timeout(Duration::from_secs(5), async {
+            while !done() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "timed out waiting for {what}");
+    }
+
+    #[tokio::test]
+    async fn without_a_binary_hot_restart_stays_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let running =
+            ProxyRuntime::builder(restartable_config(dir.path()), dir.path().join("i.toml"))
+                .hot_restart(crate::test_support::FakePreflight::approving())
+                .start()
+                .await
+                .unwrap();
+
+        assert!(running.restart_hub().is_none());
+        assert!(running.console_services().restart.is_none());
+        assert!(matches!(
+            running.run_to_exit_after_cancel().await.unwrap(),
+            ProxyExit::Stopped
+        ));
+    }
+
+    impl RunningProxy {
+        async fn run_to_exit_after_cancel(self) -> Result<ProxyExit, CoreError> {
+            self.shutdown.cancel();
+            self.run_to_exit().await
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_refuses_restarts_instead_of_leaving_them_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let running = restartable(dir.path(), crate::test_support::FakePreflight::approving())
+            .start()
+            .await
+            .unwrap();
+        let hub = running.restart_hub().unwrap();
+        let shutdown = running.shutdown_token().clone();
+        assert!(running.console_services().restart.is_some());
+
+        let waiting = tokio::spawn(running.wait());
+
+        eventually("wait to refuse restarts", || {
+            matches!(
+                hub.request(),
+                Err(infrarust_api::services::proxy_control::RestartRequestError::Unsupported(_))
+            )
+        })
+        .await;
+        shutdown.cancel();
+        waiting.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refused_preflight_keeps_the_proxy_serving() {
+        let dir = tempfile::tempdir().unwrap();
+        let preflight = crate::test_support::FakePreflight::refusing();
+        let running = restartable(dir.path(), preflight.clone())
+            .start()
+            .await
+            .unwrap();
+        let addr = running.local_addr();
+        let hub = running.restart_hub().unwrap();
+        let shutdown = running.shutdown_token().clone();
+        let run = tokio::spawn(running.run_to_exit());
+
+        hub.request().unwrap();
+
+        eventually("the preflight to fail", || hub.last_failure().is_some()).await;
+        assert_eq!(hub.phase(), RestartPhase::Idle);
+        assert_eq!(preflight.checks(), 1);
+        assert!(
+            hub.last_failure()
+                .unwrap()
+                .contains("cannot take over live sessions")
+        );
+        tokio::net::TcpStream::connect(addr).await.unwrap();
+        hub.request().unwrap();
+        eventually("the second preflight", || preflight.checks() == 2).await;
+
+        shutdown.cancel();
+        assert!(matches!(run.await.unwrap().unwrap(), ProxyExit::Stopped));
+        assert_eq!(
+            hub.request(),
+            Err(infrarust_api::services::proxy_control::RestartRequestError::ShuttingDown)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_restart_hands_the_listener_over_to_the_successor() {
+        let dir = tempfile::tempdir().unwrap();
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let running = restartable(dir.path(), crate::test_support::FakePreflight::approving())
+            .loader(Box::new(recording_loader("recorder", &log)))
+            .trusted_plugins(["recorder".to_string()])
+            .start()
+            .await
+            .unwrap();
+        let addr = running.local_addr();
+        let hub = running.restart_hub().unwrap();
+        let run = tokio::spawn(running.run_to_exit());
+
+        hub.request().unwrap();
+
+        let exit = tokio::time::timeout(Duration::from_secs(10), run)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ProxyExit::Restart(handover) = exit else {
+            panic!("a requested restart must hand over, got {exit:?}");
+        };
+        assert_eq!(hub.phase(), RestartPhase::HandingOver);
+        assert_eq!(handover.plan.target, dir.path().join("infrarust"));
+        let record = handover.package.state.listener.as_ref().unwrap();
+        assert_eq!(record.local_addr, addr);
+        assert_eq!(record.bind, "127.0.0.1:0".parse().unwrap());
+        assert!(handover.package.state.sessions.is_empty());
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec!["enable", "initialize", "shutdown", "disable"]
+        );
+
+        let inheritance = crate::hot_restart::MemoryInheritance::new(handover.package);
+        let outcome = inheritance.record();
+        let successor = restartable(dir.path(), crate::test_support::FakePreflight::approving())
+            .loader(Box::new(recording_loader("recorder", &log)))
+            .trusted_plugins(["recorder".to_string()])
+            .restored(Box::new(inheritance))
+            .start()
+            .await
+            .unwrap();
+
+        assert_eq!(successor.local_addr(), addr);
+        assert_eq!(
+            outcome.outcome(),
+            crate::hot_restart::InheritanceOutcome::Committed
+        );
+        assert!(tokio::net::TcpStream::connect(addr).await.is_ok());
+        assert!(successor.restart_hub().is_some());
+        successor.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_successor_that_cannot_unpack_rolls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = ListenerHandover {
+            socket,
+            bind: "127.0.0.1:0".parse().unwrap(),
+        };
+        let (mut package, _) =
+            HandoverPackage::build("2.0.0-beta.6", 1, Some(listener), Vec::new()).unwrap();
+        package.state.listener.as_mut().unwrap().local_addr = "127.0.0.1:1".parse().unwrap();
+        let inheritance = crate::hot_restart::MemoryInheritance::new(package);
+        let outcome = inheritance.record();
+
+        let started = restartable(dir.path(), crate::test_support::FakePreflight::approving())
+            .restored(Box::new(inheritance))
+            .start()
+            .await;
+
+        let Err(CoreError::Handover(crate::hot_restart::HandoverError::RolledBack(reason))) =
+            started
+        else {
+            panic!("a broken package must roll back");
+        };
+        assert!(reason.contains("listener bound to"), "{reason}");
+        assert_eq!(
+            outcome.outcome(),
+            crate::hot_restart::InheritanceOutcome::RolledBack(reason)
+        );
     }
 
     #[tokio::test]

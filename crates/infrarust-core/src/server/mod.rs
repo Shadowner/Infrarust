@@ -169,6 +169,12 @@ impl ProxyServer {
         }
     }
 
+    pub async fn settle_connections(&self, timeout: Duration) -> usize {
+        self.connections.close();
+        let _ = tokio::time::timeout(timeout, self.connections.wait()).await;
+        self.connections.len()
+    }
+
     pub fn active_connections(&self) -> usize {
         self.connections.len()
     }

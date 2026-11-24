@@ -18,11 +18,11 @@ use infrarust_api::permissions::{
 };
 use infrarust_api::plugin::PluginContext;
 use infrarust_api::provider::PluginConfigProvider;
-use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::providers::{ProviderKind, ProviderRejected};
 use infrarust_api::services::proxy_info::ProxyInfo;
 use infrarust_api::services::scheduler::Scheduler;
 use infrarust_api::services::service_registry::ServiceRegistry;
+use infrarust_api::services::{ProxyRestart, ProxyUpdates};
 use infrarust_api::services::{
     ban_service::{BanProvider, BanService},
     config_service::ConfigService,
@@ -58,6 +58,7 @@ pub struct HostRegistries {
     pub services: Arc<ServiceRegistryImpl>,
     pub channels: PluginChannels,
     pub updates: Option<Arc<dyn ProxyUpdates>>,
+    pub restart: Option<Arc<dyn ProxyRestart>>,
 }
 
 pub struct PluginContextImpl {
@@ -88,6 +89,7 @@ pub struct PluginContextImpl {
     capabilities: CapabilitySet,
     channels: PluginChannels,
     updates: Option<Arc<dyn ProxyUpdates>>,
+    restart: Option<Arc<dyn ProxyRestart>>,
 }
 
 impl PluginContextImpl {
@@ -157,6 +159,7 @@ impl PluginContextImpl {
             capabilities,
             channels: registries.channels,
             updates: registries.updates,
+            restart: registries.restart,
         }
     }
 
@@ -225,6 +228,7 @@ impl PluginContextImpl {
             capabilities: _,
             channels,
             updates: _,
+            restart: _,
         } = self;
 
         event_bus.unsubscribe_all();
@@ -445,6 +449,10 @@ impl PluginContext for PluginContextImpl {
 
     fn proxy_updates(&self) -> Option<Arc<dyn ProxyUpdates>> {
         self.updates.clone()
+    }
+
+    fn proxy_restart(&self) -> Option<Arc<dyn ProxyRestart>> {
+        self.restart.clone()
     }
 
     fn proxy_info(&self) -> &ProxyInfo {

@@ -22,6 +22,7 @@ struct HubState {
     phase: RestartPhase,
     pending: bool,
     stopping: bool,
+    refusal: Option<String>,
     last_failure: Option<String>,
 }
 
@@ -52,6 +53,7 @@ impl RestartHub {
                 phase: RestartPhase::Idle,
                 pending: false,
                 stopping: false,
+                refusal: None,
                 last_failure: None,
             }),
         })
@@ -86,6 +88,8 @@ impl RestartHub {
         self.state.send_if_modified(|state| {
             answer = if state.stopping {
                 Err(RestartRequestError::ShuttingDown)
+            } else if let Some(refusal) = &state.refusal {
+                Err(RestartRequestError::Unsupported(refusal.clone()))
             } else if state.pending || state.phase != RestartPhase::Idle {
                 Err(RestartRequestError::InProgress)
             } else {
@@ -100,6 +104,19 @@ impl RestartHub {
     pub fn mark_stopping(&self) {
         self.state
             .send_if_modified(|state| !std::mem::replace(&mut state.stopping, true));
+    }
+
+    pub fn refuse_requests(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        if self.is_pending() {
+            tracing::warn!(%reason, "a pending hot restart request is dropped");
+        }
+        self.state.send_modify(|state| {
+            if std::mem::take(&mut state.pending) {
+                state.last_failure = Some(reason.clone());
+            }
+            state.refusal = Some(reason);
+        });
     }
 
     pub async fn requested(&self) {
@@ -216,6 +233,28 @@ mod tests {
         restarting.set_phase(RestartPhase::Draining);
         restarting.mark_stopping();
         assert_eq!(restarting.request(), Err(RestartRequestError::ShuttingDown));
+    }
+
+    #[test]
+    fn a_hub_refusing_requests_answers_unsupported_and_drops_a_pending_one() {
+        let hub = hub();
+        hub.request().unwrap();
+
+        hub.refuse_requests("the proxy runs without its restart loop");
+
+        assert!(!hub.is_pending());
+        assert_eq!(
+            hub.last_failure().as_deref(),
+            Some("the proxy runs without its restart loop")
+        );
+        assert_eq!(
+            hub.request(),
+            Err(RestartRequestError::Unsupported(
+                "the proxy runs without its restart loop".into()
+            ))
+        );
+        hub.mark_stopping();
+        assert_eq!(hub.request(), Err(RestartRequestError::ShuttingDown));
     }
 
     #[test]

@@ -76,6 +76,9 @@ pub enum CoreError {
 
     #[error("ban storage error: {0}")]
     Ban(String),
+
+    #[error("hot restart error: {0}")]
+    Handover(#[from] crate::hot_restart::HandoverError),
 }
 
 impl From<CoreError> for infrarust_api::error::ServiceError {
