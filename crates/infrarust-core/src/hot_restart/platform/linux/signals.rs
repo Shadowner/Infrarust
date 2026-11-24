@@ -10,6 +10,7 @@ use infrarust_transport::handover::{
 static EARLY: AtomicU32 = AtomicU32::new(0);
 static EARLY_TAKEN: AtomicBool = AtomicBool::new(false);
 static EARLY_RECORDERS: Mutex<Vec<SignalRecorder>> = Mutex::new(Vec::new());
+static EARLY_WATCHED: AtomicU32 = AtomicU32::new(0);
 static LATE: AtomicU32 = AtomicU32::new(0);
 static DEFERRED: AtomicU32 = AtomicU32::new(0);
 static STOP_RECORDERS: Once = Once::new();
@@ -66,19 +67,17 @@ pub fn early_signals() -> EarlySignals {
     EarlySignals::from_bits(EARLY.load(Ordering::SeqCst))
 }
 
+pub fn record_early_restarts() -> io::Result<()> {
+    watch_early(HandoverSignal::Restart)
+}
+
 pub fn take_over_signals<T>(install: impl FnOnce() -> T) -> (T, EarlySignals) {
-    let watching = !EARLY_RECORDERS
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .is_empty();
-    let late: Vec<SignalRecorder> = if watching {
-        HandoverSignal::ALL
-            .into_iter()
-            .filter_map(|signal| record_signal(signal, &LATE).ok())
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let watched = EARLY_WATCHED.load(Ordering::SeqCst);
+    let late: Vec<SignalRecorder> = HandoverSignal::ALL
+        .into_iter()
+        .filter(|signal| watched & signal.bit() != 0)
+        .filter_map(|signal| record_signal(signal, &LATE).ok())
+        .collect();
     let installed = install();
     let mut early = early_signals();
     for recorder in late {
@@ -93,13 +92,24 @@ pub fn defer_stop(signal: HandoverSignal) {
 }
 
 pub(super) fn install_early() -> io::Result<()> {
+    for signal in HandoverSignal::ALL {
+        watch_early(signal)?;
+    }
+    unblock_signals(&HandoverSignal::ALL)
+}
+
+fn watch_early(signal: HandoverSignal) -> io::Result<()> {
     let mut recorders = EARLY_RECORDERS
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    for signal in HandoverSignal::ALL {
-        recorders.push(record_signal(signal, &EARLY)?);
+    if EARLY_TAKEN.load(Ordering::SeqCst)
+        || EARLY_WATCHED.load(Ordering::SeqCst) & signal.bit() != 0
+    {
+        return Ok(());
     }
-    unblock_signals(&HandoverSignal::ALL)
+    recorders.push(record_signal(signal, &EARLY)?);
+    EARLY_WATCHED.fetch_or(signal.bit(), Ordering::SeqCst);
+    Ok(())
 }
 
 pub(super) fn record_stops() {
@@ -146,6 +156,8 @@ pub(super) fn forward_pending_stop() {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]
@@ -166,6 +178,34 @@ mod tests {
                 restart: true,
                 late: 0,
             }
+        );
+    }
+
+    #[test]
+    fn a_restart_signal_recorded_on_a_fresh_start_is_reported_once_the_handlers_exist() {
+        record_early_restarts().unwrap();
+        record_early_restarts().unwrap();
+        raise_signal(HandoverSignal::Restart).unwrap();
+
+        let (installed, early) = take_over_signals(|| "installed");
+
+        assert_eq!(installed, "installed");
+        assert!(early.restart);
+        assert_eq!(early.stop(), None);
+        assert!(!early.racing(HandoverSignal::Restart));
+        assert!(
+            EARLY_RECORDERS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+        );
+        record_early_restarts().unwrap();
+        assert!(
+            EARLY_RECORDERS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty(),
+            "nothing is recorded once the handlers took over"
         );
     }
 
