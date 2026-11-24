@@ -8,9 +8,12 @@ jobs:
   check-release:
     runs-on: ubuntu-latest
     if: startsWith(github.event.head_commit.message, 'MAJOR') ||startsWith(github.event.head_commit.message, 'MINOR') || startsWith(github.event.head_commit.message, 'PATCH')
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.get-version.outputs.version }}
       commit_title: ${{ steps.get-commit-title.outputs.commit_title }}
+      security: ${{ steps.get-security.outputs.security }}
     steps:
       - uses: actions/checkout@v7.0.1
       
@@ -26,6 +29,17 @@ jobs:
           COMMIT_TITLE=$(git log -1 --pretty=%B | head -n 1 | sed -E 's/^(MAJOR|MINOR|PATCH)[[:space:]]*:[[:space:]]*//') 
           echo "commit_title=${COMMIT_TITLE}" >> $GITHUB_OUTPUT
           
+      - name: Detect a security release
+        id: get-security
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if [[ "${MSG,,}" == *"[security]"* ]]; then
+            echo "security=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "security=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create tag
         run: |
           git config --local user.email "action@github.com"
@@ -35,6 +49,8 @@ jobs:
 
   build-and-release:
     needs: check-release
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -96,6 +112,8 @@ jobs:
         uses: ./.github/actions/build-frontend
 
       - name: Build
+        env:
+          INFRARUST_OFFICIAL_BUILD: "1"
         run: cargo build --release --target ${{ matrix.target }}
         
       - name: Prepare release archive (Unix)
@@ -125,8 +143,132 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  manifest:
+    needs: [check-release, build-and-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.check-release.outputs.version }}
+      TAG: v${{ needs.check-release.outputs.version }}
+      SECURITY: ${{ needs.check-release.outputs.security }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+          minisign -v
+
+      - name: Download release archives
+        run: |
+          gh release download "$TAG" -D dist -p 'infrarust-*'
+          ls -l dist
+          count=$(find dist -maxdepth 1 -type f -name 'infrarust-*' | wc -l)
+          if [ "$count" -ne 6 ]; then
+            echo "::error::expected 6 release archives in $TAG, found $count"
+            exit 1
+          fi
+
+      - name: Probe the linux x86_64 binary
+        id: probe
+        run: |
+          probe_dir="$RUNNER_TEMP/probe"
+          mkdir -p "$probe_dir"
+          tar -xzf dist/infrarust-linux-x86_64.tar.gz -C "$probe_dir"
+          if ! output=$(timeout 30 "$probe_dir/infrarust" --handover-probe < /dev/null); then
+            echo "::error::infrarust --handover-probe failed"
+            exit 1
+          fi
+          line=$(head -n 1 <<< "$output")
+          echo "probe: $line"
+          if ! probe=$(jq -cn --argjson probe "$line" '$probe | select(type == "object")') || [ -z "$probe" ]; then
+            echo "::error::infrarust --handover-probe did not print a JSON object"
+            exit 1
+          fi
+          if ! jq -e '.official == true' <<< "$probe" > /dev/null; then
+            echo "::error::the released binary is not an official build"
+            exit 1
+          fi
+          handover=null
+          if jq -e --arg version "$VERSION" '.version == $version' <<< "$probe" > /dev/null; then
+            handover=$(jq -c '.handover | if type == "object" then . else null end' <<< "$probe")
+          else
+            echo "::warning::the probe reports another version than $VERSION, handover is set to null"
+          fi
+          echo "handover=$handover" >> "$GITHUB_OUTPUT"
+
+      - name: Build manifest.json and SHA256SUMS
+        env:
+          HANDOVER: ${{ steps.probe.outputs.handover }}
+        run: |
+          published_at=$(gh release view "$TAG" --json publishedAt -q .publishedAt)
+          bash scripts/release-manifest.sh \
+            --version "$VERSION" \
+            --tag "$TAG" \
+            --published-at "$published_at" \
+            --security "$SECURITY" \
+            --handover "$HANDOVER" \
+            --dist dist \
+            --out out
+          cat out/manifest.json out/SHA256SUMS
+
+      - name: Sign manifest.json
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::the MINISIGN_SECRET_KEY secret is not set"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
+          minisign -S -s "$key" -m out/manifest.json -t "infrarust $TAG" < /dev/null
+
+      - name: Verify the signature against the repository keys
+        run: |
+          shopt -s nullglob
+          keys=(crates/infrarust-core/src/update/keys/*.pub)
+          if [ "${#keys[@]}" -eq 0 ]; then
+            echo "::error::no public key in crates/infrarust-core/src/update/keys"
+            exit 1
+          fi
+          verified=0
+          for key in "${keys[@]}"; do
+            pubkey=$(grep -v '^untrusted comment:' "$key" | tr -d '[:space:]' || true)
+            if minisign -V -H -P "$pubkey" -m out/manifest.json -x out/manifest.json.minisig < /dev/null; then
+              echo "verified with $key"
+              verified=1
+            else
+              echo "not signed by $key"
+            fi
+          done
+          if [ "$verified" -ne 1 ]; then
+            echo "::error::manifest.json.minisig does not verify against any repository key"
+            exit 1
+          fi
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: |
+            dist/infrarust-*
+            out/manifest.json
+
+      - name: Upload the manifest to the release
+        run: gh release upload "$TAG" out/manifest.json out/manifest.json.minisig out/SHA256SUMS --clobber
+
   docker:
     needs: check-release
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/docker-build.yml
     secrets: inherit
     with:
@@ -136,6 +278,8 @@ jobs:
     continue-on-error: true
     needs: check-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
         - uses: actions/checkout@v7.0.1
           with:
@@ -160,6 +304,7 @@ jobs:
   pterodactyl-egg:
     needs: build-and-release
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v4.0.1
