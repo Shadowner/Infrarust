@@ -403,3 +403,68 @@ pub(crate) fn zip_archive(entries: &[Entry]) -> Vec<u8> {
     }
     writer.finish().unwrap().into_inner()
 }
+
+pub(crate) fn probe_json(version: &str, target: &str) -> String {
+    serde_json::json!({
+        "probe": 1,
+        "version": version,
+        "target": target,
+        "official": true,
+        "docker": false,
+        "handover": null,
+    })
+    .to_string()
+}
+
+pub(crate) fn config_json(ok: bool) -> String {
+    serde_json::json!({
+        "ok": ok,
+        "config": "proxy.toml",
+        "warnings": [],
+        "error": if ok { None } else { Some("unknown field `update`") },
+    })
+    .to_string()
+}
+
+pub(crate) struct FakeBinary {
+    pub(crate) probe: String,
+    pub(crate) config: String,
+}
+
+impl FakeBinary {
+    pub(crate) fn new(version: &str) -> Self {
+        Self {
+            probe: format!("echo '{}'", probe_json(version, TEST_TARGET)),
+            config: format!("echo '{}'", config_json(true)),
+        }
+    }
+
+    pub(crate) fn rejecting_config(mut self) -> Self {
+        self.config = format!("echo '{}'; exit 1", config_json(false));
+        self
+    }
+
+    pub(crate) fn script(&self) -> Vec<u8> {
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    --handover-probe) {}\n      exit 0 ;;\n    check-config) {}\n      exit 0 ;;\n  esac\ndone\nexit 2\n",
+            self.probe, self.config
+        )
+        .into_bytes()
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn write_executable(path: &std::path::Path, content: &[u8]) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, content).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+pub(crate) fn sleep_command() -> &'static str {
+    ["/bin/sleep", "/usr/bin/sleep"]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists())
+        .expect("a sleep binary")
+}

@@ -1,8 +1,12 @@
 use std::time::SystemTime;
 
+use crate::binary::ProbeError;
+
 use super::archive::ArchiveError;
+use super::gate::Refusal;
 use super::keys::SignatureError;
 use super::manifest::ManifestError;
+use super::platform::SwapError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateError {
@@ -56,6 +60,35 @@ pub enum UpdateError {
         #[source]
         source: std::io::Error,
     },
+    #[error("release {tag} does not carry {file}")]
+    MissingAsset { tag: String, file: String },
+    #[error("{0} is not a valid version")]
+    InvalidVersion(String),
+    #[error("no update to install")]
+    NothingToInstall,
+    #[error("there is no previous binary to roll back to")]
+    NothingToRollBack,
+    #[error("another update is running")]
+    Busy,
+    #[error("{}", .refusal.instructions(.version.as_deref()))]
+    Refused {
+        refusal: Refusal,
+        version: Option<String>,
+    },
+    #[error(transparent)]
+    Probe(#[from] ProbeError),
+    #[error(
+        "the new binary reports {found_version} for {found_target}, the manifest announces {expected}"
+    )]
+    ProbeMismatch {
+        expected: String,
+        found_version: String,
+        found_target: String,
+    },
+    #[error("the binary rejects the configuration {config}: {reason}")]
+    ConfigRejected { config: String, reason: String },
+    #[error(transparent)]
+    Swap(#[from] SwapError),
 }
 
 fn rate_limited(reset: Option<SystemTime>) -> String {
