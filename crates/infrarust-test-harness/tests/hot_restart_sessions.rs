@@ -300,7 +300,6 @@ fn counting_closes() -> (ScriptedPlugin, Arc<AtomicUsize>) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "needs the forwarder freeze"]
 async fn a_frozen_passthrough_session_is_collected_for_the_successor() {
     let version = ProtocolVersion(777);
     let backend = FakeBackend::builder().spawn().await.unwrap();
