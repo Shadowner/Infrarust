@@ -60,6 +60,8 @@ pub struct ProxyServer {
     background: CancellationToken,
     listener_request: Notify,
     connections: TaskTracker,
+    #[cfg(feature = "telemetry")]
+    metrics: Arc<crate::telemetry::ProxyMetrics>,
 }
 
 impl ProxyServer {
@@ -209,6 +211,11 @@ impl ProxyServer {
 
     pub const fn shutdown(&self) -> &CancellationToken {
         &self.shutdown
+    }
+
+    #[cfg(feature = "telemetry")]
+    pub(crate) const fn metrics(&self) -> &Arc<crate::telemetry::ProxyMetrics> {
+        &self.metrics
     }
 }
 

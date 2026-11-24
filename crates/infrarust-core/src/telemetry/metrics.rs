@@ -98,6 +98,11 @@ impl ProxyMetrics {
         self.connections_active.add(1, &[]);
     }
 
+    pub fn record_connection_resumed(&self, server: &str) {
+        self.connections_active.add(1, &[]);
+        self.record_player_join(server);
+    }
+
     /// Records the end of a connection with its duration.
     pub fn record_connection_end(&self, duration_secs: f64, server: &str, mode: &str) {
         self.connections_active.add(-1, &[]);

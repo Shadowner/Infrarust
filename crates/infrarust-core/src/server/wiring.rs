@@ -215,7 +215,7 @@ impl ProxyServer {
         let client_only_handler =
             InterceptedHandler::client_only(backend_connector, services.clone(), auth);
         #[cfg(feature = "telemetry")]
-        let client_only_handler = client_only_handler.with_metrics(proxy_metrics);
+        let client_only_handler = client_only_handler.with_metrics(Arc::clone(&proxy_metrics));
 
         Ok(Self {
             common_pipeline,
@@ -234,6 +234,8 @@ impl ProxyServer {
             background,
             listener_request: Notify::new(),
             connections: TaskTracker::new(),
+            #[cfg(feature = "telemetry")]
+            metrics: proxy_metrics,
         })
     }
 }

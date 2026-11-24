@@ -252,10 +252,14 @@ pub fn launch(server: &ProxyServer, listener: &Listener, prepared: Prepared) -> 
         let uuid = player.profile().uuid;
         tracing::debug!(session = %uuid, server = %session.server, "session resumed");
         let span = tracing::info_span!("proxy.session", mode = ?session.mode, restored = true);
+        #[cfg(feature = "telemetry")]
+        let metrics = SessionMetrics::resumed(server, &player, &session.server);
         let services = services.clone();
         server.track_session(
             async move {
                 let relayed = resume_restored(&services, session, relay).await;
+                #[cfg(feature = "telemetry")]
+                metrics.ended();
                 drop(slot);
                 report(uuid, &relayed);
             }
@@ -349,6 +353,38 @@ fn revive(
         mode,
     };
     (player, session, relay)
+}
+
+#[cfg(feature = "telemetry")]
+struct SessionMetrics {
+    metrics: Arc<crate::telemetry::ProxyMetrics>,
+    server: String,
+    connected_at: SystemTime,
+}
+
+#[cfg(feature = "telemetry")]
+impl SessionMetrics {
+    fn resumed(server: &ProxyServer, player: &PlayerSession, server_id: &ServerId) -> Self {
+        let metrics = Arc::clone(server.metrics());
+        metrics.record_connection_resumed(server_id.as_str());
+        Self {
+            metrics,
+            server: server_id.as_str().to_string(),
+            connected_at: player.connected_at(),
+        }
+    }
+
+    fn ended(self) {
+        let lasted = SystemTime::now()
+            .duration_since(self.connected_at)
+            .unwrap_or_default();
+        crate::handler::helpers::record_session_end(
+            &Some(self.metrics),
+            lasted,
+            &self.server,
+            "passthrough",
+        );
+    }
 }
 
 fn report(session: Uuid, relayed: &Relayed) {
