@@ -160,7 +160,7 @@ A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../p
 ```
 ◆ Infrarust 2.0.0-beta.5 · security update available
 │ available  2.0.0-beta.6  security fix
-│ published  2026-11-20T08:00:00Z
+│ published  2026-11-20T10:00:00Z
 │ notes      https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6
 │ restart    full restart
 │
@@ -169,7 +169,7 @@ A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../p
 
 The header ends with `up to date`, `update available`, `security update available` or `check failed`. A few lines appear only when they apply: `install` follows an install that is running, done or failed; `binary` says the file on disk changed since the proxy started; `error` gives the reason a check failed; and `refused` explains why this binary cannot install the release, in place of the `update install` hint.
 
-`update install` installs the newest release on the `[update]` channel, and `update install <version>` installs that version. With no version and no release found by an earlier check, it checks first, and stops with `Infrarust <version> is up to date` when there is nothing newer or `Update check failed: <reason>` when the check fails. The install runs in the background and the command waits for it, then prints `✓ Installed 2.0.0-beta.6, restart Infrarust to run it` or `✗ Update failed: <reason>`. It does not ask for confirmation and does not restart the proxy. A refusal prints `✗ Cannot install: <reason>`, for example `an installation is already running` while another install is in progress. The console has no rollback; run [`infrarust update rollback`](#update-rollback) from a shell. [Upgrading](../guide/upgrading) walks through the whole procedure.
+`update install` installs the newest release on the `[update]` channel, and `update install <version>` installs that version. With no version and no release found by an earlier check, it checks first, and stops with `Infrarust <version> is up to date` when there is nothing newer or `Update check failed: <reason>` when the check fails. The install runs in the background and the command waits for it, then prints `✓ Installed 2.0.0-beta.6, restart Infrarust to run it` or `✗ Update failed: <reason>`. It does not ask for confirmation and does not restart the proxy. A refusal prints `✗ Cannot install: <reason>`, for example `an installation is already running` while another install is in progress. The console has no rollback; run [`infrarust update rollback`](#update-rollback) from a shell. The [upgrading guide](../guide/upgrading) puts these steps in order, from the check to the restart.
 
 #### Plugin commands
 
@@ -301,7 +301,7 @@ update available: 2.0.0-beta.6
 install it with `infrarust update install`
 ```
 
-When this binary cannot install the release, the last line gives the reason instead, starting with `this binary cannot install it:`. Nothing newer prints `up to date` after the version. A failed check prints only the version on stdout, and `error: <reason>` on stderr.
+When this binary cannot install the release, the last line gives the reason instead, starting with `this binary cannot install it:`. When nothing newer exists, the line after the version reads `up to date`. A failed check prints only the version on stdout, and `error: <reason>` on stderr.
 
 The `restart` line says how the new version takes over: `full, players are disconnected` on Linux and macOS, `manual, stop and start the proxy by hand` on Windows.
 

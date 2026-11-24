@@ -153,7 +153,7 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 
 ### Updates
 
-These three endpoints drive the [update checks](../../configuration/global#update-checks) and installs of the proxy. [Upgrading](../../guide/upgrading) covers the procedure as a whole.
+These three endpoints drive the [update checks](../../configuration/global#update-checks) and installs of the proxy. [Upgrading](../../guide/upgrading) describes the whole procedure, the restart included.
 
 `GET /api/v1/proxy/update` answers from the result of the last check and never contacts GitHub:
 
