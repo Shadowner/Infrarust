@@ -11,3 +11,4 @@ mod players;
 mod plugins;
 mod proxy;
 mod servers;
+mod update;

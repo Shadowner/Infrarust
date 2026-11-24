@@ -10,6 +10,7 @@ use infrarust_api::plugin::{
     PluginFault, PluginHealth, PluginMetadata, PluginQueueStats, PluginRestarts,
     PluginRuntimeStatus, PluginState, QueueWindow,
 };
+use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::config_service::{ConfigWriteError, ServerSource};
 use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
 use infrarust_api::services::plugin_registry::PluginInfo;
@@ -179,6 +180,7 @@ pub struct TestApiBuilder {
     players: Vec<Arc<MockPlayer>>,
     logs: Option<LogBroadcast>,
     files: Vec<(&'static str, &'static str)>,
+    updates: Option<Arc<dyn ProxyUpdates>>,
 }
 
 impl TestApiBuilder {
@@ -215,6 +217,12 @@ impl TestApiBuilder {
     #[must_use]
     pub fn logs(mut self, logs: LogBroadcast) -> Self {
         self.logs = Some(logs);
+        self
+    }
+
+    #[must_use]
+    pub fn updates(mut self, updates: Arc<dyn ProxyUpdates>) -> Self {
+        self.updates = Some(updates);
         self
     }
 
@@ -258,7 +266,7 @@ impl TestApiBuilder {
             event_tx,
             shutdown: CancellationToken::new(),
             proxy_shutdown: CancellationToken::new(),
-            updates: None,
+            updates: self.updates,
             logs: self.logs,
             server_dir: Arc::new(ServerDir::open(dir.path()).unwrap()),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
@@ -293,6 +301,7 @@ impl TestApi {
             players: Vec::new(),
             logs: None,
             files: Vec::new(),
+            updates: None,
         }
     }
 
