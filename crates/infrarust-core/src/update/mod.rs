@@ -1,5 +1,7 @@
+pub mod archive;
 pub mod channel;
 pub mod check;
+pub mod download;
 mod error;
 pub mod keys;
 pub mod manifest;

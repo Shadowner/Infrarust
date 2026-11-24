@@ -305,3 +305,101 @@ async fn serve(
     let _ = stream.write_all(&bytes).await;
     let _ = stream.shutdown().await;
 }
+
+pub(crate) enum EntryKind {
+    File(Vec<u8>),
+    Symlink(String),
+    Hardlink(String),
+    Dir,
+}
+
+pub(crate) struct Entry {
+    name: String,
+    kind: EntryKind,
+}
+
+impl Entry {
+    pub(crate) fn file(name: &str, data: &[u8]) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: EntryKind::File(data.to_vec()),
+        }
+    }
+
+    pub(crate) fn symlink(name: &str, target: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: EntryKind::Symlink(target.to_string()),
+        }
+    }
+
+    pub(crate) fn hardlink(name: &str, target: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: EntryKind::Hardlink(target.to_string()),
+        }
+    }
+
+    pub(crate) fn dir(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: EntryKind::Dir,
+        }
+    }
+}
+
+pub(crate) fn tar_gz(entries: &[Entry]) -> Vec<u8> {
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut builder = tar::Builder::new(gz);
+    for entry in entries {
+        let mut header = tar::Header::new_gnu();
+        let name = entry.name.as_bytes();
+        header.as_old_mut().name[..name.len()].copy_from_slice(name);
+        header.set_mode(0o755);
+        let data: &[u8] = match &entry.kind {
+            EntryKind::File(data) => {
+                header.set_entry_type(tar::EntryType::Regular);
+                data
+            }
+            EntryKind::Symlink(target) => {
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_link_name(target).unwrap();
+                &[]
+            }
+            EntryKind::Hardlink(target) => {
+                header.set_entry_type(tar::EntryType::Link);
+                header.set_link_name(target).unwrap();
+                &[]
+            }
+            EntryKind::Dir => {
+                header.set_entry_type(tar::EntryType::Directory);
+                &[]
+            }
+        };
+        header.set_size(data.len() as u64);
+        header.set_cksum();
+        builder.append(&header, data).unwrap();
+    }
+    builder.into_inner().unwrap().finish().unwrap()
+}
+
+pub(crate) fn zip_archive(entries: &[Entry]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+    for entry in entries {
+        match &entry.kind {
+            EntryKind::File(data) => {
+                writer.start_file(entry.name.as_str(), options).unwrap();
+                writer.write_all(data).unwrap();
+            }
+            EntryKind::Symlink(target) => writer
+                .add_symlink(entry.name.as_str(), target.as_str(), options)
+                .unwrap(),
+            EntryKind::Hardlink(_) => panic!("zip archives have no hard links"),
+            EntryKind::Dir => writer.add_directory(entry.name.as_str(), options).unwrap(),
+        }
+    }
+    writer.finish().unwrap().into_inner()
+}

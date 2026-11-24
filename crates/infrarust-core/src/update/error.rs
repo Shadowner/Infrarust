@@ -1,5 +1,6 @@
 use std::time::SystemTime;
 
+use super::archive::ArchiveError;
 use super::keys::SignatureError;
 use super::manifest::ManifestError;
 
@@ -39,6 +40,22 @@ pub enum UpdateError {
     },
     #[error("no release {version} among the recent releases")]
     VersionNotFound { version: String },
+    #[error("{file} has {actual} bytes, the manifest announces {expected}")]
+    SizeMismatch {
+        file: String,
+        expected: u64,
+        actual: u64,
+    },
+    #[error("{file} does not match the sha256 of the manifest")]
+    ShaMismatch { file: String },
+    #[error(transparent)]
+    Archive(#[from] ArchiveError),
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 fn rate_limited(reset: Option<SystemTime>) -> String {
