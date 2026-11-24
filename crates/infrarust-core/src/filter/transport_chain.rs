@@ -83,6 +83,10 @@ impl TransportSession {
     pub const fn context(&self) -> &TransportContext {
         &self.ctx
     }
+
+    pub fn detach(&mut self) {
+        self.accepted.clear();
+    }
 }
 
 impl Drop for TransportSession {
@@ -395,6 +399,18 @@ mod tests {
                 "close first id=7 ext=Some(\"clumsy\")",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_detached_session_closes_nothing() {
+        let journal = Journal::default();
+        let chain = chain(&journal, &[("first", Act::Pass), ("second", Act::Pass)]);
+        let mut session = chain.open(test_ctx(), TIMEOUT).await.unwrap();
+
+        session.detach();
+        drop(session);
+
+        assert_eq!(entries(&journal), ["accept first", "accept second"]);
     }
 
     #[tokio::test]

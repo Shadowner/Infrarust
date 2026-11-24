@@ -10,6 +10,7 @@ use infrarust_transport::{AcceptedConnection, ClientConnection, ConnectionInfo, 
 
 use crate::error::CoreError;
 use crate::filter::transport_chain::TransportSession;
+use crate::hot_restart::InFlight;
 use crate::loadbalancer::PendingTicket;
 use crate::pipeline::types::{BackendTargets, HandshakeData, LegacyHello, LoginData, RoutingData};
 use infrarust_protocol::ProtocolError;
@@ -18,6 +19,16 @@ static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_connection_id() -> u64 {
     NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+#[allow(dead_code)]
+pub(crate) fn connection_id_watermark() -> u64 {
+    NEXT_CONNECTION_ID.load(Ordering::Relaxed)
+}
+
+#[allow(dead_code)]
+pub(crate) fn reserve_connection_ids(next: u64) {
+    NEXT_CONNECTION_ID.fetch_max(next, Ordering::Relaxed);
 }
 
 pub struct ConnectionContext {
@@ -34,6 +45,7 @@ pub struct ConnectionContext {
     pub span: Option<tracing::Span>,
     pub connection_id: u64,
     transport: Option<TransportSession>,
+    in_flight: Option<InFlight>,
     _slot: ConnectionSlot,
 }
 
@@ -60,6 +72,7 @@ impl ConnectionContext {
             span: None,
             connection_id: next_connection_id(),
             transport: None,
+            in_flight: None,
             _slot: slot,
         }
     }
@@ -110,6 +123,20 @@ impl ConnectionContext {
 
     pub fn attach_transport(&mut self, session: TransportSession) {
         self.transport = Some(session);
+    }
+
+    pub fn detach_transport(&mut self) {
+        if let Some(mut session) = self.transport.take() {
+            session.detach();
+        }
+    }
+
+    pub fn hold_in_flight(&mut self, guard: InFlight) {
+        self.in_flight = Some(guard);
+    }
+
+    pub fn settle(&mut self) {
+        self.in_flight = None;
     }
 
     pub fn client_addr(&self) -> SocketAddr {
@@ -175,6 +202,34 @@ mod tests {
         assert_eq!(ctx.connection_info().client_addr(), client);
         assert_eq!(ctx.real_ip(), Some(client.ip()));
         assert_eq!(ctx.peer_addr(), peer);
+    }
+
+    #[test]
+    fn reserved_ids_are_never_handed_out_again() {
+        let floor = connection_id_watermark() + 1_000;
+        reserve_connection_ids(floor);
+        reserve_connection_ids(floor - 500);
+        assert!(connection_id_watermark() >= floor);
+        assert!(next_connection_id() >= floor);
+    }
+
+    #[tokio::test]
+    async fn settling_releases_the_in_flight_guard() {
+        let registry = std::sync::Arc::new(crate::hot_restart::RelayRegistry::default());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(local).await.unwrap();
+        let (stream, peer) = listener.accept().await.unwrap();
+        let mut ctx = ConnectionContext::new_for_test(stream, peer, local);
+
+        ctx.hold_in_flight(registry.in_flight_guard());
+        assert_eq!(registry.in_flight(), 1);
+        ctx.settle();
+        assert_eq!(registry.in_flight(), 0);
+
+        ctx.hold_in_flight(registry.in_flight_guard());
+        drop(ctx);
+        assert_eq!(registry.in_flight(), 0);
     }
 
     #[tokio::test]
