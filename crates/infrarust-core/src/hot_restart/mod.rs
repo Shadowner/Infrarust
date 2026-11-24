@@ -5,7 +5,7 @@ pub mod state;
 
 pub use package::{DroppedSession, FrozenSession, Handle, HandleTable, HandoverPackage, Unpacked};
 pub use platform::{Handed, Inheritance, RestartPlan, Successor};
-pub use relays::{RelayRegistry, RelayTicket};
+pub use relays::{InFlight, LoginLink, RelayRegistry, RelayTicket};
 pub use state::{HandleId, HandoverState, SessionMeta};
 
 #[derive(Debug, thiserror::Error)]
