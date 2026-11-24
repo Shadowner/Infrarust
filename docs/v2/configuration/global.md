@@ -36,7 +36,7 @@ To run on a non-standard port:
 bind = "0.0.0.0:25577"
 ```
 
-A hot restart that finds a new `bind` listens on the new address, and closes the old listener once the sessions are handed over. Make sure the new address is free first: when it cannot be bound, the previous version cannot start on it either, and the proxy exits. See [Rollback](../guide/upgrading#rollback).
+A hot restart that finds a new `bind` listens on the new address, and closes the old listener once the sessions are handed over. When the new address cannot be bound, the proxy logs a warning and keeps listening on the old address, so the sessions survive. Fix the address and restart again to move to it.
 
 ## Worker threads
 

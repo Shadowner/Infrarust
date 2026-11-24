@@ -454,7 +454,20 @@ impl Takeover {
         }
         let listener = match server.bind_or_adopt(adopted.or(activated)).await {
             Ok(listener) => listener,
-            Err(error) => return Err(succession.abort(error, inherited)),
+            Err(error) => match inherited.take_previous_listener() {
+                Some(previous) => {
+                    tracing::warn!(
+                        %bind,
+                        %error,
+                        "the configured bind cannot be used; keeping the inherited listener so the sessions survive"
+                    );
+                    match server.bind_or_adopt(Some(previous)).await {
+                        Ok(listener) => listener,
+                        Err(error) => return Err(succession.abort(error, inherited)),
+                    }
+                }
+                None => return Err(succession.abort(error, inherited)),
+            },
         };
         let prepared = match restore::prepare(server, inherited) {
             Ok(prepared) => prepared,

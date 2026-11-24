@@ -739,6 +739,10 @@ impl Successor {
         &self.handover
     }
 
+    pub fn config_path(&self) -> std::path::PathBuf {
+        self.seed.dir.path().join(CONFIG_FILE)
+    }
+
     pub fn builder(self) -> TestProxyBuilder {
         let Self {
             handover,

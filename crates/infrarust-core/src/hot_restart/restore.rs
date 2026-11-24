@@ -72,6 +72,10 @@ impl Inherited {
         if self.previous_bind()? != bind {
             return None;
         }
+        self.take_previous_listener()
+    }
+
+    pub fn take_previous_listener(&mut self) -> Option<TcpListener> {
         self.listener.take().map(|listener| listener.socket)
     }
 }

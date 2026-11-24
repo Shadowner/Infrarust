@@ -413,3 +413,45 @@ async fn a_running_child_server_refuses_the_restart_before_any_probe() {
         ProxyEnd::Stopped
     ));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_successor_that_cannot_bind_its_new_address_keeps_the_inherited_listener() {
+    let pipe = FakeBackend::builder().spawn().await.unwrap();
+    let proxy = TestProxy::builder()
+        .server(ServerSpec::passthrough("pipe").backend(pipe.addr()))
+        .hot_restart()
+        .start()
+        .await
+        .unwrap();
+    let addr = proxy.addr();
+    let mut steve = Pipe::join(&proxy, "pipe", &pipe, "Steve").await;
+    steve.exchange(0..10).await;
+
+    let run = proxy.run_to_exit().unwrap();
+    run.hub()
+        .expect("the proxy runs with hot restart")
+        .request()
+        .unwrap();
+    let ProxyEnd::Restarted(successor) = run.finish(RESTART).await.unwrap() else {
+        panic!("the restart must hand over");
+    };
+
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let config_path = successor.config_path();
+    let mut config: toml::Table = std::fs::read_to_string(&config_path)
+        .unwrap()
+        .parse()
+        .unwrap();
+    config.insert(
+        "bind".into(),
+        toml::Value::String(taken.local_addr().unwrap().to_string()),
+    );
+    std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+
+    let proxy = successor.builder().start().await.unwrap();
+    assert_eq!(proxy.addr(), addr);
+    steve.exchange(10..30).await;
+    let mut fresh = Pipe::join(&proxy, "pipe", &pipe, "Fresh").await;
+    fresh.exchange(0..5).await;
+    proxy.shutdown().await.unwrap();
+}

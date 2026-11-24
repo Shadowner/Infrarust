@@ -181,7 +181,7 @@ When you started Infrarust by hand in a terminal, type `stop` in its console and
 
 On Linux, the proxy can restart in place. The running program replaces itself with the binary at its own path, inside the same process, and hands its connections over. The log, like this page, calls the program from before the restart the old or previous image, and the one after it the new image. The PID does not change, so systemd, Docker and game panels never see the proxy exit. Players on `passthrough`, `zero_copy` and `server_only` servers keep their connection.
 
-The new image starts the way a fresh proxy does: it reads `infrarust.toml` and the server files again, and loads the plugins again. A hot restart is therefore also how you apply a change to `infrarust.toml` without disconnecting the players on forwarding servers. When `bind` changed, the new image listens on the new address.
+The new image starts the way a fresh proxy does: it reads `infrarust.toml` and the server files again, and loads the plugins again. A hot restart is therefore also how you apply a change to `infrarust.toml` without disconnecting the players on forwarding servers. When `bind` changed, the new image listens on the new address, or keeps the old one with a warning when the new address cannot be bound.
 
 ### Start a hot restart
 
@@ -247,7 +247,7 @@ If the new image fails before it has taken the sessions over, the proxy rolls ba
 The previous version starts from the binary the proxy was running, read through `/proc`, which works even after an install replaced the file on disk. `/proc` is mounted on any standard Linux system and in Docker containers. When that copy cannot be used, the proxy falls back to `infrarust.old` next to the binary, then to the binary at the original path, and never to the binary that just failed.
 
 ::: warning The rollback reads the same configuration
-The previous version reads `infrarust.toml` again, with the same command line. A failure that does not come from the new binary stops it as well: a new `bind` address that another process already uses, for example, or a ban file that cannot be parsed. The proxy then exits and every session is lost. Make sure a new `bind` address is free before you restart.
+The previous version reads `infrarust.toml` again, with the same command line. A failure that does not come from the new binary stops it as well, for example a ban file that cannot be parsed. The proxy then exits and every session is lost. A new `bind` address that cannot be bound is not such a failure: both versions keep listening on the old address and log a warning.
 :::
 
 Once the new image has taken the sessions over, there is no way back. A failure after that point, such as a plugin that does not load, is logged and the new image keeps running.
