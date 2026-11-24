@@ -7,8 +7,8 @@ use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_api::services::{
-    InstallRequest, InstallState, ProxyUpdates, RestartRequirement, UpdateRequestError,
-    UpdateStatus,
+    AvailableUpdate, InstallRequest, InstallState, ProxyUpdates, RestartRequirement,
+    UpdateRequestError, UpdateStatus,
 };
 use infrarust_protocol::version::ProtocolVersion;
 use tokio_util::sync::CancellationToken;
@@ -147,7 +147,7 @@ pub(crate) fn minecraft_range(versions: &[ProtocolVersion]) -> Option<String> {
     Some(format!("{oldest} -> {newest}"))
 }
 
-pub(crate) fn version_block() -> Block {
+pub(crate) fn version_block(update: Option<&AvailableUpdate>) -> Block {
     let mut fields = Fields::new();
     if let Some(range) = minecraft_range(ProtocolVersion::SUPPORTED) {
         fields.push("minecraft", range);
@@ -156,6 +156,15 @@ pub(crate) fn version_block() -> Block {
         "platform",
         format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
     );
+    if let Some(update) = update {
+        let text = format!("{} available", update.version);
+        let line = if update.security {
+            Line::from(Span::err(text)).push("  ").push(security_fix())
+        } else {
+            Span::warn(text).into()
+        };
+        fields.push("update", line);
+    }
     Block::new(product_title()).fields(fields)
 }
 
@@ -434,9 +443,15 @@ impl ConsoleCommand for VersionCommand {
     fn execute<'a>(
         &'a self,
         _args: &'a [&'a str],
-        _services: &'a ConsoleServices,
+        services: &'a ConsoleServices,
     ) -> BoxFuture<'a, CommandOutput> {
-        Box::pin(async move { version_block().into() })
+        Box::pin(async move {
+            let update = services
+                .updates
+                .as_ref()
+                .and_then(|updates| updates.status().available);
+            version_block(update.as_ref()).into()
+        })
     }
 }
 
@@ -605,7 +620,6 @@ mod tests {
     use std::time::Instant;
 
     use infrarust_api::command::CommandSpec;
-    use infrarust_api::services::AvailableUpdate;
     use infrarust_config::PermissionsConfig;
 
     use super::*;
@@ -882,6 +896,37 @@ mod tests {
         assert!(started.elapsed() >= INSTALL_SETTLE);
     }
 
+    #[test]
+    fn version_flags_a_pending_security_update() {
+        let rendered = render(version_block(Some(&security_release())));
+        assert!(
+            rendered.ends_with("| update     2.0.0-beta.6 available  security fix"),
+            "{rendered}"
+        );
+        let rendered = render(version_block(Some(&FakeUpdates::release(
+            "2.0.0-beta.6",
+            false,
+        ))));
+        assert!(
+            rendered.ends_with("| update     2.0.0-beta.6 available"),
+            "{rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn version_reads_the_cached_status_without_checking() {
+        let updates = Arc::new(FakeUpdates::new(offering(FakeUpdates::release(
+            "2.0.0-beta.6",
+            false,
+        ))));
+        let rendered = run(&VersionCommand, &[], &updates).await;
+        assert!(rendered.ends_with("2.0.0-beta.6 available"), "{rendered}");
+        assert_eq!(updates.checks(), 0);
+
+        let rendered = render(VersionCommand.execute(&[], &console(None)).await);
+        assert_eq!(rendered, render(version_block(None)));
+    }
+
     fn info(
         name: &'static str,
         aliases: &'static [&'static str],
@@ -1024,7 +1069,7 @@ mod tests {
     #[test]
     fn version_names_the_build_and_the_platform() {
         assert_eq!(
-            render(version_block()),
+            render(version_block(None)),
             format!(
                 "# Infrarust {VERSION}\n\
                  | minecraft  1.7.2 -> 26.3\n\
