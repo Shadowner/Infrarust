@@ -1,3 +1,6 @@
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(not(target_os = "linux"))]
 mod unsupported;
 
 use std::path::PathBuf;
@@ -35,9 +38,23 @@ pub trait Inheritance: Send + 'static {
 }
 
 pub fn successor() -> Result<Box<dyn Successor>, HandoverError> {
-    unsupported::successor()
+    #[cfg(target_os = "linux")]
+    {
+        linux::successor()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        unsupported::successor()
+    }
 }
 
 pub fn inherit() -> Result<Option<Box<dyn Inheritance>>, HandoverError> {
-    unsupported::inherit()
+    #[cfg(target_os = "linux")]
+    {
+        linux::inherit()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        unsupported::inherit()
+    }
 }
