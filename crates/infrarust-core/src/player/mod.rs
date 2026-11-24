@@ -63,6 +63,22 @@ const COMMAND_CHANNEL_SIZE: usize = 32;
 const SELF_WAIT_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
 pub const SHUTDOWN_REASON: &str = "Proxy is shutting down";
+pub const RESTART_REASON: &str = "Proxy is restarting, please reconnect";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownKind {
+    Stop,
+    Restart,
+}
+
+impl ShutdownKind {
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::Stop => SHUTDOWN_REASON,
+            Self::Restart => RESTART_REASON,
+        }
+    }
+}
 
 pub(crate) struct PendingConnect {
     pub(crate) target: ServerId,

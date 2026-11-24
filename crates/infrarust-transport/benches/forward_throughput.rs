@@ -7,7 +7,7 @@ use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use infrarust_transport::{ForwardResult, Forwarder};
+use infrarust_transport::{ForwardResult, Forwarder, Freeze};
 
 const BURST: usize = 100 * 1024;
 const BURSTS: usize = 656;
@@ -51,7 +51,12 @@ impl Session {
         let (proxy_backend, backend) = connected_pair().await;
         let forwarding = tokio::spawn(async move {
             forwarder
-                .forward(proxy_client, proxy_backend, CancellationToken::new())
+                .forward(
+                    proxy_client,
+                    proxy_backend,
+                    CancellationToken::new(),
+                    Freeze::never(),
+                )
                 .await
         });
         Self {

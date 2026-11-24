@@ -29,7 +29,7 @@ async fn test_copy_forwarder_bidirectional() {
         let shutdown = shutdown.clone();
         async move {
             forwarder
-                .forward(proxy_client, proxy_backend, shutdown)
+                .forward(proxy_client, proxy_backend, shutdown, Freeze::never())
                 .await
         }
     });
@@ -77,7 +77,7 @@ async fn test_copy_forwarder_shutdown() {
         let shutdown = shutdown.clone();
         async move {
             forwarder
-                .forward(proxy_client, proxy_backend, shutdown)
+                .forward(proxy_client, proxy_backend, shutdown, Freeze::never())
                 .await
         }
     });
@@ -103,7 +103,7 @@ async fn assert_client_eof_half_close(forwarder: Forwarder) {
     let shutdown = CancellationToken::new();
     let forward_handle = tokio::spawn(async move {
         forwarder
-            .forward(proxy_client, proxy_backend, shutdown)
+            .forward(proxy_client, proxy_backend, shutdown, Freeze::never())
             .await
     });
 
@@ -176,7 +176,7 @@ async fn test_splice_forwarder_linux() {
         let shutdown = shutdown.clone();
         async move {
             forwarder
-                .forward(proxy_client, proxy_backend, shutdown)
+                .forward(proxy_client, proxy_backend, shutdown, Freeze::never())
                 .await
         }
     });
@@ -275,8 +275,12 @@ async fn copy_forwarder_blames_the_backend_that_closed_first_even_when_polled_la
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
     let forwarder = Forwarder::Copy;
-    let mut forward: Forwarding =
-        Box::pin(forwarder.forward(proxy_client, proxy_backend, CancellationToken::new()));
+    let mut forward: Forwarding = Box::pin(forwarder.forward(
+        proxy_client,
+        proxy_backend,
+        CancellationToken::new(),
+        Freeze::never(),
+    ));
     start_without_driving(&mut forward).await;
     let (mut client_read, mut client_write) = client_side.into_split();
     let (mut backend_read, mut backend_write) = backend_side.into_split();
@@ -299,8 +303,12 @@ async fn copy_forwarder_blames_the_client_that_closed_first_even_when_polled_lat
     let (client_side, proxy_client) = create_connected_pair().await;
     let (proxy_backend, backend_side) = create_connected_pair().await;
     let forwarder = Forwarder::Copy;
-    let mut forward: Forwarding =
-        Box::pin(forwarder.forward(proxy_client, proxy_backend, CancellationToken::new()));
+    let mut forward: Forwarding = Box::pin(forwarder.forward(
+        proxy_client,
+        proxy_backend,
+        CancellationToken::new(),
+        Freeze::never(),
+    ));
     start_without_driving(&mut forward).await;
     let (mut client_read, mut client_write) = client_side.into_split();
     let (mut backend_read, mut backend_write) = backend_side.into_split();
@@ -323,7 +331,12 @@ async fn assert_blames_the_side_that_closed_first(forwarder: Forwarder, backend_
     let (proxy_backend, backend_side) = create_connected_pair().await;
     let forward = tokio::spawn(async move {
         forwarder
-            .forward(proxy_client, proxy_backend, CancellationToken::new())
+            .forward(
+                proxy_client,
+                proxy_backend,
+                CancellationToken::new(),
+                Freeze::never(),
+            )
             .await
     });
     let (mut client_read, mut client_write) = client_side.into_split();
@@ -374,7 +387,7 @@ async fn assert_shutdown_ends_a_half_closed_forward(forwarder: Forwarder) {
         let shutdown = shutdown.clone();
         async move {
             forwarder
-                .forward(proxy_client, proxy_backend, shutdown)
+                .forward(proxy_client, proxy_backend, shutdown, Freeze::never())
                 .await
         }
     });
@@ -427,7 +440,7 @@ async fn assert_shutdown_is_reported_as_shutdown(forwarder: Forwarder) {
             let shutdown = shutdown.clone();
             async move {
                 forwarder
-                    .forward(proxy_client, proxy_backend, shutdown)
+                    .forward(proxy_client, proxy_backend, shutdown, Freeze::never())
                     .await
             }
         });

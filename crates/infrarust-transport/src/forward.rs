@@ -1,5 +1,8 @@
 use std::io;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+
+use bytes::Bytes;
 
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -21,7 +24,59 @@ pub enum ForwardEndReason {
     ClientClosed,
     BackendClosed,
     Shutdown,
+    Frozen(Box<FrozenRelay>),
     Error(io::Error),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelaySide {
+    Client,
+    Backend,
+}
+
+#[derive(Debug, Default)]
+pub struct FrozenDirection {
+    pub tail: Bytes,
+    pub source_eof: bool,
+    pub copied: u64,
+}
+
+#[derive(Debug)]
+pub struct FrozenRelay {
+    pub client: std::net::TcpStream,
+    pub backend: std::net::TcpStream,
+    pub client_to_backend: FrozenDirection,
+    pub backend_to_client: FrozenDirection,
+    pub first_closed: Option<RelaySide>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Freeze {
+    token: CancellationToken,
+    write_deadline: Duration,
+}
+
+impl Freeze {
+    pub const DEFAULT_WRITE_DEADLINE: Duration = Duration::from_millis(100);
+
+    pub const fn new(token: CancellationToken, write_deadline: Duration) -> Self {
+        Self {
+            token,
+            write_deadline,
+        }
+    }
+
+    pub fn never() -> Self {
+        Self::new(CancellationToken::new(), Self::DEFAULT_WRITE_DEADLINE)
+    }
+
+    pub const fn token(&self) -> &CancellationToken {
+        &self.token
+    }
+
+    pub const fn write_deadline(&self) -> Duration {
+        self.write_deadline
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +110,7 @@ impl Forwarder {
         client: TcpStream,
         backend: TcpStream,
         shutdown: CancellationToken,
+        _freeze: Freeze,
     ) -> ForwardResult {
         match self {
             Self::Copy => copy_forward(client, backend, shutdown).await,
@@ -62,6 +118,45 @@ impl Forwarder {
             Self::Splice => splice_impl::splice_forward(client, backend, shutdown).await,
         }
     }
+
+    pub async fn resume(
+        self,
+        relay: FrozenRelay,
+        shutdown: CancellationToken,
+        freeze: Freeze,
+    ) -> ForwardResult {
+        use tokio::io::AsyncWriteExt;
+
+        let streams = adopt(relay.client).and_then(|client| Ok((client, adopt(relay.backend)?)));
+        let (mut client, mut backend) = match streams {
+            Ok(streams) => streams,
+            Err(e) => {
+                return ForwardResult {
+                    client_to_backend: 0,
+                    backend_to_client: 0,
+                    reason: ForwardEndReason::Error(e),
+                };
+            }
+        };
+        for (to, tail) in [
+            (&mut backend, &relay.client_to_backend.tail),
+            (&mut client, &relay.backend_to_client.tail),
+        ] {
+            if let Err(e) = to.write_all(tail).await {
+                return ForwardResult {
+                    client_to_backend: 0,
+                    backend_to_client: 0,
+                    reason: ForwardEndReason::Error(e),
+                };
+            }
+        }
+        self.forward(client, backend, shutdown, freeze).await
+    }
+}
+
+fn adopt(stream: std::net::TcpStream) -> io::Result<TcpStream> {
+    stream.set_nonblocking(true)?;
+    TcpStream::from_std(stream)
 }
 
 async fn copy_forward(

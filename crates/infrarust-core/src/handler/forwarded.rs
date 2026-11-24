@@ -14,7 +14,7 @@ use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{
-    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, Forwarder,
+    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, Forwarder, Freeze,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -107,6 +107,7 @@ impl Ready {
                 client,
                 self.backend.into_stream(),
                 self.session_token.clone(),
+                Freeze::never(),
             )
             .await;
         let cause = match &result.reason {

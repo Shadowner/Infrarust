@@ -5,7 +5,7 @@ use infrarust_api::handoff::{Handoff, HandoffTarget};
 use infrarust_api::types::ServerId;
 use infrarust_config::{ServerAddress, ServerConfig};
 use infrarust_transport::{
-    BackendConnection, BackendConnector, ForwardResult, Forwarder, TransportError,
+    BackendConnection, BackendConnector, ForwardResult, Forwarder, Freeze, TransportError,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -157,7 +157,10 @@ impl HandoffRelay {
         }
 
         let client = ctx.take_stream();
-        let result = self.forwarder().forward(client, target, shutdown).await;
+        let result = self
+            .forwarder()
+            .forward(client, target, shutdown, Freeze::never())
+            .await;
 
         #[cfg(feature = "telemetry")]
         if let Some(metrics) = &self.metrics {

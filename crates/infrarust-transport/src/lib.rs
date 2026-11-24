@@ -10,7 +10,9 @@ pub mod socket;
 pub use backend::{BackendConnection, BackendConnector, ConnectAttempt, ConnectAttemptObserver};
 pub use connection::{ClientConnection, ConnectionInfo};
 pub use error::{TransportError, TransportResult};
-pub use forward::{ForwardEndReason, ForwardResult, Forwarder};
+pub use forward::{
+    ForwardEndReason, ForwardResult, Forwarder, Freeze, FrozenDirection, FrozenRelay, RelaySide,
+};
 pub use ip_limit::{IpGuard, IpKey, IpLimiter};
 pub use listener::{
     AcceptedConnection, ConnectionSlot, Listener, ListenerConfig, PendingConnection,

@@ -31,6 +31,7 @@ pub(crate) mod handler;
 pub(crate) mod handoff;
 #[cfg(feature = "test-support")]
 pub mod handoff;
+pub mod hot_restart;
 pub(crate) mod limbo;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod loadbalancer;
