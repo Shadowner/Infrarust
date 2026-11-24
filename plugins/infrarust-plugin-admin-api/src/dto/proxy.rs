@@ -10,4 +10,5 @@ pub struct ProxyStatus {
     pub bind_address: String,
     pub features: Vec<String>,
     pub memory_rss_bytes: Option<u64>,
+    pub restart_available: bool,
 }

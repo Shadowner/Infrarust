@@ -27,6 +27,7 @@ pub async fn status(
         bind_address: state.config.bind.clone(),
         features: util::get_active_features(),
         memory_rss_bytes: util::get_memory_rss(),
+        restart_available: state.restart.is_some(),
     }))
 }
 
