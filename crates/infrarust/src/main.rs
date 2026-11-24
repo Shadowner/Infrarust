@@ -3,11 +3,11 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::ffi::OsString;
-use std::future::Future;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -17,13 +17,20 @@ use tracing_subscriber::EnvFilter;
 
 use infrarust_config::ProxyConfig;
 use infrarust_core::binary::{BuildInfo, ConfigCheck, ExeSnapshot, RunningBinary};
-use infrarust_core::runtime::{ProxyRuntime, proxy_info_from_config};
+use infrarust_core::hot_restart::{BinaryPreflight, Inheritance};
+use infrarust_core::runtime::{
+    ProxyExit, ProxyRuntime, ProxyRuntimeBuilder, RestartHandover, proxy_info_from_config,
+};
 use infrarust_core::terminal::Banner;
 use infrarust_core::terminal::formatter::InfrarustFormatter;
 use infrarust_plugin_admin_api::log_layer::{BroadcastLogLayer, LogBroadcast};
 
+use crate::signals::{HubSlot, OsSignals, Watch};
+
+mod hot_restart;
 mod migrate;
 mod plugins;
+mod signals;
 mod update_cli;
 mod wizard;
 
@@ -36,7 +43,7 @@ struct Cli {
 
     /// Path to the proxy configuration file
     #[arg(short, long, default_value = "infrarust.toml")]
-    config: std::path::PathBuf,
+    config: PathBuf,
 
     /// Override the bind address (e.g. "0.0.0.0:25577")
     #[arg(short, long)]
@@ -48,11 +55,11 @@ struct Cli {
 
     /// Override the plugins directory path
     #[arg(long)]
-    plugins_dir: Option<std::path::PathBuf>,
+    plugins_dir: Option<PathBuf>,
 
     /// Override the servers directory path
     #[arg(long)]
-    servers_dir: Option<std::path::PathBuf>,
+    servers_dir: Option<PathBuf>,
 
     #[arg(long = "handover-probe", hide = true)]
     handover_probe: bool,
@@ -62,11 +69,11 @@ struct Cli {
 enum Command {
     /// Migrate V1 proxy configs (YAML) to V2 server configs (TOML)
     Migrate {
-        input: std::path::PathBuf,
+        input: PathBuf,
         #[arg(short, long, default_value_os_t = infrarust_config::defaults::servers_dir())]
-        output: std::path::PathBuf,
+        output: PathBuf,
         #[arg(long)]
-        config: Option<std::path::PathBuf>,
+        config: Option<PathBuf>,
     },
     #[command(
         name = "check-config",
@@ -90,64 +97,51 @@ const BUILD: BuildInfo = BuildInfo {
     docker: matches!(env!("INFRARUST_DOCKER").as_bytes(), b"1"),
 };
 
-#[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
+const RUNTIME_SHUTDOWN: Duration = Duration::from_secs(3);
+
 fn main() -> ExitCode {
-    let exe = ExeSnapshot::capture();
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return hot_restart::refuse_command_line(error),
+    };
     if cli.handover_probe {
         return print_probe();
     }
     infrarust_core::terminal::color::init();
+    let exe = ExeSnapshot::capture();
 
-    if let Some(Command::CheckConfig { json }) = &cli.command {
-        return check_config(&cli, *json);
+    match &cli.command {
+        Some(Command::CheckConfig { json }) => return check_config(&cli, *json),
+        Some(Command::Update { action }) => return update_cli::run(&cli, action, exe),
+        Some(Command::Migrate {
+            input,
+            output,
+            config,
+        }) => return migrate::run(input, output, config.as_deref()),
+        None => {}
     }
 
-    if let Some(Command::Update { action }) = &cli.command {
-        return update_cli::run(&cli, action, exe);
+    match hot_restart::inherit() {
+        Ok(inheritance) => serve(cli, exe, inheritance),
+        Err(code) => code,
     }
+}
 
-    if let Some(Command::Migrate {
-        input,
-        output,
-        config,
-    }) = &cli.command
-    {
-        return migrate::run(input, output, config.as_deref());
-    }
-
+fn serve(
+    cli: Cli,
+    exe: std::io::Result<ExeSnapshot>,
+    inheritance: Option<Box<dyn Inheritance>>,
+) -> ExitCode {
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let inherited_listener = match infrarust_transport::activated_listener() {
         Ok(listener) => listener,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        }
+        Err(e) => return hot_restart::give_up(inheritance, &e.to_string()),
     };
 
-    let (config, config_warnings) = if !cli.config.exists()
-        && cli.config == Path::new("infrarust.toml")
-        && std::io::stdout().is_terminal()
-    {
-        match wizard::run(&cli.config).and_then(|outcome| match outcome {
-            wizard::WizardOutcome::Config(c) => finalize_config(&cli, *c).map(Some),
-            wizard::WizardOutcome::ExitClean => Ok(None),
-        }) {
-            Ok(Some(c)) => c,
-            Ok(None) => return ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        match load_config(&cli) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                return ExitCode::FAILURE;
-            }
-        }
+    let (config, config_warnings) = match prepare_config(&cli, inheritance.is_some()) {
+        Ok(Some(config)) => config,
+        Ok(None) => return ExitCode::SUCCESS,
+        Err(e) => return hot_restart::give_up(inheritance, &format!("{e:#}")),
     };
 
     let log_broadcast = config
@@ -155,7 +149,7 @@ fn main() -> ExitCode {
         .as_ref()
         .is_some_and(|w| w.enable_api)
         .then(|| LogBroadcast::new(512, 1000));
-    let _tracing_guard = init_tracing(
+    let tracing_guard = init_tracing(
         &cli.log_level,
         &config,
         log_broadcast.as_ref().map(LogBroadcast::layer),
@@ -174,16 +168,12 @@ fn main() -> ExitCode {
         env!("CARGO_PKG_VERSION"),
     );
 
-    // Build tokio runtime with configurable worker threads
-    let mut builder = tokio::runtime::Builder::new_multi_thread();
-    if config.worker_threads > 0 {
-        builder.worker_threads(config.worker_threads);
-    }
-    let runtime = match builder.enable_all().thread_name("infrarust-worker").build() {
-        Ok(rt) => rt,
+    let runtime = match build_runtime(&config) {
+        Ok(runtime) => runtime,
         Err(e) => {
-            tracing::error!("failed to build tokio runtime: {e}");
-            return ExitCode::FAILURE;
+            let reason = format!("failed to build tokio runtime: {e}");
+            tracing::error!("{reason}");
+            return hot_restart::give_up(inheritance, &reason);
         }
     };
 
@@ -194,19 +184,53 @@ fn main() -> ExitCode {
             None
         }
     };
+    let successor = hot_restart::successor(binary.as_ref());
 
-    match runtime.block_on(run(
+    let exit = runtime.block_on(run(Launch {
+        hot_restart: successor.is_some(),
         config,
-        cli.config,
+        config_path: cli.config,
         log_broadcast,
         inherited_listener,
         binary,
-    )) {
-        Ok(()) => ExitCode::SUCCESS,
+        inheritance,
+    }));
+    match exit {
+        Ok(Exit::Stopped) => ExitCode::SUCCESS,
+        Ok(Exit::Restart(handover)) => {
+            runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+            drop(tracing_guard);
+            hot_restart::hand_over(successor, *handover)
+        }
         Err(e) => {
             tracing::error!("{e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn build_runtime(config: &ProxyConfig) -> std::io::Result<tokio::runtime::Runtime> {
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    if config.worker_threads > 0 {
+        builder.worker_threads(config.worker_threads);
+    }
+    builder.enable_all().thread_name("infrarust-worker").build()
+}
+
+fn prepare_config(
+    cli: &Cli,
+    inherited: bool,
+) -> anyhow::Result<Option<(ProxyConfig, Vec<String>)>> {
+    let wizard = !inherited
+        && !cli.config.exists()
+        && cli.config == Path::new("infrarust.toml")
+        && std::io::stdout().is_terminal();
+    if !wizard {
+        return load_config(cli).map(Some);
+    }
+    match wizard::run(&cli.config)? {
+        wizard::WizardOutcome::Config(config) => finalize_config(cli, *config).map(Some),
+        wizard::WizardOutcome::ExitClean => Ok(None),
     }
 }
 
@@ -372,19 +396,40 @@ fn finalize_config(
     Ok((config, warnings))
 }
 
-async fn run(
+struct Launch {
     config: ProxyConfig,
-    config_path: std::path::PathBuf,
+    config_path: PathBuf,
     log_broadcast: Option<LogBroadcast>,
     inherited_listener: Option<std::net::TcpListener>,
     binary: Option<Arc<RunningBinary>>,
-) -> anyhow::Result<()> {
-    let shutdown = CancellationToken::new();
+    inheritance: Option<Box<dyn Inheritance>>,
+    hot_restart: bool,
+}
 
-    // Signal handler in background
-    tokio::spawn(watch_signals(
+enum Exit {
+    Stopped,
+    Restart(Box<RestartHandover>),
+}
+
+async fn run(launch: Launch) -> anyhow::Result<Exit> {
+    let Launch {
+        config,
+        config_path,
+        log_broadcast,
+        inherited_listener,
+        binary,
+        inheritance,
+        hot_restart,
+    } = launch;
+    let shutdown = CancellationToken::new();
+    let hub = HubSlot::default();
+
+    tokio::spawn(signals::watch_signals(
         OsSignals::install(),
-        shutdown.clone(),
+        Watch {
+            shutdown: shutdown.clone(),
+            hub: Arc::clone(&hub),
+        },
         |code| {
             flush_logs();
             std::process::exit(code)
@@ -392,34 +437,25 @@ async fn run(
     ));
 
     let web_config = config.web.clone();
-
-    #[cfg(feature = "wasm")]
-    let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
-    #[cfg(feature = "wasm")]
-    let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
-
-    let static_loader = plugins::build_static_loader(web_config.as_ref(), log_broadcast)?;
-    let static_ids = static_loader.registered_ids();
-    let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
-
-    let builder = ProxyRuntime::builder(config, config_path)
-        .shutdown_token(shutdown.clone())
-        .proxy_info(proxy_info)
-        .trusted_plugins(static_ids)
+    let builder = match runtime_builder(config, config_path, log_broadcast, &shutdown) {
+        Ok(builder) => builder,
+        Err(error) => return Err(hot_restart::abandon(inheritance, error)),
+    };
+    let mut builder = builder
         .inherited_listener(inherited_listener)
-        .binary(binary)
-        .loader(Box::new(static_loader));
-
-    #[cfg(feature = "wasm")]
-    let builder = builder.loader(Box::new(
-        infrarust_loader_wasm::WasmPluginLoader::new(wasm_engine, wasm_config)
-            .context("failed to start the wasm plugin loader")?,
-    ));
+        .binary(binary);
+    if hot_restart {
+        builder = builder.hot_restart(Arc::new(BinaryPreflight));
+    }
+    if let Some(inheritance) = inheritance {
+        builder = builder.restored(inheritance);
+    }
 
     let running = builder
         .start()
         .await
         .context("failed to initialize proxy server")?;
+    let _ = hub.set(running.restart_hub());
 
     let console_services = Arc::new(running.console_services());
 
@@ -437,103 +473,54 @@ async fn run(
         tracing::info!("{label} accessible at: http://{}", web.bind);
     }
 
-    let result = running.wait().await;
+    let exit = running.run_to_exit().await;
     console_handle.abort();
-    result.context("proxy server error")?;
-
-    tracing::info!("infrarust stopped");
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StopSignal {
-    Interrupt,
-    Terminate,
-}
-
-impl StopSignal {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Interrupt => "SIGINT",
-            Self::Terminate => "SIGTERM",
+    match exit.context("proxy server error")? {
+        ProxyExit::Stopped => {
+            tracing::info!("infrarust stopped");
+            Ok(Exit::Stopped)
         }
-    }
-
-    const fn exit_code(self) -> i32 {
-        match self {
-            Self::Interrupt => 130,
-            Self::Terminate => 143,
-        }
-    }
-}
-
-trait StopSignals: Send {
-    fn next(&mut self) -> impl Future<Output = Option<StopSignal>> + Send;
-}
-
-struct OsSignals {
-    #[cfg(unix)]
-    terminate: Option<tokio::signal::unix::Signal>,
-}
-
-impl OsSignals {
-    fn install() -> Self {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
-            let terminate = match signal(SignalKind::terminate()) {
-                Ok(terminate) => Some(terminate),
-                Err(e) => {
-                    tracing::error!(error = %e, "failed to install SIGTERM handler; only Ctrl-C will stop the proxy");
-                    None
-                }
-            };
-            Self { terminate }
-        }
-        #[cfg(not(unix))]
-        {
-            Self {}
-        }
-    }
-}
-
-impl StopSignals for OsSignals {
-    async fn next(&mut self) -> Option<StopSignal> {
-        #[cfg(unix)]
-        if let Some(terminate) = self.terminate.as_mut() {
-            return tokio::select! {
-                biased;
-                received = terminate.recv() => received.map(|()| StopSignal::Terminate),
-                received = tokio::signal::ctrl_c() => received.ok().map(|()| StopSignal::Interrupt),
-            };
-        }
-        tokio::signal::ctrl_c()
-            .await
-            .ok()
-            .map(|()| StopSignal::Interrupt)
-    }
-}
-
-async fn watch_signals(
-    mut signals: impl StopSignals,
-    shutdown: CancellationToken,
-    exit: impl FnOnce(i32) + Send,
-) {
-    while let Some(signal) = signals.next().await {
-        if shutdown.is_cancelled() {
-            tracing::warn!(
-                signal = signal.name(),
-                "shutdown signal received while the proxy is already stopping; exiting now without finishing the shutdown"
+        ProxyExit::Restart(handover) => {
+            tracing::info!(
+                sessions = handover.package.state.sessions.len(),
+                target_binary = %handover.plan.target.display(),
+                "infrarust hands its sessions over to the next image"
             );
-            exit(signal.exit_code());
-            return;
+            Ok(Exit::Restart(handover))
         }
-        tracing::info!(
-            signal = signal.name(),
-            "shutdown signal received; send it again to exit at once"
-        );
-        shutdown.cancel();
     }
+}
+
+fn runtime_builder(
+    config: ProxyConfig,
+    config_path: PathBuf,
+    log_broadcast: Option<LogBroadcast>,
+    shutdown: &CancellationToken,
+) -> anyhow::Result<ProxyRuntimeBuilder> {
+    let web_config = config.web.clone();
+
+    #[cfg(feature = "wasm")]
+    let wasm_engine = infrarust_loader_wasm::build_engine(&config)?;
+    #[cfg(feature = "wasm")]
+    let wasm_config = infrarust_loader_wasm::WasmLoaderConfig::from_proxy_config(&config);
+
+    let static_loader = plugins::build_static_loader(web_config.as_ref(), log_broadcast)?;
+    let static_ids = static_loader.registered_ids();
+    let proxy_info = proxy_info_from_config(&config, env!("CARGO_PKG_VERSION"));
+
+    let builder = ProxyRuntime::builder(config, config_path)
+        .shutdown_token(shutdown.clone())
+        .proxy_info(proxy_info)
+        .trusted_plugins(static_ids)
+        .loader(Box::new(static_loader));
+
+    #[cfg(feature = "wasm")]
+    let builder = builder.loader(Box::new(
+        infrarust_loader_wasm::WasmPluginLoader::new(wasm_engine, wasm_config)
+            .context("failed to start the wasm plugin loader")?,
+    ));
+
+    Ok(builder)
 }
 
 fn startup_banner(config: &ProxyConfig) -> Banner {
@@ -574,52 +561,6 @@ mod tests {
             servers_dir.display().to_string()
         );
         toml::from_str(&toml_str).unwrap()
-    }
-
-    struct Scripted(std::collections::VecDeque<StopSignal>);
-
-    impl StopSignals for Scripted {
-        fn next(&mut self) -> impl Future<Output = Option<StopSignal>> + Send {
-            std::future::ready(self.0.pop_front())
-        }
-    }
-
-    async fn watch(signals: &[StopSignal], shutdown: &CancellationToken) -> Option<i32> {
-        let exited = Arc::new(Mutex::new(None));
-        let seen = Arc::clone(&exited);
-        watch_signals(
-            Scripted(signals.iter().copied().collect()),
-            shutdown.clone(),
-            move |code| *seen.lock().unwrap() = Some(code),
-        )
-        .await;
-        *exited.lock().unwrap()
-    }
-
-    #[tokio::test]
-    async fn the_first_signal_starts_the_shutdown_and_the_second_exits_at_once() {
-        let shutdown = CancellationToken::new();
-        let code = watch(&[StopSignal::Terminate, StopSignal::Interrupt], &shutdown).await;
-        assert!(shutdown.is_cancelled());
-        assert_eq!(code, Some(130));
-    }
-
-    #[tokio::test]
-    async fn one_signal_only_starts_the_shutdown() {
-        let shutdown = CancellationToken::new();
-        assert_eq!(watch(&[StopSignal::Terminate], &shutdown).await, None);
-        assert!(shutdown.is_cancelled());
-    }
-
-    #[tokio::test]
-    async fn a_signal_while_the_proxy_is_already_stopping_exits_at_once() {
-        let shutdown = CancellationToken::new();
-        shutdown.cancel();
-        assert_eq!(
-            watch(&[StopSignal::Terminate], &shutdown).await,
-            Some(143),
-            "a stop from the console counts as the first request"
-        );
     }
 
     #[test]
