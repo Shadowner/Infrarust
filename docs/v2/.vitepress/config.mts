@@ -122,6 +122,7 @@ export default
               { text: 'Docker', link: '/guide/docker' },
               { text: 'Docker Compose', link: '/guide/docker-compose' },
               { text: 'Systemd Service', link: '/guide/systemd' },
+              { text: 'Upgrading', link: '/guide/upgrading' },
               { text: 'Server Management', link: '/guide/server-management' },
               { text: 'Behind a Load Balancer', link: '/guide/load-balancer' },
             ],

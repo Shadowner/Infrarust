@@ -234,7 +234,16 @@ The same mechanism works with any activator that speaks the systemd protocol. [`
 
 ## Updating Infrarust
 
-To deploy a new version:
+A binary from a release archive installs the new release itself. Run the install as the service user, from the service's working directory, then restart the service:
+
+```bash
+sudo -u infrarust sh -c 'cd /opt/infrarust && ./infrarust -c infrarust.toml update install'
+sudo systemctl restart infrarust
+```
+
+The previous binary stays next to the new one as `/opt/infrarust/infrarust.old`, for `infrarust update rollback`. [Upgrading](./upgrading) covers update checks, installs started from the console or the admin API, rollback, and how to verify a download by hand.
+
+To replace the binary by hand instead:
 
 ```bash
 sudo systemctl stop infrarust
