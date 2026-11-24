@@ -60,10 +60,10 @@ impl fmt::Display for Refusal {
 }
 
 pub fn build_refusal(build: &BuildInfo) -> Option<Refusal> {
-    if !build.official {
-        Some(Refusal::NotOfficial)
-    } else if build.docker {
+    if build.docker {
         Some(Refusal::Docker)
+    } else if !build.official {
+        Some(Refusal::NotOfficial)
     } else if !supported_target(build.target) {
         Some(Refusal::UnsupportedTarget {
             target: build.target.to_string(),
@@ -146,7 +146,6 @@ mod tests {
     fn a_build_outside_the_pipeline_is_refused() {
         let build = BuildInfo {
             official: false,
-            docker: true,
             ..OFFICIAL
         };
         let refusal = build_refusal(&build).unwrap();
@@ -172,6 +171,16 @@ mod tests {
                 .instructions(Some("2.0.0-beta.6"))
                 .contains("`docker pull ghcr.io/shadowner/infrarust:2.0.0-beta.6`")
         );
+    }
+
+    #[test]
+    fn a_docker_image_is_told_to_pull_even_when_built_outside_the_pipeline() {
+        let build = BuildInfo {
+            official: false,
+            docker: true,
+            ..OFFICIAL
+        };
+        assert_eq!(build_refusal(&build), Some(Refusal::Docker));
     }
 
     #[test]

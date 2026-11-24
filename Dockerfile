@@ -33,6 +33,7 @@ COPY --from=frontend-builder /frontend/.output/public/ \
      ./plugins/infrarust-plugin-admin-api/frontend/.output/public/
 
 ENV OPENSSL_STATIC=1
+ENV INFRARUST_DOCKER_IMAGE=1
 ENV RUSTFLAGS="-C target-feature=+crt-static"
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

@@ -87,7 +87,7 @@ const BUILD: BuildInfo = BuildInfo {
     version: env!("CARGO_PKG_VERSION"),
     target: env!("INFRARUST_TARGET"),
     official: matches!(env!("INFRARUST_OFFICIAL").as_bytes(), b"1"),
-    docker: cfg!(feature = "docker"),
+    docker: matches!(env!("INFRARUST_DOCKER").as_bytes(), b"1"),
 };
 
 #[allow(clippy::print_stderr)] // eprintln used before tracing is initialized
