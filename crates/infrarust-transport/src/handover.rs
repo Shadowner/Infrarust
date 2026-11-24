@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::io::Write;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
@@ -6,12 +8,22 @@ use std::{fmt, io};
 
 #[cfg(unix)]
 use nix::errno::Errno;
+#[cfg(target_os = "linux")]
+use nix::fcntl::SealFlag;
 #[cfg(unix)]
 use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+#[cfg(target_os = "linux")]
+use nix::libc::off_t;
+#[cfg(target_os = "linux")]
+use nix::sys::memfd::{MFdFlags, memfd_create};
 #[cfg(unix)]
 use nix::sys::socket::{
     SockType, SockaddrLike, SockaddrStorage, getpeername, getsockname, getsockopt, sockopt,
 };
+#[cfg(target_os = "linux")]
+use nix::sys::stat::fstat;
+#[cfg(target_os = "linux")]
+use nix::sys::uio::pread;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SocketKind {
@@ -93,6 +105,47 @@ pub fn claim_inherited(fd: RawFd, expect: SocketKind) -> io::Result<InheritedSoc
         SocketKind::Stream => InheritedSocket::Stream(owned.into()),
     })
 }
+
+#[cfg(target_os = "linux")]
+pub fn sealed_memfd(name: &str, bytes: &[u8]) -> io::Result<OwnedFd> {
+    let fd = memfd_create(name, MFdFlags::MFD_CLOEXEC | MFdFlags::MFD_ALLOW_SEALING)?;
+    let mut file = std::fs::File::from(fd);
+    file.write_all(bytes)?;
+    fcntl(
+        &file,
+        FcntlArg::F_ADD_SEALS(IMMUTABLE | SealFlag::F_SEAL_SEAL),
+    )?;
+    Ok(OwnedFd::from(file))
+}
+
+#[cfg(target_os = "linux")]
+pub fn read_sealed(fd: BorrowedFd<'_>) -> io::Result<Vec<u8>> {
+    let seals = SealFlag::from_bits_retain(fcntl(fd, FcntlArg::F_GET_SEALS)?);
+    if !seals.contains(IMMUTABLE) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("fd {} is not sealed against writes", fd.as_raw_fd()),
+        ));
+    }
+    let size = usize::try_from(fstat(fd)?.st_size).map_err(io::Error::other)?;
+    let mut bytes = vec![0; size];
+    let mut filled = 0;
+    while filled < size {
+        let offset = off_t::try_from(filled).map_err(io::Error::other)?;
+        match pread(fd, &mut bytes[filled..], offset) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(read) => filled += read,
+            Err(Errno::EINTR) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(bytes)
+}
+
+#[cfg(target_os = "linux")]
+const IMMUTABLE: SealFlag = SealFlag::F_SEAL_SHRINK
+    .union(SealFlag::F_SEAL_GROW)
+    .union(SealFlag::F_SEAL_WRITE);
 
 #[cfg(unix)]
 fn inet_address(fd: RawFd, address: SockaddrStorage) -> io::Result<SocketAddr> {

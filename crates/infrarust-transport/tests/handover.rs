@@ -209,3 +209,66 @@ rusty_fork_test! {
         assert!(is_open(&listener));
     }
 }
+
+#[cfg(target_os = "linux")]
+mod memfd {
+    use std::os::fd::AsFd;
+
+    use nix::errno::Errno;
+    use nix::fcntl::{FcntlArg, SealFlag, fcntl};
+    use nix::sys::memfd::{MFdFlags, memfd_create};
+    use nix::sys::uio::pwrite;
+    use nix::unistd::{Whence, ftruncate, lseek, write};
+
+    use infrarust_transport::handover::{read_sealed, sealed_memfd};
+
+    use super::close_on_exec;
+
+    #[test]
+    fn a_sealed_memfd_reads_back_the_same_bytes_twice() {
+        let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let fd = sealed_memfd("infrarust-handover-test", &payload).unwrap();
+        assert!(close_on_exec(&fd));
+
+        let offset = lseek(&fd, 0, Whence::SeekCur).unwrap();
+        assert_eq!(read_sealed(fd.as_fd()).unwrap(), payload);
+        assert_eq!(read_sealed(fd.as_fd()).unwrap(), payload);
+        assert_eq!(lseek(&fd, 0, Whence::SeekCur).unwrap(), offset);
+    }
+
+    #[test]
+    fn an_empty_payload_round_trips() {
+        let fd = sealed_memfd("infrarust-handover-empty", b"").unwrap();
+        assert!(read_sealed(fd.as_fd()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_sealed_memfd_refuses_every_change() {
+        let fd = sealed_memfd("infrarust-handover-test", b"state").unwrap();
+
+        let seals = SealFlag::from_bits_retain(fcntl(&fd, FcntlArg::F_GET_SEALS).unwrap());
+        assert!(seals.contains(
+            SealFlag::F_SEAL_SHRINK
+                | SealFlag::F_SEAL_GROW
+                | SealFlag::F_SEAL_WRITE
+                | SealFlag::F_SEAL_SEAL
+        ));
+
+        assert_eq!(write(&fd, b"x"), Err(Errno::EPERM));
+        assert_eq!(pwrite(&fd, b"x", 0), Err(Errno::EPERM));
+        assert_eq!(ftruncate(&fd, 0), Err(Errno::EPERM));
+        assert_eq!(
+            fcntl(&fd, FcntlArg::F_ADD_SEALS(SealFlag::F_SEAL_FUTURE_WRITE)),
+            Err(Errno::EPERM)
+        );
+        assert_eq!(read_sealed(fd.as_fd()).unwrap(), b"state");
+    }
+
+    #[test]
+    fn an_unsealed_memfd_is_not_read() {
+        let fd = memfd_create("infrarust-handover-unsealed", MFdFlags::MFD_CLOEXEC).unwrap();
+        write(&fd, b"state").unwrap();
+        let err = read_sealed(fd.as_fd()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
+    }
+}
