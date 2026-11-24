@@ -214,7 +214,7 @@ Through the admin API, call `POST /api/v1/proxy/update/install`, wait until `GET
 
 ### What players see
 
-- On `passthrough`, `zero_copy` and `server_only` servers, the client and the backend keep their TCP connections. Traffic stops while the sessions move to the new image, then resumes where it stopped, with no bytes lost in either direction. In our tests the pause stayed well under a second with 1000 sessions.
+- On `passthrough`, `zero_copy` and `server_only` servers, the client and the backend keep their TCP connections. Traffic stops while the sessions move to the new image, then resumes where it stopped, with no bytes lost in either direction. In our tests with a release build on a 16-core machine, the longest pause any player saw was about 70 ms with 1000 sessions and about 140 ms with 2000.
 - On `offline` and `client_only` servers, the proxy holds each player's game state itself and cannot hand it over. These players are disconnected with `Proxy is restarting, please reconnect`, and can join again right away.
 - A connection that is still logging in gets up to 3 seconds to finish. A login on a forwarding server that completes in time is carried over like the others. One that does not is disconnected with the same message.
 - New connections, server list pings included, wait in the kernel's queue while the proxy restarts, and the new image accepts them.
