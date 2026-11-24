@@ -31,6 +31,10 @@ pub trait ServerProvider: Send + Sync {
     fn check_status(&self) -> ProviderFuture<'_, ProviderStatus>;
 
     fn provider_type(&self) -> &'static str;
+
+    fn owns_child_process(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

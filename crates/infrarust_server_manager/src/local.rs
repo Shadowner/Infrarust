@@ -175,4 +175,8 @@ impl ServerProvider for LocalProvider {
     fn provider_type(&self) -> &'static str {
         "local"
     }
+
+    fn owns_child_process(&self) -> bool {
+        true
+    }
 }

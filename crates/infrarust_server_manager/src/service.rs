@@ -240,6 +240,20 @@ impl ServerManagerService {
             .collect()
     }
 
+    pub fn running_child_processes(&self) -> Vec<String> {
+        let mut running: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|e| {
+                e.provider.owns_child_process()
+                    && !matches!(e.state, ServerState::Sleeping | ServerState::Crashed)
+            })
+            .map(|e| e.key().clone())
+            .collect();
+        running.sort_unstable();
+        running
+    }
+
     /// Registers a callback that fires on every state transition.
     ///
     /// The callback receives `(server_id, old_state, new_state)`.

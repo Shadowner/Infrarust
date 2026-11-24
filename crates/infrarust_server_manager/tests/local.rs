@@ -2,7 +2,9 @@
 use std::io::Write;
 
 use infrarust_config::LocalManagerConfig;
-use infrarust_server_manager::{LocalProvider, ProviderStatus, ServerProvider};
+use infrarust_server_manager::{
+    LocalProvider, ProviderStatus, ServerManagerService, ServerProvider,
+};
 
 fn make_mock_script(dir: &std::path::Path, name: &str, content: &str) -> std::path::PathBuf {
     let path = dir.join(name);
@@ -269,4 +271,37 @@ async fn test_stop_without_a_process_fails() {
 
     let error = provider.stop().await.unwrap_err();
     assert_eq!(error.to_string(), "process error: process is not running");
+}
+
+#[test]
+fn a_local_provider_owns_its_child_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = make_mock_script(dir.path(), "server.sh", "#!/bin/bash\necho done\n");
+    let provider = LocalProvider::new(make_config(&script, dir.path()));
+
+    assert!(provider.owns_child_process());
+}
+
+#[tokio::test]
+async fn a_local_server_counts_as_a_running_child_until_it_stops() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = make_mock_script(
+        dir.path(),
+        "server.sh",
+        r#"#!/bin/bash
+while read -r line; do
+    if [ "$line" = "stop" ]; then exit 0; fi
+done
+"#,
+    );
+    let config = infrarust_config::ServerManagerConfig::Local(make_config(&script, dir.path()));
+    let service =
+        ServerManagerService::new(&[("lobby".to_string(), config)], reqwest::Client::new());
+    assert!(service.running_child_processes().is_empty());
+
+    service.start_server("lobby").await.unwrap();
+    assert_eq!(service.running_child_processes(), ["lobby"]);
+
+    service.stop_server("lobby").await.unwrap();
+    assert!(service.running_child_processes().is_empty());
 }

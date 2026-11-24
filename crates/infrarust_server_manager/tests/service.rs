@@ -964,3 +964,65 @@ async fn test_an_exit_after_a_confirmed_stop_is_counted() {
 
     shutdown.cancel();
 }
+
+struct ChildProvider(ProviderStatus);
+
+impl ServerProvider for ChildProvider {
+    fn start(&self) -> ProviderFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn stop(&self) -> ProviderFuture<'_, ()> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn check_status(&self) -> ProviderFuture<'_, ProviderStatus> {
+        let status = self.0;
+        Box::pin(async move { Ok(status) })
+    }
+
+    fn provider_type(&self) -> &'static str {
+        "child"
+    }
+
+    fn owns_child_process(&self) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn only_live_servers_whose_provider_owns_a_child_process_are_listed() {
+    let service = ServerManagerService::new(&[], reqwest::Client::new());
+    let register = |id: &str, provider: Arc<dyn ServerProvider>| {
+        service.register_server(
+            id.to_string(),
+            provider,
+            None,
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+    };
+    register(
+        "panel",
+        Arc::new(MockProvider::new(ProviderStatus::Running)),
+    );
+    for (id, status) in [
+        ("online", ProviderStatus::Running),
+        ("starting", ProviderStatus::Starting),
+        ("stopping", ProviderStatus::Stopping),
+        ("unknown", ProviderStatus::Unknown),
+        ("sleeping", ProviderStatus::Stopped),
+        ("crashed", ProviderStatus::Crashed),
+    ] {
+        register(id, Arc::new(ChildProvider(status)));
+    }
+    assert!(!MockProvider::new(ProviderStatus::Running).owns_child_process());
+
+    service.initial_health_check().await;
+
+    assert_eq!(service.get_state("panel"), Some(ServerState::Online));
+    assert_eq!(
+        service.running_child_processes(),
+        ["online", "starting", "stopping", "unknown"]
+    );
+}
