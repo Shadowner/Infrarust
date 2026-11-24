@@ -2,6 +2,7 @@ pub mod backend;
 pub mod connection;
 pub mod error;
 pub mod forward;
+pub mod handover;
 pub mod ip_limit;
 pub mod listener;
 pub mod proxy_protocol;
