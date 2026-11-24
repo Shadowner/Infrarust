@@ -89,6 +89,8 @@ async-stream = "0.3.6"
 # Compression
 flate2 = "1.1.10"
 libdeflater = "1.26.1"
+tar = { version = "0.4.46", default-features = false }
+zip = { version = "9.8.2", default-features = false, features = ["deflate-flate2"] }
 
 # Crypto (protocol)
 aes = "0.9.3"
@@ -102,6 +104,8 @@ hmac = "0.13.0"
 rand = "0.10.3"
 num-bigint = "0.5.1"
 base64 = "0.23.1"
+minisign-verify = "0.3.0"
+minisign = "0.10.0"
 
 # Crypto (auth plugin)
 argon2 = "0.6.0"

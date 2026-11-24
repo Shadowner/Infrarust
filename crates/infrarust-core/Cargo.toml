@@ -62,6 +62,9 @@ console = { workspace = true }
 chrono = { workspace = true }
 humantime = { workspace = true }
 flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+minisign-verify = { workspace = true }
 
 # Hot-path timing (optional, `bench-timing` feature)
 quanta = { workspace = true, optional = true }
@@ -93,6 +96,7 @@ infrarust-api = { workspace = true, features = ["serde", "test-util"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = { workspace = true }
 divan = { workspace = true }
+minisign = { workspace = true }
 
 [[bench]]
 name = "codec_chain"

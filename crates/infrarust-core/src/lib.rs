@@ -85,6 +85,7 @@ pub mod telemetry;
 pub mod terminal;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod update;
 #[cfg(not(feature = "test-support"))]
 pub(crate) mod util;
 #[cfg(feature = "test-support")]
