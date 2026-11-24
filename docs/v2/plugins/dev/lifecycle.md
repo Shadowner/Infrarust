@@ -185,6 +185,17 @@ The next level starts when every plugin of the current one is done. The whole pl
 
 Keep `on_disable` short: flush what you must keep and return. Anything longer than 5 seconds is cut off at shutdown. The limits are fixed for the `infrarust` binary; a program that embeds the proxy can set them with `ProxyRuntimeBuilder::plugin_disable_timeout` and `plugin_shutdown_timeout`, or with `PluginManager::set_shutdown_limits`. A second SIGTERM or Ctrl-C while the proxy is stopping exits the process at once, without waiting for any plugin.
 
+## Hot restarts
+
+On Linux, a [hot restart](../../guide/upgrading#restart-without-disconnecting-players) replaces the running proxy with a new image in the same process, and the players on forwarding servers stay connected. For a plugin, it is a shutdown followed by a fresh start:
+
+- In the old image, the plugin goes through the [shutdown flow](#shutdown-flow): `ProxyShutdownEvent`, the `proxy_shutdown()` token, `on_disable` and the cleanup.
+- The new image discovers, loads and enables the plugins again, from the binary and from `plugins_dir`, then fires `ProxyInitializeEvent`. A `.wasm` file replaced in the meantime runs in its new version.
+- Nothing a plugin holds in memory survives. Save what must last in `ProxyShutdownEvent` or `on_disable`, under `data_dir()` for example, and read it back in `on_enable`.
+- The carried-over players keep their player id, so state saved per player id still matches them. They reach the new image without any login event; [Proxy hot restart](./events#proxy-hot-restart) lists the events on both sides.
+
+A plugin can request a hot restart itself through `ctx.proxy_restart()`, see [ProxyRestart and ProxyUpdates](./api#proxyrestart-and-proxyupdates).
+
 ## Disabling one plugin
 
 `PluginManager::disable_plugin(id)` (and `RunningProxy::disable_plugin(id)`, which calls it) disables a single enabled plugin while the proxy keeps running. It runs the same steps as shutdown for that plugin: `on_disable()`, cleanup, `PluginDisabledEvent`, then `loader.unload()`.
@@ -258,7 +269,9 @@ Some of the available services:
 | `transport_filters()` | `Option<&dyn TransportFilterRegistry>` | Register TCP-level filters, `Some` only with the `TransportFilter` capability |
 | `plugin_id()` | `&str` | This plugin's ID |
 | `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
-| `proxy_shutdown()` | `CancellationToken` | A token that fires when the proxy shuts down |
+| `proxy_shutdown()` | `CancellationToken` | A token that fires when the proxy shuts down, or when it stops its plugins for a hot restart |
+| `proxy_restart()` | `Option<Arc<dyn ProxyRestart>>` | Request a hot restart, see [Hot restarts](#hot-restarts) |
+| `proxy_updates()` | `Option<Arc<dyn ProxyUpdates>>` | Read the update status, check for a release, install one |
 | `proxy_info()` | `&ProxyInfo` | Proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
 

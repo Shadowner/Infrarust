@@ -349,7 +349,7 @@ The guest owns resource handles it acquires (for example a limbo session handle)
 
 ## Hot reload
 
-Hot reload of a changed `*.wasm` without a proxy restart is not implemented. `unload` stops the plugin's task and drops its instance; later calls into the plugin return without running guest code. It does not re-run discovery or swap in a new instance. Replacing a plugin requires a restart, which re-runs discovery and rebuilds the cache when the bytes or version tags change.
+Hot reload of a changed `*.wasm` without a proxy restart is not implemented. `unload` stops the plugin's task and drops its instance; later calls into the plugin return without running guest code. It does not re-run discovery or swap in a new instance. Replacing a plugin requires a restart, which re-runs discovery and rebuilds the cache when the bytes or version tags change. On Linux, a [hot restart](../../guide/upgrading#restart-without-disconnecting-players) does it without disconnecting the players on forwarding servers.
 
 ## See also
 

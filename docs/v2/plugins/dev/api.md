@@ -94,7 +94,9 @@ The `PluginContext` trait provides access to every service and registration meth
 | `proxy_info()` | `&ProxyInfo` | Read-only proxy version and runtime settings |
 | `capabilities()` | `&CapabilitySet` | Capabilities granted to this plugin |
 | `data_dir()` | `PathBuf` | This plugin's data directory, `<plugins_dir>/<plugin_id>`, created if missing |
-| `proxy_shutdown()` | `CancellationToken` | Token that fires when the proxy shuts down |
+| `proxy_shutdown()` | `CancellationToken` | Token that fires when the proxy shuts down, or when it stops its plugins for a hot restart |
+| `proxy_restart()` | `Option<Arc<dyn ProxyRestart>>` | Request a hot restart. `None` when the proxy cannot restart in place, see [ProxyRestart and ProxyUpdates](#proxyrestart-and-proxyupdates) |
+| `proxy_updates()` | `Option<Arc<dyn ProxyUpdates>>` | Read the update status, check for a release, start an install. `None` when the proxy could not locate its own executable |
 | `plugin_id()` | `&str` | This plugin's ID |
 | `channel_registrar()` | `&dyn ChannelRegistrar` | Register the plugin message channels this plugin listens on, removed when it is disabled. See [Plugin messaging](./messaging) |
 | `server_messenger()` | `Arc<dyn ServerMessenger>` | Send a plugin message to a backend server through a player on it. See [Plugin messaging](./messaging#messages-to-a-server) |
@@ -635,7 +637,49 @@ for source in config.list_server_sources() {
 }
 ```
 
-`get_proxy_config_document()` returns `infrarust.toml` with every secret field replaced by `<redacted>`, and `write_proxy_config_document(&toml)` replaces it. `get_effective_proxy_config_document()` returns the same document with the CLI overrides the process was started with applied, and `get_server_document()` redacts server credentials the same way. The write needs the `ConfigWrite` capability: without it the plugin is handed a read-only service that answers `ConfigWriteError::PermissionDenied`, and there is no ungated handle to reach around it. Secret fields the submitted document leaves out or carries redacted keep the value already on disk, so a document read back from `get_proxy_config_document()` can be submitted unchanged. Nothing is applied to the running proxy; the new file takes effect on restart.
+`get_proxy_config_document()` returns `infrarust.toml` with every secret field replaced by `<redacted>`, and `write_proxy_config_document(&toml)` replaces it. `get_effective_proxy_config_document()` returns the same document with the CLI overrides the process was started with applied, and `get_server_document()` redacts server credentials the same way. The write needs the `ConfigWrite` capability: without it the plugin is handed a read-only service that answers `ConfigWriteError::PermissionDenied`, and there is no ungated handle to reach around it. Secret fields the submitted document leaves out or carries redacted keep the value already on disk, so a document read back from `get_proxy_config_document()` can be submitted unchanged. Nothing is applied to the running proxy; the new file takes effect on the next start or [hot restart](#proxyrestart-and-proxyupdates).
+
+## ProxyRestart and ProxyUpdates
+
+`ctx.proxy_restart()` and `ctx.proxy_updates()` give a plugin the controls behind the console `restart` and `update` commands. Both traits are sealed: a plugin calls them, and only the proxy implements them. No capability gates them. WASM plugins have no equivalent.
+
+`proxy_restart()` is `Some` when the proxy can [restart in place](../../guide/upgrading#restart-without-disconnecting-players), which takes Linux, and `None` elsewhere. `request_restart()` returns as soon as the restart is scheduled:
+
+```rust
+use infrarust_api::services::RestartRequestError;
+
+if let Some(restart) = ctx.proxy_restart() {
+    match restart.request_restart() {
+        Ok(()) => tracing::info!("hot restart scheduled"),
+        Err(RestartRequestError::InProgress) => tracing::info!("a restart is already running"),
+        Err(error) => tracing::warn!(%error, "hot restart refused"),
+    }
+}
+```
+
+| Error | When |
+|-------|------|
+| `InProgress` | Another restart has not finished |
+| `ShuttingDown` | The proxy is stopping |
+| `Unsupported(reason)` | The proxy runs without its restart loop, which only happens in a program that embeds it |
+
+`Ok(())` does not promise a restart. The proxy runs its [preflight](../../guide/upgrading#preflight) afterwards and only logs a refusal. When the restart goes ahead, the calling plugin is disabled in the old image and enabled again in the new one, see [Hot restarts](./lifecycle#hot-restarts).
+
+`proxy_updates()` is `Some` when the proxy located its own executable at startup:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `status()` | `UpdateStatus` | What the last check found, without checking again. It carries what [`GET /api/v1/proxy/update`](../builtin/admin-api#updates) reports |
+| `check_now()` | `BoxFuture<'_, UpdateStatus>` | Check for a new release now, then return the new status |
+| `start_install(request)` | `Result<(), UpdateRequestError>` | Start an install in the background. Follow it through `status().install` |
+
+An `InstallRequest` has two fields. `version` names the release, or is `None` for the one the last check found. With `then_restart: true`, the proxy hot restarts once the install succeeds, as long as the installed release can take over the sessions; otherwise it logs `the update is installed but needs a full restart`. `start_install` refuses with:
+
+| Error | When |
+|-------|------|
+| `Busy` | Another install is running |
+| `NothingToInstall` | No `version` was given and no check found a release |
+| `Refused(reason)` | This binary cannot install releases; or `then_restart` is set and the proxy has no hot restart; or no `version` was given and the release found needs a full restart. `reason` says what to do instead |
 
 ## LoadBalancerService
 

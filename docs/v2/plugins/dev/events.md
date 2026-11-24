@@ -125,7 +125,7 @@ Legacy server list pings fire `ProxyPingEvent` with `legacy: true`, see [ProxyPi
 
 - Every event up to and including `PostLoginEvent` is awaited: the login waits for all listeners before it moves on.
 - A login that ends before `PostLoginEvent` (denied, banned, failed authentication, disconnected by `player.disconnect` during an earlier event, or cut short by a proxy shutdown) never creates a player, so no `DisconnectEvent` follows.
-- Once `PostLoginEvent` has fired, `DisconnectEvent` fires exactly once for that player, whatever ends the session: the client leaving, a kick, a denied or failed initial connection, the backend closing, a proxy shutdown or an error.
+- Once `PostLoginEvent` has fired, `DisconnectEvent` fires exactly once for that player, whatever ends the session: the client leaving, a kick, a denied or failed initial connection, the backend closing, a proxy shutdown or an error. A player carried over by a hot restart gets it from the new proxy when they leave, and none from the old one, see [Proxy hot restart](#proxy-hot-restart).
 - During `PostLoginEvent` the player is already in the player registry (`get_player_by_id`, `get_player` and `get_player_by_uuid` find it) and `current_server()` is `None`, because the player has not been routed yet.
 - A `player.disconnect(reason)` made during `PostLoginEvent` disconnects the client in the state it is in (the login phase for `offline` and the forwarding modes, before any server is chosen) with that reason, and the player's `DisconnectEvent` follows. In `offline` and `client_only`, messages, titles and action bars sent during `PostLoginEvent` wait and reach the client once it has joined the game.
 - When a player logs in with a UUID that is already online, the proxy disconnects the first session with "You logged in from another location" and waits for its `DisconnectEvent` before the new session's `PostLoginEvent`, for at most `[events] disconnect_deadline`.
@@ -167,6 +167,27 @@ When the proxy stops (a signal, the `stop` console command, or a plugin cancelli
 7. It stops its background work: the file and Docker providers and their watchers, active health probes, the expired ban purge and server manager monitoring.
 
 A plugin can save per-player state in its `DisconnectEvent` listener and global state in `ProxyShutdownEvent` or `on_disable`. The services from the plugin context, such as the player registry or the ban service, still work in `on_disable`.
+
+### Proxy hot restart
+
+On Linux, the proxy can [restart in place](../../guide/upgrading#restart-without-disconnecting-players). The running proxy, the old image, hands its forwarding sessions over to a new image in the same process. Plugins see a shutdown in the old image and a fresh start in the new one, while the players on `passthrough`, `zero_copy` and `server_only` servers stay connected.
+
+In the old image, the proxy:
+
+1. Stops accepting connections and waits up to 3 seconds for the logins in progress. A login that completes in that time fires its events as usual, `PostLoginEvent` included.
+2. Ends the sessions it cannot hand over. In `offline` and `client_only`, the player is disconnected with "Proxy is restarting, please reconnect" and its `DisconnectEvent` fires with the cause `Shutdown`. A login still in progress gets the same message and ends without a `PostLoginEvent`. The forwarding sessions keep running.
+3. Waits for those connections to finish, for at most 5 seconds.
+4. Fires `ProxyShutdownEvent`, delivers the queued events, disables the plugins and stops its background work, as in steps 4 to 7 of a [shutdown](#proxy-shutdown). The players about to be carried over are still in the player registry at this point, and the `proxy_shutdown()` token fires.
+5. Pauses the forwarding sessions and hands them over. No `DisconnectEvent` fires for them.
+
+In the new image, the proxy:
+
+1. Resumes the forwarding sessions before any plugin loads. Each carried-over player is back in the player registry with the same player id, profile and current server.
+2. Loads and enables the plugins. `on_enable` already finds the carried-over players in the registry.
+3. Fires a `PermissionsSetupEvent` for each carried-over player, so a custom permission checker applies to them as it does at login.
+4. Fires `ProxyInitializeEvent` and starts accepting connections.
+
+The carried-over players appear in the new proxy without `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `ServerConnectedEvent`, and without any other login or server connection event. When they leave, their `DisconnectEvent` fires as for any other player. If the new image fails before it takes the sessions over, the previous version starts again and goes through the same steps. See [Hot restarts](./lifecycle#hot-restarts) for what this means for a plugin's own state.
 
 ## Subscribing to events
 
@@ -569,7 +590,7 @@ Fired exactly once for every player that got a `PostLoginEvent`, when their sess
 | `ClientQuit` (`client_quit`) | The client closed the connection |
 | `Kicked { reason }` (`kicked`) | The proxy ended the session: `Player::disconnect`, a denied connection, a duplicate login. `reason` is what the client was shown |
 | `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere. `reason` is what the client was shown, see [KickedFromServerEvent](#kickedfromserverevent). Always `None` in the forwarding modes, where the proxy does not read the backend's packets |
-| `Shutdown` (`shutdown`) | The proxy is shutting down. The client was shown "Proxy is shutting down" (`offline` and `client_only`). See [Proxy shutdown](#proxy-shutdown) |
+| `Shutdown` (`shutdown`) | The proxy is shutting down, or restarting in place. The client was shown "Proxy is shutting down", or "Proxy is restarting, please reconnect" for a hot restart (`offline` and `client_only`). See [Proxy shutdown](#proxy-shutdown) and [Proxy hot restart](#proxy-hot-restart) |
 | `Error` (`error`) | The session failed, for example an I/O error or an initial backend that could not be reached |
 
 ```rust
@@ -1168,11 +1189,11 @@ A legacy ping answer only carries the MOTD, the player counts and, for clients f
 
 ### ProxyInitializeEvent
 
-Fired after the proxy finishes startup and all plugins are loaded. No fields. Use this for setup that depends on other plugins being ready.
+Fired after the proxy finishes startup and all plugins are loaded. No fields. Use this for setup that depends on other plugins being ready. After a hot restart it fires in the new image, once the carried-over players have had their `PermissionsSetupEvent`, see [Proxy hot restart](#proxy-hot-restart).
 
 ### ProxyShutdownEvent
 
-Fired during shutdown, once every player session has ended and before any plugin is disabled. No fields. Use this or `Plugin::on_disable` for resource cleanup. See [Proxy shutdown](#proxy-shutdown) for the full sequence.
+Fired during shutdown, once every player session has ended and before any plugin is disabled. No fields. Use this or `Plugin::on_disable` for resource cleanup. See [Proxy shutdown](#proxy-shutdown) for the full sequence. A hot restart fires it in the old image too, while the players on forwarding servers are still connected, see [Proxy hot restart](#proxy-hot-restart).
 
 ### ConfigReloadEvent
 
