@@ -51,7 +51,7 @@ It changes on every restart and is not written to the configuration file.
 
 The log only gets a warning that a key was generated, without the key itself. The placeholder `CHANGE-ME` counts as no key.
 
-This key is not written to disk. It changes on every restart. For a persistent key, set one explicitly:
+This key is not written to disk. It changes on every restart, a [hot restart](#hot-restart) included. For a persistent key, set one explicitly:
 
 ```toml
 [web]
@@ -145,8 +145,9 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/proxy` | Proxy status: version, uptime, player count, server count, features, memory usage |
+| GET | `/api/v1/proxy` | Proxy status: version, uptime, player count, server count, features, memory usage, and whether a hot restart is available |
 | POST | `/api/v1/proxy/shutdown` | Graceful proxy shutdown |
+| POST | `/api/v1/proxy/restart` | Restart in place, keeping the players on forwarding servers connected |
 | GET | `/api/v1/proxy/update` | What the last update check found, without checking again |
 | POST | `/api/v1/proxy/update/check` | Check for a new release now |
 | POST | `/api/v1/proxy/update/install` | Install a release in the background |
@@ -170,7 +171,7 @@ These three endpoints drive the [update checks](../../configuration/global#updat
       "published_at": "2026-11-20T10:00:00Z",
       "notes_url": "https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6",
       "security": false,
-      "restart": "full"
+      "restart": "hot"
     },
     "install": { "state": "idle" },
     "install_refusal": null,
@@ -186,7 +187,7 @@ These three endpoints drive the [update checks](../../configuration/global#updat
 | `checks_enabled` | The `[update] check` setting |
 | `last_check` | When the last check ran, as an RFC 3339 timestamp. `null` before the first one |
 | `last_error` | Why the last check failed, `null` when it worked |
-| `available` | The newest release offered on the `[update]` channel, or `null`. `restart` is `full`, or `manual` on Windows where the proxy has to be stopped and started by hand |
+| `available` | The newest release offered on the `[update]` channel, or `null`. `restart` is `hot` on Linux when the release can take over the sessions of the running version, `full` when it cannot or on macOS and other Unix systems, and `manual` on Windows, where the proxy has to be stopped and started by hand. See [Restart the proxy](../../guide/upgrading#restart-the-proxy) |
 | `install` | `{"state": "idle"}`, `{"state": "running", "version": ...}`, `{"state": "installed", "version": ...}` or `{"state": "failed", "reason": ...}` |
 | `install_refusal` | Why this binary cannot install releases, with what to do instead. `null` when it can |
 | `binary_changed` | `true` when the executable on disk is no longer the one the proxy started from, so a restart would run another binary |
@@ -199,7 +200,7 @@ These three endpoints drive the [update checks](../../configuration/global#updat
 { "version": "2.0.0-beta.6" }
 ```
 
-Without `version`, it installs the release the last check found. It does not check by itself, so run `POST /api/v1/proxy/update/check` first when the status has no `available` release. The proxy is not restarted.
+Without `version`, it installs the release the last check found. It does not check by itself, so run `POST /api/v1/proxy/update/check` first when the status has no `available` release. The proxy is not restarted: once `install.state` is `installed`, call [`POST /api/v1/proxy/restart`](#hot-restart) to run the new version.
 
 ```json
 {
@@ -221,6 +222,51 @@ Follow the install through `GET /api/v1/proxy/update`, where `install.state` goe
 | `503 Service Unavailable` | The proxy has no update service |
 
 When the proxy has an update service and the body is valid, each install request writes an info-level log line with the target `audit` before the proxy accepts or refuses the install. It carries `action=proxy_update_install`, `source=admin_api` and the requested version, or `latest` without one.
+
+### Hot restart
+
+`POST /api/v1/proxy/restart` asks the proxy to [restart in place](../../guide/upgrading#restart-without-disconnecting-players). On Linux, it runs the binary at its path again in the same process: players on `passthrough`, `zero_copy` and `server_only` servers stay connected, and players on `offline` and `client_only` servers are disconnected with `Proxy is restarting, please reconnect`. The new image reads `infrarust.toml` again, so this also applies a configuration written through [`PUT /api/v1/config/proxy/raw`](#configuration).
+
+The request takes no body. It answers `202` once the restart is scheduled, before the proxy checks anything:
+
+```json
+{
+  "data": {
+    "success": true,
+    "message": "Hot restart scheduled"
+  }
+}
+```
+
+| Response | When |
+|----------|------|
+| `202 Accepted` | The restart is scheduled |
+| `409 Conflict` | A restart is already in progress, the proxy is shutting down, or hot restart is not supported by this proxy. The message says which |
+| `503 Service Unavailable` | The proxy has no hot restart, on macOS or Windows for example, with `hot restart is not available on this proxy` |
+
+A `202` does not mean the restart will happen. The proxy runs its [preflight](../../guide/upgrading#preflight) afterwards, and when the preflight refuses, the reason only shows in the proxy log, on a `hot restart failed` warning. The admin API itself is down during the restart: the old image stops its plugins, this one included, before the handover, and the new image starts the API again once it has loaded them.
+
+`GET /api/v1/proxy` reports `restart_available`: `true` when this endpoint can schedule a restart, `false` when it answers `503`.
+
+```json
+{
+  "data": {
+    "version": "2.0.0-beta.6",
+    "uptime_seconds": 3725,
+    "uptime_human": "1h 2m 5s",
+    "players_online": 12,
+    "servers_count": 4,
+    "bind_address": "127.0.0.1:8080",
+    "features": ["plugin-admin-api"],
+    "memory_rss_bytes": 41943040,
+    "restart_available": true
+  }
+}
+```
+
+`bind_address` is the address of the admin API itself. The uptime counts from the moment the plugin started, so a hot restart sets it back to zero.
+
+On a proxy that has hot restart, each restart request writes an info-level log line with the target `audit` before the proxy accepts or refuses it. It carries `action=proxy_restart` and `source=admin_api`.
 
 ### Players
 
@@ -433,7 +479,7 @@ Server documents get the same treatment: `GET /api/v1/servers/{id}/raw` and `GET
 
 `GET /api/v1/config/proxy` reports what the process is actually running on, so a `--bind` or `--servers-dir` override shows up there but not in the file. `GET /api/v1/config/proxy/raw` returns the file as it is on disk, comments and all, and `PUT` keeps the document you send rather than merging it into the old one, so deleting a key works. The write is validated before it lands and goes through a temporary file, so a crash mid-write cannot truncate `infrarust.toml`. If the file is missing or unparsable, both read and write fall back to the configuration the proxy started with.
 
-Writing the global config never touches the running proxy. The response carries `requires_restart: true` and the new configuration applies on the next start:
+Writing the global config never touches the running proxy. The response carries `requires_restart: true` and the new configuration applies on the next start, or after a [hot restart](#hot-restart):
 
 ```json
 {
@@ -553,7 +599,9 @@ Streams log entries in real time. Filter by minimum `level` (`trace`, `debug`, `
 
 When `enable_webui` is `true`, the plugin serves an embedded web frontend at the root URL (`http://127.0.0.1:8080/`). The frontend is a Nuxt SPA bundled into the binary at compile time.
 
-The status bar at the top shows an `Update` badge with the version when the last check found a newer release, red and labelled `Security update` when the release fixes a security issue. When the release has a notes page, the badge links to it. A `Restart to apply` badge appears when the executable on disk is no longer the one the proxy started from, after an install for example. The dashboard reads `GET /api/v1/proxy/update` when it opens, every 30 minutes after that, and when the event stream reconnects. It never starts a check or an install.
+The status bar at the top shows an `Update` badge with the version when the last check found a newer release, red and labelled `Security update` when the release fixes a security issue. When the release has a notes page, the badge links to it. A `Restart to apply` badge appears when the executable on disk is no longer the one the proxy started from, after an install for example. On a proxy where `restart_available` is `true`, that badge is a button that starts a hot restart. The dashboard reads `GET /api/v1/proxy/update` when it opens, every 30 minutes after that, and when the event stream reconnects. It never starts a check or an install.
+
+When `restart_available` is `true`, the quick actions of the dashboard and the operations of the Configuration page include `Hot Restart`. Both, like the `Restart to apply` button, ask for confirmation first, then call `POST /api/v1/proxy/restart` and show `Hot restart scheduled`, or the error message the API returned. When `restart_available` is `false`, the action is hidden and `Restart to apply` is a plain badge.
 
 The Plugins page shows each plugin's state; it has no enable or disable action, since a plugin is turned on or off with `enabled` in its `[plugins.<id>]` table and a restart. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
 
