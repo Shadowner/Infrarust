@@ -1,6 +1,6 @@
 ---
 title: Upgrading Infrarust
-description: Check for a new release, install it with infrarust update, roll it back, verify a release by hand, and restart the proxy on the new version.
+description: Check for a new release, install it with infrarust update, roll it back, verify a release by hand, and restart the proxy on the new version, in place on Linux without disconnecting forwarding players.
 ---
 
 # Upgrading Infrarust
@@ -38,11 +38,11 @@ update available: 2.0.0-beta.6
   security fix: no
   published:    2026-11-20T10:00:00Z
   notes:        https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6
-  restart:      full, players are disconnected
+  restart:      hot, players stay connected
 install it with `infrarust update install`
 ```
 
-The command runs as the service user from the proxy's working directory. It loads `infrarust.toml` the way the proxy does, so a relative `servers_dir` has to resolve from where it runs. Read the release notes before you install. The exit code is `0` when Infrarust is up to date, `100` when an update is available and `1` when the check failed; see [`update check`](../reference/cli#update-check) for the JSON output.
+The `restart` line says how the release takes over, see [Restart the proxy](#restart-the-proxy). The command runs as the service user from the proxy's working directory. It loads `infrarust.toml` the way the proxy does, so a relative `servers_dir` has to resolve from where it runs. Read the release notes before you install. The exit code is `0` when Infrarust is up to date, `100` when an update is available and `1` when the check failed; see [`update check`](../reference/cli#update-check) for the JSON output.
 
 ## Install the release
 
@@ -58,7 +58,7 @@ Run it as the user the service runs as. The command creates `.infrarust.lock` in
 
 ### From the console or the admin API
 
-The running proxy installs a release with the console command `update install [version]`, or with `POST /api/v1/proxy/update/install` on the [admin API](../plugins/builtin/admin-api#updates). Neither asks for confirmation, and neither restarts the proxy.
+The running proxy installs a release with the console command `update install [version]`, or with `POST /api/v1/proxy/update/install` on the [admin API](../plugins/builtin/admin-api#updates). Neither asks for confirmation, and neither restarts the proxy. On Linux, the console command `update apply` installs the release and then restarts the proxy in place, see [Apply an update in place](#apply-an-update-in-place).
 
 The install then runs inside the proxy, as its user, so that user needs write access to the directory of the executable. The [systemd unit](./systemd#unit-file) gives it with `ReadWritePaths=/opt/infrarust`. A binary in a directory the service cannot write, such as `/usr/local/bin` under `ProtectSystem=strict`, is refused with `cannot write to /usr/local/bin (...)`, followed by what to do instead.
 
@@ -78,7 +78,7 @@ If a step of the swap fails, the steps already done are undone. When the undo fa
 
 The temporary files are removed after every attempt; `.infrarust.lock` stays. Only one previous binary is kept, since each install replaces `infrarust.old`. When the running proxy installs twice before a restart, the second install keeps the version that is still running as `infrarust.old`, so a rollback returns to it.
 
-The proxy goes on running the binary it started from. Within a minute it notices that the file on disk changed and logs a warning. From then on the console `update` command tells you to restart Infrarust, the admin API reports `binary_changed: true`, and the dashboard shows `Restart to apply`. [Restart the proxy](#restart-the-proxy) to run the new version.
+The proxy goes on running the binary it started from. Within a minute it notices that the file on disk changed and logs a warning. From then on the console `update` command tells you to restart Infrarust, the admin API reports `binary_changed: true`, and the dashboard shows `Restart to apply`. [Restart the proxy](#restart-the-proxy) to run the new version; on Linux, a [hot restart](#restart-without-disconnecting-players) runs it without disconnecting the players on forwarding servers.
 
 ## Roll back
 
@@ -88,7 +88,7 @@ The proxy goes on running the binary it started from. Within a minute it notices
 sudo -u infrarust sh -c 'cd /opt/infrarust && ./infrarust -c infrarust.toml update rollback'
 ```
 
-It asks `Restore Infrarust 2.0.0-beta.5 over /opt/infrarust/infrarust? [y/N]`, runs `check-config` with the previous binary, and swaps the two files. The binary it replaces becomes the new `infrarust.old`, so running the command again undoes the rollback. Restart the proxy afterwards.
+It asks `Restore Infrarust 2.0.0-beta.5 over /opt/infrarust/infrarust? [y/N]`, runs `check-config` with the previous binary, and swaps the two files. The binary it replaces becomes the new `infrarust.old`, so running the command again undoes the rollback. Restart the proxy afterwards: in place when the previous version supports hot restart, by hand otherwise.
 
 The previous binary has to accept the configuration. If you added settings that only the new version knows, remove them first, or the rollback stops with `the binary rejects the configuration`. Rollback is only available from a shell, not from the console or the admin API.
 
@@ -145,7 +145,17 @@ An install swaps in the binary from a release archive. On a build you made yours
 
 ## Restart the proxy
 
-An install or a rollback replaces the file on disk; the proxy keeps running the binary it started from until you restart it. A restart ends every player's session, and players can join again as soon as the proxy is back.
+An install or a rollback replaces the file on disk; the proxy keeps running the binary it started from until it restarts. On Linux, it can [restart in place](#restart-without-disconnecting-players) and keep the players on forwarding servers connected. A stop followed by a start ends every player's session, and players can join again as soon as the proxy is back.
+
+`update check` and the [admin API](../plugins/builtin/admin-api#updates) give each release a `restart` value that says which of the two it needs. The console `update` command shows the same value as `hot restart`, `full restart` or `stop and start the proxy by hand`.
+
+| `restart` | When | What to do |
+|-----------|------|------------|
+| `hot` | On Linux, when the release can take over the sessions of the running version | A [hot restart](#restart-without-disconnecting-players) runs it, and players on forwarding servers stay connected |
+| `full` | The release cannot take over the sessions, or the proxy runs on macOS or another Unix system | Stop the proxy and start it again. Every player is disconnected |
+| `manual` | On Windows | Stop the proxy and start it again yourself |
+
+### Stop and start
 
 With systemd:
 
@@ -166,3 +176,93 @@ docker compose up -d
 [Docker](./docker#upgrading) has the `docker run` version.
 
 When you started Infrarust by hand in a terminal, type `stop` in its console and start it again. On Windows, stop the proxy and start it again yourself; `update check` reports this as `manual, stop and start the proxy by hand`.
+
+## Restart without disconnecting players
+
+On Linux, the proxy can restart in place. The running program replaces itself with the binary at its own path, inside the same process, and hands its connections over. This page and the log call the program from before the restart the old or previous image, and the one after it the new image. The PID does not change, so systemd, Docker and game panels never see the proxy exit. Players on `passthrough`, `zero_copy` and `server_only` servers keep their connection.
+
+The new image starts the way a fresh proxy does: it reads `infrarust.toml` and the server files again, and loads the plugins again. A hot restart is therefore also how you apply a change to `infrarust.toml` without disconnecting the players on forwarding servers. When `bind` changed, the new image listens on the new address.
+
+### Start a hot restart
+
+| From | How |
+|------|-----|
+| The console | `restart`. [`update apply`](#apply-an-update-in-place) installs a release first |
+| A shell | `kill -USR2 <pid>`. With systemd, `sudo systemctl reload infrarust` once the unit has [`ExecReload`](./systemd#reload-without-disconnecting-players). With Docker, `docker kill --signal=USR2 infrarust` |
+| The admin API | `POST /api/v1/proxy/restart`, see [Hot restart](../plugins/builtin/admin-api#hot-restart) |
+| The dashboard | `Hot Restart` on the dashboard and on the Configuration page, or the `Restart to apply` badge after an install |
+| A plugin | `PluginContext::proxy_restart()`, see [Hot restarts](../plugins/dev/lifecycle#hot-restarts) |
+
+Each of these asks for the restart and returns at once. Follow the restart in the log. The old image logs `hot restart requested, checking the new binary`, then one line per step. The new image logs `taking over from the previous image`, then `handover committed, this image owns the inherited sessions`, then `inherited sessions resumed` with the number of sessions it `restored` and `dropped`, and last `infrarust is ready, accepting connections`.
+
+One restart runs at a time. A request made while a restart is in progress, or while the proxy stops, is refused. A SIGUSR2 that arrives while the proxy is still starting is ignored, and the log says so.
+
+### Apply an update in place
+
+The console command `update apply` installs a release and restarts in place in one step. It takes the release the last check found, and checks first when none is known. `update apply <version>` names that same release; to install another version, use `update install <version>` and restart afterwards. A release whose `restart` is not `hot` is refused before anything is installed, with `<version> needs a full restart, nothing was installed`.
+
+The restart still goes through the [preflight](#preflight). When the preflight refuses it, the new binary stays installed and the proxy keeps running the old one. Fix the cause, then type `restart`.
+
+From a shell, the same takes two commands:
+
+```bash
+sudo -u infrarust sh -c 'cd /opt/infrarust && ./infrarust -c infrarust.toml update install -y'
+sudo systemctl reload infrarust
+```
+
+Through the admin API, call `POST /api/v1/proxy/update/install`, wait until `GET /api/v1/proxy/update` reports `install.state` as `installed`, then call `POST /api/v1/proxy/restart`.
+
+### What players see
+
+- On `passthrough`, `zero_copy` and `server_only` servers, the client and the backend keep their TCP connections. Traffic stops while the sessions move to the new image, then resumes where it stopped, with no bytes lost in either direction. In our tests the pause stayed well under a second with 1000 sessions.
+- On `offline` and `client_only` servers, the proxy holds each player's game state itself and cannot hand it over. These players are disconnected with `Proxy is restarting, please reconnect`, and can join again right away.
+- A connection that is still logging in gets up to 3 seconds to finish. A login on a forwarding server that completes in time is carried over like the others. One that does not is disconnected with the same message.
+- New connections, server list pings included, wait in the kernel's queue while the proxy restarts, and the new image accepts them.
+
+A forwarding session that cannot be handed over is closed, and the log says so. A carried-over player whose server is no longer in the configuration keeps the connection to its backend; the new image logs a warning for it.
+
+### Preflight
+
+Before it changes anything, the proxy checks that the new image can take over:
+
+1. No server with a [`local` server manager](./server-management#local-process) runs as a child process of the proxy. The new image could not manage these processes, so a local server that is starting, online or stopping blocks the restart. Stop it first with `stop-server <id>`.
+2. The binary at the path the proxy started from, symlinks followed, runs and supports the handover protocol of the running version. A version without hot restart is refused.
+3. That binary is built for the same target as the running one, such as `x86_64-unknown-linux-musl`.
+4. Its `check-config` accepts the configuration, with the command-line options the proxy was started with.
+
+Each run of the new binary has 10 seconds to answer. When a check fails, nothing has changed and the proxy keeps serving every player. The request was answered already, so the reason is in the log, on a `hot restart failed` warning:
+
+```
+lobby, survival run as child processes of the proxy and would be orphaned by a hot restart; stop them first
+/opt/infrarust/infrarust is built for aarch64-unknown-linux-musl, but this proxy runs as x86_64-unknown-linux-musl; install the x86_64-unknown-linux-musl build
+/opt/infrarust/infrarust rejects the configuration infrarust.toml: <reason>; fix it, then restart again
+```
+
+### Rollback
+
+After the preflight, the old image stops accepting connections, waits for the logins in flight, disconnects the players it cannot hand over, stops its plugins and pauses the forwarding sessions. Then it starts the new image.
+
+If the new image fails before it has taken the sessions over, the proxy rolls back. That covers a binary that cannot start, a configuration or command line it rejects, a listener it cannot open, and a panic during its startup. The proxy starts the previous version again in the same process, and that version resumes the sessions. Players on forwarding servers stay connected through it. The log shows `rolling the hot restart back to <version>: <reason>`.
+
+The previous version starts from the binary the proxy was running, read through `/proc`, which works even after an install replaced the file on disk. `/proc` is mounted on any standard Linux system and in Docker containers. When that copy cannot be used, the proxy falls back to `infrarust.old` next to the binary, then to the binary at the original path, and never to the binary that just failed.
+
+::: warning A configuration problem stops the rollback too
+The previous version reads `infrarust.toml` again, with the same command line. A failure that does not come from the new binary stops it as well: a new `bind` address that another process already uses, for example, or a ban file that cannot be parsed. The proxy then exits and every session is lost. Make sure a new `bind` address is free before you restart.
+:::
+
+Once the new image has taken the sessions over, there is no way back. A failure after that point, such as a plugin that does not load, is logged and the new image keeps running.
+
+### Stopping during a hot restart
+
+A SIGTERM or SIGINT, from `systemctl stop` or `docker stop` for example, that arrives during the preflight or while the proxy waits for the logins in flight cancels the restart. The proxy then stops gracefully, as it would at any other time.
+
+From the moment the proxy starts disconnecting players for the restart, a stop waits for the handover: the new image starts, then stops gracefully. Sending the signal again in that phase does not make the proxy exit at once. See [Signals](../reference/cli#signals).
+
+### Limits
+
+- Hot restart works on Linux only. On macOS and Windows, the console `restart` command answers `Hot restart is unavailable on this platform`, the admin API answers `503`, and the dashboard shows no hot restart action. Stop the proxy and start it again.
+- Players on `offline` and `client_only` servers are disconnected, see [What players see](#what-players-see).
+- A running `local` server blocks the restart, see [Preflight](#preflight).
+- The new binary must support hot restart as well. Going back to a release without it takes a full restart, and `update check` reports `full` for such a release.
+- The old image stops its plugins and the new one loads them again, so a plugin keeps only the state it saves. Plugin authors can read [Hot restarts](../plugins/dev/lifecycle#hot-restarts).
+- A line typed in the console during the restart may be lost. Type it again once the new image logs `infrarust is ready, accepting connections`.
