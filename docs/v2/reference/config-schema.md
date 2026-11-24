@@ -457,6 +457,25 @@ limbo_handlers = 64
 permission_nodes = 256
 ```
 
+### `[update]`
+
+Background checks for new releases. Read at startup; changes need a restart. See [Update checks](../configuration/global#update-checks) for the channels, what each check sends to GitHub, and mirrors.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `check` | boolean | `true` | Look for new releases in the background. Checks you ask for run either way |
+| `channel` | string | `"auto"` | `"auto"` offers pre-releases only when the running version is one, `"stable"` offers stable releases only, `"prerelease"` offers both |
+| `interval` | duration | `"24h"` | Time between two background checks |
+| `url` | string | `"https://api.github.com/repos/Shadowner/Infrarust/releases"` | Release list to read, in the format of the GitHub releases API |
+
+Validation: `interval` greater than zero, and `url` starting with `http://` or `https://`, even with `check = false`. With `check` on, an `interval` under `1h` gives a warning.
+
+```toml
+[update]
+channel = "stable"
+interval = "12h"
+```
+
 ### `[plugins.<id>]`
 
 Per-plugin configuration, keyed by plugin ID. WASM plugins are discovered from `plugins_dir`.

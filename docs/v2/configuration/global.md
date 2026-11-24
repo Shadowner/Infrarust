@@ -1,6 +1,6 @@
 ---
 title: Global Settings
-description: Reference for infrarust.toml. Bind address, workers, timeouts, rate limits, keepalive, bans, forwarding, ip_filter, web admin API, permissions, WASM plugin limits, and other proxy-wide settings.
+description: Reference for infrarust.toml. Bind address, workers, timeouts, rate limits, keepalive, bans, forwarding, ip_filter, web admin API, permissions, WASM plugin limits, update checks, and other proxy-wide settings.
 outline: [2, 3]
 ---
 
@@ -600,6 +600,67 @@ A plugin that propagates a refused registration with `?` in `on_enable` fails to
 
 Startup fails when a quota is 0 or above 1048576.
 
+## Update checks
+
+```toml
+[update]
+check = true
+channel = "auto"
+interval = "24h"
+url = "https://api.github.com/repos/Shadowner/Infrarust/releases"
+```
+
+Infrarust looks for newer releases in the background and tells you when one is out. It never installs a release on its own; see [Upgrading](../guide/upgrading) for that step.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `check` | bool | `true` | Look for new releases in the background |
+| `channel` | string | `"auto"` | Which releases are offered: `"auto"`, `"stable"` or `"prerelease"` |
+| `interval` | duration | `"24h"` | Time between two background checks |
+| `url` | string | `"https://api.github.com/repos/Shadowner/Infrarust/releases"` | Release list the checks read |
+
+The first background check runs at a random moment between 1 and 10 minutes after startup, then every `interval`, whether the previous check worked or not. When a check finds a newer release, the proxy logs it once per version: at info level, or at warn level when the release fixes a security issue. The result also shows in the console `update` and `version` commands, in `/ir version` for admins, and in the [admin API and dashboard](../plugins/builtin/admin-api#updates).
+
+`check = false` stops the background checks. A check you ask for still runs: `infrarust update check`, `infrarust update install` without `--version`, the console `update` command, and `POST /api/v1/proxy/update/check`.
+
+### Channels
+
+Only versions newer than the running one are offered. Infrarust compares versions as semver and treats a version with a pre-release suffix, such as `2.0.0-beta.6`, as a pre-release. It reads this from the version number and ignores the pre-release flag of the GitHub release.
+
+| `channel` | Offers |
+|-----------|--------|
+| `auto` | Pre-releases and stable releases when the running version is a pre-release, stable releases only when it is stable |
+| `stable` | Stable releases only, even when the running version is a pre-release |
+| `prerelease` | Pre-releases and stable releases |
+
+A release is offered only when it carries a `manifest.json` signed with a release key built into the binary. Drafts and releases without a signed manifest are skipped. The checks read the 20 most recent releases of the list and nothing older.
+
+### Privacy and the GitHub rate limit
+
+Each check is an HTTPS request from the proxy to the GitHub API. When a newer release exists, the check also downloads its `manifest.json` and `manifest.json.minisig` from GitHub. GitHub sees the IP address of the server, and the `User-Agent` header carries the Infrarust version, as in `infrarust/2.0.0-beta.5`. Set `check = false` if the proxy should not contact GitHub on its own.
+
+GitHub limits the API requests an IP address can make without a token (60 an hour at the time of writing), and anything else on the same address shares that budget. The proxy keeps the `ETag` of the last release list and sends it back with the next request, so an unchanged list comes back as `304 Not Modified` instead of being downloaded again. When GitHub answers `403` or `429`, the check fails with `the update server rate limit is reached until <time>`, and the next background check waits for the next `interval`.
+
+### Using a mirror
+
+`url` points the checks at another server. It must answer `GET <url>?per_page=20` with a JSON array in the format of the GitHub releases API. Each release needs `tag_name` and an `assets` array whose entries have `name` and `browser_download_url`; `draft`, `published_at` and `html_url` are optional. The manifest, its signature and the archives are downloaded from the `browser_download_url` of the asset with the matching name, wherever that URL points.
+
+A mirror cannot change what gets installed. The manifest must verify against the release key built into the binary, and each archive must match the size and sha256 the manifest gives.
+
+### Validation
+
+- `interval` must be greater than zero. `"0s"` is rejected with `update.interval must be greater than zero`.
+- With `check` on, an `interval` under one hour starts the proxy with a warning, because checks that often can run into the GitHub rate limit.
+- `url` must be an `http://` or `https://` URL. Anything else is rejected with `update.url must be an http or https URL`.
+
+The first and last rules apply even with `check = false`.
+
+The section is read at startup; changing it needs a restart.
+
+::: warning Older binaries reject the section
+The global config refuses unknown keys, so a version of Infrarust that predates `[update]` refuses an `infrarust.toml` containing it, with an `unknown field` error. Remove the section before you put such a version back by hand. `infrarust update install` and `infrarust update rollback` run `check-config` with the binary they are about to put in place, and stop before changing anything when it rejects the file.
+:::
+
 ## Plugins
 
 ```toml
@@ -695,6 +756,11 @@ plugin_channels = 128
 codec_filters = 32
 limbo_handlers = 64
 permission_nodes = 256
+
+[update]
+check = true
+channel = "auto"
+interval = "24h"
 
 # [telemetry]
 # enabled = true
