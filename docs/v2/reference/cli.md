@@ -350,7 +350,7 @@ infrarust [OPTIONS] update install [--version <VERSION>] [--yes]
 | `--version <VERSION>` | | newest on the channel | Install this version instead. A leading `v` is accepted |
 | `--yes` | `-y` | | Install without asking for confirmation |
 
-Without `--version`, it checks the `[update]` channel first. When nothing newer exists it prints `Infrarust <version> is up to date, nothing to install` and exits with `0`. `--version` takes that release whatever the channel and whether it is older or newer than the running one, as long as it is among the 20 most recent releases and carries a signed manifest.
+Without `--version`, it checks the `[update]` channel first. When nothing newer exists it prints `Infrarust <version> is up to date, nothing to install` and exits with `0`. `--version` installs that release whatever the channel, older or newer than the running one, as long as it is among the 20 most recent releases and carries a signed manifest.
 
 It refuses without downloading anything when the binary was not built by the release pipeline, when it comes from the container image, when no release archive exists for its platform, when it cannot write to the binary's directory, or when the configuration file does not exist. Each refusal says what to do instead.
 
