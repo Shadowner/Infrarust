@@ -11,8 +11,10 @@ outline: [2, 3]
 The main proxy binary. It loads a TOML configuration file, starts the proxy, and opens an interactive console.
 
 ```bash
-infrarust [OPTIONS]
+infrarust [OPTIONS] [COMMAND]
 ```
+
+Without a command it starts the proxy. The commands [`migrate`](#infrarust-migrate), [`check-config`](#infrarust-check-config) and [`update`](#infrarust-update) run one task and exit. The options below go before the command: `infrarust -c /etc/infrarust/proxy.toml update check`, not `infrarust update check -c ...`.
 
 ### Options
 
@@ -145,10 +147,29 @@ A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../p
 |---------|---------|-------|-------------|
 | `help` | `?` | `help [command]` | Show help |
 | `version` | `ver` | `version` | Show version info |
+| `update` | | `update [install [version]]` | Check for or install an update |
 | `status` | `info` | `status` | Proxy overview |
 | `stop` | `shutdown`, `exit`, `quit` | `stop` | Shut down the proxy |
 | `clear` | `cls` | `clear` | Clear the screen |
 | `gc` | | `gc` | Run garbage collection |
+
+`version` prints the version, the supported Minecraft versions and the platform. When the last update check found a newer release, it adds an `update` line, `2.0.0-beta.6 available`, followed by `security fix` for a release that fixes a security issue. It reads the result of the last check and does not contact GitHub.
+
+`update` runs a check now, whatever `[update] check` says, and prints what it found:
+
+```
+◆ Infrarust 2.0.0-beta.5 · security update available
+│ available  2.0.0-beta.6  security fix
+│ published  2026-11-20T08:00:00Z
+│ notes      https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6
+│ restart    full restart
+│
+│ type update install to install it
+```
+
+The header ends with `up to date`, `update available`, `security update available` or `check failed`. A few lines appear only when they apply: `install` follows an install that is running, done or failed; `binary` says the file on disk changed since the proxy started; `error` gives the reason a check failed; and `refused` explains why this binary cannot install the release, in place of the `update install` hint.
+
+`update install` installs the newest release on the `[update]` channel, and `update install <version>` installs that version. With no version and no release found by an earlier check, it checks first, and stops with `Infrarust <version> is up to date` when there is nothing newer or `Update check failed: <reason>` when the check fails. The install runs in the background and the command waits for it, then prints `✓ Installed 2.0.0-beta.6, restart Infrarust to run it` or `✗ Update failed: <reason>`. It does not ask for confirmation and does not restart the proxy. A refusal prints `✗ Cannot install: <reason>`, for example `an installation is already running` while another install is in progress. The console has no rollback; run [`infrarust update rollback`](#update-rollback) from a shell. [Upgrading](../guide/upgrading) walks through the whole procedure.
 
 #### Plugin commands
 
@@ -188,6 +209,210 @@ infrarust migrate ./old-servers --output ./servers --config ./old-config.yaml
 ```
 
 The command prints a summary of converted files, along with any warnings or errors encountered during migration. It exits with a non-zero code if any conversion fails.
+
+---
+
+## infrarust check-config
+
+Validates the proxy configuration and exits without starting the proxy.
+
+```bash
+infrarust [OPTIONS] check-config [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print the result as one JSON line on stdout |
+
+It reads the file given by `-c` (`infrarust.toml` by default), applies `--bind`, `--plugins-dir` and `--servers-dir`, and runs the checks the proxy runs at startup, which include that `servers_dir` exists. It does not read the server files in that directory. A missing file is an error, and the setup wizard never runs.
+
+Without `--json`, warnings go to stderr as `warning:` lines. The result goes to stdout as `configuration is valid: <path>`, or to stderr as `error: <reason>`:
+
+```
+$ infrarust -c /opt/infrarust/infrarust.toml check-config
+warning: update.interval is 30m; checking GitHub more than once an hour can hit its rate limit
+configuration is valid: /opt/infrarust/infrarust.toml
+```
+
+With `--json`, the warnings go into the JSON line instead:
+
+```json
+{"ok":true,"config":"/opt/infrarust/infrarust.toml","warnings":["update.interval is 30m; checking GitHub more than once an hour can hit its rate limit"],"error":null}
+```
+
+```json
+{"ok":false,"config":"infrarust.toml","warnings":[],"error":"cannot read config file: infrarust.toml: No such file or directory (os error 2)"}
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | The configuration is valid |
+| `1` | It is invalid or cannot be read |
+
+`infrarust update install` and `infrarust update rollback` run `check-config --json` with the binary they are about to put in place, with the same `-c`, `--bind`, `--plugins-dir` and `--servers-dir`, and stop when it reports an error. An install started from the console or the admin API passes the options the proxy was started with.
+
+---
+
+## infrarust update
+
+Checks for, installs and rolls back signed releases.
+
+```bash
+infrarust [OPTIONS] update <COMMAND>
+```
+
+| Command | What it does |
+|---------|--------------|
+| [`check`](#update-check) | Look for a newer signed release |
+| [`install`](#update-install) | Download, verify and install a release over this binary |
+| [`rollback`](#update-rollback) | Put back the binary that the last install replaced |
+
+The commands read the `[update]` section of the file given by `-c`, and they load it the way the proxy does, so relative paths such as `servers_dir = "./servers"` resolve from the directory you run them in. Run them from the proxy's working directory. They treat a missing or broken configuration differently:
+
+| Command | No configuration file | A configuration that does not load |
+|---------|-----------------------|------------------------------------|
+| `check` | Uses the `[update]` defaults | Fails with the error |
+| `install` | Refuses, because the new binary checks the configuration before it replaces this one | Fails with the error |
+| `rollback` | Fails when the previous binary checks the configuration | Warns and goes on, since the previous binary checks the configuration before it is restored |
+
+Warnings and errors go to stderr. `--log-level` does not apply to these commands; `RUST_LOG` does.
+
+### update check
+
+```bash
+infrarust [OPTIONS] update check [--channel <CHANNEL>] [--json]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--channel <CHANNEL>` | `[update] channel` | `auto`, `stable` or `prerelease`, for this check only. See [Channels](../configuration/global#channels) |
+| `--json` | | Print the result as one JSON line on stdout |
+
+It queries the release list even when `[update] check = false`.
+
+```
+$ infrarust update check
+current version: 2.0.0-beta.5
+update available: 2.0.0-beta.6
+  security fix: no
+  published:    2026-11-20T10:00:00Z
+  notes:        https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6
+  restart:      full, players are disconnected
+install it with `infrarust update install`
+```
+
+When this binary cannot install the release, the last line gives the reason instead, starting with `this binary cannot install it:`. Nothing newer prints `up to date` after the version. A failed check prints only the version on stdout, and `error: <reason>` on stderr.
+
+The `restart` line says how the new version takes over: `full, players are disconnected` on Linux and macOS, `manual, stop and start the proxy by hand` on Windows.
+
+With `--json`:
+
+```json
+{"current_version":"2.0.0-beta.5","last_check":"2026-11-24T10:00:00Z","last_error":null,"available":{"version":"2.0.0-beta.6","published_at":"2026-11-20T10:00:00Z","notes_url":"https://github.com/Shadowner/Infrarust/releases/tag/v2.0.0-beta.6","security":false,"restart":"full"},"install_refusal":null}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `current_version` | Version of the binary that ran the check |
+| `last_check` | When the check ran, in RFC 3339 UTC. `null` when the configuration did not load and no check ran |
+| `last_error` | Why the check failed, `null` when it worked |
+| `available` | The newest release offered on the channel, `null` when there is none |
+| `available.version`, `available.published_at`, `available.notes_url` | Its version, publication time and release notes page |
+| `available.security` | `true` when the release fixes a security issue |
+| `available.restart` | `full` or `manual`, as on the `restart` line |
+| `install_refusal` | Why this binary cannot install releases, with what to do instead. `null` when it can |
+
+`install_refusal` includes the write test on the binary's directory, so it depends on the user who runs the command.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Infrarust is up to date |
+| `100` | An update is available, even one this binary cannot install |
+| `1` | The check failed |
+
+A cron job or monitoring script can branch on the code:
+
+```bash
+infrarust -c /opt/infrarust/infrarust.toml update check --json > /var/tmp/infrarust-update.json
+if [ $? -eq 100 ]; then
+  jq -r '.available.version' /var/tmp/infrarust-update.json
+fi
+```
+
+### update install
+
+```bash
+infrarust [OPTIONS] update install [--version <VERSION>] [--yes]
+```
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--version <VERSION>` | | newest on the channel | Install this version instead. A leading `v` is accepted |
+| `--yes` | `-y` | | Install without asking for confirmation |
+
+Without `--version`, it checks the `[update]` channel first. When nothing newer exists it prints `Infrarust <version> is up to date, nothing to install` and exits with `0`. `--version` takes that release whatever the channel and whether it is older or newer than the running one, as long as it is among the 20 most recent releases and carries a signed manifest.
+
+It refuses without downloading anything when the binary was not built by the release pipeline, when it comes from the container image, when no release archive exists for its platform, when it cannot write to the binary's directory, or when the configuration file does not exist. Each refusal says what to do instead.
+
+It asks for confirmation before it installs, with `No` as the default:
+
+```
+Install Infrarust 2.0.0-beta.6 over /opt/infrarust/infrarust? [y/N]
+```
+
+Answering no prints `cancelled, nothing was changed`. When stdin is not a terminal, nobody can answer, so the command stops with `stdin is not a terminal, so nobody can confirm; pass --yes to go ahead`. Pass `--yes` in scripts.
+
+Each step prints a line on stderr, and the result goes to stdout:
+
+```
+looking for the release
+downloading infrarust-linux-x86_64.tar.gz (9437184 bytes) for 2.0.0-beta.6
+  25%
+  50%
+  75%
+  100%
+download verified
+extracting the new binary
+probing the new binary
+checking the configuration with the new binary
+replacing the binary
+installed Infrarust 2.0.0-beta.6 at /opt/infrarust/infrarust, the previous binary is kept at /opt/infrarust/infrarust.old
+restart Infrarust to run it; a proxy already running from this binary notices the change and says so in its logs
+```
+
+The install does not restart a running proxy. [What an install does](../guide/upgrading#what-an-install-does) details each step.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Installed, or nothing to install |
+| `1` | Refused, cancelled or failed |
+
+### update rollback
+
+```bash
+infrarust [OPTIONS] update rollback [--yes]
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--yes` | `-y` | Roll back without asking for confirmation |
+
+Puts back `infrarust.old`, the binary the last install replaced (`infrarust.old.exe` on Windows). The two files swap places, so the binary it replaces becomes the new `infrarust.old` and a second rollback undoes the first. Before the swap, it runs the previous binary to read its version and runs its `check-config`.
+
+```
+$ infrarust update rollback
+Restore Infrarust 2.0.0-beta.5 over /opt/infrarust/infrarust? [y/N] y
+restored Infrarust 2.0.0-beta.5 at /opt/infrarust/infrarust, the replaced binary is kept at /opt/infrarust/infrarust.old
+restart Infrarust to run it; a proxy already running from this binary notices the change and says so in its logs
+run `infrarust update rollback` again to undo
+```
+
+Without `infrarust.old` it stops with `there is no previous binary to roll back to`. The confirmation works as for `install`.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Rolled back |
+| `1` | Refused, cancelled or failed |
 
 ---
 
