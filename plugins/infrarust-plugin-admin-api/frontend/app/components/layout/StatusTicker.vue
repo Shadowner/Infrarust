@@ -11,6 +11,7 @@ import {
   HeartIcon,
   ExclamationTriangleIcon,
   ArrowUpCircleIcon,
+  ArrowPathRoundedSquareIcon,
 } from '@heroicons/vue/24/outline';
 import type { ApiEnvelope, ProxyStatus, UpdateStatusDto } from '~/types/api';
 
@@ -22,6 +23,7 @@ const { request } = useApi();
 const { status: sseStatus, onEvent } = useEventBus();
 const { now } = useTick();
 const { pending: restartPending } = useRestartRequired();
+const { restart: hotRestart } = useHotRestart();
 
 const proxyStatus = ref<ProxyStatus | null>(null);
 const pinging = ref(false);
@@ -73,22 +75,44 @@ const updateTitle = computed(() => {
   return `${kind} ${update.version} ${state}${notes}`;
 });
 
+const restartAvailable = computed(() => proxyStatus.value?.restart_available ?? false);
+const restartHintTitle = computed(() =>
+  restartAvailable.value
+    ? 'A new binary is on disk. Hot restart the proxy to apply it'
+    : 'A new binary is on disk. Restart the proxy to apply it',
+);
+
+function handleRestartHint() {
+  if (restartAvailable.value) hotRestart();
+}
+
 async function loadUpdateStatus() {
   const res = await request<ApiEnvelope<UpdateStatusDto>>('/proxy/update').catch(() => null);
   if (res) updateStatus.value = res.data;
 }
 
-onMounted(async () => {
+async function loadProxyStatus() {
+  const res = await request<ApiEnvelope<ProxyStatus>>('/proxy').catch(() => null);
+  if (!res) return;
+  proxyStatus.value = res.data;
+  uptimeBaseSeconds.value = res.data.uptime_seconds;
+  uptimeBaseTime.value = Date.now();
+}
+
+let sseDropped = false;
+watch(sseStatus, (status) => {
+  if (status === 'error') sseDropped = true;
+  if (status === 'open' && sseDropped) {
+    sseDropped = false;
+    loadProxyStatus();
+    loadUpdateStatus();
+  }
+});
+
+onMounted(() => {
   loadUpdateStatus();
   updateTimer = setInterval(loadUpdateStatus, UPDATE_REFRESH_INTERVAL);
-  try {
-    const res = await request<{ data: ProxyStatus }>('/proxy');
-    proxyStatus.value = res.data;
-    uptimeBaseSeconds.value = res.data.uptime_seconds;
-    uptimeBaseTime.value = Date.now();
-  } catch {
-    // Will be populated by SSE
-  }
+  loadProxyStatus();
 });
 
 onBeforeUnmount(() => {
@@ -184,10 +208,19 @@ function handleSwitchKey() {
         <component :is="availableUpdate.security ? ShieldExclamationIcon : ArrowUpCircleIcon" class="h-3 w-3" />
         {{ availableUpdate.security ? 'Security update' : 'Update' }}
         <span class="font-mono normal-case">{{ availableUpdate.version }}</span>
-        <template v-if="updateApplied">
-          <span class="h-2.5 w-px bg-current opacity-40" />
-          Restart to apply
-        </template>
+      </component>
+
+      <component
+        v-if="updateApplied"
+        :is="restartAvailable ? 'button' : 'span'"
+        :type="restartAvailable ? 'button' : undefined"
+        :title="restartHintTitle"
+        class="flex items-center gap-1.5 rounded-full border border-[rgba(233,160,71,0.35)] bg-[rgba(233,160,71,0.14)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#ffd8ad]"
+        :class="restartAvailable ? 'transition-colors hover:bg-[rgba(233,160,71,0.24)]' : ''"
+        @click="handleRestartHint"
+      >
+        <ArrowPathRoundedSquareIcon class="h-3 w-3" />
+        Restart to apply
       </component>
 
       <div class="flex items-center gap-2">
@@ -256,14 +289,20 @@ function handleSwitchKey() {
         :rel="updateNotesUrl ? 'noopener' : undefined"
         :aria-label="updateTitle"
         :title="updateTitle"
-        class="relative"
         :class="availableUpdate.security ? 'text-[var(--ir-danger)]' : 'text-[var(--ir-accent)]'"
       >
         <component :is="availableUpdate.security ? ShieldExclamationIcon : ArrowUpCircleIcon" class="h-4 w-4" />
-        <span
-          v-if="updateApplied"
-          class="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--ir-warn)]"
-        />
+      </component>
+      <component
+        v-if="updateApplied"
+        :is="restartAvailable ? 'button' : 'span'"
+        :type="restartAvailable ? 'button' : undefined"
+        :aria-label="restartHintTitle"
+        :title="restartHintTitle"
+        class="text-[var(--ir-warn)]"
+        @click="handleRestartHint"
+      >
+        <ArrowPathRoundedSquareIcon class="h-4 w-4" />
       </component>
       <span
         class="h-2 w-2 rounded-full"
