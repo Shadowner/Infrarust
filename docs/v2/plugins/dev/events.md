@@ -254,7 +254,7 @@ Fired once per connection, right after the proxy routed its domain and before an
 | `raw_host` | `String` | The host as the client sent it, with its case, Forge marker (`\0FML3\0`) and trailing dot. Empty when a legacy ping sends no host |
 | `port` | `u16` | The port from the handshake, 0 when a legacy ping sends none |
 | `protocol_version` | `ProtocolVersion` | The client's protocol version. For a client older than 1.7, the legacy protocol number, or 0 for a ping format that carries none |
-| `intent` | `HandshakeIntent` | `Status` (server list ping), `Login` or `Transfer` (a 1.20.5+ client sent by a `Transfer` packet, which the proxy closes after the event: transfers are not supported yet). `as_str()` gives `status`, `login`, `transfer` |
+| `intent` | `HandshakeIntent` | `Status` (server list ping), `Login` or `Transfer` (a 1.20.5+ client sent by a `Transfer` packet; the connection then goes through the login like any other, and the backend receives the transfer intent). `as_str()` gives `status`, `login`, `transfer` |
 | `legacy` | `bool` | `true` for a client older than 1.7 |
 | `server` | `Option<ServerId>` | The server the domain routes to. `None` for a ping to an unknown domain |
 

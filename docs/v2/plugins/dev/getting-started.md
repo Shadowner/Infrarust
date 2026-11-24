@@ -10,7 +10,7 @@ This tutorial walks you through creating a plugin that logs player connections a
 
 ## Prerequisites
 
-- A Rust toolchain new enough for edition 2024. Infrarust pins its MSRV at 1.94 in the workspace `Cargo.toml`.
+- A Rust toolchain new enough for edition 2024. Infrarust pins its MSRV at 1.99 in the workspace `Cargo.toml`.
 - The Infrarust source code checked out locally
 - Familiarity with `async`/`await` in Rust
 

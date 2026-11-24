@@ -16,7 +16,7 @@ You need a Rust toolchain with edition 2024 support and the `wasm32-wasip2` targ
 rustup target add wasm32-wasip2
 ```
 
-The proxy host and the SDK are pinned to edition 2024 and `rust-version = "1.94"`. Use a toolchain at or above that version.
+The proxy host and the SDK are pinned to edition 2024 and `rust-version = "1.99"`. Use a toolchain at or above that version.
 
 ## Cargo.toml
 

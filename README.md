@@ -54,7 +54,7 @@ sudo mv infrarust /usr/local/bin/
 # Docker
 docker pull ghcr.io/shadowner/infrarust:latest
 
-# From source (Rust 1.94+)
+# From source (Rust 1.99+)
 git clone https://github.com/Shadowner/Infrarust.git && cd Infrarust
 cargo build --release -p infrarust
 ```
