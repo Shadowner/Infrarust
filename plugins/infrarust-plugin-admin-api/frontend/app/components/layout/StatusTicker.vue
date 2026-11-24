@@ -10,8 +10,11 @@ import {
   KeyIcon,
   HeartIcon,
   ExclamationTriangleIcon,
+  ArrowUpCircleIcon,
 } from '@heroicons/vue/24/outline';
-import type { ProxyStatus } from '~/types/api';
+import type { ApiEnvelope, ProxyStatus, UpdateStatusDto } from '~/types/api';
+
+const UPDATE_REFRESH_INTERVAL = 30 * 60 * 1000;
 
 const route = useRoute();
 const auth = useAuth();
@@ -24,6 +27,8 @@ const proxyStatus = ref<ProxyStatus | null>(null);
 const pinging = ref(false);
 const uptimeBaseSeconds = ref(0);
 const uptimeBaseTime = ref(Date.now());
+const updateStatus = ref<UpdateStatusDto | null>(null);
+let updateTimer: ReturnType<typeof setInterval> | null = null;
 
 const pageMap: Record<string, { label: string; icon: any }> = {
   '/dashboard': { label: 'Dashboard', icon: HomeIcon },
@@ -51,7 +56,31 @@ const liveUptime = computed(() => {
   return formatDuration(uptimeBaseSeconds.value + elapsed);
 });
 
+const availableUpdate = computed(() =>
+  updateStatus.value?.enabled ? updateStatus.value.available : null,
+);
+const updateApplied = computed(() => updateStatus.value?.binary_changed ?? false);
+const updateNotesUrl = computed(() => {
+  const url = availableUpdate.value?.notes_url;
+  return url && /^https?:\/\//i.test(url) ? url : undefined;
+});
+const updateTitle = computed(() => {
+  const update = availableUpdate.value;
+  if (!update) return '';
+  const kind = update.security ? 'Security update' : 'Update';
+  const state = updateApplied.value ? 'installed, restart the proxy to apply it' : 'available';
+  const notes = updateNotesUrl.value ? ' (opens the release notes)' : '';
+  return `${kind} ${update.version} ${state}${notes}`;
+});
+
+async function loadUpdateStatus() {
+  const res = await request<ApiEnvelope<UpdateStatusDto>>('/proxy/update').catch(() => null);
+  if (res) updateStatus.value = res.data;
+}
+
 onMounted(async () => {
+  loadUpdateStatus();
+  updateTimer = setInterval(loadUpdateStatus, UPDATE_REFRESH_INTERVAL);
   try {
     const res = await request<{ data: ProxyStatus }>('/proxy');
     proxyStatus.value = res.data;
@@ -60,6 +89,11 @@ onMounted(async () => {
   } catch {
     // Will be populated by SSE
   }
+});
+
+onBeforeUnmount(() => {
+  if (updateTimer) clearInterval(updateTimer);
+  updateTimer = null;
 });
 
 onEvent('stats.tick', (data) => {
@@ -135,6 +169,27 @@ function handleSwitchKey() {
         Restart required
       </NuxtLink>
 
+      <component
+        v-if="availableUpdate"
+        :is="updateNotesUrl ? 'a' : 'span'"
+        :href="updateNotesUrl"
+        :target="updateNotesUrl ? '_blank' : undefined"
+        :rel="updateNotesUrl ? 'noopener' : undefined"
+        :title="updateTitle"
+        class="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+        :class="availableUpdate.security
+          ? 'border-[rgba(204,62,56,0.4)] bg-[rgba(204,62,56,0.16)] text-[#ffc0bc]'
+          : 'border-[var(--ir-border-strong)] bg-[var(--ir-accent-soft)] text-[var(--ir-text)]'"
+      >
+        <component :is="availableUpdate.security ? ShieldExclamationIcon : ArrowUpCircleIcon" class="h-3 w-3" />
+        {{ availableUpdate.security ? 'Security update' : 'Update' }}
+        <span class="font-mono normal-case">{{ availableUpdate.version }}</span>
+        <template v-if="updateApplied">
+          <span class="h-2.5 w-px bg-current opacity-40" />
+          Restart to apply
+        </template>
+      </component>
+
       <div class="flex items-center gap-2">
         <span
           class="h-2 w-2 rounded-full transition-transform duration-150"
@@ -193,6 +248,23 @@ function handleSwitchKey() {
       <NuxtLink v-if="restartPending" to="/config/proxy" aria-label="Restart required" class="text-[var(--ir-warn)]">
         <ExclamationTriangleIcon class="h-4 w-4" />
       </NuxtLink>
+      <component
+        v-if="availableUpdate"
+        :is="updateNotesUrl ? 'a' : 'span'"
+        :href="updateNotesUrl"
+        :target="updateNotesUrl ? '_blank' : undefined"
+        :rel="updateNotesUrl ? 'noopener' : undefined"
+        :aria-label="updateTitle"
+        :title="updateTitle"
+        class="relative"
+        :class="availableUpdate.security ? 'text-[var(--ir-danger)]' : 'text-[var(--ir-accent)]'"
+      >
+        <component :is="availableUpdate.security ? ShieldExclamationIcon : ArrowUpCircleIcon" class="h-4 w-4" />
+        <span
+          v-if="updateApplied"
+          class="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--ir-warn)]"
+        />
+      </component>
       <span
         class="h-2 w-2 rounded-full"
         :class="[

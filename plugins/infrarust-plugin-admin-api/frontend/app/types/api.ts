@@ -39,6 +39,38 @@ export interface ProxyStatus {
   memory_rss_bytes: number | null;
 }
 
+export type RestartRequirement = 'hot' | 'full' | 'manual';
+
+export interface AvailableUpdateDto {
+  version: string;
+  published_at: string | null;
+  notes_url: string | null;
+  security: boolean;
+  restart: RestartRequirement;
+}
+
+export type InstallStateDto =
+  | { state: 'idle' }
+  | { state: 'running'; version: string }
+  | { state: 'installed'; version: string }
+  | { state: 'failed'; reason: string };
+
+export interface UpdateStatusDto {
+  enabled: boolean;
+  current_version: string;
+  checks_enabled: boolean;
+  last_check: string | null;
+  last_error: string | null;
+  available: AvailableUpdateDto | null;
+  install: InstallStateDto;
+  install_refusal: string | null;
+  binary_changed: boolean;
+}
+
+export interface InstallUpdateRequest {
+  version?: string;
+}
+
 // ── Stats ──
 
 export interface StatsDto {
