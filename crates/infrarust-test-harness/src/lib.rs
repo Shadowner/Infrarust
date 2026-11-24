@@ -33,7 +33,7 @@ pub use legacy::{
 };
 pub use limbo::{Hold, Holds, holding_gate, holding_handler, next_hold};
 pub use managed::FakeServerProvider;
-pub use proxy::{ServerSpec, TestProxy, TestProxyBuilder};
+pub use proxy::{ProxyEnd, ProxyRun, ServerSpec, Successor, TestProxy, TestProxyBuilder};
 pub use recorder::{EventKind, RECORDER_PLUGIN_ID, Recorded, Recorder, RecordingPlugin};
 pub use scripted::ScriptedPlugin;
 pub use session::{FakeSessionServer, SessionCall};

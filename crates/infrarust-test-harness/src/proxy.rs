@@ -9,15 +9,19 @@ use infrarust_api::player::Player;
 use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
 use infrarust_api::services::player_registry::PlayerRegistry;
 use infrarust_config::{ProxyConfig, ProxyMode, ServerConfig};
+use infrarust_core::error::CoreError;
 use infrarust_core::event_bus::EventBusImpl;
+use infrarust_core::hot_restart::{InheritanceRecord, MemoryInheritance, Preflight, RestartHub};
 use infrarust_core::plugin::{PluginLoader, PluginState, StaticPluginLoader};
-use infrarust_core::runtime::{ProxyRuntime, RunningProxy};
+use infrarust_core::runtime::{ProxyExit, ProxyRuntime, RestartHandover, RunningProxy};
 use infrarust_core::server::ProxyServer;
 use infrarust_core::server::ProxyServices;
+use infrarust_core::test_support::{FakePreflight, test_binary};
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_server_manager::ServerProvider;
 use tempfile::TempDir;
 use tokio::net::TcpSocket;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use toml::{Table, Value};
 
@@ -31,8 +35,10 @@ const MANAGED_START_TIMEOUT: Duration = Duration::from_secs(10);
 const MANAGED_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONFIG_FILE: &str = "infrarust.toml";
+const EXECUTABLE: &str = "infrarust";
 
 type TablePatch = Box<dyn FnOnce(&mut Table) + Send>;
+type Providers = Vec<(String, Arc<dyn ServerProvider>)>;
 
 pub struct ServerSpec {
     id: String,
@@ -212,6 +218,14 @@ pub struct TestProxyBuilder {
     session_url: Option<String>,
     patches: Vec<TablePatch>,
     drain_timeout: Duration,
+    hot_restart: Option<Arc<dyn Preflight>>,
+    succession: Option<(Seed, MemoryInheritance)>,
+}
+
+struct Seed {
+    dir: Arc<TempDir>,
+    routes: Vec<(String, String)>,
+    reserved: Vec<TcpSocket>,
 }
 
 impl std::fmt::Debug for TestProxyBuilder {
@@ -268,69 +282,53 @@ impl TestProxyBuilder {
         self
     }
 
+    #[must_use]
+    pub fn hot_restart(self) -> Self {
+        self.hot_restart_with(FakePreflight::approving())
+    }
+
+    #[must_use]
+    pub fn hot_restart_with(mut self, preflight: Arc<dyn Preflight>) -> Self {
+        self.hot_restart = Some(preflight);
+        self
+    }
+
     pub async fn start(self) -> HarnessResult<TestProxy> {
         crate::init_tracing();
         let Self {
-            mut servers,
+            servers,
             plugins,
             loaders,
             session_url,
             patches,
             drain_timeout,
+            hot_restart,
+            succession,
         } = self;
 
-        let dir = tempfile::tempdir()?;
-        let servers_dir = dir.path().join("servers");
-        let plugins_dir = dir.path().join("plugins");
-        std::fs::create_dir(&servers_dir)?;
-        std::fs::create_dir(&plugins_dir)?;
-
-        let providers: Vec<(String, Arc<dyn ServerProvider>)> = servers
-            .iter_mut()
-            .filter_map(|spec| spec.provider.take().map(|p| (spec.id.clone(), p)))
-            .collect();
-        let mut reserved = Vec::new();
-        let routes = write_servers(servers, &servers_dir, &mut reserved)?;
-
-        let mut table = Table::new();
-        table.insert("bind".into(), Value::String("127.0.0.1:0".into()));
-        table.insert("servers_dir".into(), path_value(&servers_dir)?);
-        table.insert("plugins_dir".into(), path_value(&plugins_dir)?);
-        table.insert("max_connections_per_ip".into(), Value::Integer(0));
-        table.insert(
-            "trusted_proxies".into(),
-            string_array(vec!["127.0.0.0/8".to_string()]),
-        );
-        table.insert(
-            "rate_limit".into(),
-            Value::Table(Table::from_iter([(
-                "enabled".into(),
-                Value::Boolean(false),
-            )])),
-        );
-        table.insert(
-            "ban".into(),
-            Value::Table(Table::from_iter([(
-                "file".into(),
-                path_value(&dir.path().join("bans.json"))?,
-            )])),
-        );
-        if let Some(url) = session_url {
-            table.insert(
-                "auth".into(),
-                Value::Table(Table::from_iter([(
-                    "session_url".into(),
-                    Value::String(url),
-                )])),
-            );
-        }
-        for patch in patches {
-            patch(&mut table);
-        }
+        let (seed, providers, inheritance) = match succession {
+            Some((seed, inheritance)) => {
+                if !servers.is_empty() {
+                    return Err(HarnessError::setup(
+                        "a successor keeps the servers of the proxy it takes over from",
+                    ));
+                }
+                (seed, Vec::new(), Some(inheritance))
+            }
+            None => {
+                let (seed, providers) =
+                    write_files(servers, session_url, patches, hot_restart.is_some())?;
+                (seed, providers, None)
+            }
+        };
+        let Seed {
+            dir,
+            routes,
+            reserved,
+        } = seed;
 
         let config_path = dir.path().join(CONFIG_FILE);
-        let text = toml::to_string(&table).map_err(HarnessError::setup)?;
-        std::fs::write(&config_path, &text)?;
+        let text = std::fs::read_to_string(&config_path)?;
         let config: ProxyConfig = toml::from_str(&text)
             .map_err(|e| HarnessError::setup(format!("{CONFIG_FILE}: {e}")))?;
         infrarust_config::validate_proxy_config(&config)
@@ -340,6 +338,15 @@ impl TestProxyBuilder {
         let mut builder = ProxyRuntime::builder(config, config_path)
             .shutdown_token(shutdown.clone())
             .drain_timeout(drain_timeout);
+        if let Some(preflight) = &hot_restart {
+            builder = builder
+                .binary(Some(test_binary(&dir.path().join(EXECUTABLE))))
+                .hot_restart(Arc::clone(preflight));
+        }
+        let record = inheritance.as_ref().map(MemoryInheritance::record);
+        if let Some(inheritance) = inheritance {
+            builder = builder.restored(Box::new(inheritance));
+        }
         let plugin_ids = if plugins.is_empty() {
             Vec::new()
         } else {
@@ -387,9 +394,82 @@ impl TestProxyBuilder {
             shutdown,
             routes,
             dir,
+            hot_restart,
+            inheritance: record,
             _reserved: reserved,
         })
     }
+}
+
+fn write_files(
+    mut servers: Vec<ServerSpec>,
+    session_url: Option<String>,
+    patches: Vec<TablePatch>,
+    hot_restart: bool,
+) -> HarnessResult<(Seed, Providers)> {
+    let dir = tempfile::tempdir()?;
+    let servers_dir = dir.path().join("servers");
+    let plugins_dir = dir.path().join("plugins");
+    std::fs::create_dir(&servers_dir)?;
+    std::fs::create_dir(&plugins_dir)?;
+
+    let providers: Providers = servers
+        .iter_mut()
+        .filter_map(|spec| spec.provider.take().map(|p| (spec.id.clone(), p)))
+        .collect();
+    let mut reserved = Vec::new();
+    let routes = write_servers(servers, &servers_dir, &mut reserved)?;
+
+    let mut table = Table::new();
+    table.insert("bind".into(), Value::String("127.0.0.1:0".into()));
+    table.insert("servers_dir".into(), path_value(&servers_dir)?);
+    table.insert("plugins_dir".into(), path_value(&plugins_dir)?);
+    table.insert("max_connections_per_ip".into(), Value::Integer(0));
+    table.insert(
+        "trusted_proxies".into(),
+        string_array(vec!["127.0.0.0/8".to_string()]),
+    );
+    table.insert(
+        "rate_limit".into(),
+        Value::Table(Table::from_iter([(
+            "enabled".into(),
+            Value::Boolean(false),
+        )])),
+    );
+    table.insert(
+        "ban".into(),
+        Value::Table(Table::from_iter([(
+            "file".into(),
+            path_value(&dir.path().join("bans.json"))?,
+        )])),
+    );
+    if let Some(url) = session_url {
+        table.insert(
+            "auth".into(),
+            Value::Table(Table::from_iter([(
+                "session_url".into(),
+                Value::String(url),
+            )])),
+        );
+    }
+    if hot_restart {
+        table.insert(
+            "update".into(),
+            Value::Table(Table::from_iter([("check".into(), Value::Boolean(false))])),
+        );
+    }
+    for patch in patches {
+        patch(&mut table);
+    }
+
+    let text = toml::to_string(&table).map_err(HarnessError::setup)?;
+    std::fs::write(dir.path().join(CONFIG_FILE), text)?;
+    let seed = Seed {
+        dir: Arc::new(dir),
+        routes,
+        reserved,
+    };
+    Ok((seed, providers))
 }
 
 pub struct TestProxy {
@@ -398,7 +478,9 @@ pub struct TestProxy {
     shutdown: CancellationToken,
     addr: SocketAddr,
     routes: Vec<(String, String)>,
-    dir: TempDir,
+    dir: Arc<TempDir>,
+    hot_restart: Option<Arc<dyn Preflight>>,
+    inheritance: Option<InheritanceRecord>,
     _reserved: Vec<TcpSocket>,
 }
 
@@ -421,6 +503,8 @@ impl TestProxy {
             session_url: None,
             patches: Vec::new(),
             drain_timeout: DEFAULT_DRAIN_TIMEOUT,
+            hot_restart: None,
+            succession: None,
         }
     }
 
@@ -541,6 +625,130 @@ impl TestProxy {
             Some(running) => Ok(running.shutdown().await?),
             None => Ok(()),
         }
+    }
+
+    pub fn restart_hub(&self) -> Option<Arc<RestartHub>> {
+        self.running.as_ref().and_then(RunningProxy::restart_hub)
+    }
+
+    pub const fn inheritance(&self) -> Option<&InheritanceRecord> {
+        self.inheritance.as_ref()
+    }
+
+    pub fn run_to_exit(mut self) -> HarnessResult<ProxyRun> {
+        let running = self
+            .running
+            .take()
+            .ok_or_else(|| HarnessError::setup("the proxy is already shut down"))?;
+        let hub = running.restart_hub();
+        let task = tokio::spawn(running.run_to_exit());
+        Ok(ProxyRun {
+            task,
+            server: Arc::clone(&self.server),
+            shutdown: std::mem::replace(&mut self.shutdown, CancellationToken::new()),
+            hub,
+            addr: self.addr,
+            seed: Seed {
+                dir: Arc::clone(&self.dir),
+                routes: std::mem::take(&mut self.routes),
+                reserved: std::mem::take(&mut self._reserved),
+            },
+            hot_restart: self.hot_restart.take(),
+        })
+    }
+}
+
+pub struct ProxyRun {
+    task: JoinHandle<Result<ProxyExit, CoreError>>,
+    server: Arc<ProxyServer>,
+    shutdown: CancellationToken,
+    hub: Option<Arc<RestartHub>>,
+    addr: SocketAddr,
+    seed: Seed,
+    hot_restart: Option<Arc<dyn Preflight>>,
+}
+
+impl std::fmt::Debug for ProxyRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProxyRun")
+            .field("addr", &self.addr)
+            .field("hub", &self.hub)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProxyRun {
+    pub const fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    pub const fn server(&self) -> &Arc<ProxyServer> {
+        &self.server
+    }
+
+    pub const fn hub(&self) -> Option<&Arc<RestartHub>> {
+        self.hub.as_ref()
+    }
+
+    pub const fn shutdown_token(&self) -> &CancellationToken {
+        &self.shutdown
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+
+    pub async fn finish(self, timeout: Duration) -> HarnessResult<ProxyEnd> {
+        let exit = tokio::time::timeout(timeout, self.task)
+            .await
+            .map_err(|_| HarnessError::timeout("the proxy to exit", timeout))?
+            .map_err(|e| HarnessError::Unexpected(format!("the proxy task failed: {e}")))??;
+        Ok(match exit {
+            ProxyExit::Stopped => ProxyEnd::Stopped,
+            ProxyExit::Restart(handover) => ProxyEnd::Restarted(Box::new(Successor {
+                handover,
+                seed: self.seed,
+                hot_restart: self.hot_restart,
+            })),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub enum ProxyEnd {
+    Stopped,
+    Restarted(Box<Successor>),
+}
+
+pub struct Successor {
+    handover: Box<RestartHandover>,
+    seed: Seed,
+    hot_restart: Option<Arc<dyn Preflight>>,
+}
+
+impl std::fmt::Debug for Successor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Successor")
+            .field("handover", &self.handover)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Successor {
+    pub fn handover(&self) -> &RestartHandover {
+        &self.handover
+    }
+
+    pub fn builder(self) -> TestProxyBuilder {
+        let Self {
+            handover,
+            seed,
+            hot_restart,
+        } = self;
+        let mut builder = TestProxy::builder();
+        builder.hot_restart = hot_restart;
+        builder.succession = Some((seed, MemoryInheritance::new(handover.package)));
+        builder
     }
 }
 
