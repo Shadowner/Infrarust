@@ -394,7 +394,7 @@ fn report(session: Uuid, relayed: &Relayed) {
             tracing::info!(%session, c2b, b2c, ?reason, "session ended");
         }
         RelayEnd::Frozen => {
-            tracing::info!(%session, c2b, b2c, "session frozen for a hot restart");
+            tracing::debug!(%session, c2b, b2c, "session frozen for a hot restart");
         }
     }
 }

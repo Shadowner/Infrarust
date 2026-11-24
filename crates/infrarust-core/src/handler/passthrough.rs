@@ -106,7 +106,7 @@ impl PassthroughHandler {
                 tracing::info!(session = %session_id, c2b, b2c, ?reason, "session ended");
             }
             RelayEnd::Frozen => {
-                tracing::info!(session = %session_id, c2b, b2c, "session frozen for a hot restart");
+                tracing::debug!(session = %session_id, c2b, b2c, "session frozen for a hot restart");
             }
         }
 
