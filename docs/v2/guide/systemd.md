@@ -1,6 +1,6 @@
 ---
 title: Running with systemd
-description: Set up Infrarust as a systemd service with automatic restarts, journald logging, and a dedicated system user.
+description: Set up Infrarust as a systemd service with automatic restarts, reloads that keep players connected, journald logging, and a dedicated system user.
 ---
 
 # Running with systemd
@@ -51,6 +51,7 @@ User=infrarust
 Group=infrarust
 WorkingDirectory=/opt/infrarust
 ExecStart=/opt/infrarust/infrarust --config /opt/infrarust/infrarust.toml
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=5
 
@@ -88,13 +89,32 @@ sudo systemctl enable infrarust
 sudo systemctl start infrarust
 sudo systemctl stop infrarust
 sudo systemctl restart infrarust
+sudo systemctl reload infrarust
 ```
+
+`restart` stops the proxy and starts it again, which disconnects every player. `reload` restarts it in place, see [Reload without disconnecting players](#reload-without-disconnecting-players).
 
 Check if the service is running:
 
 ```bash
 sudo systemctl status infrarust
 ```
+
+## Reload without disconnecting players
+
+The `ExecReload` line of the unit makes `systemctl reload infrarust` send SIGUSR2 to the proxy, which starts a [hot restart](./upgrading#restart-without-disconnecting-players). The proxy runs the binary at `/opt/infrarust/infrarust` again inside the same process. Players on `passthrough`, `zero_copy` and `server_only` servers stay connected, players on `offline` and `client_only` servers are disconnected with `Proxy is restarting, please reconnect`, and the proxy reads `infrarust.toml` again.
+
+The main PID never changes, which is what `Type=simple` expects: systemd keeps tracking the same process and never sees it exit. `kill $MAINPID` signals the proxy alone, not the processes of the `local` servers it may run.
+
+`systemctl reload` returns as soon as the signal is sent. Follow the restart in the journal:
+
+```bash
+journalctl -u infrarust -f
+```
+
+`infrarust is ready, accepting connections` marks the end of it. When the restart is refused, the proxy keeps running as before and the journal has `hot restart failed` with the reason, such as a running `local` server or a configuration the binary rejects. See [Preflight](./upgrading#preflight).
+
+A `systemctl stop` during a reload is handled as described in [Stopping during a hot restart](./upgrading#stopping-during-a-hot-restart).
 
 ## Log level
 
@@ -228,22 +248,36 @@ The `listener bound` line just after it reports the address the proxy is listeni
 When a socket is passed in, the `bind` address in `infrarust.toml` and the `so_reuseport` setting are ignored. The listening address and backlog belong to the `.socket` unit. Only the first passed file descriptor is used; Infrarust listens on one socket.
 :::
 
+Socket activation keeps working across `systemctl reload`: the proxy hands the socket it got from systemd over to the new image along with the sessions. Leave `bind` in `infrarust.toml` as it was when the proxy started, though. A new image that finds a different `bind` binds that address itself and closes the socket from systemd.
+
 ::: tip
 The same mechanism works with any activator that speaks the systemd protocol. [`systemfd`](https://github.com/mitsuhiko/systemfd) is handy during development: `systemfd --no-pid -s tcp::25565 -- infrarust` keeps the port open across restarts.
 :::
 
 ## Updating Infrarust
 
-A binary from a release archive installs the new release itself. Run the install as the service user, from the service's working directory, then restart the service:
+A binary from a release archive installs the new release itself. Run the install as the service user, from the service's working directory, then reload the service to run the new binary without disconnecting the players on forwarding servers:
 
 ```bash
 sudo -u infrarust sh -c 'cd /opt/infrarust && ./infrarust -c infrarust.toml update install'
-sudo systemctl restart infrarust
+sudo systemctl reload infrarust
 ```
+
+When the `restart` line of `update check` reads `full` for the release, the release cannot take over the sessions: use `sudo systemctl restart infrarust` instead.
+
+The console command `update apply` does both steps at once, but it needs a console attached to the proxy, and a service started by this unit has none: systemd gives it `/dev/null` as standard input. The admin API does the same with `POST /api/v1/proxy/update/install` followed by `POST /api/v1/proxy/restart`.
 
 The previous binary stays next to the new one as `/opt/infrarust/infrarust.old`, for `infrarust update rollback`. [Upgrading](./upgrading) covers update checks, installs started from the console or the admin API, rollback, and how to verify a download by hand.
 
-To replace the binary by hand instead:
+To replace the binary by hand instead, write the new file next to the old one and rename it over the old one, then reload:
+
+```bash
+sudo install -o infrarust -g infrarust -m 0755 /path/to/new/infrarust /opt/infrarust/infrarust.next
+sudo mv /opt/infrarust/infrarust.next /opt/infrarust/infrarust
+sudo systemctl reload infrarust
+```
+
+The rename swaps the file in one step: the running proxy goes on with the old one, and the hot restart starts the new one. To stop the proxy for the swap instead:
 
 ```bash
 sudo systemctl stop infrarust
