@@ -20,7 +20,7 @@ How you upgrade depends on where the binary came from. A binary from a GitHub re
 
 To replace the binary by hand instead, download the archive for your platform from the [releases page](https://github.com/Shadowner/Infrarust/releases), check it as shown in [Verify a release by hand](#verify-a-release-by-hand), stop the proxy, put the new binary in place of the old one, and start the proxy again.
 
-The examples below follow the layout of [Running with systemd](./systemd): the binary at `/opt/infrarust/infrarust`, owned by the `infrarust` user, which is also the service's working directory.
+The examples below follow the layout of [Running with systemd](./systemd): the binary is `/opt/infrarust/infrarust`, owned by the `infrarust` user, and `/opt/infrarust` is the service's working directory.
 
 ## Check for a new release
 
@@ -125,7 +125,7 @@ sha256sum -c --ignore-missing SHA256SUMS
 jq -r '.artifacts[] | "\(.sha256)  \(.file)"' manifest.json | sha256sum -c --ignore-missing
 ```
 
-Both print `infrarust-linux-x86_64.tar.gz: OK`. Finally, check that GitHub Actions built the archive from this repository, with the [GitHub CLI](https://cli.github.com/):
+Both print `infrarust-linux-x86_64.tar.gz: OK`. The [GitHub CLI](https://cli.github.com/) checks that GitHub Actions built the archive from this repository:
 
 ```bash
 gh attestation verify infrarust-linux-x86_64.tar.gz --repo Shadowner/Infrarust
