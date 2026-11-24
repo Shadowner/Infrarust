@@ -87,10 +87,15 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
 
     use super::*;
+    use crate::hot_restart::package::ListenerHandover;
 
     fn package() -> (HandoverPackage, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let listener = ListenerHandover {
+            bind: listener.local_addr().unwrap(),
+            socket: listener,
+        };
         let (package, dropped) =
             HandoverPackage::build("2.0.0-beta.6", 12, Some(listener), Vec::new()).unwrap();
         assert!(dropped.is_empty());
@@ -109,8 +114,8 @@ mod tests {
         let unpacked = received.unpack().unwrap();
         assert_eq!(unpacked.from_version, "2.0.0-beta.6");
         assert_eq!(unpacked.next_player_id, 12);
-        let (listener, _) = unpacked.listener.unwrap();
-        let (mut accepted, _) = listener.accept().unwrap();
+        let listener = unpacked.listener.unwrap();
+        let (mut accepted, _) = listener.socket.accept().unwrap();
         client.write_all(b"ping").unwrap();
         let mut buf = [0; 4];
         accepted.read_exact(&mut buf).unwrap();

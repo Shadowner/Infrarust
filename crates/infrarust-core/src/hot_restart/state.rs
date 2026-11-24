@@ -29,6 +29,7 @@ pub struct HandoverState {
 pub struct ListenerRecord {
     pub handle: HandleId,
     pub local_addr: SocketAddr,
+    pub bind: SocketAddr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +293,7 @@ mod tests {
             listener: Some(ListenerRecord {
                 handle: HandleId(0),
                 local_addr: SocketAddr::from(([0, 0, 0, 0], 25_565)),
+                bind: SocketAddr::from(([0, 0, 0, 0], 25_565)),
             }),
             sessions,
         }

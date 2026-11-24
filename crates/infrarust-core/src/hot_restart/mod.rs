@@ -12,7 +12,10 @@ pub mod state;
 pub use coordinator::{RestartHandle, RestartHub, RestartPhase};
 #[cfg(any(test, feature = "test-support"))]
 pub use memory::{InheritanceOutcome, InheritanceRecord, MemoryInheritance};
-pub use package::{DroppedSession, FrozenSession, Handle, HandleTable, HandoverPackage, Unpacked};
+pub use package::{
+    DroppedSession, FrozenSession, Handle, HandleTable, HandoverPackage, ListenerHandover,
+    UnpackFailure, Unpacked,
+};
 pub use platform::{Handed, Inheritance, RestartPlan, Successor};
 pub use preflight::{BinaryPreflight, Preflight, PreflightError};
 pub use relays::{InFlight, LoginLink, RelayRegistry, RelayTicket};

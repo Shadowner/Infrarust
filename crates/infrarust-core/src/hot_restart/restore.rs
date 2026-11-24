@@ -11,9 +11,11 @@ use infrarust_transport::{FrozenRelay, Listener};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use super::HandoverError;
 use super::freeze;
-use super::package::{DroppedSession, FrozenSession, HandoverPackage, Unpacked};
+use super::package::{
+    DroppedSession, FrozenSession, Handle, HandoverPackage, ListenerHandover, UnpackFailure,
+    Unpacked,
+};
 use super::state::SessionMeta;
 use crate::handler::forwarded::{ForwardedSession, RelayEnd, Relayed, resume_restored};
 use crate::pipeline::context::reserve_connection_ids;
@@ -26,28 +28,31 @@ pub struct Inherited {
     from_version: String,
     frozen_at: SystemTime,
     next_player_id: u64,
-    listener: Option<(TcpListener, SocketAddr)>,
+    listener: Option<ListenerHandover>,
     sessions: Vec<FrozenSession>,
     dropped: Vec<DroppedSession>,
+    held: Vec<Handle>,
 }
 
 impl Inherited {
-    pub fn unpack(package: HandoverPackage) -> Result<Self, HandoverError> {
-        let frozen_at = UNIX_EPOCH + Duration::from_millis(package.state.created_at_ms);
+    pub fn unpack(package: HandoverPackage) -> Result<Self, UnpackFailure> {
         let Unpacked {
             from_version,
+            created_at_ms,
             next_player_id,
             listener,
             sessions,
             dropped,
+            held,
         } = package.unpack()?;
         Ok(Self {
             from_version,
-            frozen_at,
+            frozen_at: UNIX_EPOCH + Duration::from_millis(created_at_ms),
             next_player_id,
             listener,
             sessions,
             dropped,
+            held,
         })
     }
 
@@ -55,8 +60,8 @@ impl Inherited {
         &self.from_version
     }
 
-    pub fn listener_addr(&self) -> Option<SocketAddr> {
-        self.listener.as_ref().map(|(_, addr)| *addr)
+    pub fn previous_bind(&self) -> Option<SocketAddr> {
+        self.listener.as_ref().map(|listener| listener.bind)
     }
 
     pub fn session_count(&self) -> usize {
@@ -64,12 +69,10 @@ impl Inherited {
     }
 
     pub fn take_listener(&mut self, bind: SocketAddr) -> Option<TcpListener> {
-        let addr = self.listener_addr()?;
-        let serves = addr == bind || (bind.port() == 0 && addr.ip() == bind.ip());
-        if !serves {
+        if self.previous_bind()? != bind {
             return None;
         }
-        self.listener.take().map(|(listener, _)| listener)
+        self.listener.take().map(|listener| listener.socket)
     }
 }
 
@@ -97,6 +100,7 @@ pub struct Prepared {
     rejected: Vec<Rejected>,
     dropped: Vec<DroppedSession>,
     stale_listener: Option<TcpListener>,
+    held: Vec<Handle>,
 }
 
 impl Prepared {
@@ -163,6 +167,7 @@ pub fn prepare(server: &ProxyServer, inherited: Inherited) -> Result<Prepared, P
         listener,
         sessions,
         dropped,
+        held,
     } = inherited;
     let router = &server.services().domain_router;
     let mut seen = HashSet::with_capacity(sessions.len());
@@ -204,7 +209,8 @@ pub fn prepare(server: &ProxyServer, inherited: Inherited) -> Result<Prepared, P
         revivals,
         rejected,
         dropped,
-        stale_listener: listener.map(|(listener, _)| listener),
+        stale_listener: listener.map(|listener| listener.socket),
+        held,
     })
 }
 
@@ -218,9 +224,11 @@ pub fn launch(server: &ProxyServer, listener: &Listener, prepared: Prepared) -> 
         rejected,
         dropped,
         stale_listener,
+        held,
     } = prepared;
     reserve_connection_ids(next_player_id);
     drop(stale_listener);
+    drop(held);
     for Rejected { session, reason } in rejected {
         tracing::warn!(
             player = %session.meta.profile.username,
@@ -473,9 +481,13 @@ mod tests {
 
     fn package(
         next_player_id: u64,
-        listener: Option<TcpListener>,
+        listener: Option<(TcpListener, &str)>,
         sessions: Vec<FrozenSession>,
     ) -> HandoverPackage {
+        let listener = listener.map(|(socket, bind)| ListenerHandover {
+            socket,
+            bind: bind.parse().unwrap(),
+        });
         let (package, dropped) =
             HandoverPackage::build("2.0.0-beta.6", next_player_id, listener, sessions).unwrap();
         assert!(dropped.is_empty());
@@ -536,7 +548,7 @@ mod tests {
         let (alex, mut alex_peers) = session(4101, ProxyMode::ZeroCopy, b"alex-up", b"alex-down");
         let accept = TcpListener::bind("127.0.0.1:0").unwrap();
         let accept_addr = accept.local_addr().unwrap();
-        let mut sent = package(4102, Some(accept), vec![steve, alex]);
+        let mut sent = package(4102, Some((accept, "127.0.0.1:0")), vec![steve, alex]);
         sent.state.created_at_ms -= 1_500;
         let mut inheritance = MemoryInheritance::new(sent);
         let outcome = inheritance.record();
@@ -622,7 +634,8 @@ mod tests {
         let (steve, mut peers) = session(4300, ProxyMode::Passthrough, b"", b"");
         let accept = TcpListener::bind("127.0.0.1:0").unwrap();
         let accept_addr = accept.local_addr().unwrap();
-        let inherited = Inherited::unpack(package(4301, Some(accept), vec![steve])).unwrap();
+        let inherited =
+            Inherited::unpack(package(4301, Some((accept, "127.0.0.1:0")), vec![steve])).unwrap();
 
         let failure = prepare(&server, inherited).unwrap_err();
 
@@ -638,7 +651,10 @@ mod tests {
         );
         assert!(failure.to_string().contains("1 relays"), "{failure}");
         assert_eq!(failure.inherited.session_count(), 1);
-        assert_eq!(failure.inherited.listener_addr(), Some(accept_addr));
+        assert_eq!(
+            failure.inherited.previous_bind(),
+            Some("127.0.0.1:0".parse().unwrap())
+        );
         stays_open(&mut peers.player).await;
         stays_open(&mut peers.server).await;
         std::net::TcpStream::connect(accept_addr).unwrap();
@@ -657,18 +673,25 @@ mod tests {
         let (kept, mut kept_peers) = session(4400, ProxyMode::ServerOnly, b"", b"");
         let (offline, mut offline_peers) = session(4401, ProxyMode::Offline, b"", b"");
         let (twin, mut twin_peers) = session(4400, ProxyMode::Passthrough, b"", b"");
+        let (broken, mut broken_peers) = session(4402, ProxyMode::Passthrough, b"", b"");
         let stale = TcpListener::bind("127.0.0.1:0").unwrap();
         let stale_addr = stale.local_addr().unwrap();
-        let mut inherited =
-            Inherited::unpack(package(10, Some(stale), vec![kept, offline, twin])).unwrap();
+        let mut sent = package(
+            10,
+            Some((stale, "127.0.0.1:0")),
+            vec![kept, offline, twin, broken],
+        );
+        let swapped = &mut sent.state.sessions[3].backend;
+        std::mem::swap(&mut swapped.local, &mut swapped.peer);
+        let mut inherited = Inherited::unpack(sent).unwrap();
         let moved: SocketAddr = "127.0.0.1:1".parse().unwrap();
         assert!(inherited.take_listener(moved).is_none());
         let listener = server.bind().await.unwrap();
 
         let prepared = prepare(&server, inherited).unwrap();
 
-        assert_eq!((prepared.resumable(), prepared.lost()), (1, 2));
-        for peers in [&mut offline_peers, &mut twin_peers] {
+        assert_eq!((prepared.resumable(), prepared.lost()), (1, 3));
+        for peers in [&mut offline_peers, &mut twin_peers, &mut broken_peers] {
             stays_open(&mut peers.player).await;
             stays_open(&mut peers.server).await;
         }
@@ -678,9 +701,9 @@ mod tests {
 
         assert_eq!(restored.players.len(), 1);
         assert_eq!(restored.players[0].id(), PlayerId::new(4400));
-        assert_eq!(restored.dropped, 2);
+        assert_eq!(restored.dropped, 3);
         assert!(connection_id_watermark() >= 4401);
-        for peers in [&mut offline_peers, &mut twin_peers] {
+        for peers in [&mut offline_peers, &mut twin_peers, &mut broken_peers] {
             closes(&mut peers.player).await;
             closes(&mut peers.server).await;
         }
@@ -690,24 +713,31 @@ mod tests {
     }
 
     #[test]
-    fn the_inherited_listener_is_only_taken_for_the_address_it_serves() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let mut inherited = Inherited::unpack(package(1, Some(listener), Vec::new())).unwrap();
-        let elsewhere = SocketAddr::new(addr.ip(), addr.port().wrapping_add(1).max(1));
+    fn the_inherited_listener_is_adopted_only_while_the_configured_bind_is_unchanged() {
+        let socket = TcpListener::bind("127.0.0.1:0").unwrap();
+        let real = socket.local_addr().unwrap();
+        let mut inherited =
+            Inherited::unpack(package(1, Some((socket, "0.0.0.0:25565")), Vec::new())).unwrap();
+        assert_eq!(
+            inherited.previous_bind(),
+            Some("0.0.0.0:25565".parse().unwrap())
+        );
 
-        assert!(inherited.take_listener(elsewhere).is_none());
         assert!(
             inherited
-                .take_listener("0.0.0.0:0".parse().unwrap())
+                .take_listener("0.0.0.0:25566".parse().unwrap())
                 .is_none()
         );
+        assert!(inherited.take_listener(real).is_none());
+        let adopted = inherited
+            .take_listener("0.0.0.0:25565".parse().unwrap())
+            .expect("an unchanged bind adopts the listener whatever its real address");
+        assert_eq!(adopted.local_addr().unwrap(), real);
         assert!(
             inherited
-                .take_listener("127.0.0.1:0".parse().unwrap())
-                .is_some()
+                .take_listener("0.0.0.0:25565".parse().unwrap())
+                .is_none()
         );
-        assert!(inherited.take_listener(addr).is_none());
-        assert_eq!(inherited.listener_addr(), None);
+        assert_eq!(inherited.previous_bind(), None);
     }
 }
