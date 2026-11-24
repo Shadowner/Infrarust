@@ -10,5 +10,6 @@ mod logs;
 mod players;
 mod plugins;
 mod proxy;
+mod restart;
 mod servers;
 mod update;

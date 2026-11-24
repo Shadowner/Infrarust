@@ -10,10 +10,10 @@ use infrarust_api::plugin::{
     PluginFault, PluginHealth, PluginMetadata, PluginQueueStats, PluginRestarts,
     PluginRuntimeStatus, PluginState, QueueWindow,
 };
-use infrarust_api::services::ProxyUpdates;
 use infrarust_api::services::config_service::{ConfigWriteError, ServerSource};
 use infrarust_api::services::load_balancer::{BackendState, BackendStatus};
 use infrarust_api::services::plugin_registry::PluginInfo;
+use infrarust_api::services::{ProxyRestart, ProxyUpdates};
 use infrarust_api::test_util::{
     MockBanService, MockConfigService, MockLoadBalancerService, MockPlayer, MockPlayerRegistry,
     MockPluginRegistry, MockServerManager,
@@ -181,6 +181,7 @@ pub struct TestApiBuilder {
     logs: Option<LogBroadcast>,
     files: Vec<(&'static str, &'static str)>,
     updates: Option<Arc<dyn ProxyUpdates>>,
+    restart: Option<Arc<dyn ProxyRestart>>,
 }
 
 impl TestApiBuilder {
@@ -227,6 +228,12 @@ impl TestApiBuilder {
     }
 
     #[must_use]
+    pub fn restart(mut self, restart: Arc<dyn ProxyRestart>) -> Self {
+        self.restart = Some(restart);
+        self
+    }
+
+    #[must_use]
     pub fn server_file(mut self, name: &'static str, contents: &'static str) -> Self {
         self.files.push((name, contents));
         self
@@ -267,7 +274,7 @@ impl TestApiBuilder {
             shutdown: CancellationToken::new(),
             proxy_shutdown: CancellationToken::new(),
             updates: self.updates,
-            restart: None,
+            restart: self.restart,
             logs: self.logs,
             server_dir: Arc::new(ServerDir::open(dir.path()).unwrap()),
             provider_sender: Arc::new(tokio::sync::Mutex::new(None)),
@@ -303,6 +310,7 @@ impl TestApi {
             logs: None,
             files: Vec::new(),
             updates: None,
+            restart: None,
         }
     }
 
