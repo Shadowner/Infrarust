@@ -11,6 +11,7 @@ use infrarust_api::types::{Component, GameProfile, PlayerId, ProtocolVersion, Se
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::hot_restart::LoginLink;
 use crate::pipeline::context::ConnectionContext;
 use crate::player::lifecycle::PlayerLifecycle;
 use crate::player::{PlayerCommand, PlayerSession, SessionKind};
@@ -55,6 +56,7 @@ pub(crate) struct Admitted {
     pub(crate) lifecycle: PlayerLifecycle,
     pub(crate) commands: mpsc::Receiver<PlayerCommand>,
     pub(crate) token: CancellationToken,
+    pub(crate) login_link: Option<LoginLink>,
     pub(crate) rewritten: bool,
 }
 
@@ -102,7 +104,13 @@ pub(crate) async fn admit(
         return LoginAdmission::Refused(reason);
     }
 
-    let token = shutdown.child_token();
+    let (token, login_link) = match kind {
+        SessionKind::Forwarded => {
+            let (token, link) = services.relays.link_login();
+            (token, Some(link))
+        }
+        SessionKind::Intercepted { .. } => (shutdown.child_token(), None),
+    };
     let (command_tx, commands) = PlayerSession::channel();
     let session = PlayerSession::builder(
         PlayerId::new(ctx.connection_id),
@@ -138,6 +146,7 @@ pub(crate) async fn admit(
         lifecycle,
         commands,
         token,
+        login_link,
         rewritten,
     })
 }
@@ -265,6 +274,54 @@ mod tests {
         let seen = logins.lock().unwrap().clone();
         assert_eq!(seen.len(), 1, "{seen:?}");
         (seen[0], session_online)
+    }
+
+    #[tokio::test]
+    async fn a_forwarded_session_outlives_the_pipeline_once_its_login_link_is_detached() {
+        let services = test_proxy_services();
+        let (ctx, _peer) = connection().await;
+        let connection = services.relays.pipeline().child_token();
+        let LoginAdmission::Admitted(forwarding) = admit(
+            &services,
+            &ctx,
+            &connection,
+            arrival(),
+            SessionKind::Forwarded,
+        )
+        .await
+        else {
+            panic!("the player must be admitted");
+        };
+        let mut second = arrival();
+        second.profile.username = "Alex".to_string();
+        second.profile.uuid = uuid::Uuid::from_u128(2);
+        let LoginAdmission::Admitted(logging_in) =
+            admit(&services, &ctx, &connection, second, SessionKind::Forwarded).await
+        else {
+            panic!("the player must be admitted");
+        };
+        let mut third = arrival();
+        third.profile.username = "Notch".to_string();
+        third.profile.uuid = uuid::Uuid::from_u128(3);
+        let intercepted = SessionKind::Intercepted { online_mode: false };
+        let LoginAdmission::Admitted(playing) =
+            admit(&services, &ctx, &connection, third, intercepted).await
+        else {
+            panic!("the player must be admitted");
+        };
+        assert!(playing.login_link.is_none());
+        assert!(forwarding.login_link.unwrap().detach());
+
+        services.relays.close_pipeline();
+
+        assert!(!forwarding.token.is_cancelled());
+        assert!(logging_in.token.is_cancelled());
+        assert!(playing.token.is_cancelled());
+        services.relays.sessions().cancel();
+        assert!(forwarding.token.is_cancelled());
+        forwarding.lifecycle.end(DisconnectCause::Shutdown).await;
+        logging_in.lifecycle.end(DisconnectCause::Shutdown).await;
+        playing.lifecycle.end(DisconnectCause::Shutdown).await;
     }
 
     #[tokio::test]

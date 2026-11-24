@@ -11,6 +11,7 @@ use crate::filter::transport_registry::TransportFilterRegistryImpl;
 use crate::forwarding::server_override::resolve_forwarding_handler;
 use crate::forwarding::{ForwardingError, ForwardingHandler, ForwardingMode};
 use crate::handoff::ConnectionClaims;
+use crate::hot_restart::RelayRegistry;
 use crate::limbo::registry::LimboHandlerRegistry;
 use crate::loadbalancer::BackendHealthView;
 use crate::permissions::PermissionService;
@@ -47,6 +48,7 @@ pub struct ProxyServices {
     pub(crate) forwarding_secret: Option<Arc<[u8]>>,
     pub permission_service: Arc<PermissionService>,
     pub(crate) plugin_messaging: Arc<PluginMessaging>,
+    pub relays: Arc<RelayRegistry>,
 }
 
 impl ProxyServices {

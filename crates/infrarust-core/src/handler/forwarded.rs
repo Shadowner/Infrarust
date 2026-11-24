@@ -14,7 +14,7 @@ use infrarust_protocol::Packet;
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::version::ProtocolVersion;
 use infrarust_transport::{
-    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, Forwarder, Freeze,
+    BackendConnection, BackendConnector, ForwardEndReason, ForwardResult, Forwarder, FrozenRelay,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -27,11 +27,12 @@ use crate::auth::game_profile::offline_profile;
 use crate::error::CoreError;
 use crate::forwarding::domain_rewrite::rewrite_handshake;
 use crate::forwarding::{ForwardingData, ForwardingHandler, build_handshake_for_backend};
+use crate::hot_restart::{FrozenSession, LoginLink, RelayRegistry, RelayTicket, freeze};
 use crate::loadbalancer::select_backend_addresses;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
 use crate::player::lifecycle::PlayerLifecycle;
-use crate::player::{PlayerCommand, PlayerSession, SHUTDOWN_REASON, SessionKind};
+use crate::player::{PlayerCommand, PlayerSession, SessionKind};
 use crate::server::ProxyServices;
 use crate::session::backend_login::ConnectError;
 use crate::session::kick::Kick;
@@ -97,29 +98,138 @@ pub(crate) struct Ready {
     lifecycle: PlayerLifecycle,
     commands: mpsc::Receiver<PlayerCommand>,
     session_token: CancellationToken,
-    shutdown: CancellationToken,
+    login_link: Option<LoginLink>,
+    relays: Arc<RelayRegistry>,
+}
+
+#[derive(Debug)]
+pub(crate) enum RelayEnd {
+    Ended(ForwardEndReason),
+    Frozen,
+}
+
+#[derive(Debug)]
+pub(crate) struct Relayed {
+    pub(crate) client_to_backend: u64,
+    pub(crate) backend_to_client: u64,
+    pub(crate) reason: RelayEnd,
+}
+
+impl Relayed {
+    const fn cut() -> Self {
+        Self {
+            client_to_backend: 0,
+            backend_to_client: 0,
+            reason: RelayEnd::Ended(ForwardEndReason::Shutdown),
+        }
+    }
+}
+
+pub(crate) struct ForwardedSession {
+    pub(crate) player: Arc<PlayerSession>,
+    pub(crate) lifecycle: PlayerLifecycle,
+    pub(crate) commands: mpsc::Receiver<PlayerCommand>,
+    pub(crate) server: ServerId,
+    pub(crate) mode: ProxyMode,
 }
 
 impl Ready {
-    pub(crate) async fn forward(mut self, client: TcpStream) -> ForwardResult {
-        let result = Forwarder::for_mode(self.mode)
+    pub(crate) async fn forward(self, ctx: &mut ConnectionContext) -> Relayed {
+        let Self {
+            player,
+            server,
+            mode,
+            backend,
+            lifecycle,
+            commands,
+            session_token,
+            login_link,
+            relays,
+        } = self;
+        let session = ForwardedSession {
+            player,
+            lifecycle,
+            commands,
+            server,
+            mode,
+        };
+        if !login_link.is_none_or(LoginLink::detach) {
+            ctx.settle();
+            session.lifecycle.end(DisconnectCause::Shutdown).await;
+            return Relayed::cut();
+        }
+        let ticket = relays.ticket();
+        ctx.settle();
+        let result = Forwarder::for_mode(mode)
             .forward(
-                client,
-                self.backend.into_stream(),
-                self.session_token.clone(),
-                Freeze::never(),
+                ctx.take_stream(),
+                backend.into_stream(),
+                session_token,
+                relays.freeze(),
             )
             .await;
-        let cause = match &result.reason {
-            ForwardEndReason::ClientClosed => DisconnectCause::ClientQuit,
-            ForwardEndReason::BackendClosed => DisconnectCause::BackendClosed { reason: None },
-            ForwardEndReason::Shutdown => {
-                cancelled_cause(&self.shutdown, queued_kick(&mut self.commands))
-            }
-            _ => DisconnectCause::Error,
-        };
-        self.lifecycle.end(cause).await;
-        result
+        if matches!(result.reason, ForwardEndReason::Frozen(_)) {
+            ctx.detach_transport();
+        }
+        settle(session, &relays, result, ticket).await
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) async fn resume_restored(
+    services: &ProxyServices,
+    session: ForwardedSession,
+    relay: FrozenRelay,
+) -> Relayed {
+    let relays = &services.relays;
+    let ticket = relays.ticket();
+    let token = session.player.shutdown_token().clone();
+    let result = Forwarder::for_mode(session.mode)
+        .resume(relay, token, relays.freeze())
+        .await;
+    settle(session, relays, result, ticket).await
+}
+
+async fn settle(
+    mut session: ForwardedSession,
+    relays: &RelayRegistry,
+    result: ForwardResult,
+    ticket: RelayTicket,
+) -> Relayed {
+    let ForwardResult {
+        client_to_backend,
+        backend_to_client,
+        reason,
+    } = result;
+    let reason = match reason {
+        ForwardEndReason::Frozen(relay) => {
+            let meta = freeze::capture(&session.player, &session.server, session.mode);
+            session.lifecycle.release_for_restart();
+            relays.push_frozen(FrozenSession {
+                meta,
+                relay: *relay,
+            });
+            drop(ticket);
+            RelayEnd::Frozen
+        }
+        reason => {
+            drop(ticket);
+            let cause = match &reason {
+                ForwardEndReason::ClientClosed => DisconnectCause::ClientQuit,
+                ForwardEndReason::BackendClosed => DisconnectCause::BackendClosed { reason: None },
+                ForwardEndReason::Shutdown => {
+                    cancelled_cause(relays.sessions(), queued_kick(&mut session.commands))
+                }
+                _ => DisconnectCause::Error,
+            };
+            session.lifecycle.end(cause).await;
+            RelayEnd::Ended(reason)
+        }
+    };
+    Relayed {
+        client_to_backend,
+        backend_to_client,
+        reason,
     }
 }
 
@@ -289,7 +399,8 @@ impl ForwardedLogin<'_> {
                                 lifecycle: admitted.lifecycle,
                                 commands: admitted.commands,
                                 session_token: admitted.token,
-                                shutdown: self.shutdown.clone(),
+                                login_link: admitted.login_link,
+                                relays: Arc::clone(&self.services.relays),
                             }));
                         }
                         Err(error) => {
@@ -482,7 +593,7 @@ impl ForwardedLogin<'_> {
         let reason = queued_kick(&mut admitted.commands).or_else(|| {
             self.shutdown
                 .is_cancelled()
-                .then(|| Component::text(SHUTDOWN_REASON))
+                .then(|| Component::text(self.services.relays.notice().reason()))
         });
         if let Some(reason) = &reason {
             self.kick(ctx, reason).await;

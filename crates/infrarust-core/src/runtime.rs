@@ -22,6 +22,7 @@ use infrarust_transport::Listener;
 use crate::binary::RunningBinary;
 use crate::console::ConsoleServices;
 use crate::error::CoreError;
+use crate::player::ShutdownKind;
 use crate::plugin::manager::{PluginManager, PluginServices, ShutdownLimits};
 use crate::plugin::{
     HostWiring, PluginContextFactoryImpl, PluginLoader, PluginManagerError, PluginManagerHandle,
@@ -490,7 +491,7 @@ impl RunningProxy {
             Err(e) => Err(CoreError::Startup(format!("proxy server task failed: {e}"))),
         };
 
-        self.server.close_sessions();
+        self.server.close_sessions(ShutdownKind::Stop);
         self.server.drain_connections(self.drain_timeout).await;
 
         let deadline = tokio::time::Instant::now() + self.plugin_shutdown_timeout;
@@ -519,7 +520,7 @@ impl RunningProxy {
 impl Drop for RunningProxy {
     fn drop(&mut self) {
         self.shutdown.cancel();
-        self.server.close_sessions();
+        self.server.close_sessions(ShutdownKind::Stop);
         self.server.stop_background_tasks();
     }
 }

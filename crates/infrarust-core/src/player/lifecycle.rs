@@ -56,6 +56,23 @@ impl PlayerLifecycle {
         lifecycle
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn restore(services: &ProxyServices, session: Arc<PlayerSession>) -> Self {
+        let guard = services.connection_registry.register(Arc::clone(&session));
+        Self {
+            bus: Arc::clone(&services.event_bus),
+            deadline: services.config.events.disconnect_deadline,
+            registration: Some(Registration {
+                session,
+                guard: Some(guard),
+            }),
+        }
+    }
+
+    pub(crate) fn release_for_restart(mut self) {
+        drop(self.registration.take());
+    }
+
     pub(crate) async fn end(mut self, cause: DisconnectCause) {
         if let Some(registration) = self.registration.take() {
             finish(Arc::clone(&self.bus), registration, cause, self.deadline).await;
@@ -339,6 +356,77 @@ mod tests {
             Some(PlayerId::new(2))
         );
         second_lifecycle.end(DisconnectCause::ClientQuit).await;
+    }
+
+    #[tokio::test]
+    async fn releasing_for_a_restart_unregisters_without_a_disconnect_event() {
+        let services = test_proxy_services();
+        let log = record(&services);
+        let (steve, _rx) = player(&services, 1, "Steve");
+        let lifecycle = PlayerLifecycle::begin(&services, Arc::clone(&steve)).await;
+        steve.set_current_server(ServerId::new("lobby"));
+
+        lifecycle.release_for_restart();
+
+        tokio::time::timeout(Duration::from_secs(1), steve.released())
+            .await
+            .expect("the player must be released");
+        tokio::task::yield_now().await;
+        assert_eq!(lines(&log), ["post_login:1:true:None"]);
+        assert_eq!(services.connection_registry.count(), 0);
+        assert!(!steve.is_connected());
+    }
+
+    fn forwarded(services: &ProxyServices, id: u64, username: &str) -> Arc<PlayerSession> {
+        let (tx, _rx) = PlayerSession::channel();
+        PlayerSession::builder(
+            PlayerId::new(id),
+            GameProfile {
+                uuid: offline_uuid(username),
+                username: username.to_string(),
+                properties: vec![],
+            },
+            ProtocolVersion::new(767),
+            "127.0.0.1:40000".parse().unwrap(),
+            tx,
+            CancellationToken::new(),
+            Arc::clone(&services.backend_load),
+        )
+        .kind(SessionKind::Forwarded)
+        .current_server(ServerId::new("lobby"))
+        .build()
+    }
+
+    #[tokio::test]
+    async fn a_restored_player_is_registered_silently_and_ends_normally() {
+        let services = test_proxy_services();
+        let log = record(&services);
+        let (present, _rx) = player(&services, 1, "Steve");
+        let present_lifecycle = PlayerLifecycle::begin(&services, Arc::clone(&present)).await;
+        let restored = forwarded(&services, 7, "Steve");
+
+        let lifecycle = PlayerLifecycle::restore(&services, Arc::clone(&restored));
+
+        assert_eq!(lines(&log), ["post_login:1:true:None"]);
+        assert_eq!(services.connection_registry.count(), 2);
+        assert!(
+            services
+                .connection_registry
+                .find_by_id(PlayerId::new(7))
+                .is_some()
+        );
+        assert!(!present.shutdown_token().is_cancelled());
+        assert!(!restored.shutdown_token().is_cancelled());
+        assert!(present.is_connected());
+
+        lifecycle.end(DisconnectCause::ClientQuit).await;
+
+        assert_eq!(
+            lines(&log),
+            ["post_login:1:true:None", "disconnect:7:client_quit:lobby"]
+        );
+        assert_eq!(services.connection_registry.count(), 1);
+        present_lifecycle.end(DisconnectCause::ClientQuit).await;
     }
 
     struct Admin;

@@ -297,6 +297,7 @@ pub struct PlayerSessionBuilder {
     permissions: Option<Arc<PermissionService>>,
     virtual_host: Option<String>,
     events: Option<Arc<EventBusImpl>>,
+    connected_at: Option<SystemTime>,
 }
 
 impl PlayerSessionBuilder {
@@ -336,6 +337,12 @@ impl PlayerSessionBuilder {
         self
     }
 
+    #[must_use]
+    pub const fn connected_at(mut self, at: SystemTime) -> Self {
+        self.connected_at = Some(at);
+        self
+    }
+
     pub fn build(self) -> Arc<PlayerSession> {
         let typed_commands = CommandQueue::new(self.profile.username.clone());
         Arc::new_cyclic(|shared| PlayerSession {
@@ -354,7 +361,7 @@ impl PlayerSessionBuilder {
             backend_load: self.backend_load,
             connected: AtomicBool::new(true),
             kind: self.kind,
-            connected_at: SystemTime::now(),
+            connected_at: self.connected_at.unwrap_or_else(SystemTime::now),
             command_tx: self.command_tx,
             shutdown_token: self.shutdown_token,
             permission_checker: RwLock::new(self.permission_checker),
@@ -398,6 +405,7 @@ impl PlayerSession {
             permissions: None,
             virtual_host: None,
             events: None,
+            connected_at: None,
         }
     }
 

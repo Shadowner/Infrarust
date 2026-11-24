@@ -19,8 +19,8 @@ use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
+use crate::player::SessionKind;
 use crate::player::commands::CommandInbox;
-use crate::player::{SHUTDOWN_REASON, SessionKind};
 use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
@@ -160,6 +160,7 @@ impl InterceptedHandler {
             lifecycle,
             commands,
             token,
+            login_link: _,
             rewritten,
         } = admitted;
         let Entry {
@@ -246,6 +247,7 @@ impl InterceptedHandler {
         #[cfg(feature = "telemetry")]
         let session_server = initial.server.clone();
 
+        conn.settle();
         let outcome = run_session_loop(&ctx, &mut io, initial).await;
         player.end_commands().await;
 
@@ -253,7 +255,7 @@ impl InterceptedHandler {
             Some(reason) => kicked(&mut io.client, reason, registry).await,
             None => disconnect_cause(&outcome, shutdown),
         };
-        announce_shutdown(&mut io.client, &cause, registry).await;
+        announce_shutdown(&self.services, &mut io.client, &cause).await;
         io.close();
 
         lifecycle.end(cause).await;
@@ -299,7 +301,7 @@ async fn ended_before_start(
     }
     if ctx.token.is_cancelled() {
         let cause = cancelled_cause(shutdown, None);
-        announce_shutdown(&mut io.client, &cause, registry).await;
+        announce_shutdown(ctx.services, &mut io.client, &cause).await;
         return Some(cause);
     }
     None
@@ -317,13 +319,14 @@ async fn kicked(
 }
 
 async fn announce_shutdown(
+    services: &ProxyServices,
     client: &mut ClientBridge,
     cause: &DisconnectCause,
-    registry: &PacketRegistry,
 ) {
     if matches!(cause, DisconnectCause::Shutdown) {
+        let reason = Component::text(services.relays.notice().reason());
         client
-            .disconnect(&Component::text(SHUTDOWN_REASON), registry)
+            .disconnect(&reason, &services.packet_registry)
             .await
             .ok();
     }

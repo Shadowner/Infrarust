@@ -17,11 +17,11 @@ use super::ProxyServer;
 use crate::error::CoreError;
 use crate::handoff::raw_claim::{self, RawClaim, RawClaimLimits};
 use crate::handoff::{HandoffError, HandoffLevel};
+use crate::hot_restart::InFlight;
 use crate::pipeline::admission::{self, Admission};
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::MiddlewareResult;
 use crate::pipeline::types::{ConnectionIntent, LegacyHello};
-use crate::player::SHUTDOWN_REASON;
 
 enum ConnectionError {
     BeforeLogin(CoreError),
@@ -95,13 +95,14 @@ impl ProxyServer {
                 }
             };
 
-            let sessions = self.sessions.clone();
+            let in_flight = self.services.relays.in_flight_guard();
+            let pipeline = self.services.relays.pipeline().clone();
             let peer = pending.peer_addr();
             tracing::debug!(peer = %peer, "new connection");
 
             let server = Arc::clone(&self);
             self.connections.spawn(async move {
-                match server.handle_connection(pending, sessions).await {
+                match server.handle_connection(pending, pipeline, in_flight).await {
                     Ok(()) => {}
                     Err(ConnectionError::BeforeLogin(e)) if client_gave_up(&e) => {
                         tracing::debug!(peer = %peer, error = %e, "client left before login");
@@ -120,8 +121,9 @@ impl ProxyServer {
         &self,
         pending: PendingConnection,
         shutdown: CancellationToken,
+        in_flight: InFlight,
     ) -> Result<(), ConnectionError> {
-        let Some(ctx) = self.accept(pending, &shutdown).await? else {
+        let Some(ctx) = self.accept(pending, in_flight, &shutdown).await? else {
             return Ok(());
         };
         let Some(mut ctx) = self.claim_raw(ctx, &shutdown).await else {
@@ -165,6 +167,7 @@ impl ProxyServer {
     async fn accept(
         &self,
         pending: PendingConnection,
+        in_flight: InFlight,
         shutdown: &CancellationToken,
     ) -> Result<Option<ConnectionContext>, CoreError> {
         let accepted = tokio::select! {
@@ -184,6 +187,7 @@ impl ProxyServer {
             },
         };
         let mut ctx = ConnectionContext::from_accepted(accepted);
+        ctx.hold_in_flight(in_flight);
         if !self.open_transport(&mut ctx, shutdown).await {
             return Ok(None);
         }
@@ -320,9 +324,8 @@ impl ProxyServer {
             result = self.login_pipeline.execute(&mut ctx) => Some(result?),
         };
         let Some(login) = login else {
-            self.send_kick(&mut ctx, &Component::text(SHUTDOWN_REASON))
-                .await
-                .ok();
+            let reason = Component::text(self.services.relays.notice().reason());
+            self.send_kick(&mut ctx, &reason).await.ok();
             return Ok(None);
         };
 
@@ -398,11 +401,12 @@ impl ProxyServer {
 
     async fn hand_off(
         &self,
-        ctx: ConnectionContext,
+        mut ctx: ConnectionContext,
         handoff: Handoff,
         level: HandoffLevel,
         shutdown: &CancellationToken,
     ) {
+        ctx.settle();
         let client = ctx.client_addr();
         let target = handoff.target.clone();
         match self

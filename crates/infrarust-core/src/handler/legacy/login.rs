@@ -6,7 +6,7 @@ use infrarust_protocol::legacy::LegacyHandshakeRequest;
 use super::LegacyHandler;
 use crate::error::CoreError;
 use crate::handler::forwarded::{
-    Applicant, ForwardedLogin, Opening, PROXY_LOGIN_SERVER, Route, Wire,
+    Applicant, ForwardedLogin, Opening, PROXY_LOGIN_SERVER, RelayEnd, Route, Wire,
 };
 use crate::handler::helpers::send_legacy_kick;
 use crate::pipeline::admission;
@@ -79,16 +79,27 @@ impl LegacyHandler {
             "legacy login: forwarding to backend"
         );
 
-        let result = ready.forward(ctx.take_stream()).await;
+        let result = ready.forward(ctx).await;
 
-        tracing::info!(
-            server = %server,
-            username = %request.username,
-            c2b = result.client_to_backend,
-            b2c = result.backend_to_client,
-            reason = ?result.reason,
-            "legacy session ended"
-        );
+        let username = request.username.as_str();
+        let (c2b, b2c) = (result.client_to_backend, result.backend_to_client);
+        match &result.reason {
+            RelayEnd::Ended(reason) => tracing::info!(
+                %server,
+                username,
+                c2b,
+                b2c,
+                ?reason,
+                "legacy session ended"
+            ),
+            RelayEnd::Frozen => tracing::info!(
+                %server,
+                username,
+                c2b,
+                b2c,
+                "legacy session frozen for a hot restart"
+            ),
+        }
 
         Ok(())
     }

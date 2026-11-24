@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use infrarust_transport::BackendConnector;
 
-use super::forwarded::{Applicant, ForwardedLogin, Opening, Route, Wire};
+use super::forwarded::{Applicant, ForwardedLogin, Opening, RelayEnd, Route, Wire};
 use crate::error::CoreError;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::BackendTargets;
@@ -90,7 +90,7 @@ impl PassthroughHandler {
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_start(&self.metrics, server.as_str(), "passthrough");
 
-        let result = ready.forward(ctx.take_stream()).await;
+        let result = ready.forward(&mut ctx).await;
 
         #[cfg(feature = "telemetry")]
         super::helpers::record_session_end(
@@ -100,13 +100,15 @@ impl PassthroughHandler {
             "passthrough",
         );
 
-        tracing::info!(
-            session = %session_id,
-            c2b = result.client_to_backend,
-            b2c = result.backend_to_client,
-            reason = ?result.reason,
-            "session ended"
-        );
+        let (c2b, b2c) = (result.client_to_backend, result.backend_to_client);
+        match &result.reason {
+            RelayEnd::Ended(reason) => {
+                tracing::info!(session = %session_id, c2b, b2c, ?reason, "session ended");
+            }
+            RelayEnd::Frozen => {
+                tracing::info!(session = %session_id, c2b, b2c, "session frozen for a hot restart");
+            }
+        }
 
         Ok(())
     }

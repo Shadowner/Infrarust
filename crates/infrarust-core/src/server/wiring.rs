@@ -23,6 +23,7 @@ use crate::forwarding::secret::load_or_generate_secret;
 use crate::handler::InterceptedHandler;
 use crate::handler::legacy::LegacyHandler;
 use crate::handler::passthrough::PassthroughHandler;
+use crate::hot_restart::RelayRegistry;
 use crate::loadbalancer::PassiveBackendHealth;
 use crate::middleware::backend_selection::BackendSelectionMiddleware;
 use crate::middleware::ban_check::BanCheckMiddleware;
@@ -51,7 +52,7 @@ impl ProxyServer {
         config_path: std::path::PathBuf,
         shutdown: CancellationToken,
     ) -> Result<Self, CoreError> {
-        let sessions = CancellationToken::new();
+        let relays = Arc::new(RelayRegistry::default());
         let background = CancellationToken::new();
 
         let domain_router = Arc::new(DomainRouter::new());
@@ -171,6 +172,7 @@ impl ProxyServer {
             plugin_messaging: Arc::new(crate::plugin_messaging::PluginMessaging::new(
                 &config.plugin_messaging,
             )),
+            relays: Arc::clone(&relays),
         };
 
         let Pipelines {
@@ -187,7 +189,7 @@ impl ProxyServer {
         let legacy_handler = LegacyHandler::new(
             services.clone(),
             Arc::clone(&backend_connector),
-            sessions.clone(),
+            relays.pipeline().clone(),
             status_cache,
             relay_gate,
         );
@@ -228,7 +230,6 @@ impl ProxyServer {
             backend_health,
             unknown_domain_behavior: config.unknown_domain_behavior,
             shutdown,
-            sessions,
             background,
             connections: TaskTracker::new(),
         })

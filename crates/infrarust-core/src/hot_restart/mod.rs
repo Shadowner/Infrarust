@@ -1,3 +1,4 @@
+pub mod freeze;
 pub mod package;
 pub mod platform;
 pub mod relays;
