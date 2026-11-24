@@ -71,3 +71,8 @@ mimalloc = { workspace = true, optional = true }
 [dev-dependencies]
 minisign = { workspace = true }
 tempfile = { workspace = true }
+infrarust-test-harness = { path = "../infrarust-test-harness" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+command-fds = { workspace = true }
+nix = { workspace = true }
