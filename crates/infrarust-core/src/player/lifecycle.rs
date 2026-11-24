@@ -56,7 +56,6 @@ impl PlayerLifecycle {
         lifecycle
     }
 
-    #[allow(dead_code)]
     pub(crate) fn restore(services: &ProxyServices, session: Arc<PlayerSession>) -> Self {
         let guard = services.connection_registry.register(Arc::clone(&session));
         Self {

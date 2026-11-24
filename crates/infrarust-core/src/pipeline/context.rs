@@ -26,7 +26,6 @@ pub(crate) fn connection_id_watermark() -> u64 {
     NEXT_CONNECTION_ID.load(Ordering::Relaxed)
 }
 
-#[allow(dead_code)]
 pub(crate) fn reserve_connection_ids(next: u64) {
     NEXT_CONNECTION_ID.fetch_max(next, Ordering::Relaxed);
 }

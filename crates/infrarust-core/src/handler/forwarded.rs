@@ -175,7 +175,6 @@ impl Ready {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) async fn resume_restored(
     services: &ProxyServices,
     session: ForwardedSession,

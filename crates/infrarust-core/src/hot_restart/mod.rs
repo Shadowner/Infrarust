@@ -6,6 +6,7 @@ pub mod package;
 pub mod platform;
 pub mod preflight;
 pub mod relays;
+pub mod restore;
 pub mod state;
 
 pub use coordinator::{RestartHandle, RestartHub, RestartPhase};
@@ -15,6 +16,7 @@ pub use package::{DroppedSession, FrozenSession, Handle, HandleTable, HandoverPa
 pub use platform::{Handed, Inheritance, RestartPlan, Successor};
 pub use preflight::{BinaryPreflight, Preflight, PreflightError};
 pub use relays::{InFlight, LoginLink, RelayRegistry, RelayTicket};
+pub use restore::{Inherited, PrepareFailure, Prepared, RestoreError, Restored};
 pub use state::{HandleId, HandoverState, SessionMeta};
 
 #[derive(Debug, thiserror::Error)]
