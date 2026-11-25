@@ -49,9 +49,11 @@ pub struct ExeSnapshot {
 impl ExeSnapshot {
     pub fn capture() -> io::Result<Self> {
         let path = std::env::current_exe()?;
-        let path = path.canonicalize().unwrap_or(path);
+        let path = path
+            .canonicalize()
+            .unwrap_or_else(|_| without_deleted_mark(path));
         Ok(Self {
-            identity: ExeIdentity::of(&path).ok(),
+            identity: running_identity(&path),
             path,
             #[cfg(target_os = "linux")]
             image: std::fs::File::open("/proc/self/exe").ok(),
@@ -89,6 +91,38 @@ impl ExeSnapshot {
     }
 }
 
+#[cfg(target_os = "linux")]
+const DELETED_MARK: &[u8] = b" (deleted)";
+
+#[cfg(target_os = "linux")]
+fn without_deleted_mark(path: PathBuf) -> PathBuf {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    match path.as_os_str().as_bytes().strip_suffix(DELETED_MARK) {
+        Some(launched) if !launched.is_empty() => {
+            PathBuf::from(std::ffi::OsString::from_vec(launched.to_vec()))
+        }
+        _ => path,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn without_deleted_mark(path: PathBuf) -> PathBuf {
+    path
+}
+
+#[cfg(target_os = "linux")]
+fn running_identity(path: &Path) -> Option<ExeIdentity> {
+    ExeIdentity::of(Path::new("/proc/self/exe"))
+        .or_else(|_| ExeIdentity::of(path))
+        .ok()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn running_identity(path: &Path) -> Option<ExeIdentity> {
+    ExeIdentity::of(path).ok()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -117,6 +151,34 @@ mod tests {
         let snapshot = ExeSnapshot::at(path.clone());
         std::fs::remove_file(&path).unwrap();
         assert!(snapshot.changed_on_disk());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_image_whose_file_was_replaced_keeps_the_path_it_was_launched_from() {
+        assert_eq!(
+            without_deleted_mark(PathBuf::from("/opt/infrarust/infrarust (deleted)")),
+            PathBuf::from("/opt/infrarust/infrarust")
+        );
+        assert_eq!(
+            without_deleted_mark(PathBuf::from("/opt/infrarust/infrarust")),
+            PathBuf::from("/opt/infrarust/infrarust")
+        );
+        assert_eq!(
+            without_deleted_mark(PathBuf::from(" (deleted)")),
+            PathBuf::from(" (deleted)")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_captured_identity_is_the_one_of_the_running_image() {
+        let snapshot = ExeSnapshot::capture().unwrap();
+        assert_eq!(
+            snapshot.identity(),
+            ExeIdentity::of(Path::new("/proc/self/exe")).ok()
+        );
+        assert!(!snapshot.changed_on_disk());
     }
 
     #[test]
