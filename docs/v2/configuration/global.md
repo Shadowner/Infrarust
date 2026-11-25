@@ -667,6 +667,58 @@ The section is read at startup; changing it needs a restart.
 The global config refuses unknown keys, so a version of Infrarust that predates `[update]` refuses an `infrarust.toml` containing it, with an `unknown field` error. Remove the section before you put such a version back by hand. `infrarust update install` and `infrarust update rollback` run `check-config` with the binary they are about to put in place, and stop before changing anything when it rejects the file.
 :::
 
+## Restart
+
+```toml
+[restart]
+transfer = true
+reauthenticate = false
+delay = "0s"
+message = ""
+```
+
+These options shape a [hot restart](../guide/upgrading#restart-without-disconnecting-players). They do not apply to a normal stop.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `transfer` | bool | `true` | Send the players the proxy cannot hand over back to it, so they reconnect on their own |
+| `reauthenticate` | bool | `false` | Run the session check again for a `client_only` player who comes back |
+| `delay` | duration | `"0s"` | Default delay before a restart |
+| `message` | string | `""` | Default chat message before a restart |
+
+### Players sent back to the proxy
+
+A hot restart keeps the players on `passthrough`, `zero_copy` and `server_only` servers connected. Players on `offline` and `client_only` servers cannot be handed over. With `transfer = true`, those on Minecraft 1.20.5 or later are transferred back to the proxy and come back by themselves, on the server they were on. Older clients are disconnected with `Proxy is restarting, please reconnect`. [Players who come back on their own](../guide/upgrading#players-who-come-back-on-their-own) describes the mechanism and its limits.
+
+`transfer = false` disconnects all of them with the message.
+
+A `client_only` player who comes back with a valid ticket is not checked against the session server again: the proxy verified the account when the player first joined, and the ticket proves it is the same client. Set `reauthenticate = true` to run the check anyway. A restart then depends on the session server being reachable, and a player it refuses is disconnected.
+
+### Delay and message
+
+`delay` and `message` are the defaults of an [announced restart](../guide/upgrading#announce-a-restart). A request that names its own delay or message overrides the matching option. SIGUSR2, `systemctl reload` and the console `update apply` cannot name any, so they always use these.
+
+```toml
+[restart]
+delay = "30s"
+message = "&eThe proxy restarts in {delay}, you will be back in a moment"
+```
+
+With this, `systemctl reload infrarust` tells the players, waits 30 seconds and restarts. `restart 0s` in the console restarts at once despite the configured delay.
+
+In `message`, `{delay}` becomes the time left, such as `30s` or `1m 30s`, and `{seconds}` the same time in seconds. `&` codes set colors, as in the `broadcast` command. Only players on `offline` and `client_only` servers receive it.
+
+### Validation
+
+- `delay` is at most one hour. A longer one is rejected with `restart.delay is <delay>, the longest delay is 1h`.
+- `message` is at most 256 characters.
+
+The section is read at startup; changing it needs a restart, which can be a hot one.
+
+::: warning Older binaries reject the section
+A version of Infrarust that predates `[restart]` refuses an `infrarust.toml` containing it, as it does for [`[update]`](#update-checks). Remove the section before going back to such a version.
+:::
+
 ## Plugins
 
 ```toml
@@ -767,6 +819,12 @@ permission_nodes = 256
 check = true
 channel = "auto"
 interval = "24h"
+
+[restart]
+transfer = true
+reauthenticate = false
+delay = "0s"
+message = ""
 
 # [telemetry]
 # enabled = true

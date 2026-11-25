@@ -148,7 +148,7 @@ A quarantined or recovering plugin keeps the state `enabled`. [Fault Model](../p
 | `help` | `?` | `help [command]` | Show help |
 | `version` | `ver` | `version` | Show version info |
 | `update` | | `update [install\|apply [version]]` | Check for, install or apply an update |
-| `restart` | | `restart` | Restart in place, keeping the players on forwarding servers connected (Linux) |
+| `restart` | | `restart [delay] [message...]`, `restart cancel` | Restart in place, keeping the players on forwarding servers connected (Linux) |
 | `status` | `info` | `status` | Proxy overview |
 | `stop` | `shutdown`, `exit`, `quit` | `stop` | Shut down the proxy |
 | `clear` | `cls` | `clear` | Clear the screen |
@@ -186,6 +186,17 @@ Otherwise the command waits for the install and prints `✓ Installed 2.0.0-beta
 | `A restart is already in progress` | Another restart has not finished |
 | `The proxy is shutting down` | The proxy is stopping |
 | `Hot restart is unavailable here` | The proxy has no hot restart, as on macOS and Windows. Stop the proxy and start it again |
+| `The restart request is refused: <reason>` | The delay is over one hour or the message over 256 characters |
+
+`restart 30s` waits 30 seconds and tells the players first, and `restart 2m &eUpdate in {delay}` chooses the message. The first argument is the delay when it reads as a duration (`30s`, `2m`, `1m30s`); everything else is the message. `restart Back in a minute` sends the message once and restarts without waiting, and `restart 0s` restarts at once even when [`[restart]`](../configuration/global#restart) sets a delay. With a delay, the command answers `✓ Hot restart requested in 30s, the players are told; 'restart cancel' calls it off`. [Announce a restart](../guide/upgrading#announce-a-restart) has the details.
+
+`restart cancel` calls off a restart that has not started yet:
+
+| Reply | When |
+|-------|------|
+| `✓ The restart is cancelled` | The restart was waiting for its delay, or had not passed its preflight |
+| `No restart is scheduled` | Nothing was asked |
+| `✗ The restart is already under way` | The proxy has stopped accepting connections |
 
 #### Plugin commands
 
@@ -207,8 +218,8 @@ During a hot restart, a stop signal depends on how far the restart has gone:
 
 | Phase | `SIGTERM` or `SIGINT` |
 |-------|-----------------------|
-| The preflight, and the wait of up to 3 seconds for the logins in flight | Cancels the restart. The proxy stops gracefully, as above |
-| From the moment the proxy disconnects the players it cannot hand over, until the new image runs | Deferred. The new image starts, logs `a stop signal arrived during the restart; this image stops now`, and stops gracefully. Further signals in this phase do not force an immediate exit |
+| The preflight, the delay of an announced restart, and the wait of up to 3 seconds for the logins in flight | Cancels the restart. The proxy stops gracefully, as above |
+| From the moment the proxy sends back or disconnects the players it cannot hand over, until the new image runs | Deferred. The new image starts, logs `a stop signal arrived during the restart; this image stops now`, and stops gracefully. Further signals in this phase do not force an immediate exit |
 
 ---
 

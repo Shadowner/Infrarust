@@ -102,7 +102,9 @@ sudo systemctl status infrarust
 
 ## Reload without disconnecting players
 
-The `ExecReload` line of the unit makes `systemctl reload infrarust` send SIGUSR2 to the proxy, which starts a [hot restart](./upgrading#restart-without-disconnecting-players). The proxy runs the binary at `/opt/infrarust/infrarust` again inside the same process. Players on `passthrough`, `zero_copy` and `server_only` servers stay connected, players on `offline` and `client_only` servers are disconnected with `Proxy is restarting, please reconnect`, and the proxy reads `infrarust.toml` again.
+The `ExecReload` line of the unit makes `systemctl reload infrarust` send SIGUSR2 to the proxy, which starts a [hot restart](./upgrading#restart-without-disconnecting-players). The proxy runs the binary at `/opt/infrarust/infrarust` again inside the same process. Players on `passthrough`, `zero_copy` and `server_only` servers stay connected, players on `offline` and `client_only` servers come back on their own on Minecraft 1.20.5 and later and are disconnected with `Proxy is restarting, please reconnect` on older clients, and the proxy reads `infrarust.toml` again.
+
+A reload cannot carry a delay or a message. To warn the players first, set them in [`[restart]`](../configuration/global#restart): every reload then announces the restart and waits.
 
 The main PID never changes, which is what `Type=simple` expects: systemd keeps tracking the same process and never sees it exit. `kill $MAINPID` signals the proxy alone, not the processes of the `local` servers it may run.
 

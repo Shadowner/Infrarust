@@ -662,6 +662,28 @@ if let Some(restart) = ctx.proxy_restart() {
 | `InProgress` | Another restart has not finished |
 | `ShuttingDown` | The proxy is stopping |
 | `Unsupported(reason)` | The proxy runs without its restart loop, which only happens in a program that embeds it |
+| `Invalid(reason)` | The options ask for a delay over one hour or a message over 256 characters |
+
+`request_restart()` uses the delay and the message of [`[restart]`](../../configuration/global#restart). `request_restart_with(options)` chooses them, to [announce the restart](../../guide/upgrading#announce-a-restart) to the players:
+
+```rust
+use std::time::Duration;
+use infrarust_api::services::RestartOptions;
+
+restart.request_restart_with(RestartOptions {
+    delay: Some(Duration::from_secs(30)),
+    message: Some("&eUpdate in {delay}".into()),
+})?;
+```
+
+A field left to `None` keeps the configured value. `Some(Duration::ZERO)` restarts without waiting.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `request_restart()` | `Result<(), RestartRequestError>` | Schedule a restart with the configured delay and message |
+| `request_restart_with(options)` | `Result<(), RestartRequestError>` | Schedule a restart with its own delay and message |
+| `cancel_restart()` | `Result<(), RestartCancelError>` | Call off a restart that has not stopped accepting connections. `NothingScheduled` when none was asked, `TooLate` afterwards |
+| `scheduled_restart()` | `Option<ScheduledRestart>` | The time of the restart, while it waits for its delay |
 
 `Ok(())` does not promise a restart. The proxy runs its [preflight](../../guide/upgrading#preflight) afterwards and only logs a refusal. When the restart goes ahead, the calling plugin is disabled in the old image and enabled again in the new one, see [Hot restarts](./lifecycle#hot-restarts).
 

@@ -172,10 +172,10 @@ A plugin can save per-player state in its `DisconnectEvent` listener and global 
 
 On Linux, the proxy can [restart in place](../../guide/upgrading#restart-without-disconnecting-players). The running proxy, the old image, hands its forwarding sessions over to a new image in the same process. Plugins see a shutdown in the old image and a fresh start in the new one, while the players on `passthrough`, `zero_copy` and `server_only` servers stay connected.
 
-In the old image, the proxy:
+In the old image, the proxy first waits for the delay of an [announced restart](../../guide/upgrading#announce-a-restart), if any. Nothing changes for plugins during that wait, and the restart can still be cancelled. Then it:
 
 1. Stops accepting connections and waits up to 3 seconds for the logins in progress. A login that completes in that time fires its events as usual, `PostLoginEvent` included.
-2. Ends the sessions it cannot hand over. In `offline` and `client_only`, the player is disconnected with "Proxy is restarting, please reconnect" and its `DisconnectEvent` fires with the cause `Shutdown`. A login still in progress gets the same message and ends without a `PostLoginEvent`. The forwarding sessions keep running.
+2. Ends the sessions it cannot hand over. In `offline` and `client_only`, a client on 1.20.5 or later is [sent back to the proxy](../../guide/upgrading#players-who-come-back-on-their-own) with a transfer, and an older one is disconnected with "Proxy is restarting, please reconnect". Either way its `DisconnectEvent` fires with the cause `Shutdown`. No `PreTransferEvent` fires for this transfer. A login still in progress gets the message and ends without a `PostLoginEvent`. The forwarding sessions keep running.
 3. Waits for those connections to finish, for at most 5 seconds.
 4. Fires `ProxyShutdownEvent`, delivers the queued events, disables the plugins and stops its background work, as in steps 4 to 7 of a [shutdown](#proxy-shutdown). The players about to be carried over are still in the player registry at this point, and the `proxy_shutdown()` token fires.
 5. Pauses the forwarding sessions and hands them over. No `DisconnectEvent` fires for them.
@@ -187,7 +187,9 @@ In the new image, the proxy:
 3. Fires a `PermissionsSetupEvent` for each carried-over player, so a custom permission checker applies to them as it does at login.
 4. Fires `ProxyInitializeEvent` and starts accepting connections.
 
-The carried-over players appear in the new proxy without `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `ServerConnectedEvent`, and without any other login or server connection event. When they leave, their `DisconnectEvent` fires as for any other player. If the new image fails before it takes the sessions over, the previous version starts again and goes through the same steps. See [Hot restarts](./lifecycle#hot-restarts) for what this means for a plugin's own state.
+The carried-over players appear in the new proxy without `PreLoginEvent`, `LoginEvent`, `PostLoginEvent` or `ServerConnectedEvent`, and without any other login or server connection event.
+
+A player who was sent back is a new connection, with a new player id, and goes through every login event. Two things differ from a first login. The `ConnectionHandshakeEvent` reports the `Transfer` intent. And when the proxy recognises the player's ticket, the profile in `PreLoginEvent` is already the full one, a result of `ForceOffline` or `ForceOnline` is ignored, `OnlineAuthFailedEvent` cannot fire since the session server is not asked, and the initial server offered to `PlayerChooseInitialServerEvent` is the one the player was on. A listener can still deny the login or pick another server. When they leave, their `DisconnectEvent` fires as for any other player. If the new image fails before it takes the sessions over, the previous version starts again and goes through the same steps. See [Hot restarts](./lifecycle#hot-restarts) for what this means for a plugin's own state.
 
 ## Subscribing to events
 
@@ -590,7 +592,7 @@ Fired exactly once for every player that got a `PostLoginEvent`, when their sess
 | `ClientQuit` (`client_quit`) | The client closed the connection |
 | `Kicked { reason }` (`kicked`) | The proxy ended the session: `Player::disconnect`, a denied connection, a duplicate login. `reason` is what the client was shown |
 | `BackendClosed { reason }` (`backend_closed`) | The backend kicked the player or closed the connection and the player was not moved elsewhere. `reason` is what the client was shown, see [KickedFromServerEvent](#kickedfromserverevent). Always `None` in the forwarding modes, where the proxy does not read the backend's packets |
-| `Shutdown` (`shutdown`) | The proxy is shutting down, or restarting in place. The client was shown "Proxy is shutting down", or "Proxy is restarting, please reconnect" for a hot restart (`offline` and `client_only`). See [Proxy shutdown](#proxy-shutdown) and [Proxy hot restart](#proxy-hot-restart) |
+| `Shutdown` (`shutdown`) | The proxy is shutting down, or restarting in place. The client was shown "Proxy is shutting down". For a hot restart (`offline` and `client_only`), it was sent back to the proxy when it runs 1.20.5 or later, and shown "Proxy is restarting, please reconnect" otherwise. See [Proxy shutdown](#proxy-shutdown) and [Proxy hot restart](#proxy-hot-restart) |
 | `Error` (`error`) | The session failed, for example an I/O error or an initial backend that could not be reached |
 
 ```rust

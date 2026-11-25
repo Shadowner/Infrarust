@@ -147,7 +147,8 @@ Paginated endpoints accept `?page=1&per_page=20` query parameters. Maximum `per_
 |--------|------|-------------|
 | GET | `/api/v1/proxy` | Proxy status: version, uptime, player count, server count, features, memory usage, and whether a hot restart is available |
 | POST | `/api/v1/proxy/shutdown` | Graceful proxy shutdown |
-| POST | `/api/v1/proxy/restart` | Restart in place, keeping the players on forwarding servers connected |
+| POST | `/api/v1/proxy/restart` | Restart in place, keeping the players on forwarding servers connected. Takes an optional delay and message |
+| DELETE | `/api/v1/proxy/restart` | Cancel a restart that is waiting for its delay |
 | GET | `/api/v1/proxy/update` | What the last update check found, without checking again |
 | POST | `/api/v1/proxy/update/check` | Check for a new release now |
 | POST | `/api/v1/proxy/update/install` | Install a release in the background |
@@ -225,9 +226,22 @@ When the proxy has an update service and the body is valid, each install request
 
 ### Hot restart
 
-`POST /api/v1/proxy/restart` asks the proxy to [restart in place](../../guide/upgrading#restart-without-disconnecting-players). On Linux, it runs the binary at its path again in the same process: players on `passthrough`, `zero_copy` and `server_only` servers stay connected, and players on `offline` and `client_only` servers are disconnected with `Proxy is restarting, please reconnect`. The new image reads `infrarust.toml` again, so this also applies a configuration written through [`PUT /api/v1/config/proxy/raw`](#configuration).
+`POST /api/v1/proxy/restart` asks the proxy to [restart in place](../../guide/upgrading#restart-without-disconnecting-players). On Linux, it runs the binary at its path again in the same process: players on `passthrough`, `zero_copy` and `server_only` servers stay connected, and players on `offline` and `client_only` servers [come back on their own](../../guide/upgrading#players-who-come-back-on-their-own) on Minecraft 1.20.5 and later, or are disconnected with `Proxy is restarting, please reconnect` on older clients. The new image reads `infrarust.toml` again, so this also applies a configuration written through [`PUT /api/v1/config/proxy/raw`](#configuration).
 
-The request takes no body. It answers `202` once the restart is scheduled, before the proxy checks anything:
+The body is optional. Without one, the restart uses the delay and the message of [`[restart]`](../../configuration/global#restart). A body can set either or both:
+
+```json
+{ "delay_seconds": 30, "message": "&eUpdate in {delay}" }
+```
+
+| Field | Description |
+|-------|-------------|
+| `delay_seconds` | Time to wait before the restart, at most 3600. `0` restarts at once, whatever the configuration says |
+| `message` | Chat message sent to the players on `offline` and `client_only` servers, at most 256 characters. `{delay}` and `{seconds}` show the time left |
+
+Any other field is refused. [Announce a restart](../../guide/upgrading#announce-a-restart) describes when the message is sent.
+
+The request answers `202` once the restart is scheduled, before the proxy checks anything. The message is `Hot restart scheduled in 30 seconds` when the body sets a delay:
 
 ```json
 {
@@ -241,12 +255,15 @@ The request takes no body. It answers `202` once the restart is scheduled, befor
 | Response | When |
 |----------|------|
 | `202 Accepted` | The restart is scheduled |
+| `400 Bad Request` | The delay is over one hour or the message over 256 characters |
 | `409 Conflict` | A restart is already in progress, the proxy is shutting down, or the proxy refuses hot restarts (`hot restart is not supported here: <reason>`). The message says which |
 | `503 Service Unavailable` | The proxy has no hot restart, on macOS or Windows for example, with `hot restart is not available on this proxy` |
 
 A `202` does not mean the restart will happen. The proxy runs its [preflight](../../guide/upgrading#preflight) afterwards, and when the preflight refuses, the reason only shows in the proxy log, on a `hot restart failed` warning. The admin API itself stops answering for part of the restart: the old image stops its plugins, this one included, before the handover, and the new image starts the API again once it has loaded them.
 
-`GET /api/v1/proxy` reports `restart_available`: `true` when this endpoint can schedule a restart, `false` when it answers `503`.
+`DELETE /api/v1/proxy/restart` cancels a restart that has not stopped accepting connections yet. It answers `200` with `Hot restart cancelled`, and `409` with `no restart is scheduled` or `the restart is already under way` otherwise. The players who were told about the restart are told it is cancelled.
+
+`GET /api/v1/proxy` reports `restart_available`: `true` when this endpoint can schedule a restart, `false` when it answers `503`. While a restart waits for its delay, the status also carries `restart_scheduled_at`, the time of the restart in RFC 3339, and `restart_in_seconds`. Both are absent the rest of the time.
 
 ```json
 {
@@ -266,7 +283,7 @@ A `202` does not mean the restart will happen. The proxy runs its [preflight](..
 
 `bind_address` is the address of the admin API itself. The uptime counts from the moment the plugin started, so a hot restart sets it back to zero.
 
-On a proxy that has hot restart, each restart request writes an info-level log line with the target `audit` before the proxy accepts or refuses it. It carries `action=proxy_restart` and `source=admin_api`.
+On a proxy that has hot restart, each restart request writes an info-level log line with the target `audit` before the proxy accepts or refuses it. It carries `action=proxy_restart` and `source=admin_api`, with `delay_seconds` when the request set one. A cancellation writes the same kind of line with `action=proxy_restart_cancel`.
 
 ### Players
 
@@ -601,7 +618,7 @@ When `enable_webui` is `true`, the plugin serves an embedded web frontend at the
 
 The status bar at the top shows an `Update` badge with the version when the last check found a newer release, red and labelled `Security update` when the release fixes a security issue. When the release has a notes page, the badge links to it. A `Restart to apply` badge appears when the executable on disk is no longer the one the proxy started from, after an install for example. On a proxy where `restart_available` is `true`, that badge is a button that starts a hot restart. The dashboard reads `GET /api/v1/proxy/update` when it opens, every 30 minutes after that, and when the event stream reconnects. It never starts a check or an install.
 
-When `restart_available` is `true`, the quick actions of the dashboard and the operations of the Configuration page include `Hot Restart`. Both, like the `Restart to apply` button, ask for confirmation first, then call `POST /api/v1/proxy/restart` and show `Hot restart scheduled`, or the error message the API returned. When `restart_available` is `false`, the action is hidden and `Restart to apply` is a plain badge.
+When `restart_available` is `true`, the quick actions of the dashboard and the operations of the Configuration page include `Hot Restart`. Both, like the `Restart to apply` button, open a dialog first. It says what happens to the players, and lets you pick a delay (the configured one, none, a preset, or a number of seconds) and type a message for the players. `Restart` then calls `POST /api/v1/proxy/restart` and shows the answer of the API. While a restart waits for its delay, the status bar shows `Restart in` with a countdown and a `Cancel` button, which calls `DELETE /api/v1/proxy/restart`. When `restart_available` is `false`, the action is hidden and `Restart to apply` is a plain badge.
 
 The Plugins page shows each plugin's state; it has no enable or disable action, since a plugin is turned on or off with `enabled` in its `[plugins.<id>]` table and a restart. A WASM plugin that is recovering or quarantined gets a second badge with its health, and the time until the next attempt when one is scheduled. A WASM plugin's page adds a Runtime panel with its health, generation, restarts in the window, queue depth and queue wait, and the cause and age of its last fault. Native plugins have no Runtime panel. Both pages fetch the plugins again every 10 seconds, on every second `stats.tick` event of the event stream, and count down to the next attempt in between.
 

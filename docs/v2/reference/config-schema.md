@@ -476,6 +476,25 @@ channel = "stable"
 interval = "12h"
 ```
 
+### `[restart]`
+
+What a [hot restart](../guide/upgrading#restart-without-disconnecting-players) does with the players it cannot hand over, and how it is announced. Read at startup; changes need a restart. See [Restart](../configuration/global#restart).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `transfer` | boolean | `true` | Send players on `offline` and `client_only` servers with a 1.20.5 or later client back to the proxy, so they reconnect on their own. `false` disconnects them with a message |
+| `reauthenticate` | boolean | `false` | Ask the session server again for a `client_only` player who comes back after a restart |
+| `delay` | duration | `"0s"` | Time a restart waits when the request gives no delay |
+| `message` | string | `""` | Chat message sent before a restart when the request gives none. `{delay}` and `{seconds}` show the time left |
+
+Validation: `delay` at most `1h`, and `message` at most 256 characters.
+
+```toml
+[restart]
+delay = "30s"
+message = "&eThe proxy restarts in {delay}, you will be back in a moment"
+```
+
 ### `[plugins.<id>]`
 
 Per-plugin configuration, keyed by plugin ID. WASM plugins are discovered from `plugins_dir`.

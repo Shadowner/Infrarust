@@ -187,7 +187,7 @@ The new image starts the way a fresh proxy does: it reads `infrarust.toml` and t
 
 | From | How |
 |------|-----|
-| The console | `restart`. [`update apply`](#apply-an-update-in-place) installs a release first |
+| The console | `restart`, or `restart 30s Back in a minute` to [announce it first](#announce-a-restart). [`update apply`](#apply-an-update-in-place) installs a release first |
 | A shell | `kill -USR2 <pid>`. With systemd, `sudo systemctl reload infrarust` once the unit has [`ExecReload`](./systemd#reload-without-disconnecting-players). With Docker, `docker kill --signal=USR2 infrarust` |
 | The admin API | `POST /api/v1/proxy/restart`, see [Hot restart](../plugins/builtin/admin-api#hot-restart) |
 | The dashboard | `Hot Restart` on the dashboard and on the Configuration page, or the `Restart to apply` badge after an install |
@@ -196,6 +196,23 @@ The new image starts the way a fresh proxy does: it reads `infrarust.toml` and t
 Each of these asks for the restart and returns at once. Follow the restart in the log. The old image logs `hot restart requested, checking the new binary`, then one line per step. The new image logs `taking over from the previous image`, then `handover committed, this image owns the inherited sessions`, then `inherited sessions resumed` with the number of sessions it `restored` and `dropped`, and last `infrarust is ready, accepting connections`.
 
 One restart runs at a time. A request made while a restart is in progress, or while the proxy stops, is refused. A SIGUSR2 that arrives while the proxy is still starting is ignored, and the log says so.
+
+### Announce a restart
+
+A restart can wait and tell the players first. Give it a delay, a message, or both:
+
+| From | How |
+|------|-----|
+| The console | `restart 30s`, `restart 2m &eUpdate in {delay}`, `restart Back in a minute` |
+| The admin API | `POST /api/v1/proxy/restart` with `{"delay_seconds": 30, "message": "&eUpdate in {delay}"}` |
+| The dashboard | the delay and the message of the `Hot Restart` dialog |
+| The configuration | [`[restart]`](../configuration/global#restart) sets the delay and the message used when a request gives none, which is always the case for SIGUSR2, `systemctl reload` and `update apply` |
+
+The proxy runs the [preflight](#preflight) first, so a restart that would be refused is never announced. It then sends the message in chat, sends it again when 5 minutes, 1 minute, 30, 10, 5 and 1 seconds are left, and runs the preflight again before it restarts. In the message, `{delay}` is the time left, written like `1m 30s`, `{seconds}` is the same time in seconds, and `&` codes set colors. A delay without a message uses `The proxy restarts in {delay}`. A message without a delay is sent once, right before the restart. The longest delay is one hour and the longest message 256 characters.
+
+Only players on `offline` and `client_only` servers receive the message. The proxy relays the traffic of the other modes without reading it, so it cannot add a chat line there, and those players do not notice the restart anyway.
+
+While the proxy waits, `restart cancel` in the console, `DELETE /api/v1/proxy/restart` or `Cancel` in the dashboard calls the restart off. The players are told `The restart is cancelled`. They get the same line when the second preflight refuses the restart. Once the proxy has stopped accepting connections, it is too late to cancel.
 
 ### Apply an update in place
 
@@ -215,11 +232,33 @@ Through the admin API, call `POST /api/v1/proxy/update/install`, wait until `GET
 ### What players see
 
 - On `passthrough`, `zero_copy` and `server_only` servers, the client and the backend keep their TCP connections. Traffic stops while the sessions move to the new image, then resumes where it stopped, with no bytes lost in either direction. In our tests with a release build on a 16-core machine, the longest pause any player saw was about 70 ms with 1000 sessions and about 140 ms with 2000.
-- On `offline` and `client_only` servers, the proxy holds each player's game state itself and cannot hand it over. These players are disconnected with `Proxy is restarting, please reconnect`, and can join again right away.
+- On `offline` and `client_only` servers, the proxy holds each player's game state itself and cannot hand it over. A client on Minecraft 1.20.5 or later is [sent back to the proxy](#players-who-come-back-on-their-own): it shows a loading screen for a moment and is in the game again without the player doing anything. An older client is disconnected with `Proxy is restarting, please reconnect`, and can join again right away.
 - A connection that is still logging in gets up to 3 seconds to finish. A login on a forwarding server that completes in time is carried over like the others. One that does not is disconnected with the same message.
 - New connections, server list pings included, wait in the kernel's queue while the proxy restarts, and the new image accepts them.
 
 A forwarding session that cannot be handed over is closed, with a warning in the log. A carried-over player whose server is no longer in the configuration keeps the connection to its backend; the new image logs a warning for it.
+
+### Players who come back on their own
+
+Since Minecraft 1.20.5 a server can send a client to another address and leave it a small piece of data, a cookie, to present there. The proxy uses both to bring back the players it cannot hand over.
+
+Right before the restart, each such player on 1.20.5 or later receives a cookie holding a random ticket, then a transfer to the address and port the player joined with. The client reconnects at once and waits in the kernel's queue with the other new connections. The new image asks it for the cookie during login. A ticket it knows brings the player back:
+
+- on the server the player was on, including one reached with `/server` or a plugin, as long as that server still exists;
+- with the same profile, without asking Mojang's session server again. The connection is encrypted as before.
+
+The old image logs `players on 1.20.5 and later were sent back to reconnect on their own` with their number, and the new image logs `player resumed after the restart` for each one.
+
+A ticket works once, for 60 seconds, and only from the address it was given to, for the same player name, protocol version and domain. The proxy keeps what the ticket stands for on its side and passes it to the new image with the sessions; the cookie holds nothing but the random ticket. A client that comes back without a valid ticket logs in the normal way, with the session check on `client_only` servers. This is what happens to a player whose connection changes address between the two connections, for example from IPv6 to IPv4.
+
+The players are sent back to the host name and the port their client used. That works when the name still resolves to the proxy, which is the normal case. It does not work for a client that reached the proxy through a tunnel or an address that only existed for that connection, nor when the restart applies a new `bind` port that the players do not reach through the old one. Set `transfer = false` for such a restart.
+
+Two settings of [`[restart]`](../configuration/global#restart) change this:
+
+- `transfer = false` disconnects these players with the message, as the proxy did before.
+- `reauthenticate = true` keeps the session check for the players who come back. A restart then needs Mojang's session server to be reachable for them.
+
+Players are only sent back when the new binary can resume them. A restart into an older release disconnects them with the message instead. After a [rollback](#rollback), the previous version resumes them as the new one would have.
 
 ### Preflight
 
@@ -240,7 +279,7 @@ lobby, survival run as child processes of the proxy and would be orphaned by a h
 
 ### Rollback
 
-After the preflight, the old image stops accepting connections, waits for the logins in flight, disconnects the players it cannot hand over, stops its plugins and pauses the forwarding sessions. Then it starts the new image.
+After the preflight, the old image stops accepting connections, waits for the logins in flight, sends back or disconnects the players it cannot hand over, stops its plugins and pauses the forwarding sessions. Then it starts the new image.
 
 If the new image fails before it has taken the sessions over, the proxy rolls back. That covers a binary that cannot start, a configuration or command line it rejects, a listener it cannot open, and a panic during its startup. The proxy starts the previous version again in the same process, and that version resumes the sessions. Players on forwarding servers stay connected through it. The log shows `rolling the hot restart back to <version>: <reason>`.
 
@@ -254,14 +293,14 @@ Once the new image has taken the sessions over, there is no way back. A failure 
 
 ### Stopping during a hot restart
 
-A SIGTERM or SIGINT that arrives during the preflight, or while the proxy waits for the logins in flight, cancels the restart. The proxy then stops gracefully, as it would at any other time. `systemctl stop` and `docker stop` send SIGTERM.
+A SIGTERM or SIGINT that arrives during the preflight, during the delay of an [announced restart](#announce-a-restart), or while the proxy waits for the logins in flight, cancels the restart. The proxy then stops gracefully, as it would at any other time. `systemctl stop` and `docker stop` send SIGTERM.
 
 From the moment the proxy starts disconnecting players for the restart, a stop waits for the handover: the new image starts, then stops gracefully. Sending the signal again in that phase does not make the proxy exit at once. See [Signals](../reference/cli#signals).
 
 ### Limits
 
 - Hot restart works on Linux only. On macOS and Windows, the console `restart` command answers `Hot restart is unavailable here`, the admin API answers `503`, and the dashboard shows no hot restart action. Stop the proxy and start it again.
-- Players on `offline` and `client_only` servers are disconnected, see [What players see](#what-players-see).
+- Players on `offline` and `client_only` servers with a client older than 1.20.5 are disconnected, see [What players see](#what-players-see).
 - A running `local` server blocks the restart, see [Preflight](#preflight).
 - The new binary must support hot restart as well. Going back to a release without it takes a full restart, and `update check` reports `full` for such a release.
 - The old image stops its plugins and the new one loads them again, so a plugin keeps only the state it saves. Plugin authors can read [Hot restarts](../plugins/dev/lifecycle#hot-restarts).

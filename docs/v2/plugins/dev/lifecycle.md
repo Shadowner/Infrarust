@@ -193,6 +193,7 @@ On Linux, a [hot restart](../../guide/upgrading#restart-without-disconnecting-pl
 - The new image discovers, loads and enables the plugins again, from the binary and from `plugins_dir`, then fires `ProxyInitializeEvent`. A `.wasm` file replaced in the meantime runs in its new version.
 - Nothing a plugin holds in memory survives. Save what must last in `ProxyShutdownEvent` or `on_disable`, under `data_dir()` for example, and read it back in `on_enable`.
 - The carried-over players keep their player id, so state saved per player id still matches them. They reach the new image without any login event; [Proxy hot restart](./events#proxy-hot-restart) lists the events on both sides.
+- The players on `offline` and `client_only` servers who are sent back to the proxy log in again and get a new player id. Key the state you keep for them by UUID.
 
 A plugin can request a hot restart itself through `ctx.proxy_restart()`, see [ProxyRestart and ProxyUpdates](./api#proxyrestart-and-proxyupdates).
 
