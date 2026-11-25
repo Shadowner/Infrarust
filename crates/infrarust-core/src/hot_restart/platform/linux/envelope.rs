@@ -24,11 +24,18 @@ pub struct EnvelopeHeader {
 #[derive(Debug)]
 pub struct Envelope {
     pub header: EnvelopeHeader,
+    version: u32,
     body: Vec<u8>,
 }
 
 impl Envelope {
     pub fn state(&self) -> Result<(HandoverState, Vec<u8>), HandoverError> {
+        if self.version != VERSION {
+            return Err(malformed(format!(
+                "envelope version {} is not supported, expected {VERSION}",
+                self.version
+            )));
+        }
         let (state, tails) = state::decode(&self.body)?;
         check_handles(&self.header, &state)?;
         Ok((state, tails))
@@ -62,11 +69,6 @@ pub fn decode(bytes: &[u8]) -> Result<Envelope, HandoverError> {
         return Err(malformed("bad envelope magic".into()));
     }
     let version = u32::from_le_bytes([prefix[8], prefix[9], prefix[10], prefix[11]]);
-    if version != VERSION {
-        return Err(malformed(format!(
-            "envelope version {version} is not supported, expected {VERSION}"
-        )));
-    }
     let json_len = u32::from_le_bytes([prefix[12], prefix[13], prefix[14], prefix[15]]) as usize;
     let rest = &bytes[PREFIX_LEN..];
     let json = rest
@@ -77,6 +79,7 @@ pub fn decode(bytes: &[u8]) -> Result<Envelope, HandoverError> {
     check_fds(&header)?;
     Ok(Envelope {
         header,
+        version,
         body: rest[json_len..].to_vec(),
     })
 }
@@ -229,6 +232,21 @@ mod tests {
         bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
         assert!(
             matches!(open(&bytes), Err(HandoverError::Malformed(reason)) if reason.contains("version 2"))
+        );
+    }
+
+    #[test]
+    fn an_unknown_version_still_yields_the_header() {
+        let (state, tails, _peers) = sample();
+        let header = header(vec![1, 2, 3, 4, 5]);
+        let mut bytes = encode(&header, &state, &tails).unwrap();
+        bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
+
+        let envelope = decode(&bytes).unwrap();
+
+        assert_eq!(envelope.header, header);
+        assert!(
+            matches!(envelope.state(), Err(HandoverError::Malformed(reason)) if reason.contains("version 2"))
         );
     }
 
