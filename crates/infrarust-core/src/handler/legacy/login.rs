@@ -92,7 +92,7 @@ impl LegacyHandler {
                 ?reason,
                 "legacy session ended"
             ),
-            RelayEnd::Frozen => tracing::info!(
+            RelayEnd::Frozen => tracing::debug!(
                 %server,
                 username,
                 c2b,

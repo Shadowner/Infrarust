@@ -263,7 +263,9 @@ pub fn launch(server: &ProxyServer, listener: &Listener, prepared: Prepared) -> 
             async move {
                 let relayed = resume_restored(&services, session, relay).await;
                 #[cfg(feature = "telemetry")]
-                metrics.ended();
+                if !matches!(relayed.reason, RelayEnd::Frozen) {
+                    metrics.ended();
+                }
                 drop(slot);
                 report(uuid, &relayed);
             }

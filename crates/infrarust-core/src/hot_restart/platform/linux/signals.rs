@@ -136,10 +136,7 @@ pub(super) fn release() {
 }
 
 pub(super) fn forward_pending_stop() {
-    let mut bits = DEFERRED.load(Ordering::SeqCst);
-    if !EARLY_TAKEN.load(Ordering::SeqCst) {
-        bits |= EARLY.load(Ordering::SeqCst);
-    }
+    let bits = DEFERRED.load(Ordering::SeqCst) | EARLY.load(Ordering::SeqCst);
     let Some(signal) = EarlySignals::from_bits(bits).stop() else {
         return;
     };

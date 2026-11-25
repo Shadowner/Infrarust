@@ -124,7 +124,8 @@ impl RelayRegistry {
         self.freeze.cancel();
     }
 
-    pub fn is_freezing(&self) -> bool {
+    #[cfg(test)]
+    fn is_freezing(&self) -> bool {
         self.freeze.is_cancelled()
     }
 

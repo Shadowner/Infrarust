@@ -342,7 +342,7 @@ async fn apply(
     shutdown: &CancellationToken,
 ) -> CommandOutput {
     if restart.is_none() {
-        return Failure::new("Hot restart is unavailable on this platform")
+        return Failure::new("Hot restart is unavailable here")
             .with_hint(manual_restart_hint())
             .into();
     }
@@ -351,7 +351,7 @@ async fn apply(
         Err(output) => return output,
     };
     if let Some(version) = version
-        && version.trim_start_matches('v') != available.version
+        && version.strip_prefix('v').unwrap_or(version) != available.version
     {
         return Failure::new(format!(
             "Only the advertised update {} can be applied in place",
@@ -604,12 +604,15 @@ impl ConsoleCommand for RestartCommand {
 
     fn execute<'a>(
         &'a self,
-        _args: &'a [&'a str],
+        args: &'a [&'a str],
         services: &'a ConsoleServices,
     ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
+            if !args.is_empty() {
+                return usage(self);
+            }
             let Some(restart) = services.restart.as_deref() else {
-                return Failure::new("Hot restart is unavailable on this platform")
+                return Failure::new("Hot restart is unavailable here")
                     .with_hint(Hint::Note("stop the proxy and start it again".to_string()))
                     .into();
             };
@@ -1047,7 +1050,7 @@ mod tests {
     async fn restart_without_a_handle_says_hot_restart_is_unavailable() {
         assert_eq!(
             render(RestartCommand.execute(&[], &console(None)).await),
-            "error: Hot restart is unavailable on this platform\n  stop the proxy and start it again"
+            "error: Hot restart is unavailable here\n  stop the proxy and start it again"
         );
     }
 
@@ -1083,7 +1086,7 @@ mod tests {
         let updates = Arc::new(FakeUpdates::new(offering(hot_release())));
         assert_eq!(
             apply_with(&["apply"], &updates, None).await,
-            "error: Hot restart is unavailable on this platform\n  type update install, then stop the proxy and start it again"
+            "error: Hot restart is unavailable here\n  type update install, then stop the proxy and start it again"
         );
         assert!(updates.requests().is_empty());
     }

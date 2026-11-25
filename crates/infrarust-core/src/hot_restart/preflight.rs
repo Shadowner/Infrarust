@@ -12,6 +12,8 @@ pub trait Preflight: Send + Sync {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PreflightError {
+    #[error("an update is being installed; restart once it has finished")]
+    InstallRunning,
     #[error("the new binary cannot be probed: {0}")]
     Probe(ProbeError),
     #[error(

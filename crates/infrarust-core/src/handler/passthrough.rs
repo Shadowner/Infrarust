@@ -93,12 +93,14 @@ impl PassthroughHandler {
         let result = ready.forward(&mut ctx).await;
 
         #[cfg(feature = "telemetry")]
-        super::helpers::record_session_end(
-            &self.metrics,
-            ctx.connection_duration(),
-            server.as_str(),
-            "passthrough",
-        );
+        if !matches!(result.reason, RelayEnd::Frozen) {
+            super::helpers::record_session_end(
+                &self.metrics,
+                ctx.connection_duration(),
+                server.as_str(),
+                "passthrough",
+            );
+        }
 
         let (c2b, b2c) = (result.client_to_backend, result.backend_to_client);
         match &result.reason {

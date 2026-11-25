@@ -204,7 +204,7 @@ fn close_on_exec(fds: &[BorrowedFd<'_>]) {
 
 #[derive(Debug)]
 struct LinuxInheritance {
-    wire: Option<(HandoverState, Vec<u8>)>,
+    wire: Option<Envelope>,
     handles: Vec<RawFd>,
     claimed: Vec<InheritedSocket>,
     memfd: Option<OwnedFd>,
@@ -244,9 +244,10 @@ impl LinuxInheritance {
 
 impl Inheritance for LinuxInheritance {
     fn take_package(&mut self) -> Result<HandoverPackage, HandoverError> {
-        let (state, tails) = self.wire.take().ok_or_else(|| {
+        let envelope = self.wire.take().ok_or_else(|| {
             HandoverError::Malformed("the inherited package was already taken".into())
         })?;
+        let (state, tails) = envelope.state()?;
         let expected = expectations(&state, self.handles.len())?;
         for (index, (fd, expect)) in self.handles.iter().zip(expected).enumerate() {
             let id = u32::try_from(index)
@@ -273,8 +274,7 @@ impl Inheritance for LinuxInheritance {
     }
 
     fn commit(mut self: Box<Self>) -> Result<(), HandoverError> {
-        if cfg!(debug_assertions)
-            && self.failpoint == Some(Failpoint::SuccessorPrecommit)
+        if self.failpoint == Some(Failpoint::SuccessorPrecommit)
             && self.rollback.attempt == Attempt::First
         {
             return Err(self.roll_back("the successor-precommit failpoint is set"));
@@ -327,11 +327,8 @@ fn inherit_from(
     exec: Exec,
 ) -> Result<LinuxInheritance, HandoverError> {
     let memfd = claim_sealed(vars.fd)?;
-    let Envelope {
-        header,
-        state,
-        tails,
-    } = envelope::decode(&read_sealed(memfd.as_fd())?)?;
+    let envelope = envelope::decode(&read_sealed(memfd.as_fd())?)?;
+    let header = &envelope.header;
     if header.handles.contains(&vars.fd) || header.image == Some(vars.fd) {
         return Err(HandoverError::Malformed(format!(
             "fd {} is both the envelope and one of the descriptors it lists",
@@ -357,14 +354,15 @@ fn inherit_from(
         old,
         FileId::of_path,
     );
+    let (handles, version) = (header.handles.clone(), header.version.clone());
     Ok(LinuxInheritance {
-        wire: Some((state, tails)),
-        handles: header.handles,
+        wire: Some(envelope),
+        handles,
         claimed: Vec::new(),
         memfd: Some(memfd),
         image,
         rollback: RollbackPlan {
-            version: header.version,
+            version,
             memfd: vars.fd,
             attempt: vars.attempt,
             argv,

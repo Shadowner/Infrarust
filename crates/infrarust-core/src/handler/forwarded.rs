@@ -378,8 +378,21 @@ impl ForwardedLogin<'_> {
                     if warmed {
                         route.addresses = self.select(ctx, &route.routing);
                     }
-                    match self.open_backend(ctx, &admitted, &route, opening).await {
-                        Ok(backend) => {
+                    let opened = tokio::select! {
+                        biased;
+                        opened = self.open_backend(ctx, &admitted, &route, opening) => Some(opened),
+                        () = admitted.token.cancelled() => None,
+                    };
+                    match opened {
+                        None => {
+                            let ended = self
+                                .interrupted(ctx, &mut admitted)
+                                .await
+                                .unwrap_or(DisconnectCause::Shutdown);
+                            admitted.lifecycle.end(ended).await;
+                            return Ok(None);
+                        }
+                        Some(Ok(backend)) => {
                             self.services
                                 .event_bus
                                 .fire(ServerConnectedEvent::new(
@@ -402,7 +415,7 @@ impl ForwardedLogin<'_> {
                                 relays: Arc::clone(&self.services.relays),
                             }));
                         }
-                        Err(error) => {
+                        Some(Err(error)) => {
                             tracing::warn!(server = %server, error = %error, "backend connection failed");
                             Kick::failed(server, error, false)
                         }

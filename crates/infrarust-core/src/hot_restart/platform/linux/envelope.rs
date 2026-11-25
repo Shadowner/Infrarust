@@ -24,8 +24,15 @@ pub struct EnvelopeHeader {
 #[derive(Debug)]
 pub struct Envelope {
     pub header: EnvelopeHeader,
-    pub state: HandoverState,
-    pub tails: Vec<u8>,
+    body: Vec<u8>,
+}
+
+impl Envelope {
+    pub fn state(&self) -> Result<(HandoverState, Vec<u8>), HandoverError> {
+        let (state, tails) = state::decode(&self.body)?;
+        check_handles(&self.header, &state)?;
+        Ok((state, tails))
+    }
 }
 
 pub fn encode(
@@ -67,16 +74,19 @@ pub fn decode(bytes: &[u8]) -> Result<Envelope, HandoverError> {
         .ok_or_else(|| malformed("truncated envelope header".into()))?;
     let header: EnvelopeHeader =
         serde_json::from_slice(json).map_err(|e| malformed(e.to_string()))?;
-    let (state, tails) = state::decode(&rest[json_len..])?;
-    check(&header, &state)?;
+    check_fds(&header)?;
     Ok(Envelope {
         header,
-        state,
-        tails,
+        body: rest[json_len..].to_vec(),
     })
 }
 
 fn check(header: &EnvelopeHeader, state: &HandoverState) -> Result<(), HandoverError> {
+    check_handles(header, state)?;
+    check_fds(header)
+}
+
+fn check_handles(header: &EnvelopeHeader, state: &HandoverState) -> Result<(), HandoverError> {
     let count = header.handles.len();
     let mut seen = vec![false; count];
     let referenced = state.listener.iter().map(|listener| listener.handle).chain(
@@ -106,6 +116,10 @@ fn check(header: &EnvelopeHeader, state: &HandoverState) -> Result<(), HandoverE
             "the envelope carries {count} handles but the state references {total}"
         )));
     }
+    Ok(())
+}
+
+fn check_fds(header: &EnvelopeHeader) -> Result<(), HandoverError> {
     let mut fds: Vec<RawFd> = header.handles.iter().copied().chain(header.image).collect();
     if let Some(fd) = fds.iter().find(|fd| **fd < 0) {
         return Err(malformed(format!("fd {fd} is not a valid descriptor")));
@@ -152,18 +166,34 @@ mod tests {
         (package.state, package.tails, peers)
     }
 
+    fn open(bytes: &[u8]) -> Result<(EnvelopeHeader, HandoverState, Vec<u8>), HandoverError> {
+        let envelope = decode(bytes)?;
+        let (state, tails) = envelope.state()?;
+        Ok((envelope.header, state, tails))
+    }
+
+    #[test]
+    fn a_state_that_cannot_be_read_still_yields_the_header() {
+        let (state, tails, _peers) = sample();
+        let header = header(vec![10, 11, 12, 13, 14]);
+        let bytes = encode(&header, &state, &tails).unwrap();
+
+        let envelope = decode(&bytes[..bytes.len() - 1]).unwrap();
+
+        assert_eq!(envelope.header, header);
+        assert!(envelope.state().is_err());
+    }
+
     #[test]
     fn an_envelope_round_trips() {
         let (state, tails, _peers) = sample();
         let header = header(vec![10, 11, 12, 13, 14]);
 
         let bytes = encode(&header, &state, &tails).unwrap();
-        let envelope = decode(&bytes).unwrap();
+        let opened = open(&bytes).unwrap();
 
         assert_eq!(&bytes[..8], b"IRLNXENV");
-        assert_eq!(envelope.header, header);
-        assert_eq!(envelope.state, state);
-        assert_eq!(envelope.tails, tails);
+        assert_eq!(opened, (header, state, tails));
     }
 
     #[test]
@@ -176,10 +206,10 @@ mod tests {
             ..header(Vec::new())
         };
 
-        let envelope = decode(&encode(&header, &state, &[]).unwrap()).unwrap();
+        let (opened, _state, tails) = open(&encode(&header, &state, &[]).unwrap()).unwrap();
 
-        assert_eq!(envelope.header, header);
-        assert!(envelope.tails.is_empty());
+        assert_eq!(opened, header);
+        assert!(tails.is_empty());
     }
 
     #[test]
@@ -188,7 +218,7 @@ mod tests {
         let mut bytes = encode(&header(vec![1, 2, 3, 4, 5]), &state, &tails).unwrap();
         bytes[3] ^= 0xff;
         assert!(
-            matches!(decode(&bytes), Err(HandoverError::Malformed(reason)) if reason.contains("magic"))
+            matches!(open(&bytes), Err(HandoverError::Malformed(reason)) if reason.contains("magic"))
         );
     }
 
@@ -198,7 +228,7 @@ mod tests {
         let mut bytes = encode(&header(vec![1, 2, 3, 4, 5]), &state, &tails).unwrap();
         bytes[8..12].copy_from_slice(&2u32.to_le_bytes());
         assert!(
-            matches!(decode(&bytes), Err(HandoverError::Malformed(reason)) if reason.contains("version 2"))
+            matches!(open(&bytes), Err(HandoverError::Malformed(reason)) if reason.contains("version 2"))
         );
     }
 
@@ -208,7 +238,7 @@ mod tests {
         let bytes = encode(&header(vec![1, 2, 3, 4, 5]), &state, &tails).unwrap();
         for cut in [0, 7, 15, 16, 40, bytes.len() - 1] {
             assert!(
-                matches!(decode(&bytes[..cut]), Err(HandoverError::Malformed(_))),
+                matches!(open(&bytes[..cut]), Err(HandoverError::Malformed(_))),
                 "a cut at {cut} was accepted"
             );
         }
@@ -229,7 +259,7 @@ mod tests {
             forged.splice(PREFIX_LEN..PREFIX_LEN + original_len, json.iter().copied());
             forged[12..16].copy_from_slice(&u32::try_from(json.len()).unwrap().to_le_bytes());
             assert!(
-                matches!(decode(&forged), Err(HandoverError::Malformed(reason)) if reason.contains("handles")),
+                matches!(open(&forged), Err(HandoverError::Malformed(reason)) if reason.contains("handles")),
             );
         }
     }

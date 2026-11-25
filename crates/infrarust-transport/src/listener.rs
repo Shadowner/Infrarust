@@ -212,7 +212,7 @@ impl Listener {
         shutdown: CancellationToken,
     ) -> Result<Self, TransportError> {
         let socket = adopt_listener_socket(inherited)?;
-        tracing::info!(configured_bind = %config.bind, "adopting socket passed by socket activation");
+        tracing::info!(configured_bind = %config.bind, "adopting an inherited listening socket");
         Self::listen(socket, config, shutdown)
     }
 

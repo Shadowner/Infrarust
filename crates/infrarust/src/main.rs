@@ -109,6 +109,10 @@ fn main() -> ExitCode {
     if cli.handover_probe {
         return print_probe();
     }
+    let inheritance = match hot_restart::inherit() {
+        Ok(inheritance) => inheritance,
+        Err(code) => return code,
+    };
     infrarust_core::terminal::color::init();
     let exe = ExeSnapshot::capture();
 
@@ -123,10 +127,7 @@ fn main() -> ExitCode {
         None => {}
     }
 
-    match hot_restart::inherit() {
-        Ok(inheritance) => serve(cli, exe, inheritance),
-        Err(code) => code,
-    }
+    serve(cli, exe, inheritance)
 }
 
 fn serve(
@@ -347,7 +348,6 @@ fn apply_cli_overrides(cli: &Cli, config: &mut ProxyConfig) {
     }
 }
 
-#[allow(clippy::print_stderr)]
 fn print_probe() -> ExitCode {
     match serde_json::to_string(&BUILD.probe()) {
         Ok(line) => {
@@ -361,7 +361,6 @@ fn print_probe() -> ExitCode {
     }
 }
 
-#[allow(clippy::print_stderr)]
 fn check_config(cli: &Cli, json: bool) -> ExitCode {
     let check = match load_config(cli) {
         Ok((_, warnings)) => ConfigCheck {

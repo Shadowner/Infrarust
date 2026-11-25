@@ -76,7 +76,7 @@ impl IpLimiter {
         None
     }
 
-    pub fn force_acquire(self: &Arc<Self>, ip: IpAddr) -> IpGuard {
+    pub(crate) fn force_acquire(self: &Arc<Self>, ip: IpAddr) -> IpGuard {
         let key = IpKey::from(ip);
         *self.counts.entry(key).or_insert(0) += 1;
         IpGuard {

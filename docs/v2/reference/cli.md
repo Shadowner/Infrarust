@@ -174,7 +174,7 @@ The header ends with `up to date`, `update available`, `security update availabl
 
 `update apply` installs the release the last check found and then restarts the proxy in place. With no release known, it checks first, like `update install`. `update apply <version>` must name that same release, with or without a leading `v`; any other version stops with `✗ Only the advertised update 2.0.0-beta.6 can be applied in place`, followed by the commands to install it and restart by hand. Nothing is installed when:
 
-- the proxy has no hot restart, as on macOS and Windows: `✗ Hot restart is unavailable on this platform`;
+- the proxy has no hot restart, as on macOS and Windows: `✗ Hot restart is unavailable here`;
 - the release needs more than a hot restart: `✗ 2.0.0-beta.6 needs a full restart, nothing was installed`.
 
 Otherwise the command waits for the install and prints `✓ Installed 2.0.0-beta.6, restarting in place; follow the restart in the logs`, or `✗ Update failed: <reason>`. The restart that follows goes through the same [preflight](../guide/upgrading#preflight) as `restart`, so it can still be refused, with the new binary installed. See [Apply an update in place](../guide/upgrading#apply-an-update-in-place).
@@ -185,7 +185,7 @@ Otherwise the command waits for the install and prints `✓ Installed 2.0.0-beta
 |-------|------|
 | `A restart is already in progress` | Another restart has not finished |
 | `The proxy is shutting down` | The proxy is stopping |
-| `Hot restart is unavailable on this platform` | The proxy has no hot restart, as on macOS and Windows. Stop the proxy and start it again |
+| `Hot restart is unavailable here` | The proxy has no hot restart, as on macOS and Windows. Stop the proxy and start it again |
 
 #### Plugin commands
 

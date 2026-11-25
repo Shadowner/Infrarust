@@ -71,10 +71,6 @@ impl ExeSnapshot {
         &self.path
     }
 
-    pub fn dir(&self) -> Option<&Path> {
-        self.path.parent()
-    }
-
     pub const fn identity(&self) -> Option<ExeIdentity> {
         self.identity
     }

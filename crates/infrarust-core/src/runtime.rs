@@ -645,6 +645,7 @@ pub enum ProxyExit {
 pub struct RestartHandover {
     pub package: HandoverPackage,
     pub plan: RestartPlan,
+    pub stop_requested: bool,
 }
 
 enum Next {
@@ -795,6 +796,7 @@ impl RunningProxy {
         let checked = tokio::select! {
             biased;
             () = self.shutdown.cancelled() => {
+                hub.mark_stopping();
                 hub.fail("the proxy is stopping");
                 return Attempt::Stop(served((&mut self.serve_task).await));
             }
@@ -832,6 +834,7 @@ impl RunningProxy {
         let unsettled = tokio::select! {
             biased;
             () = self.shutdown.cancelled() => {
+                hub.mark_stopping();
                 hub.fail("the proxy is stopping");
                 drop(listener);
                 return Attempt::Stop(Ok(()));
@@ -846,6 +849,7 @@ impl RunningProxy {
         );
         self.server.close_sessions(ShutdownKind::Restart);
         self.server.drain_pipeline(RESTART_PIPELINE_DRAIN).await;
+        let stop_requested = self.shutdown.is_cancelled();
         self.stop_plugins().await;
         self.server.stop_background_tasks();
 
@@ -900,20 +904,42 @@ impl RunningProxy {
             elapsed_ms = u64::try_from(requested_at.elapsed().as_millis()).unwrap_or(u64::MAX),
             "hot restart: the handover package is ready"
         );
-        Attempt::Handed(Box::new(RestartHandover { package, plan }))
+        Attempt::Handed(Box::new(RestartHandover {
+            package,
+            plan,
+            stop_requested,
+        }))
     }
 
     async fn preflight(
         &self,
         hub: &RestartHub,
     ) -> Result<crate::binary::HandoverProbe, PreflightError> {
-        if let Some(manager) = &self.services().server_manager {
-            let running = manager.running_child_processes();
-            if !running.is_empty() {
-                return Err(PreflightError::ChildServers(running));
-            }
+        self.without_child_servers()?;
+        let probe = hub.preflight().check(hub.plan()).await?;
+        self.without_child_servers()?;
+        if self
+            .updates
+            .as_ref()
+            .is_some_and(|updates| updates.is_busy())
+        {
+            return Err(PreflightError::InstallRunning);
         }
-        hub.preflight().check(hub.plan()).await
+        Ok(probe)
+    }
+
+    fn without_child_servers(&self) -> Result<(), PreflightError> {
+        let running = self
+            .services()
+            .server_manager
+            .as_ref()
+            .map(|manager| manager.running_child_processes())
+            .unwrap_or_default();
+        if running.is_empty() {
+            Ok(())
+        } else {
+            Err(PreflightError::ChildServers(running))
+        }
     }
 
     async fn stop(&mut self, served: Result<(), CoreError>) -> Result<(), CoreError> {

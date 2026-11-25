@@ -15,8 +15,6 @@ pub const PROBE_SCHEMA: u32 = 1;
 pub const PROBE_FLAG: &str = "--handover-probe";
 pub const CHECK_CONFIG_COMMAND: &str = "check-config";
 
-const HOT_RESTART_AVAILABLE: bool = true;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildInfo {
     pub version: &'static str,
@@ -46,7 +44,7 @@ pub struct HandoverSupport {
 
 impl HandoverSupport {
     pub fn current() -> Option<Self> {
-        (cfg!(target_os = "linux") && HOT_RESTART_AVAILABLE).then(|| Self {
+        cfg!(target_os = "linux").then(|| Self {
             protocol: HANDOVER_PROTOCOL,
             accepts: HANDOVER_ACCEPTS.to_vec(),
         })

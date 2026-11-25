@@ -67,7 +67,8 @@ impl RestartHub {
         self.state.borrow().pending
     }
 
-    pub fn is_stopping(&self) -> bool {
+    #[cfg(test)]
+    fn is_stopping(&self) -> bool {
         self.state.borrow().stopping
     }
 
@@ -102,8 +103,12 @@ impl RestartHub {
     }
 
     pub fn mark_stopping(&self) {
-        self.state
-            .send_if_modified(|state| !std::mem::replace(&mut state.stopping, true));
+        self.state.send_if_modified(|state| {
+            if std::mem::take(&mut state.pending) {
+                state.last_failure = Some("the proxy is stopping".to_string());
+            }
+            !std::mem::replace(&mut state.stopping, true)
+        });
     }
 
     pub fn refuse_requests(&self, reason: impl Into<String>) {

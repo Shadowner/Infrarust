@@ -70,7 +70,14 @@ pub(crate) fn hand_over(
     successor: Option<Box<dyn Successor>>,
     handover: RestartHandover,
 ) -> ExitCode {
-    let RestartHandover { package, plan } = handover;
+    let RestartHandover {
+        package,
+        plan,
+        stop_requested,
+    } = handover;
+    if stop_requested {
+        defer_stop(StopSignal::Terminate);
+    }
     let sessions = package.state.sessions.len();
     let successor = match successor.map_or_else(platform::successor, Ok) {
         Ok(successor) => successor,

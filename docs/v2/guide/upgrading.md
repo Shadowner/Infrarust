@@ -260,7 +260,7 @@ From the moment the proxy starts disconnecting players for the restart, a stop w
 
 ### Limits
 
-- Hot restart works on Linux only. On macOS and Windows, the console `restart` command answers `Hot restart is unavailable on this platform`, the admin API answers `503`, and the dashboard shows no hot restart action. Stop the proxy and start it again.
+- Hot restart works on Linux only. On macOS and Windows, the console `restart` command answers `Hot restart is unavailable here`, the admin API answers `503`, and the dashboard shows no hot restart action. Stop the proxy and start it again.
 - Players on `offline` and `client_only` servers are disconnected, see [What players see](#what-players-see).
 - A running `local` server blocks the restart, see [Preflight](#preflight).
 - The new binary must support hot restart as well. Going back to a release without it takes a full restart, and `update check` reports `full` for such a release.
