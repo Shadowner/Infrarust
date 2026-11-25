@@ -32,6 +32,7 @@ pub struct BinaryPaths {
     pub exe: PathBuf,
     pub staged: PathBuf,
     pub old: PathBuf,
+    pub link: PathBuf,
     pub download: PathBuf,
     pub lock: PathBuf,
 }
@@ -62,6 +63,7 @@ impl BinaryPaths {
             exe: exe.to_path_buf(),
             staged,
             old,
+            link: named(".", ".link"),
             download: named(".", ".download"),
             lock: named(".", ".lock"),
             dir,
@@ -122,8 +124,8 @@ enum Undo {
 impl SwapStep {
     fn undo(&self) -> Undo {
         match self {
-            Self::Remove(_) | Self::Replace { .. } => Undo::Stop,
-            Self::SyncDir(_) => Undo::Skip,
+            Self::Replace { .. } => Undo::Stop,
+            Self::Remove(_) | Self::SyncDir(_) => Undo::Skip,
             Self::HardLink { to, .. } => Undo::Run(Self::Remove(to.clone())),
             Self::Rename { from, to } => Undo::Run(Self::Rename {
                 from: to.clone(),
@@ -177,14 +179,18 @@ impl SwapPlan {
                 },
             ],
             Platform::Linux | Platform::OtherUnix => vec![
-                SwapStep::Remove(paths.old.clone()),
+                SwapStep::Remove(paths.link.clone()),
                 SwapStep::HardLink {
                     from: paths.exe.clone(),
-                    to: paths.old.clone(),
+                    to: paths.link.clone(),
                 },
                 SwapStep::Replace {
                     from: paths.staged.clone(),
                     to: paths.exe.clone(),
+                },
+                SwapStep::Replace {
+                    from: paths.link.clone(),
+                    to: paths.old.clone(),
                 },
                 SwapStep::SyncDir(paths.dir.clone()),
             ],
@@ -243,20 +249,21 @@ impl SwapPlan {
         Self { steps }
     }
 
-    pub fn steps(&self) -> &[SwapStep] {
+    #[cfg(test)]
+    fn steps(&self) -> &[SwapStep] {
         &self.steps
     }
 
-    pub fn undo_after(&self, completed: usize) -> Vec<SwapStep> {
+    fn undo_after(&self, completed: usize) -> Option<Vec<SwapStep>> {
         let mut undo = Vec::new();
         for step in self.steps.iter().take(completed).rev() {
             match step.undo() {
-                Undo::Stop => break,
+                Undo::Stop => return None,
                 Undo::Skip => {}
                 Undo::Run(step) => undo.push(step),
             }
         }
-        undo
+        Some(undo)
     }
 
     pub fn execute(&self) -> Result<(), SwapError> {
@@ -264,8 +271,7 @@ impl SwapPlan {
             if let Err(source) = apply(step) {
                 let restored = self
                     .undo_after(index)
-                    .iter()
-                    .all(|undo| apply(undo).is_ok());
+                    .is_some_and(|undo| undo.iter().all(|step| apply(step).is_ok()));
                 return Err(SwapError {
                     step: step.clone(),
                     source,
@@ -406,14 +412,18 @@ mod tests {
         assert_eq!(
             SwapPlan::commit(&p, Platform::Linux).steps(),
             [
-                SwapStep::Remove(p.old.clone()),
+                SwapStep::Remove(p.link.clone()),
                 SwapStep::HardLink {
                     from: p.exe.clone(),
-                    to: p.old.clone()
+                    to: p.link.clone()
                 },
                 SwapStep::Replace {
                     from: p.staged.clone(),
                     to: p.exe.clone()
+                },
+                SwapStep::Replace {
+                    from: p.link.clone(),
+                    to: p.old.clone()
                 },
                 SwapStep::SyncDir(p.dir.clone()),
             ]
@@ -474,17 +484,20 @@ mod tests {
         let commit = SwapPlan::commit(&p, Platform::Windows);
         assert_eq!(
             commit.undo_after(2),
-            [SwapStep::Rename {
+            Some(vec![SwapStep::Rename {
                 from: p.old.clone(),
                 to: p.exe.clone()
-            }]
+            }])
         );
-        assert!(commit.undo_after(1).is_empty());
+        assert_eq!(commit.undo_after(1), Some(Vec::new()));
 
         let p = paths(Platform::Linux);
         let rollback = SwapPlan::rollback(&p, Platform::Linux);
-        assert_eq!(rollback.undo_after(2), [SwapStep::Remove(p.staged.clone())]);
-        assert!(rollback.undo_after(3).is_empty());
+        assert_eq!(
+            rollback.undo_after(2),
+            Some(vec![SwapStep::Remove(p.staged.clone())])
+        );
+        assert_eq!(rollback.undo_after(3), None);
     }
 
     fn sandbox(platform: Platform) -> (tempfile::TempDir, BinaryPaths) {
@@ -545,5 +558,35 @@ mod tests {
         assert!(error.restored);
         assert_eq!(read(&p.exe).as_deref(), Some(&b"old"[..]));
         assert!(!p.old.exists());
+        assert!(!p.link.exists());
+    }
+
+    #[test]
+    fn a_failed_unix_commit_keeps_the_previous_rollback_binary() {
+        let (_dir, p) = sandbox(Platform::Linux);
+        std::fs::write(&p.old, b"previous").unwrap();
+        std::fs::remove_file(&p.staged).unwrap();
+        let error = SwapPlan::commit(&p, Platform::Linux).execute().unwrap_err();
+        assert!(error.restored);
+        assert_eq!(read(&p.exe).as_deref(), Some(&b"old"[..]));
+        assert_eq!(read(&p.old).as_deref(), Some(&b"previous"[..]));
+    }
+
+    #[test]
+    fn a_rollback_that_fails_after_replacing_the_exe_is_not_restored() {
+        let (_dir, p) = sandbox(Platform::Linux);
+        std::fs::remove_file(&p.staged).unwrap();
+        std::fs::write(&p.old, b"previous").unwrap();
+        let mut plan = SwapPlan::rollback(&p, Platform::Linux);
+        plan.steps.insert(
+            3,
+            SwapStep::Rename {
+                from: p.dir.join("missing"),
+                to: p.old.clone(),
+            },
+        );
+        let error = plan.execute().unwrap_err();
+        assert!(!error.restored);
+        assert_eq!(read(&p.exe).as_deref(), Some(&b"previous"[..]));
     }
 }

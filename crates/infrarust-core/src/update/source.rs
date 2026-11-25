@@ -19,6 +19,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const API_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const RATE_LIMIT_RESET: &str = "x-ratelimit-reset";
+const RATE_LIMIT_REMAINING: &str = "x-ratelimit-remaining";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Release {
@@ -83,10 +84,6 @@ impl ReleaseSource {
             url: url.to_string(),
             cache: Mutex::new(None),
         })
-    }
-
-    pub fn url(&self) -> &str {
-        &self.url
     }
 
     pub async fn releases(&self) -> Result<Arc<[Release]>, UpdateError> {
@@ -174,7 +171,9 @@ pub(super) fn network(url: &str, source: reqwest::Error) -> UpdateError {
 
 fn checked(url: &str, response: Response) -> Result<Response, UpdateError> {
     let status = response.status();
-    if status == StatusCode::FORBIDDEN || status == StatusCode::TOO_MANY_REQUESTS {
+    if status == StatusCode::TOO_MANY_REQUESTS
+        || (status == StatusCode::FORBIDDEN && rate_limit_exhausted(response.headers()))
+    {
         return Err(UpdateError::RateLimited {
             reset: rate_limit_reset(response.headers()),
         });
@@ -186,6 +185,14 @@ fn checked(url: &str, response: Response) -> Result<Response, UpdateError> {
         });
     }
     Ok(response)
+}
+
+fn rate_limit_exhausted(headers: &HeaderMap) -> bool {
+    headers.contains_key(reqwest::header::RETRY_AFTER)
+        || headers
+            .get(RATE_LIMIT_REMAINING)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.trim() == "0")
 }
 
 fn rate_limit_reset(headers: &HeaderMap) -> Option<SystemTime> {
@@ -318,7 +325,9 @@ mod tests {
     #[tokio::test]
     async fn a_403_reports_the_rate_limit_reset() {
         let server = HttpServer::start(|_| {
-            Reply::status(403).with_header("x-ratelimit-reset", "1700000000")
+            Reply::status(403)
+                .with_header("x-ratelimit-remaining", "0")
+                .with_header("x-ratelimit-reset", "1700000000")
         })
         .await;
         let source = ReleaseSource::new(&server.url("/releases"), "2.0.0").unwrap();
@@ -328,6 +337,16 @@ mod tests {
             }
             other => panic!("expected a rate limit, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_403_with_quota_left_is_a_plain_status() {
+        let server = HttpServer::start(|_| Reply::status(403)).await;
+        let source = ReleaseSource::new(&server.url("/releases"), "2.0.0").unwrap();
+        assert!(matches!(
+            source.releases().await,
+            Err(UpdateError::Status { status: 403, .. })
+        ));
     }
 
     #[tokio::test]

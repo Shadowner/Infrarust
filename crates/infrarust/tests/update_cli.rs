@@ -44,7 +44,11 @@ impl Sandbox {
     fn new() -> Self {
         let dir = tempfile::Builder::new()
             .prefix("update-cli-")
-            .tempdir_in(env!("CARGO_TARGET_TMPDIR"))
+            .tempdir_in(
+                Path::new(env!("CARGO_TARGET_TMPDIR"))
+                    .canonicalize()
+                    .unwrap(),
+            )
             .unwrap();
         std::fs::create_dir(dir.path().join("servers")).unwrap();
         Self { dir }

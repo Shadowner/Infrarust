@@ -57,12 +57,9 @@ impl TrustedKeys {
         Ok(Self { keys: parsed })
     }
 
-    pub const fn len(&self) -> usize {
+    #[cfg(test)]
+    const fn len(&self) -> usize {
         self.keys.len()
-    }
-
-    pub const fn is_empty(&self) -> bool {
-        self.keys.is_empty()
     }
 
     pub fn verify(

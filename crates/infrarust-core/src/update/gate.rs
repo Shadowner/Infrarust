@@ -8,7 +8,7 @@ use crate::binary::BuildInfo;
 
 use super::platform::BinaryPaths;
 
-pub const DOCKERENV: &str = "/.dockerenv";
+const DOCKERENV: &str = "/.dockerenv";
 const RELEASES_PAGE: &str = "https://github.com/Shadowner/Infrarust/releases";
 const IMAGE: &str = "ghcr.io/shadowner/infrarust";
 
@@ -108,7 +108,8 @@ pub fn check_writable(paths: &BinaryPaths) -> Result<(), Refusal> {
     }
 }
 
-pub fn evaluate(build: &BuildInfo, exe: &Path) -> Result<BinaryPaths, Refusal> {
+#[cfg(test)]
+fn evaluate(build: &BuildInfo, exe: &Path) -> Result<BinaryPaths, Refusal> {
     if let Some(refusal) = build_refusal(build) {
         return Err(refusal);
     }

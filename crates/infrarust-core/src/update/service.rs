@@ -172,14 +172,19 @@ impl UpdateService {
         self.run_install(&request, observer).await
     }
 
+    pub fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::Acquire)
+    }
+
     pub async fn rollback(&self) -> Result<RolledBack, UpdateError> {
         let _claim = Claim::take(&self.busy).ok_or(UpdateError::Busy)?;
         let result = install::rollback(&self.binary).await;
+        let mut state = self.state();
+        state.binary_changed = self.binary.exe.changed_on_disk();
         if result.is_ok() {
-            let mut state = self.state();
             state.install = InstallState::Idle;
-            state.binary_changed = self.binary.exe.changed_on_disk();
         }
+        drop(state);
         result
     }
 
@@ -425,7 +430,9 @@ impl<'a> Running<'a> {
                 state.install = InstallState::Failed {
                     reason: e.to_string(),
                 };
-                if let UpdateError::Refused { refusal, .. } = e {
+                if let UpdateError::Refused { refusal, .. } = e
+                    && !matches!(refusal, Refusal::UnsupportedTarget { .. })
+                {
                     state.refusal = Some(refusal.clone());
                 }
             }
@@ -653,7 +660,9 @@ mod tests {
         let f = Fixture::new(BUILD, None).await;
         f.server.route(
             "/releases",
-            Reply::status(403).with_header("x-ratelimit-reset", "1700000000"),
+            Reply::status(403)
+                .with_header("x-ratelimit-remaining", "0")
+                .with_header("x-ratelimit-reset", "1700000000"),
         );
         assert!(matches!(
             f.service.check(None).await,

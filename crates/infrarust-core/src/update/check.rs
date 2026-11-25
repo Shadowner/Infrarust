@@ -37,7 +37,13 @@ pub async fn newest(
             Err(UpdateError::NoManifest { tag }) => {
                 tracing::debug!(%tag, "release has no signed manifest; skipped");
             }
-            Err(e @ (UpdateError::RateLimited { .. } | UpdateError::Network { .. })) => {
+            Err(
+                e @ (UpdateError::RateLimited { .. }
+                | UpdateError::Network { .. }
+                | UpdateError::Status {
+                    status: 500..=599, ..
+                }),
+            ) => {
                 return Err(e);
             }
             Err(e) => {

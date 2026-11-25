@@ -21,10 +21,6 @@ impl ChannelFilter {
         Self { prereleases }
     }
 
-    pub const fn admits_prereleases(&self) -> bool {
-        self.prereleases
-    }
-
     pub fn admits(&self, version: &Version) -> bool {
         version.pre.is_empty() || self.prereleases
     }

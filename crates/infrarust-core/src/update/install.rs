@@ -267,15 +267,7 @@ pub(super) async fn apply(
     }
 
     observer.on_step(&InstallStep::CheckingConfig);
-    let config = binary::check_config(&paths.staged, &binary.args).await?;
-    if !config.ok {
-        return Err(UpdateError::ConfigRejected {
-            config: config.config,
-            reason: config
-                .error
-                .unwrap_or_else(|| "no reason given".to_string()),
-        });
-    }
+    let config = accepted(binary::check_config(&paths.staged, &binary.args).await?)?;
 
     observer.on_step(&InstallStep::Committing);
     commit_plan(paths, &binary.exe, Platform::current()).execute()?;
@@ -311,6 +303,18 @@ fn commit_plan(paths: &BinaryPaths, running: &ExeSnapshot, platform: Platform) -
     SwapPlan::commit(paths, platform)
 }
 
+fn accepted(config: ConfigCheck) -> Result<ConfigCheck, UpdateError> {
+    if config.ok {
+        return Ok(config);
+    }
+    Err(UpdateError::ConfigRejected {
+        config: config.config,
+        reason: config
+            .error
+            .unwrap_or_else(|| "no reason given".to_string()),
+    })
+}
+
 pub async fn rollback(binary: &RunningBinary) -> Result<RolledBack, UpdateError> {
     let paths = gate::paths_for(binary.exe.path()).map_err(|refusal| UpdateError::Refused {
         refusal,
@@ -319,19 +323,14 @@ pub async fn rollback(binary: &RunningBinary) -> Result<RolledBack, UpdateError>
     let _lock = DirLock::acquire(&paths)
         .await
         .map_err(|e| e.into_update_error(&paths))?;
-    if std::fs::symlink_metadata(&paths.old).is_err() {
+    let Ok(previous) = ExeIdentity::of(&paths.old) else {
+        return Err(UpdateError::NothingToRollBack);
+    };
+    if ExeIdentity::of(&paths.exe).is_ok_and(|current| current == previous) {
         return Err(UpdateError::NothingToRollBack);
     }
     let probe = binary::probe(&paths.old).await?;
-    let config = binary::check_config(&paths.old, &binary.args).await?;
-    if !config.ok {
-        return Err(UpdateError::ConfigRejected {
-            config: config.config,
-            reason: config
-                .error
-                .unwrap_or_else(|| "no reason given".to_string()),
-        });
-    }
+    accepted(binary::check_config(&paths.old, &binary.args).await?)?;
     SwapPlan::rollback(&paths, Platform::current()).execute()?;
     Ok(RolledBack {
         version: probe.version.clone(),
