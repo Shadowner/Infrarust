@@ -434,3 +434,107 @@ Tier C then added four more, all from launching the actual game:
    proxy's view is read while the player is still in the world, and whether a
    Paper build really enforces Velocity is decided by the `velocity-direct-refused`
    control rather than by anything the server says about itself.
+
+## Remote lab: hot restart and updates with real clients
+
+The tiers above run everything on one machine and never restart the proxy.
+The lab splits the roles the way a deployment does: a host you own runs the
+proxy, real Paper servers, a Yggdrasil server and a fake release feed, and this
+machine runs the game clients and drives them. It is the only place where a
+real Minecraft client is watched across a hot restart and an update.
+
+```sh
+./lab.sh sync                          # sources and generated stack to the host
+./lab.sh keys                          # lab minisign key pair, once
+./lab.sh build n 2.0.0-beta.5          # the build that runs first
+./lab.sh build n1 2.0.0-beta.6         # a good release
+./lab.sh build envelope 2.0.0-beta.7 envelope   # a release that cannot inherit
+./lab.sh build protocol 2.0.0-beta.8 protocol   # a release with another handover protocol
+./lab.sh build docker 2.0.0-beta.5 none 0 1     # the Docker image
+./lab.sh publish n1 && ./lab.sh publish envelope && ./lab.sh publish protocol
+./lab.sh up
+./lab.sh run --donor-mc ~/.local/share/multimc
+./lab.sh run --only restart-triggers,update-chain
+./lab.sh down
+```
+
+The host defaults to `shado@192.168.50.226`; `LAB_REMOTE` names another one.
+It needs Docker, passwordless `sudo` and an SSH key, nothing else: the proxy is
+built there in a container, with the release profile.
+
+### What runs where
+
+| Where | What |
+|---|---|
+| Host, systemd | the native proxy, `infrarust-lab.service`, built as an official release |
+| Host, Docker | the proxy image, one Paper server per client version, drasl, the release feed |
+| This machine | real clients under Xvfb, node-minecraft-protocol bots, the scenario runner |
+
+Every port on the host listens on loopback and reaches this machine through one
+SSH tunnel, so the lab works behind a firewall that only lets SSH in and changes
+no rule on the host. Clients connect to `<mode><version>.127.0.0.1.sslip.io`,
+a public DNS name that resolves to loopback, which gives each route its own
+handshake domain without a hosts file: `pt1214` is passthrough on 1.21.4,
+`cov1201` is `client_only` with Velocity forwarding on 1.20.1.
+
+### Builds, the test key and the release feed
+
+`lab/Dockerfile` builds the proxy from the synced sources with three changes
+made in the build copy only: the workspace version, the release public key,
+replaced by the lab key, and optionally one fault. `envelope` bumps the version
+of the handover envelope, so the release probes as compatible and then fails to
+read what it inherits. `protocol` bumps the handover protocol, so the release
+announces that it cannot inherit.
+
+`./lab.sh keys` creates the key pair on the host, in `infrarust-lab/keys`. The
+secret key never leaves the host and never enters the repository, and a binary
+built with the lab key trusts nothing else.
+
+`./lab.sh publish` packages a build the way the release workflow does, with the
+real `scripts/release-manifest.sh`, signs the manifest with `minisign -S -H`,
+and puts it in the feed. `lab/release-server.mjs` serves the feed in the shape
+of the GitHub releases API. Its `/_control` endpoint chooses the visible
+releases and injects faults: a forged signature, a modified manifest, a damaged
+archive, a 403 with and without quota, a 429, a 500, a slow download.
+
+### Driving a real client
+
+A client is launched like in tier C, then kept alive. Three channels watch it:
+
+- the backend console says a token every 200 ms and the client log must show
+  every one, in order, which gives the longest silence the player saw;
+- `xdotool` types a chat line in the game window and the backend log must show
+  it, which proves the client to server direction after a restart;
+- a screenshot, read by `tesseract`, shows the disconnect screen of the versions
+  that do not log the reason.
+
+Each client gets its own Xvfb display, allocated one at a time: two clients on
+one display type into each other's window.
+
+### Scenarios
+
+| Id | What it proves |
+|---|---|
+| `join-matrix` | every client version enters every proxy mode through the remote proxy |
+| `restart-triggers` | one fleet lives through SIGUSR2, `systemctl reload` and the admin API |
+| `update-chain` | check, install, restart onto the release, roll back, restart again |
+| `update-refusals` | a forged, damaged or unreachable release never replaces the binary |
+| `bad-release` | a release that cannot take over hands the players back |
+| `incompatible-release` | a release with another handover protocol asks for a full restart |
+| `broken-config` | a configuration the binary rejects cancels the restart |
+| `bind-change` | a new bind address is applied while forwarding players stay |
+| `stop-during-restart` | SIGTERM right behind SIGUSR2 stops the proxy |
+| `logins-during-restart` | players who log in during a restart are served or told why |
+| `load` | 300 sessions and real clients through ten restarts, no descriptor leak |
+| `docker` | the image restarts in place and refuses to update itself |
+
+The report lands in `reports/lab.md`, the screenshots in `reports/lab-shots/`.
+
+### Limits found while building it
+
+- The 1.16.5 and 1.18.2 clients crash in their renderer under llvmpipe a few
+  seconds after joining, with or without a proxy. Tier C never saw it because
+  it stops the client as soon as it has joined. The lab uses 1.19.4 instead.
+- A Paper backend with Velocity forwarding validates the chat key of an online
+  player against Mojang's key. With accounts from another Yggdrasil server the
+  backend needs authlib-injector too, which is how the lab runs them.
