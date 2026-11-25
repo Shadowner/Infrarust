@@ -810,6 +810,31 @@ mod tests {
     }
 
     #[test]
+    fn an_encryption_request_ends_with_the_authentication_flag_since_1_20_5() {
+        let request = |should_authenticate| CEncryptionRequest {
+            server_id: String::new(),
+            public_key: vec![1, 2, 3],
+            verify_token: vec![4, 5, 6, 7],
+            should_authenticate,
+        };
+        let body = [0, 3, 1, 2, 3, 4, 4, 5, 6, 7];
+        let wire = |packet: &CEncryptionRequest, version| {
+            let mut buf = Vec::new();
+            packet.encode(&mut buf, version).unwrap();
+            buf
+        };
+        assert_eq!(
+            wire(&request(false), ProtocolVersion::V1_20_5),
+            [&body[..], &[0]].concat()
+        );
+        assert_eq!(
+            wire(&request(true), ProtocolVersion::V1_21_11),
+            [&body[..], &[1]].concat()
+        );
+        assert_eq!(wire(&request(false), ProtocolVersion::V1_20_3), body);
+    }
+
+    #[test]
     fn test_encryption_response_v1_8() {
         let pkt = SEncryptionResponse {
             shared_secret: vec![0xAB; 16],

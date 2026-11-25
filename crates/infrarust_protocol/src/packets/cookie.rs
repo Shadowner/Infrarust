@@ -179,4 +179,66 @@ mod tests {
         .unwrap();
         assert!(SCookieResponse::decode(&mut buf.as_slice(), V).is_err());
     }
+
+    fn wire<P: Packet>(packet: &P) -> Vec<u8> {
+        let mut buf = Vec::new();
+        packet.encode(&mut buf, V).unwrap();
+        buf
+    }
+
+    #[test]
+    fn store_cookie_is_a_key_then_a_length_prefixed_payload() {
+        let expected = [&[16][..], b"infrarust:resume", &[4, 0xde, 0xad, 0xbe, 0xef]].concat();
+        let key = "infrarust:resume".to_string();
+        let payload = vec![0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(
+            wire(&CStoreCookie {
+                key: key.clone(),
+                payload: payload.clone()
+            }),
+            expected
+        );
+        assert_eq!(wire(&CConfigStoreCookie { key, payload }), expected);
+    }
+
+    #[test]
+    fn a_payload_longer_than_one_length_byte_gets_a_two_byte_varint() {
+        let bytes = wire(&CStoreCookie {
+            key: "a:b".into(),
+            payload: vec![9; 300],
+        });
+        assert_eq!(&bytes[..6], &[3, b'a', b':', b'b', 0xac, 0x02]);
+        assert_eq!(bytes.len(), 6 + 300);
+    }
+
+    #[test]
+    fn a_cookie_request_is_only_its_key() {
+        let expected = [&[16][..], b"infrarust:resume"].concat();
+        let key = "infrarust:resume".to_string();
+        assert_eq!(wire(&CLoginCookieRequest { key: key.clone() }), expected);
+        assert_eq!(wire(&CConfigCookieRequest { key: key.clone() }), expected);
+        assert_eq!(wire(&CCookieRequest { key }), expected);
+    }
+
+    #[test]
+    fn a_cookie_response_flags_its_payload() {
+        let with = [&[3][..], b"a:b", &[1, 2, 0xca, 0xfe]].concat();
+        let decoded = SLoginCookieResponse::decode(&mut with.as_slice(), V).unwrap();
+        assert_eq!(decoded.key, "a:b");
+        assert_eq!(decoded.payload, Some(vec![0xca, 0xfe]));
+        assert_eq!(wire(&decoded), with);
+
+        let without = [&[3][..], b"a:b", &[0]].concat();
+        let decoded = SLoginCookieResponse::decode(&mut without.as_slice(), V).unwrap();
+        assert_eq!(decoded.payload, None);
+        assert_eq!(wire(&decoded), without);
+    }
+
+    #[test]
+    fn a_truncated_cookie_response_is_rejected() {
+        let truncated = [&[3][..], b"a:b", &[1, 4, 0xca]].concat();
+        assert!(SLoginCookieResponse::decode(&mut truncated.as_slice(), V).is_err());
+        let no_flag = [&[3][..], b"a:b"].concat();
+        assert!(SLoginCookieResponse::decode(&mut no_flag.as_slice(), V).is_err());
+    }
 }

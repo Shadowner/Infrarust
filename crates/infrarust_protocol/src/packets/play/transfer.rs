@@ -65,4 +65,40 @@ mod tests {
         let decoded = CConfigTransfer::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
         assert_eq!(decoded, pkt);
     }
+
+    #[test]
+    fn a_transfer_is_a_host_then_a_varint_port() {
+        let expected = [&[16][..], b"play.example.com", &[0xdd, 0xc7, 0x01]].concat();
+        let host = "play.example.com".to_string();
+        for version in [ProtocolVersion::V1_20_5, ProtocolVersion::V1_21_11] {
+            let mut play = Vec::new();
+            CTransfer {
+                host: host.clone(),
+                port: 25565,
+            }
+            .encode(&mut play, version)
+            .unwrap();
+            assert_eq!(play, expected);
+            let mut config = Vec::new();
+            CConfigTransfer {
+                host: host.clone(),
+                port: 25565,
+            }
+            .encode(&mut config, version)
+            .unwrap();
+            assert_eq!(config, expected);
+        }
+    }
+
+    #[test]
+    fn the_highest_port_takes_three_bytes() {
+        let mut buf = Vec::new();
+        CTransfer {
+            host: "h".into(),
+            port: 65535,
+        }
+        .encode(&mut buf, ProtocolVersion::V1_21)
+        .unwrap();
+        assert_eq!(buf, [1, b'h', 0xff, 0xff, 0x03]);
+    }
 }
