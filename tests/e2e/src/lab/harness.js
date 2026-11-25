@@ -4,6 +4,8 @@ import { Admin, Console, backendLog, dockerProxyLog, nativeLog, sh, sleep } from
 import { PORTS, REMOTE_ROOT, route } from './topology.js';
 
 export const COMMITTED = /handover committed/;
+export const RESUMED = /player resumed after the restart/;
+export const AUTHENTICATED = /client authenticated/;
 export const ROLLED_BACK = /handing the sessions back to the previous one|rolling the hot restart back/;
 export const FAILED = /hot restart failed|restart request is refused|hot restart is unavailable/;
 
@@ -181,6 +183,19 @@ export class Member {
       .find((line) => new RegExp(`\\b${this.username}\\b.*(left the game|lost connection)`).test(line.text));
   }
 
+  async returned(since, { timeoutMs = 60000 } = {}) {
+    const name = `\\b${this.username}\\b`;
+    const left = await this.backendLog.waitFor(new RegExp(`${name}.*(left the game|lost connection)`), { since, timeoutMs });
+    if (!left) return { left: null, back: null, awayMs: null };
+    const after = this.backendLog.lines.indexOf(left) + 1;
+    const back = await this.backendLog.waitFor(new RegExp(`${name}.*(joined the game|logged in with entity id)`), {
+      since: after,
+      timeoutMs,
+    });
+    if (back) await sleep(2500);
+    return { left, back, awayMs: back ? back.at - left.at : null };
+  }
+
   disconnectReason(since) {
     const line = this.client
       .since(since)
@@ -233,6 +248,14 @@ export class Fleet {
 
   get intercepted() {
     return this.members.filter((m) => !m.route.mode.survives);
+  }
+
+  get returning() {
+    return this.intercepted.filter((m) => m.route.version.transfers);
+  }
+
+  get kicked() {
+    return this.intercepted.filter((m) => !m.route.version.transfers);
   }
 
   async remove(member) {

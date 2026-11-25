@@ -17,12 +17,13 @@ export const YGGDRASIL_URL = `http://127.0.0.1:${PORTS.yggdrasil}`;
 export const RELEASES_URL = `http://127.0.0.1:${PORTS.releases}`;
 
 export const VERSIONS = [
-  { id: '1.8.9', key: '189', server: '1.8.8', image: 'java8', velocity: false },
-  { id: '1.12.2', key: '1122', server: '1.12.2', image: 'java8', velocity: false },
-  { id: '1.19.4', key: '1194', server: '1.19.4', image: 'java17', velocity: false },
-  { id: '1.20.1', key: '1201', server: '1.20.1', image: 'java17', velocity: true },
-  { id: '1.21.4', key: '1214', server: '1.21.4', image: 'java21', velocity: true },
-  { id: '1.21.11', key: '12111', server: '1.21.11', image: 'java21', velocity: false },
+  { id: '1.8.9', key: '189', server: '1.8.8', image: 'java8', velocity: false, transfers: false },
+  { id: '1.12.2', key: '1122', server: '1.12.2', image: 'java8', velocity: false, transfers: false },
+  { id: '1.19.4', key: '1194', server: '1.19.4', image: 'java17', velocity: false, transfers: false },
+  { id: '1.20.1', key: '1201', server: '1.20.1', image: 'java17', velocity: true, transfers: false },
+  { id: '1.21.4', key: '1214', server: '1.21.4', image: 'java21', velocity: true, transfers: true },
+  { id: '1.21.11', key: '12111', server: '1.21.11', image: 'java21', velocity: false, transfers: true },
+  { id: '1.20.6', key: '1206', server: '1.20.6', image: 'java21', velocity: false, transfers: true },
 ];
 
 export const MODES = [

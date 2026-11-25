@@ -1,5 +1,5 @@
-import { connectBots } from './bots.js';
-import { DockerProxy, Fleet, Pulse, restartAndWait } from './harness.js';
+import { connectBots, settled } from './bots.js';
+import { AUTHENTICATED, DockerProxy, Fleet, Pulse, RESUMED, restartAndWait } from './harness.js';
 import { releases, sh, sleep } from './remote.js';
 import { PORTS, REMOTE_ROOT, route, routes } from './topology.js';
 
@@ -8,9 +8,9 @@ const MIXED_FLEET = [
   { mode: 'pt', version: '1.12.2' },
   { mode: 'zc', version: '1.19.4' },
   { mode: 'so', version: '1.20.1' },
-  { mode: 'zc', version: '1.21.4' },
   { mode: 'pt', version: '1.21.11' },
   { mode: 'of', version: '1.21.4' },
+  { mode: 'co', version: '1.21.4' },
   { mode: 'co', version: '1.20.1' },
 ];
 
@@ -19,6 +19,23 @@ const SMALL_FLEET = [
   { mode: 'zc', version: '1.20.1' },
   { mode: 'pt', version: '1.8.9' },
   { mode: 'of', version: '1.21.4' },
+];
+
+const RESUME_FLEET = [
+  { mode: 'pt', version: '1.21.4' },
+  { mode: 'of', version: '1.20.6' },
+  { mode: 'of', version: '1.21.4' },
+  { mode: 'co', version: '1.21.4' },
+  { mode: 'ofv', version: '1.21.4' },
+  { mode: 'cov', version: '1.21.4' },
+  { mode: 'co', version: '1.21.11' },
+  { mode: 'of', version: '1.19.4' },
+];
+
+const ANNOUNCE_FLEET = [
+  { mode: 'pt', version: '1.21.4' },
+  { mode: 'co', version: '1.21.4' },
+  { mode: 'of', version: '1.20.1' },
 ];
 
 async function updateStatus(proxy) {
@@ -59,6 +76,14 @@ async function ensureNative(ctx, build = 'n') {
   await ctx.native.install(build);
 }
 
+async function swapBinary(proxy, build) {
+  await sh(
+    `cp ${REMOTE_ROOT}/dist/${build}/infrarust ${proxy.home}/.infrarust.swap && mv ${proxy.home}/.infrarust.swap ${proxy.home}/infrarust`,
+  );
+}
+
+const token = (prefix) => `${prefix}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
 async function fleetOf(ctx, specs, proxy = ctx.native) {
   const fleet = new Fleet({ factory: ctx.factory, backends: ctx.backends, proxy, shotsDir: ctx.shotsDir });
   ctx.defer(() => fleet.stop());
@@ -70,18 +95,28 @@ async function fleetOf(ctx, specs, proxy = ctx.native) {
   return fleet;
 }
 
-export async function restartRound(ctx, fleet, label, trigger, { expect = 'committed', proxy = ctx.native } = {}) {
+export async function restartRound(
+  ctx,
+  fleet,
+  label,
+  trigger,
+  { expect = 'committed', proxy = ctx.native, sendsBack = true, timeoutMs = 45000 } = {},
+) {
   const { checks } = ctx;
   const survivors = fleet.survivors.slice();
   const intercepted = fleet.intercepted.slice();
+  const returning = sendsBack ? fleet.returning.slice() : [];
+  const kicked = sendsBack ? fleet.kicked.slice() : intercepted;
   const backendMarks = new Map(fleet.members.map((m) => [m, m.backendLog.mark()]));
   const clientMarks = new Map(fleet.members.map((m) => [m, m.client.mark()]));
+  const proxyMark = proxy.log.mark();
   const pidBefore = await proxy.pid();
   const pulse = new Pulse(survivors).start();
   await sleep(2000);
 
-  const result = await restartAndWait(proxy, trigger);
+  const result = await restartAndWait(proxy, trigger, { timeoutMs });
   checks.add(`${label}: the restart ends as ${expect}`, result.outcome === expect, result.line ?? 'no outcome line in the log');
+  const trips = expect === 'refused' ? [] : await Promise.all(returning.map((member) => member.returned(backendMarks.get(member))));
   await sleep(4000);
   await pulse.stop();
 
@@ -118,38 +153,75 @@ export async function restartRound(ctx, fleet, label, trigger, { expect = 'commi
   }
   if (gaps.length) checks.note(`${label}: longest silence seen by a real client`, `${Math.max(...gaps)} ms`);
 
-  const players = await proxy.admin.players();
-  for (const member of survivors) {
-    checks.add(
-      `${label}: the proxy still lists ${member.username}`,
-      players.some((p) => p.username === member.username),
-    );
-  }
-
-  if (expect !== 'refused') {
-    for (const member of intercepted) {
-      const tag = `${label}: ${member.username} (${member.route.mode.proxyMode}, ${member.route.version.id})`;
-      const logged = member.disconnectReason(clientMarks.get(member));
-      const screen = await member.client.screenText(`${label}-kicked`);
-      const told = /restart/i.test(logged ?? '') ? `log: ${logged}` : /restart/i.test(screen) ? `screen: ${screen}` : null;
-      checks.add(`${tag} is told the proxy restarts`, Boolean(told), told ?? `log: ${logged ?? 'nothing'} | screen: ${screen || 'unreadable'}`);
-      checks.add(`${tag} left its backend`, Boolean(member.left(backendMarks.get(member))));
-      await fleet.remove(member);
-    }
-    if (intercepted.length) {
-      const again = await fleet.add(intercepted.map((m) => ({ mode: m.route.mode.key, version: m.route.version.id })));
-      checks.add(
-        `${label}: the intercepted players get back in afterwards`,
-        again.failures.length === 0,
-        `${again.added.length}/${intercepted.length}`,
-      );
-      for (const failure of again.failures) await failure.member.client.stop();
-    }
-  } else {
+  if (expect === 'refused') {
     for (const member of intercepted) {
       const tag = `${label}: ${member.username} (${member.route.mode.proxyMode}, ${member.route.version.id})`;
       checks.add(`${tag} is untouched`, !member.left(backendMarks.get(member)) && member.client.alive);
     }
+    return result;
+  }
+
+  const proxyLines = proxy.log.since(proxyMark).map((line) => line.text);
+  const away = [];
+  const lostOnTheWay = [];
+  for (const [index, member] of returning.entries()) {
+    const tag = `${label}: ${member.username} (${member.route.mode.proxyMode}${member.route.mode.forwarding === 'none' ? '' : ' + velocity'}, ${member.route.version.id})`;
+    const trip = trips[index];
+    const back = Boolean(trip.back) && member.client.alive;
+    checks.add(
+      `${tag} comes back on its own, in the same client`,
+      back,
+      trip.back ? `away from its backend for ${trip.awayMs} ms` : trip.left ? 'left and did not come back' : 'never left its backend',
+    );
+    if (!back) {
+      await member.client.screenshot(`${label}-not-back`);
+      member.client.saveLog(`${label}-not-back`);
+      lostOnTheWay.push(member);
+      continue;
+    }
+    away.push(trip.awayMs);
+    const resumed = proxyLines.find((line) => RESUMED.test(line) && line.includes(member.username));
+    checks.add(`${tag} is resumed from its ticket`, Boolean(resumed), resumed?.slice(0, 200) ?? 'no resume line in the proxy log');
+    if (member.route.mode.auth) {
+      const again = proxyLines.find((line) => AUTHENTICATED.test(line) && line.includes(member.username));
+      checks.add(`${tag} is not sent through the session server again`, !again, again?.slice(0, 200) ?? '');
+    }
+    const shown = member.disconnectReason(clientMarks.get(member));
+    checks.add(`${tag} never sees a disconnect screen`, !/restart|kicked/i.test(shown ?? ''), shown ?? '');
+    const token = await member.token('r');
+    checks.add(`${tag} hears the server again`, token.ok, token.ms === null ? '' : `${token.ms} ms`);
+    const talks = await member.chat('r');
+    if (!talks) {
+      await member.client.screenshot(`${label}-back-mute`);
+      member.client.saveLog(`${label}-back-mute`);
+    }
+    checks.add(`${tag} talks to the server again`, talks);
+  }
+  if (away.length) checks.note(`${label}: time away from the backend for the players sent back`, `${away.join(', ')} ms`);
+
+  const players = await proxy.admin.players();
+  for (const member of survivors.concat(returning.filter((m) => !lostOnTheWay.includes(m)))) {
+    checks.add(`${label}: the proxy still lists ${member.username}`, players.some((p) => p.username === member.username));
+  }
+
+  for (const member of kicked) {
+    const tag = `${label}: ${member.username} (${member.route.mode.proxyMode}, ${member.route.version.id})`;
+    const logged = member.disconnectReason(clientMarks.get(member));
+    const screen = await member.client.screenText(`${label}-kicked`);
+    const told = /restart/i.test(logged ?? '') ? `log: ${logged}` : /restart/i.test(screen) ? `screen: ${screen}` : null;
+    checks.add(`${tag} is told the proxy restarts`, Boolean(told), told ?? `log: ${logged ?? 'nothing'} | screen: ${screen || 'unreadable'}`);
+    checks.add(`${tag} left its backend`, Boolean(member.left(backendMarks.get(member))));
+  }
+  const replaced = kicked.concat(lostOnTheWay);
+  for (const member of replaced) await fleet.remove(member);
+  if (replaced.length) {
+    const again = await fleet.add(replaced.map((m) => ({ mode: m.route.mode.key, version: m.route.version.id })));
+    checks.add(
+      `${label}: the players who were disconnected get back in afterwards`,
+      again.failures.length === 0,
+      `${again.added.length}/${replaced.length}`,
+    );
+    for (const failure of again.failures) await failure.member.client.stop();
   }
   return result;
 }
@@ -212,6 +284,146 @@ export const SCENARIOS = [
       });
       const status = await ctx.native.admin.get('/proxy');
       ctx.checks.add('the proxy reports that it can restart in place', status.body?.data?.restart_available === true);
+    },
+  },
+  {
+    id: 'resume',
+    title: 'players on 1.20.5 and later come back on their own, through new and older binaries',
+    async run(ctx) {
+      const { checks, native } = ctx;
+      await ensureNative(ctx);
+      const fleet = await fleetOf(ctx, RESUME_FLEET);
+      const botRoutes = [route('of', '1.20.6'), route('of', '1.21.4'), route('of', '1.21.11')];
+      const bots = await connectBots({ count: 6, prefix: 'Rs', routes: botRoutes, port: native.port, follow: true, settleMs: 30000 });
+      ctx.defer(async () => bots.forEach((bot) => bot.close()));
+      const scripted = await settled(bots);
+      checks.add('the six scripted clients are in play', scripted === 6, `${scripted}/6`);
+
+      await restartRound(ctx, fleet, 'SIGUSR2', () => native.signal('USR2'));
+      await settled(bots);
+      for (const bot of bots) {
+        const sent = bot.sentBack[0];
+        checks.add(
+          `${bot.username} (${bot.route.version.id}) decodes a 32 byte cookie and a transfer to where it came from`,
+          Boolean(sent) &&
+            sent.key === 'infrarust:resume' &&
+            sent.valueLength === 32 &&
+            sent.host === bot.route.domain &&
+            sent.port === native.port &&
+            sent.state === 'play' &&
+            sent.transferState === 'play',
+          JSON.stringify(sent ?? null),
+        );
+        checks.add(
+          `${bot.username} is asked for its cookie once and plays again`,
+          bot.cookieRequests === 1 && bot.returns === 1 && bot.inPlay,
+          `cookie requests ${bot.cookieRequests}, returns ${bot.returns}, ${bot.kick ?? bot.error ?? 'no error'}`,
+        );
+      }
+
+      await restartRound(ctx, fleet, 'second trip', () => native.admin.post('/proxy/restart'));
+      await settled(bots);
+      checks.add(
+        'the scripted clients make the second trip with a new ticket',
+        bots.every((bot) => bot.returns === 2 && bot.inPlay && bot.sentBack.length === 2),
+        bots.map((bot) => `${bot.returns}/${bot.sentBack.length}`).join(', '),
+      );
+
+      await swapBinary(native, 'legacy');
+      await restartRound(ctx, fleet, 'into a binary that cannot resume', () => native.signal('USR2'), { sendsBack: false });
+      checks.add('the older binary runs', (await proxyVersion(native)) === '2.0.0-beta.6', await proxyVersion(native));
+      checks.add(
+        'the scripted clients are told to reconnect instead of being sent back',
+        bots.every((bot) => bot.sentBack.length === 2 && /restarting/i.test(bot.kick ?? '')),
+        bots.map((bot) => `${bot.sentBack.length}:${bot.kick ?? bot.error ?? 'nothing'}`).join(' | ').slice(0, 300),
+      );
+
+      await swapBinary(native, 'n');
+      await restartRound(ctx, fleet, 'back from the older binary', () => native.signal('USR2'), { sendsBack: false });
+      checks.add('the current binary runs again', (await proxyVersion(native)) === '2.0.0-beta.5', await proxyVersion(native));
+      await restartRound(ctx, fleet, 'after the round trip', () => native.signal('USR2'));
+    },
+  },
+  {
+    id: 'announce',
+    title: 'a restart is announced in chat, can be called off, and waits for its delay',
+    async run(ctx) {
+      const { checks, native } = ctx;
+      await ensureNative(ctx);
+      const fleet = await fleetOf(ctx, ANNOUNCE_FLEET);
+      const [quiet] = fleet.survivors;
+      const [modern] = fleet.returning;
+      const [older] = fleet.kicked;
+      const readers = [modern, older].filter(Boolean);
+      const marks = new Map(fleet.members.map((m) => [m, m.client.mark()]));
+      const backendMarks = new Map(fleet.members.map((m) => [m, m.backendLog.mark()]));
+      const pid = await native.pid();
+
+      const first = token('LAB');
+      const asked = await native.admin.post('/proxy/restart', { delay_seconds: 600, message: `&e${first} in {delay} ({seconds})` });
+      checks.add(
+        'a restart with a delay is accepted and says when',
+        asked.status === 202 && /600 seconds/.test(asked.body?.data?.message ?? ''),
+        `${asked.status} ${asked.text.slice(0, 140)}`,
+      );
+      for (const member of readers) {
+        const seen = await member.client.waitFor(new RegExp(`${first} in 10m \\(600\\)`), { since: marks.get(member), timeoutMs: 20000 });
+        checks.add(`${member.username} (${member.route.version.id}) reads the notice in chat`, Boolean(seen), seen?.text.slice(-120) ?? '');
+      }
+      const waiting = (await native.admin.get('/proxy')).body?.data ?? {};
+      checks.add(
+        'the status shows the countdown',
+        waiting.restart_in_seconds > 540 && waiting.restart_in_seconds <= 600 && typeof waiting.restart_scheduled_at === 'string',
+        `${waiting.restart_in_seconds} s, ${waiting.restart_scheduled_at}`,
+      );
+      const twice = await native.admin.post('/proxy/restart');
+      checks.add('a second request during the countdown is a conflict', twice.status === 409, `${twice.status} ${twice.text.slice(0, 120)}`);
+
+      const called = await native.admin.request('DELETE', '/proxy/restart');
+      checks.add('the restart is called off', called.status === 200, `${called.status} ${called.text.slice(0, 120)}`);
+      for (const member of readers) {
+        const seen = await member.client.waitFor(/The restart is cancelled/, { since: marks.get(member), timeoutMs: 20000 });
+        checks.add(`${member.username} is told the restart is cancelled`, Boolean(seen), seen?.text.slice(-120) ?? '');
+      }
+      await sleep(1500);
+      const idle = (await native.admin.get('/proxy')).body?.data ?? {};
+      checks.add('the countdown is gone from the status', !('restart_in_seconds' in idle) && !('restart_scheduled_at' in idle), JSON.stringify(idle).slice(0, 200));
+      checks.add('the proxy did not restart', (await native.pid()) === pid && idle.uptime_seconds > 0, `uptime ${idle.uptime_seconds} s`);
+      for (const member of fleet.members) {
+        checks.add(`${member.username} is still on its backend after the cancellation`, !member.left(backendMarks.get(member)) && member.client.alive);
+      }
+      const nothing = await native.admin.request('DELETE', '/proxy/restart');
+      checks.add('cancelling again is a conflict', nothing.status === 409, `${nothing.status} ${nothing.text.slice(0, 120)}`);
+      const tooLong = await native.admin.post('/proxy/restart', { delay_seconds: 7200 });
+      checks.add('a delay over an hour is refused with 400', tooLong.status === 400, `${tooLong.status} ${tooLong.text.slice(0, 140)}`);
+
+      const second = token('LAB');
+      const result = await restartRound(
+        ctx,
+        fleet,
+        'announced restart',
+        () => native.admin.post('/proxy/restart', { delay_seconds: 12, message: `${second} {seconds}` }),
+        { timeoutMs: 90000 },
+      );
+      checks.add('the restart waited for its delay', result.doneAt - result.startedAt >= 12000, `${result.doneAt - result.startedAt} ms from the request to the commit`);
+      for (const member of readers) {
+        const said = member.client
+          .since(marks.get(member))
+          .map((line) => line.text.match(new RegExp(`${second} (\\d+)`)))
+          .filter(Boolean)
+          .map((match) => Number(match[1]));
+        checks.add(
+          `${member.username} (${member.route.version.id}) reads the notice and its reminders`,
+          [12, 10, 5, 1].every((left) => said.includes(left)),
+          `seconds announced: ${said.join(', ')}`,
+        );
+      }
+      if (quiet) {
+        const heard = quiet.client
+          .since(marks.get(quiet))
+          .some((line) => line.text.includes(first) || line.text.includes(second) || /The restart is cancelled/.test(line.text));
+        checks.add(`${quiet.username} (${quiet.route.mode.proxyMode}) is not told anything, its traffic is only relayed`, !heard);
+      }
     },
   },
   {
@@ -505,7 +717,7 @@ export const SCENARIOS = [
   },
   {
     id: 'load',
-    title: 'three hundred sessions and four real clients through ten restarts',
+    title: '360 sessions and four real clients through ten restarts',
     async run(ctx) {
       const { checks, native } = ctx;
       await ensureNative(ctx);
@@ -515,6 +727,12 @@ export const SCENARIOS = [
       ctx.defer(async () => bots.forEach((bot) => bot.close()));
       const inPlay = bots.filter((bot) => bot.inPlay).length;
       checks.add('the 300 sessions are in play', inPlay === 300, `${inPlay}/300`);
+      const comerRoutes = [route('of', '1.21.4'), route('of', '1.21.11'), route('of', '1.20.6')];
+      const comers = await connectBots({ count: 60, prefix: 'Lr', routes: comerRoutes, port: native.port, ratePerSecond: 20, settleMs: 30000, follow: true });
+      ctx.defer(async () => comers.forEach((bot) => bot.close()));
+      const comersIn = await settled(comers);
+      checks.add('60 more sessions are in play on offline routes', comersIn === 60, `${comersIn}/60`);
+      const resumeMark = native.log.mark();
       await sleep(5000);
       const before = await native.stats();
       const playersBefore = (await native.admin.players()).length;
@@ -528,6 +746,7 @@ export const SCENARIOS = [
         outcomes.push(result.outcome);
         pauses.push(result.doneAt - result.startedAt);
         await sleep(2500);
+        await settled(comers, { timeoutMs: 20000 });
       }
       await sleep(35000);
       await pulse.stop();
@@ -536,6 +755,18 @@ export const SCENARIOS = [
       const alive = bots.filter((bot) => bot.inPlay).length;
       const lost = bots.filter((bot) => !bot.inPlay);
       checks.add('every session is still in play 35 s after the last restart', alive === inPlay, `${alive}/${inPlay}; ${lost.slice(0, 5).map((b) => `${b.username}:${b.kick ?? b.error ?? 'eof'}`).join(', ')}`);
+      const trips = comers.map((bot) => bot.returns);
+      checks.add(
+        'the 60 offline sessions come back after each of the ten restarts',
+        comers.every((bot) => bot.returns === 10 && bot.inPlay),
+        `trips per session: min ${Math.min(...trips)}, max ${Math.max(...trips)}; in play ${comers.filter((bot) => bot.inPlay).length}/60; ${comers
+          .filter((bot) => !bot.inPlay)
+          .slice(0, 4)
+          .map((bot) => `${bot.username}:${bot.kick ?? bot.error ?? 'eof'}`)
+          .join(', ')}`,
+      );
+      const resumedLines = native.log.since(resumeMark).filter((line) => RESUMED.test(line.text)).length;
+      checks.add('the proxy resumed each of them from a ticket every time', resumedLines === 600, `${resumedLines} resume lines for 600 trips`);
       const gaps = windows.map((w) => w.maxGapMs).sort((a, b) => a - b);
       checks.note('longest silence per session', `median ${gaps[Math.floor(gaps.length / 2)]} ms, p99 ${gaps[Math.floor(gaps.length * 0.99)]} ms, max ${gaps[gaps.length - 1]} ms`);
       for (const member of fleet.members) {

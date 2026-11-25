@@ -451,6 +451,8 @@ real Minecraft client is watched across a hot restart and an update.
 ./lab.sh build envelope 2.0.0-beta.7 envelope   # a release that cannot inherit
 ./lab.sh build protocol 2.0.0-beta.8 protocol   # a release with another handover protocol
 ./lab.sh build docker 2.0.0-beta.5 none 0 1     # the Docker image
+./lab.sh ssh 'cp -r infrarust-lab/dist/n1 infrarust-lab/dist/legacy'   # see "An older binary"
+node src/packet-ids.js                 # packet ids against minecraft-data, no host needed
 ./lab.sh publish n1 && ./lab.sh publish envelope && ./lab.sh publish protocol
 ./lab.sh up
 ./lab.sh run --donor-mc ~/.local/share/multimc
@@ -497,6 +499,14 @@ of the GitHub releases API. Its `/_control` endpoint chooses the visible
 releases and injects faults: a forged signature, a modified manifest, a damaged
 archive, a 403 with and without quota, a 429, a 500, a slow download.
 
+### An older binary
+
+The `resume` scenario restarts into `dist/legacy` and back: a build of the proxy
+from before players were sent back to the proxy, which does not announce
+`resume` in its handover probe. Nothing builds it from the current sources. Keep
+one binary of an older commit there, built with the lab key like the others; the
+scenario expects it to report `2.0.0-beta.6`.
+
 ### Driving a real client
 
 A client is launched like in tier C, then kept alive. Three channels watch it:
@@ -506,7 +516,15 @@ A client is launched like in tier C, then kept alive. Three channels watch it:
 - `xdotool` types a chat line in the game window and the backend log must show
   it, which proves the client to server direction after a restart;
 - a screenshot, read by `tesseract`, shows the disconnect screen of the versions
-  that do not log the reason.
+  that do not log the reason;
+- for a player the proxy sends back, the backend log must show the same name
+  leave and join again while the client process stays the same one, and the
+  proxy log must show the resume and no second authentication.
+
+Scripted clients (`src/lab/bots.js`, node-minecraft-protocol) follow a transfer
+too. They decode Store Cookie and Transfer with minecraft-data, a decoder that
+shares no code with the proxy, then reconnect with the transfer intent and
+answer the login cookie request.
 
 Each client gets its own Xvfb display, allocated one at a time: two clients on
 one display type into each other's window.
@@ -517,6 +535,8 @@ one display type into each other's window.
 |---|---|
 | `join-matrix` | every client version enters every proxy mode through the remote proxy |
 | `restart-triggers` | one fleet lives through SIGUSR2, `systemctl reload` and the admin API |
+| `resume` | clients on 1.20.5 and later come back on their own, twice, then through an older binary and back |
+| `announce` | a restart is announced in chat with its reminders, called off, then waits for its delay |
 | `update-chain` | check, install, restart onto the release, roll back, restart again |
 | `update-refusals` | a forged, damaged or unreachable release never replaces the binary |
 | `bad-release` | a release that cannot take over hands the players back |
@@ -525,7 +545,7 @@ one display type into each other's window.
 | `bind-change` | a new bind address is applied while forwarding players stay |
 | `stop-during-restart` | SIGTERM right behind SIGUSR2 stops the proxy |
 | `logins-during-restart` | players who log in during a restart are served or told why |
-| `load` | 300 sessions and real clients through ten restarts, no descriptor leak |
+| `load` | 360 sessions and real clients through ten restarts, 60 of them sent back each time, no descriptor leak |
 | `docker` | the image restarts in place and refuses to update itself |
 
 The report lands in `reports/lab.md`, the screenshots in `reports/lab-shots/`.
