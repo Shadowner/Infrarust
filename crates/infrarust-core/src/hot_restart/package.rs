@@ -5,6 +5,7 @@ use bytes::Bytes;
 use infrarust_transport::{FrozenDirection, FrozenRelay, RelaySide};
 
 use super::HandoverError;
+use super::resume::ResumeRecord;
 use super::state::{
     DirectionRecord, HandleId, HandoverState, ListenerRecord, SessionMeta, SessionRecord,
     SideRecord, SocketRecord, TailBlob, tail,
@@ -118,6 +119,7 @@ pub struct Unpacked {
     pub sessions: Vec<FrozenSession>,
     pub dropped: Vec<DroppedSession>,
     pub held: Vec<Handle>,
+    pub resumes: Vec<ResumeRecord>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -193,6 +195,7 @@ impl HandoverPackage {
             next_player_id,
             listener,
             sessions,
+            resumes: Vec::new(),
         };
         Ok((
             Self {
@@ -202,6 +205,12 @@ impl HandoverPackage {
             },
             dropped,
         ))
+    }
+
+    #[must_use]
+    pub fn with_resumes(mut self, resumes: Vec<ResumeRecord>) -> Self {
+        self.state.resumes = resumes;
+        self
     }
 
     pub fn unpack(self) -> Result<Unpacked, UnpackFailure> {
@@ -222,6 +231,7 @@ impl HandoverPackage {
             next_player_id,
             listener,
             sessions: records,
+            resumes,
             ..
         } = state;
 
@@ -265,6 +275,7 @@ impl HandoverPackage {
             sessions,
             dropped,
             held,
+            resumes,
         })
     }
 
@@ -636,6 +647,7 @@ mod tests {
                     bind: client.local_addr().unwrap(),
                 }),
                 sessions: Vec::new(),
+                resumes: Vec::new(),
             },
             tails: Vec::new(),
             handles: HandleTable::from_handles(vec![Handle::Stream(client)]),

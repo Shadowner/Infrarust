@@ -48,6 +48,15 @@ pub fn rewrite_handshake(
     }
 }
 
+pub(crate) fn as_login(handshake_data: &mut HandshakeData) -> Result<(), CoreError> {
+    handshake_data.intent = ConnectionIntent::Login;
+    let raw = encode_handshake_with_domain(handshake_data, &handshake_data.raw_host)?;
+    if let Some(first) = handshake_data.raw_packets.first_mut() {
+        *first = bytes::BytesMut::from(&raw[..]);
+    }
+    Ok(())
+}
+
 pub(crate) fn handoff_handshake(
     handshake_data: &HandshakeData,
     server_config: Option<&ServerConfig>,

@@ -205,7 +205,8 @@ mod tests {
             verified.manifest().handover,
             Some(HandoverSupport {
                 protocol: 1,
-                accepts: vec![1]
+                accepts: vec![1],
+                resume: false,
             })
         );
     }

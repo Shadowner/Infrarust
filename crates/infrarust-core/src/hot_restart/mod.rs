@@ -7,6 +7,7 @@ pub mod platform;
 pub mod preflight;
 pub mod relays;
 pub mod restore;
+pub mod resume;
 pub mod state;
 
 pub use coordinator::{RestartHandle, RestartHub, RestartPhase};
@@ -20,6 +21,10 @@ pub use platform::{Handed, Inheritance, RestartPlan, Successor};
 pub use preflight::{BinaryPreflight, Preflight, PreflightError};
 pub use relays::{InFlight, LoginLink, RelayRegistry, RelayTicket};
 pub use restore::{Inherited, PrepareFailure, Prepared, RestoreError, Restored};
+pub use resume::{
+    RESUME_COOKIE, Redeemed, ResumeHolder, ResumePresenter, ResumeRecord, ResumeRegistry,
+    ResumeToken,
+};
 pub use state::{HandleId, HandoverState, SessionMeta};
 
 #[derive(Debug, thiserror::Error)]

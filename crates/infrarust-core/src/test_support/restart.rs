@@ -27,6 +27,7 @@ pub fn test_binary(exe: &Path) -> Arc<RunningBinary> {
 #[derive(Debug)]
 pub struct FakePreflight {
     approves: bool,
+    resumes: bool,
     checks: AtomicUsize,
 }
 
@@ -34,6 +35,15 @@ impl FakePreflight {
     pub fn approving() -> Arc<Self> {
         Arc::new(Self {
             approves: true,
+            resumes: true,
+            checks: AtomicUsize::new(0),
+        })
+    }
+
+    pub fn approving_without_resume() -> Arc<Self> {
+        Arc::new(Self {
+            approves: true,
+            resumes: false,
             checks: AtomicUsize::new(0),
         })
     }
@@ -41,6 +51,7 @@ impl FakePreflight {
     pub fn refusing() -> Arc<Self> {
         Arc::new(Self {
             approves: false,
+            resumes: false,
             checks: AtomicUsize::new(0),
         })
     }
@@ -67,6 +78,7 @@ impl Preflight for FakePreflight {
                 handover: Some(HandoverSupport {
                     protocol: HANDOVER_PROTOCOL,
                     accepts: HANDOVER_ACCEPTS.to_vec(),
+                    resume: self.resumes,
                 }),
             })
         } else {

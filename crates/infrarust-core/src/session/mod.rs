@@ -15,6 +15,7 @@ pub(crate) mod login_bridge;
 pub(crate) mod login_messages;
 pub(crate) mod presentation;
 pub(crate) mod proxy_loop;
+pub(crate) mod resume;
 pub(crate) mod server_join;
 pub(crate) mod server_switch;
 pub(crate) mod session_loop;

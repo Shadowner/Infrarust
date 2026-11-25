@@ -13,9 +13,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use command_fds::{CommandFdExt, FdMapping};
+use infrarust_core::hot_restart::RESUME_COOKIE;
 use infrarust_core::player::RESTART_REASON;
+use infrarust_protocol::packets::cookie::CStoreCookie;
+use infrarust_protocol::packets::play::transfer::CTransfer;
 use infrarust_test_harness::{
-    BackendConn, ClientSession, FakeBackend, FakeClient, ProtocolVersion,
+    BackendConn, ClientSession, CookieJar, FakeBackend, FakeClient, ProtocolVersion,
 };
 use nix::sys::signal::{Signal, kill};
 use nix::sys::stat::Mode;
@@ -28,6 +31,8 @@ const BIN: &str = env!("CARGO_BIN_EXE_infrarust");
 const T: Duration = Duration::from_secs(30);
 const PROTOCOL: u32 = 769;
 const OFFLINE: ProtocolVersion = ProtocolVersion(777);
+const BEFORE_TRANSFERS: ProtocolVersion = ProtocolVersion(765);
+const RESUMED: &str = "player resumed after the restart";
 const READY: &str = "infrarust is ready, accepting connections";
 const COMMITTED: &str = "handover committed";
 const FAILPOINT: &str = "INFRARUST_HANDOVER_FAILPOINT";
@@ -531,6 +536,40 @@ async fn offline_player(
     (client, backend)
 }
 
+async fn sent_back(mut session: ClientSession, addr: SocketAddr) -> CookieJar {
+    let cookie = session.expect::<CStoreCookie>(T).await.unwrap();
+    assert_eq!(cookie.key, RESUME_COOKIE);
+    assert_eq!(cookie.payload.len(), 32);
+    let transfer = session.expect::<CTransfer>(T).await.unwrap();
+    assert_eq!(
+        (transfer.host.as_str(), transfer.port),
+        ("lobby.test", i32::from(addr.port()))
+    );
+    let jar = session.cookies();
+    session.quit().await;
+    jar
+}
+
+async fn resumed(
+    addr: SocketAddr,
+    lobby: &FakeBackend,
+    name: &str,
+    jar: CookieJar,
+) -> (ClientSession, BackendConn) {
+    let client = FakeClient::new(addr, OFFLINE)
+        .domain("lobby.test")
+        .transferred()
+        .cookies(jar)
+        .login(name)
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let backend = lobby.next_connection(T).await.unwrap();
+    assert_eq!(backend.handshake().next_state, 2);
+    (client, backend)
+}
+
 fn forwarding_site(backend: &RawBackend) -> Site {
     Site::new(&[
         ("pipe", "passthrough", backend.addr),
@@ -554,14 +593,15 @@ async fn forwarding_sessions_survive_hot_restarts_in_the_same_process() {
 
     let mut sessions = join_all(addr, &backend, 8, 2).await;
     exchange_all(&mut sessions, 50).await;
-    let (mut notch, _notch_backend) = offline_player(addr, &lobby, "Notch").await;
+    let (notch, _notch_backend) = offline_player(addr, &lobby, "Notch").await;
     send_all(&mut sessions, 50).await;
 
     proxy.signal(Signal::SIGUSR2);
     let during = tokio::spawn(Raw::connect(addr, "pipe", "During"));
-    let kicked = notch.expect_disconnect(T).await.unwrap();
-    assert_eq!(kicked.text, RESTART_REASON, "{kicked:?}");
+    let ticket = sent_back(notch, addr).await;
     proxy.restarted(1).await;
+    let (back, _back_backend) = resumed(addr, &lobby, "Notch", ticket).await;
+    assert_eq!(proxy.count(RESUMED), 1, "{}", proxy.tail());
 
     assert_eq!(proxy.pid, pid);
     proxy.assert_image("1");
@@ -573,13 +613,23 @@ async fn forwarding_sessions_survive_hot_restarts_in_the_same_process() {
     after.exchange(20).await;
     sessions.push(during);
     sessions.push(after);
-    let (mut back, _back_backend) = offline_player(addr, &lobby, "Notch").await;
+    let mut elder = FakeClient::new(addr, BEFORE_TRANSFERS)
+        .domain("lobby.test")
+        .login("Elder")
+        .await
+        .unwrap()
+        .joined()
+        .unwrap();
+    let _elder_backend = lobby.next_connection(T).await.unwrap();
 
     send_all(&mut sessions, 30).await;
     proxy.console("restart");
-    let kicked = back.expect_disconnect(T).await.unwrap();
+    let kicked = elder.expect_disconnect(T).await.unwrap();
     assert_eq!(kicked.text, RESTART_REASON, "{kicked:?}");
+    let ticket = sent_back(back, addr).await;
     proxy.restarted(2).await;
+    let _again = resumed(addr, &lobby, "Notch", ticket).await;
+    assert_eq!(proxy.count(RESUMED), 2, "{}", proxy.tail());
 
     assert_eq!(proxy.pid, pid);
     receive_all(&mut sessions).await;
@@ -623,6 +673,35 @@ async fn a_failed_successor_keeps_the_sessions(failpoint: &str, trace: &str) {
     for session in &sessions {
         session.assert_open();
     }
+    proxy.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_player_sent_back_resumes_on_the_image_that_took_the_sessions_back() {
+    let backend = RawBackend::spawn().await;
+    let lobby = FakeBackend::builder().spawn().await.unwrap();
+    let mut site = Site::new(&[
+        ("pipe", "passthrough", backend.addr),
+        ("lobby", "offline", lobby.addr()),
+    ]);
+    let addr = site.addr;
+    let mut proxy = Proxy::start(&mut site, &[(FAILPOINT, "successor-precommit")]);
+    proxy.wait_for(READY, 1).await;
+    let mut sessions = join_all(addr, &backend, 1, 0).await;
+    exchange_all(&mut sessions, 10).await;
+    let (notch, _notch_backend) = offline_player(addr, &lobby, "Notch").await;
+
+    proxy.signal(Signal::SIGUSR2);
+    let ticket = sent_back(notch, addr).await;
+    proxy
+        .wait_for("infrarust: rolling the hot restart back", 1)
+        .await;
+    proxy.restarted(1).await;
+
+    proxy.assert_image("2");
+    let _back = resumed(addr, &lobby, "Notch", ticket).await;
+    assert_eq!(proxy.count(RESUMED), 1, "{}", proxy.tail());
+    exchange_all(&mut sessions, 10).await;
     proxy.stop().await;
 }
 

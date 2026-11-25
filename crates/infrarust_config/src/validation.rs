@@ -404,6 +404,7 @@ pub fn validate_proxy_document(config: &ProxyConfig) -> Result<Vec<String>, Conf
 
     let mut warnings = validate_wasm_config(config)?;
     warnings.extend(validate_update(&config.update)?);
+    validate_restart(&config.restart)?;
 
     if config.rate_limit.enabled {
         if config.rate_limit.window.is_zero() {
@@ -455,6 +456,25 @@ fn validate_update(update: &crate::types::UpdateConfig) -> Result<Vec<String>, C
         ));
     }
     Ok(warnings)
+}
+
+fn validate_restart(restart: &crate::types::RestartConfig) -> Result<(), ConfigError> {
+    use crate::types::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE};
+
+    if restart.delay > MAX_RESTART_DELAY {
+        return Err(ConfigError::Proxy(ProxyValidationError::RestartDelay {
+            delay: humantime::format_duration(restart.delay).to_string(),
+            max: humantime::format_duration(MAX_RESTART_DELAY).to_string(),
+        }));
+    }
+    let length = restart.message.chars().count();
+    if length > MAX_RESTART_MESSAGE {
+        return Err(ConfigError::Proxy(ProxyValidationError::RestartMessage {
+            length,
+            max: MAX_RESTART_MESSAGE,
+        }));
+    }
+    Ok(())
 }
 
 fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ProxyValidationError> {

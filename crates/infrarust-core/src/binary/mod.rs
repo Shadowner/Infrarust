@@ -40,6 +40,8 @@ impl BuildInfo {
 pub struct HandoverSupport {
     pub protocol: u32,
     pub accepts: Vec<u32>,
+    #[serde(default)]
+    pub resume: bool,
 }
 
 impl HandoverSupport {
@@ -47,6 +49,7 @@ impl HandoverSupport {
         cfg!(target_os = "linux").then(|| Self {
             protocol: HANDOVER_PROTOCOL,
             accepts: HANDOVER_ACCEPTS.to_vec(),
+            resume: true,
         })
     }
 
@@ -125,6 +128,7 @@ mod tests {
         let support = |protocol, accepts: &[u32]| HandoverSupport {
             protocol,
             accepts: accepts.to_vec(),
+            resume: false,
         };
         let successor = HandoverProbe {
             handover: Some(support(2, &[1, 2])),

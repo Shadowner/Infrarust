@@ -14,6 +14,7 @@ use infrarust_config::RateLimitConfig;
 use infrarust_transport::IpKey;
 
 use crate::error::CoreError;
+use crate::hot_restart::ResumeRegistry;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::middleware::{Middleware, MiddlewareResult};
 use crate::pipeline::types::ConnectionIntent;
@@ -30,6 +31,7 @@ pub struct RateLimiterMiddleware {
     login_limiter: Arc<KeyedLimiter>,
     status_limiter: Arc<KeyedLimiter>,
     warned: Arc<AtomicBool>,
+    resumes: Option<Arc<ResumeRegistry>>,
 }
 
 impl RateLimiterMiddleware {
@@ -42,7 +44,14 @@ impl RateLimiterMiddleware {
             login_limiter: Arc::new(login_limiter),
             status_limiter: Arc::new(status_limiter),
             warned: Arc::new(AtomicBool::new(false)),
+            resumes: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_resumes(mut self, resumes: Arc<ResumeRegistry>) -> Self {
+        self.resumes = Some(resumes);
+        self
     }
 
     fn build_limiter(max: u32, window: Duration) -> KeyedLimiter {
@@ -107,6 +116,15 @@ impl Middleware for RateLimiterMiddleware {
             let Some(handshake) = ctx.handshake.as_ref() else {
                 return Ok(MiddlewareResult::Continue); // No handshake yet, skip
             };
+
+            if handshake.intent == ConnectionIntent::Transfer
+                && self
+                    .resumes
+                    .as_ref()
+                    .is_some_and(|resumes| resumes.claim_slot(ctx.client_ip()))
+            {
+                return Ok(MiddlewareResult::Continue);
+            }
 
             let limiter = match handshake.intent {
                 ConnectionIntent::Status => &self.status_limiter,

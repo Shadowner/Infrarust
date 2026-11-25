@@ -2016,6 +2016,7 @@ dependencies = [
  "infrarust-test-harness",
  "infrarust-transport",
  "infrarust_config",
+ "infrarust_protocol",
  "mimalloc",
  "minisign",
  "nix",

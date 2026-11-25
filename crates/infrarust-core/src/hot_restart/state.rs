@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::HandoverError;
+use super::resume::ResumeRecord;
 use crate::binary::HANDOVER_ACCEPTS;
 
 pub const MAGIC: [u8; 8] = *b"IRHANDOV";
@@ -23,6 +24,8 @@ pub struct HandoverState {
     pub next_player_id: u64,
     pub listener: Option<ListenerRecord>,
     pub sessions: Vec<SessionRecord>,
+    #[serde(default)]
+    pub resumes: Vec<ResumeRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,6 +299,7 @@ mod tests {
                 bind: SocketAddr::from(([0, 0, 0, 0], 25_565)),
             }),
             sessions,
+            resumes: Vec::new(),
         }
     }
 

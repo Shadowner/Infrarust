@@ -14,6 +14,7 @@ mod permissions;
 mod plugin_messaging;
 mod proxy_mode;
 mod rate_limit;
+mod restart;
 mod server_manager;
 mod status;
 mod telemetry;
@@ -36,6 +37,7 @@ pub use permissions::{PermissionProviderSelection, PermissionsConfig};
 pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::{IdentityCheck, ProxyMode};
 pub use rate_limit::RateLimitConfig;
+pub use restart::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE, RestartConfig};
 pub use server_manager::{
     CraftyManagerConfig, LocalManagerConfig, ManagerLifecycle, PterodactylManagerConfig,
     ServerManagerConfig,

@@ -119,6 +119,7 @@ pub fn test_proxy_services() -> ProxyServices {
         )),
         plugin_messaging: Arc::new(crate::plugin_messaging::PluginMessaging::default()),
         relays: Arc::new(crate::hot_restart::RelayRegistry::default()),
+        resumes: Arc::new(crate::hot_restart::ResumeRegistry::default()),
     }
 }
 

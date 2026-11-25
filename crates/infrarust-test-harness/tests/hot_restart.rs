@@ -10,10 +10,11 @@ use infrarust_api::event::{EventPriority, ResultedEvent};
 use infrarust_api::events::lifecycle::{LoginEvent, PermissionsSetupEvent, PermissionsSetupResult};
 use infrarust_api::permissions::PermissionMap;
 use infrarust_api::services::proxy_control::RestartRequestError;
-use infrarust_core::hot_restart::{InheritanceOutcome, RestartPhase};
-use infrarust_core::player::RESTART_REASON;
+use infrarust_core::hot_restart::{InheritanceOutcome, RESUME_COOKIE, RestartPhase};
 use infrarust_core::test_support::FakePreflight;
+use infrarust_protocol::packets::cookie::CStoreCookie;
 use infrarust_protocol::packets::play::chat::SChatMessage;
+use infrarust_protocol::packets::play::transfer::CTransfer;
 use infrarust_server_manager::{ProviderStatus, ServerManagerError, ServerProvider};
 use infrarust_test_harness::{
     BackendConn, ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeClient, HarnessError,
@@ -165,13 +166,18 @@ async fn forwarding_sessions_survive_a_hot_restart_and_intercepted_ones_reconnec
     wait_until("the grace", || hub.phase() == RestartPhase::Draining).await;
     assert_eq!(hub.request(), Err(RestartRequestError::InProgress));
     release.notify_one();
-    let kicked = notch.expect_disconnect(T).await.unwrap();
-    assert_eq!(kicked.text, RESTART_REASON, "{kicked:?}");
+    let cookie = notch.expect::<CStoreCookie>(T).await.unwrap();
+    assert_eq!(cookie.key, RESUME_COOKIE);
+    let sent_back = notch.expect::<CTransfer>(T).await.unwrap();
+    assert_eq!(sent_back.port, i32::from(addr.port()));
+    let notch_cookies = notch.cookies();
+    notch.quit().await;
 
     let ProxyEnd::Restarted(successor) = run.finish(RESTART).await.unwrap() else {
         panic!("the restart must hand over");
     };
     assert_eq!(successor.handover().package.state.sessions.len(), 3);
+    assert_eq!(successor.handover().package.state.resumes.len(), 1);
     let after = Recorder::new();
     let grants =
         ScriptedPlugin::new("grants").on::<PermissionsSetupEvent>(EventPriority::NORMAL, |event| {
@@ -239,6 +245,18 @@ async fn forwarding_sessions_survive_a_hot_restart_and_intercepted_ones_reconnec
     let mut fresh = Pipe::join(&proxy, "pipe", &pipe, "Fresh").await;
     fresh.exchange(0..5).await;
     assert_eq!(after.count(EventKind::PostLogin), 1);
+    let _notch = proxy
+        .client_for("lobby", VERSION)
+        .unwrap()
+        .transferred()
+        .cookies(notch_cookies)
+        .login("Notch")
+        .await
+        .unwrap()
+        .joined()
+        .expect("the player sent back before the restart comes back on its own");
+    assert_eq!(lobby.next_connection(T).await.unwrap().username(), "Notch");
+    assert_eq!(after.count(EventKind::PostLogin), 2);
     let hub = proxy
         .restart_hub()
         .expect("the successor can restart again");

@@ -176,7 +176,8 @@ async fn choose_target(
     routing: &RoutingData,
 ) -> Result<Chosen, Refusal> {
     let services = ctx.services;
-    let initial_server = ServerId::new(routing.config_id.clone());
+    let initial_server =
+        resumed_server(ctx, routing).unwrap_or_else(|| ServerId::new(routing.config_id.clone()));
     let choose = PlayerChooseInitialServerEvent::new(ctx.player(), initial_server.clone());
     let choose = services.event_bus.fire(choose).await;
     let server = match choose.result() {
@@ -225,6 +226,18 @@ async fn choose_target(
         limbo,
         approved: true,
     })
+}
+
+fn resumed_server(ctx: &SessionContext<'_>, routing: &RoutingData) -> Option<ServerId> {
+    let target = ctx.resumed_server.as_ref()?;
+    if target.as_str() == routing.config_id {
+        return None;
+    }
+    let (config, _) = ctx
+        .services
+        .domain_router
+        .find_route_by_server_id(target.as_str())?;
+    validation::admits_session(ctx.session.kind(), &config).then(|| target.clone())
 }
 
 async fn redirected_route(

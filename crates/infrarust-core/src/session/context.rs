@@ -25,6 +25,7 @@ pub(crate) struct SessionContext<'a> {
     pub(crate) handshake: HandshakeData,
     pub(crate) connection_info: ConnectionInfo,
     pub(crate) token: CancellationToken,
+    pub(crate) resumed_server: Option<ServerId>,
 }
 
 impl SessionContext<'_> {
@@ -131,6 +132,7 @@ pub(crate) mod test_helpers {
                 connected_at: tokio::time::Instant::now(),
             },
             token: CancellationToken::new(),
+            resumed_server: None,
         }
     }
 

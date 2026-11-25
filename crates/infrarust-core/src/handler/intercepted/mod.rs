@@ -17,14 +17,16 @@ use infrarust_transport::BackendConnector;
 use super::helpers::cancelled_cause;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
+use crate::forwarding::domain_rewrite::as_login;
 use crate::pipeline::context::ConnectionContext;
 use crate::pipeline::types::{HandshakeData, RoutingData};
-use crate::player::SessionKind;
 use crate::player::commands::CommandInbox;
+use crate::player::{SessionKind, ShutdownKind};
 use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
 use crate::session::login_admission::{Admitted, Arrival, LoginAdmission, admit};
 use crate::session::proxy_loop::ProxyLoopOutcome;
+use crate::session::resume::{self, Claim};
 
 use crate::session::context::{SessionContext, SessionIo};
 use crate::session::initial_connect::{InitialMode, LoginFacts, resolve_initial_mode};
@@ -92,7 +94,7 @@ impl InterceptedHandler {
         shutdown: CancellationToken,
     ) -> Result<(), CoreError> {
         let routing = conn.require_routing()?.clone();
-        let handshake = conn.require_handshake()?.clone();
+        let mut handshake = conn.require_handshake()?.clone();
         let login_data = conn.login.clone();
 
         let version = handshake.protocol_version;
@@ -101,18 +103,60 @@ impl InterceptedHandler {
         let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
         client.set_cancel(shutdown.clone());
 
-        let (profile, online_mode) = match self
-            .auth_strategy
-            .authenticate(
-                &mut client,
-                login_data.as_ref(),
-                &self.services,
-                version,
-                conn.client_addr(),
-                &handshake.domain,
-            )
-            .await?
-        {
+        let claim = resume::claim(
+            &self.services,
+            &mut client,
+            &handshake,
+            login_data.as_ref(),
+            conn.client_ip(),
+        )
+        .await?;
+        let resumed = match claim {
+            Claim::Absent => None,
+            Claim::Presented => {
+                as_login(&mut handshake)?;
+                None
+            }
+            Claim::Resumed(record) => {
+                as_login(&mut handshake)?;
+                Some(record)
+            }
+        };
+        let recognised = match &resumed {
+            Some(record) => {
+                self.auth_strategy
+                    .resume(
+                        &mut client,
+                        record,
+                        &self.services,
+                        conn.client_addr(),
+                        &handshake.domain,
+                    )
+                    .await?
+            }
+            None => None,
+        };
+        let authenticated = match recognised {
+            Some(authenticated) => authenticated,
+            None => {
+                self.auth_strategy
+                    .authenticate(
+                        &mut client,
+                        login_data.as_ref(),
+                        &self.services,
+                        version,
+                        conn.client_addr(),
+                        &handshake.domain,
+                    )
+                    .await?
+            }
+        };
+        let resumed_server = resumed
+            .map(|record| record.server)
+            .filter(|server| !server.is_empty())
+            .map(ServerId::new);
+
+        let (profile, online_mode) = match authenticated {
             Authenticated::Denied(reason) => {
                 client.disconnect(&reason, registry).await.ok();
                 return Ok(());
@@ -143,6 +187,7 @@ impl InterceptedHandler {
             routing,
             handshake,
             online_mode,
+            resumed_server,
         };
         self.play(conn, &shutdown, client, admitted, entry).await
     }
@@ -167,6 +212,7 @@ impl InterceptedHandler {
             routing,
             handshake,
             online_mode,
+            resumed_server,
         } = entry;
         let registry = &self.services.packet_registry;
         let (client_codec, server_codec) = crate::filter::codec_chain::build_codec_chains(
@@ -189,6 +235,7 @@ impl InterceptedHandler {
             handshake,
             connection_info: conn.connection_info().clone(),
             token,
+            resumed_server,
         };
 
         if let Some(cause) = ended_before_start(&ctx, &mut io, shutdown).await {
@@ -255,7 +302,7 @@ impl InterceptedHandler {
             Some(reason) => kicked(&mut io.client, reason, registry).await,
             None => disconnect_cause(&outcome, shutdown),
         };
-        announce_shutdown(&self.services, &mut io.client, &cause).await;
+        announce_shutdown(&ctx, &mut io.client, &cause).await;
         io.close();
 
         lifecycle.end(cause).await;
@@ -278,6 +325,7 @@ struct Entry {
     routing: RoutingData,
     handshake: HandshakeData,
     online_mode: bool,
+    resumed_server: Option<ServerId>,
 }
 
 async fn ended_before_start(
@@ -301,7 +349,7 @@ async fn ended_before_start(
     }
     if ctx.token.is_cancelled() {
         let cause = cancelled_cause(shutdown, None);
-        announce_shutdown(ctx.services, &mut io.client, &cause).await;
+        announce_shutdown(ctx, &mut io.client, &cause).await;
         return Some(cause);
     }
     None
@@ -319,17 +367,19 @@ async fn kicked(
 }
 
 async fn announce_shutdown(
-    services: &ProxyServices,
+    ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
     cause: &DisconnectCause,
 ) {
-    if matches!(cause, DisconnectCause::Shutdown) {
-        let reason = Component::text(services.relays.notice().reason());
-        client
-            .disconnect(&reason, &services.packet_registry)
-            .await
-            .ok();
+    if !matches!(cause, DisconnectCause::Shutdown) {
+        return;
     }
+    let notice = ctx.services.relays.notice();
+    if matches!(notice, ShutdownKind::Restart) && resume::send_back(ctx, client).await {
+        return;
+    }
+    let reason = Component::text(notice.reason());
+    client.disconnect(&reason, ctx.registry()).await.ok();
 }
 
 fn disconnect_cause(outcome: &ProxyLoopOutcome, shutdown: &CancellationToken) -> DisconnectCause {

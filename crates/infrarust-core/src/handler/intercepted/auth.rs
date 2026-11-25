@@ -9,6 +9,7 @@ use infrarust_protocol::version::ProtocolVersion;
 use crate::auth::game_profile::offline_profile;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
+use crate::hot_restart::ResumeRecord;
 use crate::pipeline::types::LoginData;
 use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
@@ -121,6 +122,47 @@ impl AuthStrategy {
                 })
             }
         }
+    }
+}
+
+impl AuthStrategy {
+    pub(crate) async fn resume(
+        &self,
+        client: &mut ClientBridge,
+        record: &ResumeRecord,
+        services: &ProxyServices,
+        remote_addr: std::net::SocketAddr,
+        domain: &str,
+    ) -> Result<Option<Authenticated>, CoreError> {
+        let mojang = match self {
+            Self::Mojang(auth) => Some(auth),
+            Self::Offline { mojang } => mojang.as_ref(),
+        };
+        let encrypts = match (record.online_mode, mojang) {
+            (true, Some(auth)) if !services.config.restart.reauthenticate => Some(auth),
+            (false, _) if matches!(self, Self::Offline { .. }) => None,
+            _ => return Ok(None),
+        };
+        let profile = record.profile();
+        let version = infrarust_api::types::ProtocolVersion::new(client.protocol_version().0);
+        if let PreLogin::Denied(reason) =
+            pre_login(services, profile.clone(), remote_addr, version, domain).await
+        {
+            return Ok(Some(Authenticated::Denied(reason)));
+        }
+        if let Some(auth) = encrypts {
+            auth.encrypt(client, &services.packet_registry).await?;
+        }
+        tracing::info!(
+            username = %profile.username,
+            uuid = %profile.uuid,
+            online_mode = record.online_mode,
+            "player resumed after the restart"
+        );
+        Ok(Some(Authenticated::Player {
+            profile,
+            online_mode: record.online_mode,
+        }))
     }
 }
 

@@ -139,6 +139,20 @@ impl MojangAuth {
         .map_err(|_| CoreError::Timeout("online authentication timed out".to_string()))?
     }
 
+    pub async fn encrypt(
+        &self,
+        client: &mut ClientBridge,
+        registry: &PacketRegistry,
+    ) -> Result<(), CoreError> {
+        let key = tokio::time::timeout(
+            self.authenticate_timeout,
+            self.exchange_keys(client, None, registry, false),
+        )
+        .await
+        .map_err(|_| CoreError::Timeout("the encryption handshake timed out".to_string()))??;
+        client.enable_encryption(&key)
+    }
+
     async fn exchange_keys_and_verify(
         &self,
         client: &mut ClientBridge,
@@ -146,20 +160,36 @@ impl MojangAuth {
         profile_key: Option<&ProfileKey>,
         registry: &PacketRegistry,
     ) -> Result<GameProfile, CoreError> {
-        // Generate random verify token
-        let verify_token: [u8; 4] = rand::random();
+        let key = self
+            .exchange_keys(client, profile_key, registry, true)
+            .await?;
 
-        // Send EncryptionRequest
+        let server_hash = minecraft_server_hash("", &key, &self.public_key_der);
+
+        let profile = self.verify_session(username, &server_hash).await?;
+
+        client.enable_encryption(&key)?;
+
+        Ok(profile)
+    }
+
+    async fn exchange_keys(
+        &self,
+        client: &mut ClientBridge,
+        profile_key: Option<&ProfileKey>,
+        registry: &PacketRegistry,
+        should_authenticate: bool,
+    ) -> Result<[u8; 16], CoreError> {
+        let verify_token: [u8; 4] = rand::random();
         let version = client.protocol_version();
         let enc_request = CEncryptionRequest {
             server_id: String::new(),
             public_key: self.public_key_der.clone(),
             verify_token: verify_token.to_vec(),
-            should_authenticate: true,
+            should_authenticate,
         };
         client.send_packet(&enc_request, registry).await?;
 
-        // Read EncryptionResponse
         let frame = client
             .read_preauth_frame(MAX_ENCRYPTION_RESPONSE_FRAME)
             .await?
@@ -190,20 +220,8 @@ impl MojangAuth {
             }
         };
 
-        let key = self
-            .open_encryption_response(enc_response, profile_key, verify_token)
-            .await?;
-
-        // Compute server hash
-        let server_hash = minecraft_server_hash("", &key, &self.public_key_der);
-
-        // Call Mojang session server
-        let profile = self.verify_session(username, &server_hash).await?;
-
-        // Enable encryption on client bridge
-        client.enable_encryption(&key)?;
-
-        Ok(profile)
+        self.open_encryption_response(enc_response, profile_key, verify_token)
+            .await
     }
 
     async fn open_encryption_response(

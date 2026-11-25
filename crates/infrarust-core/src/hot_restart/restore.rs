@@ -16,6 +16,7 @@ use super::package::{
     DroppedSession, FrozenSession, Handle, HandoverPackage, ListenerHandover, UnpackFailure,
     Unpacked,
 };
+use super::resume::ResumeRecord;
 use super::state::SessionMeta;
 use crate::handler::forwarded::{ForwardedSession, RelayEnd, Relayed, resume_restored};
 use crate::pipeline::context::reserve_connection_ids;
@@ -32,6 +33,7 @@ pub struct Inherited {
     sessions: Vec<FrozenSession>,
     dropped: Vec<DroppedSession>,
     held: Vec<Handle>,
+    resumes: Vec<ResumeRecord>,
 }
 
 impl Inherited {
@@ -44,6 +46,7 @@ impl Inherited {
             sessions,
             dropped,
             held,
+            resumes,
         } = package.unpack()?;
         Ok(Self {
             from_version,
@@ -53,7 +56,12 @@ impl Inherited {
             sessions,
             dropped,
             held,
+            resumes,
         })
+    }
+
+    pub fn take_resumes(&mut self) -> Vec<ResumeRecord> {
+        std::mem::take(&mut self.resumes)
     }
 
     pub fn from_version(&self) -> &str {
@@ -172,6 +180,7 @@ pub fn prepare(server: &ProxyServer, inherited: Inherited) -> Result<Prepared, P
         sessions,
         dropped,
         held,
+        resumes: _,
     } = inherited;
     let router = &server.services().domain_router;
     let mut seen = HashSet::with_capacity(sessions.len());

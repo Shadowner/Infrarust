@@ -469,6 +469,7 @@ impl Takeover {
                 None => return Err(succession.abort(error, inherited)),
             },
         };
+        let resumes = inherited.take_resumes();
         let prepared = match restore::prepare(server, inherited) {
             Ok(prepared) => prepared,
             Err(failure) => {
@@ -477,6 +478,13 @@ impl Takeover {
             }
         };
         succession.commit();
+        let waiting = server.services().resumes.admit(resumes);
+        if waiting > 0 {
+            tracing::info!(
+                players = waiting,
+                "players sent back by the previous image are expected to reconnect"
+            );
+        }
         let restored = restore::launch(server, &listener, prepared);
         Ok((listener, restored))
     }
@@ -802,11 +810,23 @@ impl RunningProxy {
             }
             checked = self.preflight(hub) => checked,
         };
+        let resumes = Arc::clone(&self.services().resumes);
         match checked {
-            Ok(probe) => tracing::info!(
-                version = %probe.version,
-                "the new binary can take over the sessions"
-            ),
+            Ok(probe) => {
+                let sends_back = self.services().config.restart.transfer
+                    && probe
+                        .handover
+                        .as_ref()
+                        .is_some_and(|support| support.resume);
+                tracing::info!(
+                    version = %probe.version,
+                    sends_back,
+                    "the new binary can take over the sessions"
+                );
+                if sends_back {
+                    resumes.arm();
+                }
+            }
             Err(error) => {
                 hub.fail(error.to_string());
                 return Attempt::Aborted;
@@ -821,6 +841,7 @@ impl RunningProxy {
         let listener = match (&mut self.serve_task).await {
             Ok(Ok(ServeExit::Restart(listener))) => listener,
             joined => {
+                resumes.disarm();
                 hub.fail("the accept loop ended before handing its listener back");
                 return Attempt::Stop(served(joined));
             }
@@ -836,6 +857,7 @@ impl RunningProxy {
             () = self.shutdown.cancelled() => {
                 hub.mark_stopping();
                 hub.fail("the proxy is stopping");
+                resumes.disarm();
                 drop(listener);
                 return Attempt::Stop(Ok(()));
             }
@@ -849,6 +871,13 @@ impl RunningProxy {
         );
         self.server.close_sessions(ShutdownKind::Restart);
         self.server.drain_pipeline(RESTART_PIPELINE_DRAIN).await;
+        let sent_back = resumes.take_issued();
+        if !sent_back.is_empty() {
+            tracing::info!(
+                players = sent_back.len(),
+                "hot restart: players on 1.20.5 and later were sent back to reconnect on their own"
+            );
+        }
         let stop_requested = self.shutdown.is_cancelled();
         self.stop_plugins().await;
         self.server.stop_background_tasks();
@@ -888,7 +917,7 @@ impl RunningProxy {
             relays.take_frozen(),
         );
         let (package, dropped) = match built {
-            Ok(built) => built,
+            Ok((package, dropped)) => (package.with_resumes(sent_back), dropped),
             Err(error) => return Attempt::Failed(error.into()),
         };
         for session in &dropped {

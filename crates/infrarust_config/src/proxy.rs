@@ -12,8 +12,8 @@ use crate::defaults;
 use crate::types::{
     ActiveHealthConfig, AuthConfig, BanConfig, DockerProviderConfig, EventsConfig,
     ForwardingConfig, IpFilterConfig, KeepaliveConfig, MotdConfig, PermissionsConfig,
-    PluginMessagingConfig, PluginWasmConfig, RateLimitConfig, StatusCacheConfig, TelemetryConfig,
-    UpdateConfig, WasmConfig, WebConfig,
+    PluginMessagingConfig, PluginWasmConfig, RateLimitConfig, RestartConfig, StatusCacheConfig,
+    TelemetryConfig, UpdateConfig, WasmConfig, WebConfig,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +163,9 @@ pub struct ProxyConfig {
 
     #[serde(default)]
     pub update: UpdateConfig,
+
+    #[serde(default)]
+    pub restart: RestartConfig,
 
     /// Plugin configurations keyed by plugin ID.
     #[serde(default)]

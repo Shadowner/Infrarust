@@ -174,6 +174,7 @@ impl ProxyServer {
                 &config.plugin_messaging,
             )),
             relays: Arc::clone(&relays),
+            resumes: Arc::new(crate::hot_restart::ResumeRegistry::default()),
         };
 
         let Pipelines {
@@ -375,7 +376,8 @@ fn build_pipelines(
     common.add(Box::new(IpFilterMiddleware::new(config.ip_filter.clone())));
     common.add(Box::new(HandshakeParserMiddleware::new()));
     common.add(Box::new(BanIpCheckMiddleware::new(Arc::clone(ban_manager))));
-    let rate_limiter = RateLimiterMiddleware::new(&config.rate_limit);
+    let rate_limiter =
+        RateLimiterMiddleware::new(&config.rate_limit).with_resumes(Arc::clone(&services.resumes));
     common.add(Box::new(rate_limiter.clone()));
     common.add(Box::new(DomainRouterMiddleware::new(Arc::clone(
         &services.domain_router,
