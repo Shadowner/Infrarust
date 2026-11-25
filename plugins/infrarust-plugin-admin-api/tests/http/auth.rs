@@ -182,6 +182,7 @@ const PROTECTED_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/v1/config/reload"),
     ("POST", "/api/v1/proxy/shutdown"),
     ("POST", "/api/v1/proxy/restart"),
+    ("DELETE", "/api/v1/proxy/restart"),
     ("GET", "/api/v1/proxy/update"),
     ("POST", "/api/v1/proxy/update/check"),
     ("POST", "/api/v1/proxy/update/install"),

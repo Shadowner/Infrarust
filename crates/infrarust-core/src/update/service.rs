@@ -515,7 +515,10 @@ mod tests {
     impl infrarust_api::__sealed::Sealed for FakeRestart {}
 
     impl ProxyRestart for FakeRestart {
-        fn request_restart(&self) -> Result<(), RestartRequestError> {
+        fn request_restart_with(
+            &self,
+            _options: infrarust_api::services::RestartOptions,
+        ) -> Result<(), RestartRequestError> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }

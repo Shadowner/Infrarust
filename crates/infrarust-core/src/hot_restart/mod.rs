@@ -1,3 +1,4 @@
+pub mod announce;
 pub mod coordinator;
 pub mod freeze;
 #[cfg(any(test, feature = "test-support"))]

@@ -1,8 +1,14 @@
 use std::fmt;
 use std::sync::Arc;
 
-use infrarust_api::services::proxy_control::{ProxyRestart, RestartRequestError};
+use std::time::SystemTime;
+
+use infrarust_api::services::proxy_control::{
+    ProxyRestart, RestartCancelError, RestartOptions, RestartRequestError, ScheduledRestart,
+};
 use tokio::sync::watch;
+
+use super::announce;
 
 use super::platform::RestartPlan;
 use super::preflight::Preflight;
@@ -11,6 +17,7 @@ use super::preflight::Preflight;
 pub enum RestartPhase {
     Idle,
     Preflight,
+    Announcing,
     Draining,
     Closing,
     Freezing,
@@ -24,6 +31,9 @@ struct HubState {
     stopping: bool,
     refusal: Option<String>,
     last_failure: Option<String>,
+    options: RestartOptions,
+    scheduled: Option<SystemTime>,
+    cancelled: bool,
 }
 
 pub struct RestartHub {
@@ -55,6 +65,9 @@ impl RestartHub {
                 stopping: false,
                 refusal: None,
                 last_failure: None,
+                options: RestartOptions::default(),
+                scheduled: None,
+                cancelled: false,
             }),
         })
     }
@@ -85,6 +98,11 @@ impl RestartHub {
     }
 
     pub fn request(&self) -> Result<(), RestartRequestError> {
+        self.request_with(RestartOptions::default())
+    }
+
+    pub fn request_with(&self, options: RestartOptions) -> Result<(), RestartRequestError> {
+        announce::validate(&options)?;
         let mut answer = Ok(());
         self.state.send_if_modified(|state| {
             answer = if state.stopping {
@@ -96,10 +114,58 @@ impl RestartHub {
             } else {
                 Ok(())
             };
-            state.pending |= answer.is_ok();
+            if answer.is_ok() {
+                state.pending = true;
+                state.cancelled = false;
+                state.options = options;
+            }
             answer.is_ok()
         });
         answer
+    }
+
+    pub fn options(&self) -> RestartOptions {
+        self.state.borrow().options.clone()
+    }
+
+    pub fn announce_until(&self, at: SystemTime) -> bool {
+        let entered = self.set_phase(RestartPhase::Announcing);
+        if entered {
+            self.state.send_modify(|state| state.scheduled = Some(at));
+        }
+        entered
+    }
+
+    pub fn scheduled(&self) -> Option<ScheduledRestart> {
+        self.state
+            .borrow()
+            .scheduled
+            .map(|at| ScheduledRestart { at })
+    }
+
+    pub fn cancel(&self) -> Result<(), RestartCancelError> {
+        let mut answer = Ok(());
+        self.state.send_if_modified(|state| {
+            answer = if state.phase > RestartPhase::Announcing {
+                Err(RestartCancelError::TooLate)
+            } else if state.cancelled || (state.phase == RestartPhase::Idle && !state.pending) {
+                Err(RestartCancelError::NothingScheduled)
+            } else {
+                Ok(())
+            };
+            state.cancelled |= answer.is_ok();
+            answer.is_ok()
+        });
+        answer
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.state.borrow().cancelled
+    }
+
+    pub async fn cancelled(&self) {
+        let mut state = self.state.subscribe();
+        let _ = state.wait_for(|state| state.cancelled).await;
     }
 
     pub fn mark_stopping(&self) {
@@ -136,6 +202,9 @@ impl RestartHub {
             }
             state.phase = phase;
             state.pending = false;
+            if phase > RestartPhase::Announcing {
+                state.scheduled = None;
+            }
             true
         })
     }
@@ -146,6 +215,8 @@ impl RestartHub {
         self.state.send_modify(|state| {
             state.phase = RestartPhase::Idle;
             state.pending = false;
+            state.scheduled = None;
+            state.cancelled = false;
             state.last_failure = Some(reason);
         });
     }
@@ -165,8 +236,16 @@ pub struct RestartHandle {
 impl infrarust_api::__sealed::Sealed for RestartHandle {}
 
 impl ProxyRestart for RestartHandle {
-    fn request_restart(&self) -> Result<(), RestartRequestError> {
-        self.hub.request()
+    fn request_restart_with(&self, options: RestartOptions) -> Result<(), RestartRequestError> {
+        self.hub.request_with(options)
+    }
+
+    fn cancel_restart(&self) -> Result<(), RestartCancelError> {
+        self.hub.cancel()
+    }
+
+    fn scheduled_restart(&self) -> Option<ScheduledRestart> {
+        self.hub.scheduled()
     }
 }
 
@@ -352,5 +431,113 @@ mod tests {
         );
         let error = hub.preflight().check(hub.plan()).await.unwrap_err();
         assert!(matches!(error, PreflightError::ChildServers(_)));
+    }
+
+    fn options(delay: u64, message: &str) -> RestartOptions {
+        RestartOptions {
+            delay: Some(Duration::from_secs(delay)),
+            message: Some(message.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_request_carries_its_options_to_the_restart() {
+        let hub = hub();
+        assert_eq!(hub.options(), RestartOptions::default());
+        hub.request_with(options(30, "Back soon")).unwrap();
+        assert_eq!(hub.options(), options(30, "Back soon"));
+        assert_eq!(
+            hub.request_with(options(5, "Other")),
+            Err(RestartRequestError::InProgress)
+        );
+        assert_eq!(hub.options(), options(30, "Back soon"));
+        hub.fail("refused");
+        hub.request().unwrap();
+        assert_eq!(hub.options(), RestartOptions::default());
+    }
+
+    #[test]
+    fn options_over_the_limits_are_refused_before_anything_is_scheduled() {
+        let hub = hub();
+        assert!(matches!(
+            hub.request_with(options(7200, "Later")),
+            Err(RestartRequestError::Invalid(_))
+        ));
+        assert!(!hub.is_pending());
+        assert_eq!(hub.phase(), RestartPhase::Idle);
+    }
+
+    #[test]
+    fn the_schedule_is_known_while_the_restart_is_announced() {
+        let hub = hub();
+        hub.request().unwrap();
+        hub.set_phase(RestartPhase::Preflight);
+        assert_eq!(hub.scheduled(), None);
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        assert!(hub.announce_until(at));
+        assert_eq!(hub.phase(), RestartPhase::Announcing);
+        assert_eq!(hub.scheduled(), Some(ScheduledRestart { at }));
+        assert_eq!(hub.request(), Err(RestartRequestError::InProgress));
+        hub.set_phase(RestartPhase::Draining);
+        assert_eq!(hub.scheduled(), None);
+    }
+
+    #[test]
+    fn a_restart_can_be_cancelled_until_the_proxy_stops_accepting() {
+        let hub = hub();
+        assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
+
+        hub.request().unwrap();
+        assert_eq!(hub.cancel(), Ok(()));
+        assert!(hub.is_cancelled());
+        assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
+        hub.fail("the restart was cancelled");
+        assert!(!hub.is_cancelled());
+
+        hub.request().unwrap();
+        hub.set_phase(RestartPhase::Preflight);
+        hub.announce_until(SystemTime::now());
+        assert_eq!(hub.cancel(), Ok(()));
+        hub.fail("the restart was cancelled");
+        assert_eq!(hub.scheduled(), None);
+        assert_eq!(hub.phase(), RestartPhase::Idle);
+
+        hub.request().unwrap();
+        assert!(!hub.is_cancelled(), "a new request starts clean");
+        hub.set_phase(RestartPhase::Draining);
+        assert_eq!(hub.cancel(), Err(RestartCancelError::TooLate));
+        assert!(!hub.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn a_cancellation_wakes_whoever_waits_for_it() {
+        let hub = hub();
+        hub.request().unwrap();
+        hub.set_phase(RestartPhase::Preflight);
+        let waiting = {
+            let hub = Arc::clone(&hub);
+            tokio::spawn(async move { hub.cancelled().await })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        hub.cancel().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn the_handle_exposes_the_cancellation_and_the_schedule() {
+        let hub = hub();
+        let handle = hub.handle();
+        assert_eq!(handle.scheduled_restart(), None);
+        assert_eq!(
+            handle.cancel_restart(),
+            Err(RestartCancelError::NothingScheduled)
+        );
+        handle.request_restart_with(options(10, "Soon")).unwrap();
+        assert_eq!(hub.options(), options(10, "Soon"));
+        assert_eq!(handle.cancel_restart(), Ok(()));
     }
 }

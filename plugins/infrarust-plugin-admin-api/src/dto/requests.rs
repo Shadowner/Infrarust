@@ -37,6 +37,13 @@ pub enum BanTargetRequest {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RestartRequest {
+    pub delay_seconds: Option<u64>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstallUpdateRequest {
     pub version: Option<String>,
 }

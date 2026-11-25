@@ -38,6 +38,8 @@ export interface ProxyStatus {
   features: string[];
   memory_rss_bytes: number | null;
   restart_available: boolean;
+  restart_scheduled_at?: string;
+  restart_in_seconds?: number;
 }
 
 export type RestartRequirement = 'hot' | 'full' | 'manual';

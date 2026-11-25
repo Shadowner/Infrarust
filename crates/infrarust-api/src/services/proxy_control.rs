@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::BoxFuture;
 
@@ -67,6 +67,27 @@ pub enum RestartRequestError {
     InProgress,
     #[error("the proxy is shutting down")]
     ShuttingDown,
+    #[error("{0}")]
+    Invalid(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RestartOptions {
+    pub delay: Option<Duration>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledRestart {
+    pub at: SystemTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RestartCancelError {
+    #[error("no restart is scheduled")]
+    NothingScheduled,
+    #[error("the restart is already under way")]
+    TooLate,
 }
 
 pub trait ProxyUpdates: Send + Sync + crate::__sealed::Sealed {
@@ -78,5 +99,17 @@ pub trait ProxyUpdates: Send + Sync + crate::__sealed::Sealed {
 }
 
 pub trait ProxyRestart: Send + Sync + crate::__sealed::Sealed {
-    fn request_restart(&self) -> Result<(), RestartRequestError>;
+    fn request_restart(&self) -> Result<(), RestartRequestError> {
+        self.request_restart_with(RestartOptions::default())
+    }
+
+    fn request_restart_with(&self, options: RestartOptions) -> Result<(), RestartRequestError>;
+
+    fn cancel_restart(&self) -> Result<(), RestartCancelError> {
+        Err(RestartCancelError::NothingScheduled)
+    }
+
+    fn scheduled_restart(&self) -> Option<ScheduledRestart> {
+        None
+    }
 }

@@ -252,8 +252,9 @@ mod tests {
     impl infrarust_api::__sealed::Sealed for CountingRestart {}
 
     impl ProxyRestart for CountingRestart {
-        fn request_restart(
+        fn request_restart_with(
             &self,
+            _options: infrarust_api::services::proxy_control::RestartOptions,
         ) -> Result<(), infrarust_api::services::proxy_control::RestartRequestError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())

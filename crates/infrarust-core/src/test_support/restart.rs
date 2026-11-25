@@ -26,7 +26,7 @@ pub fn test_binary(exe: &Path) -> Arc<RunningBinary> {
 
 #[derive(Debug)]
 pub struct FakePreflight {
-    approves: bool,
+    approvals: usize,
     resumes: bool,
     checks: AtomicUsize,
 }
@@ -34,7 +34,7 @@ pub struct FakePreflight {
 impl FakePreflight {
     pub fn approving() -> Arc<Self> {
         Arc::new(Self {
-            approves: true,
+            approvals: usize::MAX,
             resumes: true,
             checks: AtomicUsize::new(0),
         })
@@ -42,15 +42,23 @@ impl FakePreflight {
 
     pub fn approving_without_resume() -> Arc<Self> {
         Arc::new(Self {
-            approves: true,
+            approvals: usize::MAX,
             resumes: false,
+            checks: AtomicUsize::new(0),
+        })
+    }
+
+    pub fn approving_times(approvals: usize) -> Arc<Self> {
+        Arc::new(Self {
+            approvals,
+            resumes: true,
             checks: AtomicUsize::new(0),
         })
     }
 
     pub fn refusing() -> Arc<Self> {
         Arc::new(Self {
-            approves: false,
+            approvals: 0,
             resumes: false,
             checks: AtomicUsize::new(0),
         })
@@ -66,9 +74,9 @@ impl Preflight for FakePreflight {
         &'a self,
         plan: &'a RestartPlan,
     ) -> BoxFuture<'a, Result<HandoverProbe, PreflightError>> {
-        self.checks.fetch_add(1, Ordering::SeqCst);
+        let earlier = self.checks.fetch_add(1, Ordering::SeqCst);
         let build = plan.binary.build;
-        let outcome = if self.approves {
+        let outcome = if earlier < self.approvals {
             Ok(HandoverProbe {
                 probe: PROBE_SCHEMA,
                 version: build.version.to_string(),

@@ -25,8 +25,9 @@ pub use player_registry::PlayerRegistry;
 pub use plugin_registry::{PluginInfo, PluginRegistry};
 pub use providers::{ProviderKind, ProviderRejected};
 pub use proxy_control::{
-    AvailableUpdate, InstallRequest, InstallState, ProxyRestart, ProxyUpdates, RestartRequestError,
-    RestartRequirement, UpdateRequestError, UpdateStatus,
+    AvailableUpdate, InstallRequest, InstallState, ProxyRestart, ProxyUpdates, RestartCancelError,
+    RestartOptions, RestartRequestError, RestartRequirement, ScheduledRestart, UpdateRequestError,
+    UpdateStatus,
 };
 pub use proxy_info::{
     KeepaliveInfo, ProxyInfo, RateLimitInfo, StatusCacheInfo, UnknownDomainBehavior,

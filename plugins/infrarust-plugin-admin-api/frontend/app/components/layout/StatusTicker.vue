@@ -16,6 +16,7 @@ import {
 import type { ApiEnvelope, ProxyStatus, UpdateStatusDto } from '~/types/api';
 
 const UPDATE_REFRESH_INTERVAL = 30 * 60 * 1000;
+const SCHEDULE_REFRESH_SECONDS = 5;
 
 const route = useRoute();
 const auth = useAuth();
@@ -23,7 +24,13 @@ const { request } = useApi();
 const { status: sseStatus, onEvent } = useEventBus();
 const { now } = useTick();
 const { pending: restartPending } = useRestartRequired();
-const { restart: hotRestart } = useHotRestart();
+const {
+  restart: hotRestart,
+  state: restartState,
+  setSchedule,
+  refreshSchedule,
+  cancel: cancelRestart,
+} = useHotRestart();
 
 const proxyStatus = ref<ProxyStatus | null>(null);
 const pinging = ref(false);
@@ -82,6 +89,15 @@ const restartHintTitle = computed(() =>
     : 'A new binary is on disk. Restart the proxy to apply it',
 );
 
+const restartIn = computed(() => {
+  const at = restartState.value.scheduledAt;
+  return at === null ? null : Math.max(0, Math.ceil((at - now.value) / 1000));
+});
+
+watch(restartIn, (left) => {
+  if (left !== null && left % SCHEDULE_REFRESH_SECONDS === 0) void refreshSchedule();
+});
+
 function handleRestartHint() {
   if (restartAvailable.value) hotRestart();
 }
@@ -95,6 +111,7 @@ async function loadProxyStatus() {
   const res = await request<ApiEnvelope<ProxyStatus>>('/proxy').catch(() => null);
   if (!res) return;
   proxyStatus.value = res.data;
+  setSchedule(res.data.restart_scheduled_at);
   uptimeBaseSeconds.value = res.data.uptime_seconds;
   uptimeBaseTime.value = Date.now();
 }
@@ -209,6 +226,24 @@ function handleSwitchKey() {
         {{ availableUpdate.security ? 'Security update' : 'Update' }}
         <span class="font-mono normal-case">{{ availableUpdate.version }}</span>
       </component>
+
+      <span
+        v-if="restartIn !== null"
+        class="flex items-center gap-1.5 rounded-full border border-[rgba(233,160,71,0.35)] bg-[rgba(233,160,71,0.14)] py-0.5 pl-2.5 pr-1 text-[10px] font-semibold uppercase tracking-wider text-[#ffd8ad]"
+        role="status"
+      >
+        <ArrowPathRoundedSquareIcon class="h-3 w-3" />
+        Restart in
+        <span class="font-mono normal-case">{{ formatDuration(restartIn) }}</span>
+        <button
+          type="button"
+          class="rounded-full px-1.5 py-px normal-case transition-colors hover:bg-[rgba(233,160,71,0.24)]"
+          title="Cancel the scheduled restart"
+          @click="cancelRestart"
+        >
+          Cancel
+        </button>
+      </span>
 
       <component
         v-if="updateApplied"

@@ -6,7 +6,9 @@ use infrarust_api::command::CommandInfo as PluginCommandInfo;
 use infrarust_api::event::BoxFuture;
 use infrarust_api::services::config_service::ConfigService;
 use infrarust_api::services::player_registry::PlayerRegistry;
-use infrarust_api::services::proxy_control::RestartRequestError;
+use infrarust_api::services::proxy_control::{
+    RestartCancelError, RestartOptions, RestartRequestError,
+};
 use infrarust_api::services::{
     AvailableUpdate, InstallRequest, InstallState, ProxyRestart, ProxyUpdates, RestartRequirement,
     UpdateRequestError, UpdateStatus,
@@ -23,6 +25,7 @@ use crate::console::output::{
 };
 use crate::console::parser::format_duration_short;
 use crate::console::render::usage_line;
+use crate::hot_restart::announce;
 use crate::terminal::Mark;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -395,10 +398,22 @@ async fn apply(
     }
 }
 
-fn restart_output(answer: Result<(), RestartRequestError>) -> CommandOutput {
+fn restart_output(
+    answer: Result<(), RestartRequestError>,
+    delay: Option<Duration>,
+) -> CommandOutput {
     match answer {
-        Ok(()) => {
-            CommandOutput::Success("Hot restart requested, follow it in the logs".to_string())
+        Ok(()) => match delay.filter(|delay| !delay.is_zero()) {
+            Some(delay) => CommandOutput::Success(format!(
+                "Hot restart requested in {}, the players are told; 'restart cancel' calls it off",
+                announce::compact(delay)
+            )),
+            None => {
+                CommandOutput::Success("Hot restart requested, follow it in the logs".to_string())
+            }
+        },
+        Err(RestartRequestError::Invalid(reason)) => {
+            Failure::new(format!("The restart request is refused: {reason}")).into()
         }
         Err(RestartRequestError::InProgress) => {
             CommandOutput::Note("A restart is already in progress".to_string())
@@ -597,7 +612,7 @@ impl ConsoleCommand for RestartCommand {
             name: "restart",
             aliases: &[],
             description: "Restart in place, keeping forwarded players connected",
-            usage: "restart",
+            usage: "restart [delay] [message...] | restart cancel",
             category: CommandCategory::System,
         }
     }
@@ -608,16 +623,35 @@ impl ConsoleCommand for RestartCommand {
         services: &'a ConsoleServices,
     ) -> BoxFuture<'a, CommandOutput> {
         Box::pin(async move {
-            if !args.is_empty() {
-                return usage(self);
-            }
             let Some(restart) = services.restart.as_deref() else {
                 return Failure::new("Hot restart is unavailable here")
                     .with_hint(Hint::Note("stop the proxy and start it again".to_string()))
                     .into();
             };
+            if args == ["cancel"] {
+                tracing::info!(target: "console", "Hot restart cancelled from console");
+                return match restart.cancel_restart() {
+                    Ok(()) => CommandOutput::Success("The restart is cancelled".to_string()),
+                    Err(RestartCancelError::NothingScheduled) => {
+                        CommandOutput::Note("No restart is scheduled".to_string())
+                    }
+                    Err(RestartCancelError::TooLate) => {
+                        Failure::new("The restart is already under way").into()
+                    }
+                };
+            }
+            let (delay, message) = match args.split_first() {
+                Some((head, tail)) => match humantime::parse_duration(head) {
+                    Ok(delay) => (Some(delay), super::args::rest(tail)),
+                    Err(_) => (None, super::args::rest(args)),
+                },
+                None => (None, None),
+            };
             tracing::info!(target: "console", "Hot restart requested from console");
-            restart_output(restart.request_restart())
+            restart_output(
+                restart.request_restart_with(RestartOptions { delay, message }),
+                delay,
+            )
         })
     }
 }
@@ -1001,22 +1035,38 @@ mod tests {
 
     struct ScriptedRestart {
         answer: Result<(), RestartRequestError>,
+        cancel: Result<(), RestartCancelError>,
         calls: std::sync::atomic::AtomicUsize,
+        asked: std::sync::Mutex<Vec<RestartOptions>>,
     }
 
     impl infrarust_api::__sealed::Sealed for ScriptedRestart {}
 
     impl ProxyRestart for ScriptedRestart {
-        fn request_restart(&self) -> Result<(), RestartRequestError> {
+        fn request_restart_with(&self, options: RestartOptions) -> Result<(), RestartRequestError> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.asked.lock().unwrap().push(options);
             self.answer.clone()
+        }
+
+        fn cancel_restart(&self) -> Result<(), RestartCancelError> {
+            self.cancel.clone()
         }
     }
 
     fn answering(answer: Result<(), RestartRequestError>) -> Arc<ScriptedRestart> {
+        cancelling(answer, Err(RestartCancelError::NothingScheduled))
+    }
+
+    fn cancelling(
+        answer: Result<(), RestartRequestError>,
+        cancel: Result<(), RestartCancelError>,
+    ) -> Arc<ScriptedRestart> {
         Arc::new(ScriptedRestart {
             answer,
+            cancel,
             calls: std::sync::atomic::AtomicUsize::new(0),
+            asked: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -1070,6 +1120,10 @@ mod tests {
                 Err(RestartRequestError::Unsupported("no restart loop".into())),
                 "error: Hot restart is unavailable: no restart loop\n  stop the proxy and start it again",
             ),
+            (
+                Err(RestartRequestError::Invalid("the delay is 2h".into())),
+                "error: The restart request is refused: the delay is 2h",
+            ),
         ] {
             let restart = answering(answer);
             let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
@@ -1078,6 +1132,79 @@ mod tests {
                 expected
             );
             assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn restart_takes_a_delay_and_a_message() {
+        for (args, delay, message, expected) in [
+            (
+                &["30s", "&eBack", "in", "{delay}"][..],
+                Some(Duration::from_secs(30)),
+                Some("&eBack in {delay}"),
+                "ok: Hot restart requested in 30s, the players are told; 'restart cancel' calls it off",
+            ),
+            (
+                &["2m"][..],
+                Some(Duration::from_secs(120)),
+                None,
+                "ok: Hot restart requested in 2m, the players are told; 'restart cancel' calls it off",
+            ),
+            (
+                &["0s"][..],
+                Some(Duration::ZERO),
+                None,
+                "ok: Hot restart requested, follow it in the logs",
+            ),
+            (
+                &["Maintenance", "now"][..],
+                None,
+                Some("Maintenance now"),
+                "ok: Hot restart requested, follow it in the logs",
+            ),
+            (
+                &[][..],
+                None,
+                None,
+                "ok: Hot restart requested, follow it in the logs",
+            ),
+        ] {
+            let restart = answering(Ok(()));
+            let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
+            assert_eq!(
+                render(RestartCommand.execute(args, &services).await),
+                expected
+            );
+            assert_eq!(
+                *restart.asked.lock().unwrap(),
+                [RestartOptions {
+                    delay,
+                    message: message.map(str::to_string)
+                }]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn restart_cancel_reports_what_was_called_off() {
+        for (cancel, expected) in [
+            (Ok(()), "ok: The restart is cancelled"),
+            (
+                Err(RestartCancelError::NothingScheduled),
+                "- No restart is scheduled",
+            ),
+            (
+                Err(RestartCancelError::TooLate),
+                "error: The restart is already under way",
+            ),
+        ] {
+            let restart = cancelling(Ok(()), cancel);
+            let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
+            assert_eq!(
+                render(RestartCommand.execute(&["cancel"], &services).await),
+                expected
+            );
+            assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         }
     }
 

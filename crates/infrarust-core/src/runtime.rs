@@ -24,6 +24,7 @@ use infrarust_transport::Listener;
 use crate::binary::RunningBinary;
 use crate::console::ConsoleServices;
 use crate::error::CoreError;
+use crate::hot_restart::announce::{self, Announcement};
 use crate::hot_restart::restore::{self, Inherited, Restored};
 use crate::hot_restart::{
     HandoverPackage, Inheritance, ListenerHandover, Preflight, PreflightError, RestartHub,
@@ -640,6 +641,8 @@ const RESTART_GRACE: Duration = Duration::from_secs(3);
 const RESTART_PIPELINE_DRAIN: Duration = Duration::from_secs(5);
 const FREEZE_MARGIN: Duration = Duration::from_millis(400);
 const FROZEN_TASKS: Duration = Duration::from_secs(1);
+const ANNOUNCE_SETTLE: Duration = Duration::from_millis(250);
+const CANCELLED: &str = "the restart was cancelled";
 const WITHOUT_RESTART_LOOP: &str =
     "this proxy was started without its restart loop; restart it by hand";
 
@@ -659,6 +662,12 @@ pub struct RestartHandover {
 enum Next {
     Served(Result<(), CoreError>),
     Requested,
+}
+
+enum Announced {
+    Waited,
+    Stopped(Attempt),
+    Cancelled,
 }
 
 enum Attempt {
@@ -795,42 +804,49 @@ impl RunningProxy {
     }
 
     async fn restart(&mut self, hub: &RestartHub) -> Attempt {
-        let requested_at = Instant::now();
         hub.set_phase(RestartPhase::Preflight);
+        let announcement = Announcement::resolve(&hub.options(), &self.services().config.restart);
         tracing::info!(
             target_binary = %hub.plan().target.display(),
             "hot restart requested, checking the new binary"
         );
-        let checked = tokio::select! {
-            biased;
-            () = self.shutdown.cancelled() => {
-                hub.mark_stopping();
-                hub.fail("the proxy is stopping");
-                return Attempt::Stop(served((&mut self.serve_task).await));
-            }
-            checked = self.preflight(hub) => checked,
+        let mut probe = match self.checked(hub).await {
+            Ok(probe) => probe,
+            Err(attempt) => return attempt,
         };
+        if !announcement.is_silent() {
+            match self.announce(hub, &announcement).await {
+                Announced::Waited => {}
+                Announced::Stopped(attempt) => return attempt,
+                Announced::Cancelled => return self.call_off(hub, CANCELLED),
+            }
+            if !announcement.delay.is_zero() {
+                probe = match self.checked(hub).await {
+                    Ok(probe) => probe,
+                    Err(attempt) => {
+                        announce::tell(
+                            &self.services().player_registry,
+                            announce::CANCELLED_MESSAGE,
+                        );
+                        return attempt;
+                    }
+                };
+            }
+        }
+        let requested_at = Instant::now();
         let resumes = Arc::clone(&self.services().resumes);
-        match checked {
-            Ok(probe) => {
-                let sends_back = self.services().config.restart.transfer
-                    && probe
-                        .handover
-                        .as_ref()
-                        .is_some_and(|support| support.resume);
-                tracing::info!(
-                    version = %probe.version,
-                    sends_back,
-                    "the new binary can take over the sessions"
-                );
-                if sends_back {
-                    resumes.arm();
-                }
-            }
-            Err(error) => {
-                hub.fail(error.to_string());
-                return Attempt::Aborted;
-            }
+        let sends_back = self.services().config.restart.transfer
+            && probe
+                .handover
+                .as_ref()
+                .is_some_and(|support| support.resume);
+        tracing::info!(
+            version = %probe.version,
+            sends_back,
+            "the new binary can take over the sessions"
+        );
+        if sends_back {
+            resumes.arm();
         }
 
         hub.set_phase(RestartPhase::Draining);
@@ -938,6 +954,76 @@ impl RunningProxy {
             plan,
             stop_requested,
         }))
+    }
+
+    async fn checked(&mut self, hub: &RestartHub) -> Result<crate::binary::HandoverProbe, Attempt> {
+        let checked = tokio::select! {
+            biased;
+            () = self.shutdown.cancelled() => return Err(self.stopped(hub).await),
+            () = hub.cancelled() => return Err(self.call_off(hub, CANCELLED)),
+            checked = self.preflight(hub) => checked,
+        };
+        checked.map_err(|error| {
+            hub.fail(error.to_string());
+            Attempt::Aborted
+        })
+    }
+
+    async fn stopped(&mut self, hub: &RestartHub) -> Attempt {
+        hub.mark_stopping();
+        hub.fail("the proxy is stopping");
+        Attempt::Stop(served((&mut self.serve_task).await))
+    }
+
+    fn call_off(&self, hub: &RestartHub, reason: &str) -> Attempt {
+        if hub.phase() == RestartPhase::Announcing {
+            announce::tell(
+                &self.services().player_registry,
+                announce::CANCELLED_MESSAGE,
+            );
+        }
+        hub.fail(reason);
+        Attempt::Aborted
+    }
+
+    async fn announce(&mut self, hub: &RestartHub, announcement: &Announcement) -> Announced {
+        let delay = announcement.delay;
+        let started = tokio::time::Instant::now();
+        hub.announce_until(std::time::SystemTime::now() + delay);
+        tracing::info!(
+            delay = %announce::compact(delay),
+            message = %announcement.message,
+            "hot restart: telling the players before the proxy restarts"
+        );
+        let players = Arc::clone(&self.services().player_registry);
+        let mut waits: Vec<(tokio::time::Instant, Option<Duration>)> = announcement
+            .marks()
+            .into_iter()
+            .map(|mark| (started + delay.saturating_sub(mark), Some(mark)))
+            .collect();
+        waits.push((started + delay, None));
+        for (at, mark) in waits {
+            tokio::select! {
+                biased;
+                () = self.shutdown.cancelled() => {
+                    return Announced::Stopped(self.stopped(hub).await);
+                }
+                () = hub.cancelled() => return Announced::Cancelled,
+                () = tokio::time::sleep_until(at) => {}
+            }
+            if let Some(mark) = mark {
+                let told = announce::tell(&players, &announcement.text(mark));
+                tracing::debug!(
+                    left = %announce::compact(mark),
+                    told,
+                    "hot restart: notice sent"
+                );
+            }
+        }
+        if delay.is_zero() {
+            tokio::time::sleep(ANNOUNCE_SETTLE).await;
+        }
+        Announced::Waited
     }
 
     async fn preflight(

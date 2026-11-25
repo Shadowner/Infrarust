@@ -1344,3 +1344,43 @@ fn a_short_update_interval_only_warns() {
     let warnings = validate_proxy_config(&config).unwrap();
     assert!(!warnings.iter().any(|w| w.contains("update.interval")));
 }
+
+#[test]
+fn a_restart_delay_over_an_hour_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("[restart]\ndelay = \"1h\"\n", dir.path());
+    assert!(validate_proxy_config(&config).is_ok());
+    let config = proxy_from_toml("[restart]\ndelay = \"1h 1s\"\n", dir.path());
+    assert!(matches!(
+        validate_proxy_config(&config),
+        Err(ConfigError::Proxy(ProxyValidationError::RestartDelay { delay, max }))
+            if delay == "1h 1s" && max == "1h"
+    ));
+}
+
+#[test]
+fn a_restart_message_over_the_limit_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let fits = "é".repeat(256);
+    let config = proxy_from_toml(&format!("[restart]\nmessage = \"{fits}\"\n"), dir.path());
+    assert!(validate_proxy_config(&config).is_ok());
+    let long = "é".repeat(257);
+    let config = proxy_from_toml(&format!("[restart]\nmessage = \"{long}\"\n"), dir.path());
+    assert!(matches!(
+        validate_proxy_config(&config),
+        Err(ConfigError::Proxy(ProxyValidationError::RestartMessage {
+            length: 257,
+            max: 256
+        }))
+    ));
+}
+
+#[test]
+fn a_configuration_without_a_restart_section_sends_players_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = proxy_from_toml("", dir.path());
+    assert!(config.restart.transfer);
+    assert!(!config.restart.reauthenticate);
+    assert!(config.restart.delay.is_zero());
+    assert!(config.restart.message.is_empty());
+}

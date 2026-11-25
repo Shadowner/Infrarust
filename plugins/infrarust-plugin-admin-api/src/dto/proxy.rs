@@ -11,4 +11,8 @@ pub struct ProxyStatus {
     pub features: Vec<String>,
     pub memory_rss_bytes: Option<u64>,
     pub restart_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart_scheduled_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart_in_seconds: Option<u64>,
 }
