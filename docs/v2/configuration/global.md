@@ -360,6 +360,8 @@ offline_uuid = "offline"
 
 Point it at an [authlib-injector](https://github.com/yushijinhun/authlib-injector) deployment or any other Yggdrasil-compatible server to authenticate against that instead. Give the complete endpoint URL rather than just the host, since implementations differ in how they prefix their routes — most authlib-injector servers expose it under `/authlib-injector/sessionserver/session/minecraft/hasJoined`.
 
+With `velocity`, `bungee_cord` or `bungee_guard` forwarding, the backend learns the player's real UUID, so Infrarust also relays the player's chat signing key to it, and the backend checks that key against the keys of its own session service. A backend that still trusts Mojang rejects a key signed by another Yggdrasil server: players on 1.19.3 and later join and are disconnected a second later with `Invalid signature for profile public key`. Start those backends with authlib-injector pointed at the same server, the way you start the clients. Without forwarding the key is not relayed and the backend needs nothing.
+
 The setting has no effect in any other proxy mode: `offline` never authenticates, and the forwarding modes leave authentication to the backend.
 
 `offline_uuid` decides the UUID of a player who is not verified by the session server: every player on an `offline` or passthrough server, and a `client_only` player let in with `ForceOffline`.
