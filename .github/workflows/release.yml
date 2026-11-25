@@ -199,7 +199,8 @@ jobs:
           if jq -e --arg version "$VERSION" '.version == $version' <<< "$probe" > /dev/null; then
             handover=$(jq -c '.handover | if type == "object" then . else null end' <<< "$probe")
           else
-            echo "::warning::the probe reports another version than $VERSION, handover is set to null"
+            echo "::error::the probe reports another version than $VERSION"
+            exit 1
           fi
           echo "handover=$handover" >> "$GITHUB_OUTPUT"
 
@@ -229,7 +230,7 @@ jobs:
           key="$RUNNER_TEMP/minisign.key"
           trap 'rm -f "$key"' EXIT
           (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
-          minisign -S -s "$key" -m out/manifest.json -t "infrarust $TAG" < /dev/null
+          minisign -S -H -s "$key" -m out/manifest.json -t "infrarust $TAG" < /dev/null
 
       - name: Verify the signature against the repository keys
         run: |
@@ -270,7 +271,9 @@ jobs:
       contents: read
       packages: write
     uses: ./.github/workflows/docker-build.yml
-    secrets: inherit
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     with:
       tag: ${{ needs.check-release.outputs.version }},latest
 
