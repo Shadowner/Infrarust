@@ -36,6 +36,7 @@ pub enum BanTargetRequest {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstallUpdateRequest {
     pub version: Option<String>,
 }

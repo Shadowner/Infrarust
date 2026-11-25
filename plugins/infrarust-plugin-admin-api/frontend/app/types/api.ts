@@ -68,10 +68,6 @@ export interface UpdateStatusDto {
   binary_changed: boolean;
 }
 
-export interface InstallUpdateRequest {
-  version?: string;
-}
-
 // ── Stats ──
 
 export interface StatsDto {

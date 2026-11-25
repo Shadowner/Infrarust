@@ -2165,6 +2165,7 @@ dependencies = [
  "mime_guess",
  "notify",
  "rust-embed",
+ "semver",
  "serde",
  "serde_json",
  "subtle",

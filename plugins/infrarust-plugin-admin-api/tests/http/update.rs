@@ -300,6 +300,32 @@ async fn update_install_passes_the_requested_version() {
 }
 
 #[tokio::test]
+async fn update_install_rejects_a_version_that_is_not_a_number() {
+    let updates = Arc::new(MockUpdates::new(up_to_date()));
+    let api = api_with(&updates);
+
+    let (status, body) = api
+        .json(install_request(&api, Some(r#"{"version":"latest"}"#)))
+        .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "BAD_REQUEST");
+    assert!(updates.installs().is_empty());
+}
+
+#[tokio::test]
+async fn update_install_rejects_an_unknown_field() {
+    let updates = Arc::new(MockUpdates::new(up_to_date()));
+    let api = api_with(&updates);
+
+    let request = install_request(&api, Some(r#"{"verison":"2.1.0"}"#));
+    let response = api.send(request).await;
+
+    assert!(response.status().is_client_error());
+    assert!(updates.installs().is_empty());
+}
+
+#[tokio::test]
 async fn update_install_rejects_a_blank_version() {
     let updates = Arc::new(MockUpdates::new(up_to_date()));
     let api = api_with(&updates);

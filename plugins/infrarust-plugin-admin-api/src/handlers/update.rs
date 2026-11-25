@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use infrarust_api::services::{InstallRequest, InstallState, ProxyUpdates, UpdateRequestError};
+use infrarust_api::services::{InstallRequest, ProxyUpdates, UpdateRequestError};
 
 use crate::dto::requests::InstallUpdateRequest;
 use crate::dto::update::UpdateStatusResponse;
@@ -68,11 +68,10 @@ pub async fn install(
         })
         .map_err(install_error)?;
 
-    let message = match (updates.status().install, version) {
-        (InstallState::Running { version }, _) | (_, Some(version)) => {
-            format!("Installing Infrarust {version}")
-        }
-        (_, None) => "Installing the latest update".to_owned(),
+    let target = version.or_else(|| updates.status().available.map(|update| update.version));
+    let message = match target {
+        Some(version) => format!("Installing Infrarust {version}"),
+        None => "Installing the latest update".to_owned(),
     };
     Ok(accepted(MutationResult {
         success: true,
@@ -91,7 +90,12 @@ fn requested_version(body: InstallUpdateRequest) -> Result<Option<String>, ApiEr
     }
     if version.len() > MAX_VERSION_LEN {
         return Err(ApiError::BadRequest(format!(
-            "version too long (max {MAX_VERSION_LEN} characters)"
+            "version too long (max {MAX_VERSION_LEN} bytes)"
+        )));
+    }
+    if semver::Version::parse(version.strip_prefix('v').unwrap_or(version)).is_err() {
+        return Err(ApiError::BadRequest(format!(
+            "version must be a release version such as 2.0.0, got {version:?}"
         )));
     }
     Ok(Some(version.to_owned()))

@@ -216,7 +216,7 @@ Follow the install through `GET /api/v1/proxy/update`, where `install.state` goe
 | Response | When |
 |----------|------|
 | `202 Accepted` | The install started |
-| `400 Bad Request` | `version` is blank or longer than 64 characters |
+| `400 Bad Request` | `version` is blank, longer than 64 bytes or not a version number |
 | `404 Not Found` | No `version` given and no release found by a check |
 | `409 Conflict` | Another install is running, or this binary cannot install releases. The message says which, and what to do instead |
 | `503 Service Unavailable` | The proxy has no update service |

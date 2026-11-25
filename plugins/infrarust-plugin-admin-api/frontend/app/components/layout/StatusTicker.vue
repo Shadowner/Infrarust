@@ -99,14 +99,14 @@ async function loadProxyStatus() {
   uptimeBaseTime.value = Date.now();
 }
 
-let sseDropped = false;
+let sseWasOpen = sseStatus.value === 'open';
 watch(sseStatus, (status) => {
-  if (status === 'error') sseDropped = true;
-  if (status === 'open' && sseDropped) {
-    sseDropped = false;
+  if (status !== 'open') return;
+  if (sseWasOpen) {
     loadProxyStatus();
     loadUpdateStatus();
   }
+  sseWasOpen = true;
 });
 
 onMounted(() => {
