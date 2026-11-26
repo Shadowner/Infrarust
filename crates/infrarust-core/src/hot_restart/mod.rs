@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 pub mod announce;
 pub mod coordinator;
 pub mod freeze;
@@ -23,7 +25,7 @@ pub use preflight::{BinaryPreflight, Preflight, PreflightError};
 pub use relays::{InFlight, LoginLink, RelayRegistry, RelayTicket};
 pub use restore::{Inherited, PrepareFailure, Prepared, RestoreError, Restored};
 pub use resume::{
-    RESUME_COOKIE, Redeemed, ResumeHolder, ResumePresenter, ResumeRecord, ResumeRegistry,
+    RESUME_COOKIE, Redeemed, Refusal, ResumeHolder, ResumePresenter, ResumeRecord, ResumeRegistry,
     ResumeToken,
 };
 pub use state::{HandleId, HandoverState, SessionMeta};
@@ -54,4 +56,14 @@ pub enum HandoverError {
         reason: String,
         package: Box<HandoverPackage>,
     },
+}
+
+fn unix_millis(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+    })
+}
+
+fn now_ms() -> u64 {
+    unix_millis(SystemTime::now())
 }

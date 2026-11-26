@@ -479,7 +479,12 @@ async fn a_player_comes_back_to_the_server_it_had_switched_to() {
     let run = requested(proxy);
     let back = sent_back(session).await;
     let successor = handed(run).await;
-    assert_eq!(successor.handover().package.state.resumes[0].server, "b");
+    assert_eq!(
+        successor.handover().package.state.resumes[0]
+            .server
+            .as_deref(),
+        Some("b")
+    );
     let proxy = successor.builder().start().await.unwrap();
     let before = a.accepted_connections();
     let _session = proxy

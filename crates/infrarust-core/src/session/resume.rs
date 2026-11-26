@@ -51,19 +51,19 @@ pub(crate) async fn send_back(ctx: &SessionContext<'_>, client: &mut ClientBridg
         domain: host.to_string(),
         server: session
             .current_server()
-            .map(|server| server.as_str().to_string())
-            .unwrap_or_default(),
+            .map(|server| server.as_str().to_string()),
         protocol_version: ctx.version().0,
     };
     let Some(token) = resumes.issue(holder) else {
         return false;
     };
-    match transfer(ctx, client, &token).await {
+    let port = ctx.handshake.port;
+    match transfer(ctx, client, &token, host, port).await {
         Ok(()) => {
             tracing::debug!(
                 username = %ctx.username(),
                 host,
-                port = ctx.handshake.port,
+                port,
                 "player sent back to the proxy for the restart"
             );
             tokio::time::timeout(DEPARTURE, client.closed()).await.ok();
@@ -81,12 +81,14 @@ async fn transfer(
     ctx: &SessionContext<'_>,
     client: &mut ClientBridge,
     token: &ResumeToken,
+    host: &str,
+    port: u16,
 ) -> Result<(), CoreError> {
     let registry = ctx.registry();
     let key = RESUME_COOKIE.to_string();
     let payload = token.to_vec();
-    let host = ctx.handshake.domain.clone();
-    let port = i32::from(ctx.handshake.port);
+    let host = host.to_string();
+    let port = i32::from(port);
     if client.state() == ConnectionState::Config {
         client
             .send_packet(&CConfigStoreCookie { key, payload }, registry)
@@ -141,7 +143,10 @@ pub(crate) async fn claim(
                 frame.id
             ))
         })?;
-    let Some(token) = answer.payload.filter(|_| answer.key == RESUME_COOKIE) else {
+    if answer.key != RESUME_COOKIE {
+        return Ok(Claim::Absent);
+    }
+    let Some(token) = answer.payload else {
         return Ok(Claim::Absent);
     };
     let presenter = ResumePresenter {
@@ -156,7 +161,7 @@ pub(crate) async fn claim(
         Redeemed::Refused(reason) => {
             tracing::info!(
                 username = %login.username,
-                reason,
+                %reason,
                 "a resume ticket was refused, the player logs in normally"
             );
             Ok(Claim::Presented)

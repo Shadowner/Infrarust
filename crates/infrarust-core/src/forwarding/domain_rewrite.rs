@@ -3,6 +3,7 @@
 //! Replaces the copy-pasted domain rewrite code from V1.
 //! Used by `BackendBridge::send_initial_packets()` and handlers.
 
+use bytes::BytesMut;
 use infrarust_config::{DomainRewrite, ServerConfig};
 use infrarust_protocol::io::PacketEncoder;
 use infrarust_protocol::packets::handshake::SHandshake;
@@ -48,12 +49,14 @@ pub fn rewrite_handshake(
     }
 }
 
-pub(crate) fn as_login(handshake_data: &mut HandshakeData) -> Result<(), CoreError> {
+pub(crate) fn rewrite_as_login(handshake_data: &mut HandshakeData) -> Result<(), CoreError> {
     handshake_data.intent = ConnectionIntent::Login;
-    let raw = encode_handshake_with_domain(handshake_data, &handshake_data.raw_host)?;
-    if let Some(first) = handshake_data.raw_packets.first_mut() {
-        *first = bytes::BytesMut::from(&raw[..]);
-    }
+    let frame = frame_handshake_with_domain(handshake_data, &handshake_data.raw_host)?;
+    let first = handshake_data
+        .raw_packets
+        .first_mut()
+        .ok_or(CoreError::InvalidState("the handshake packet was not kept"))?;
+    *first = frame;
     Ok(())
 }
 
@@ -86,6 +89,13 @@ fn encode_handshake_with_domain(
     handshake_data: &HandshakeData,
     new_domain: &str,
 ) -> Result<Vec<u8>, CoreError> {
+    frame_handshake_with_domain(handshake_data, new_domain).map(|frame| frame.to_vec())
+}
+
+fn frame_handshake_with_domain(
+    handshake_data: &HandshakeData,
+    new_domain: &str,
+) -> Result<BytesMut, CoreError> {
     let next_state = match handshake_data.intent {
         ConnectionIntent::Status => ConnectionState::Status,
         ConnectionIntent::Login | ConnectionIntent::Transfer => ConnectionState::Login,
@@ -104,14 +114,13 @@ fn encode_handshake_with_domain(
 
     let mut encoder = PacketEncoder::new();
     encoder.append_raw(0x00, &payload)?;
-    Ok(encoder.take().to_vec())
+    Ok(encoder.take())
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::default_trait_access)]
     use super::*;
-    use bytes::BytesMut;
     use infrarust_protocol::version::ProtocolVersion;
 
     fn make_handshake_data() -> HandshakeData {
@@ -289,6 +298,32 @@ mod tests {
                 "new.domain.com"
             );
         }
+    }
+
+    #[test]
+    fn a_transfer_handshake_is_rewritten_as_a_login() {
+        for raw_host in ["Play.Example.com.", "play.example.com\0FML3\0"] {
+            let mut hd = handshake_from(raw_host);
+            hd.intent = ConnectionIntent::Transfer;
+            rewrite_as_login(&mut hd).unwrap();
+            assert_eq!(hd.intent, ConnectionIntent::Login);
+            assert_eq!(hd.raw_packets.len(), 1);
+            let decoded = decode_handshake_from_framed(&hd.raw_packets[0]);
+            assert_eq!(decoded.server_address, raw_host);
+            assert_eq!(decoded.server_port, 25565);
+            assert_eq!(decoded.next_state, ConnectionState::Login);
+            assert!(!decoded.transfer);
+        }
+    }
+
+    #[test]
+    fn a_handshake_without_its_packet_is_not_rewritten_as_a_login() {
+        let mut hd = make_handshake_data();
+        hd.raw_packets.clear();
+        assert!(matches!(
+            rewrite_as_login(&mut hd),
+            Err(CoreError::InvalidState(_))
+        ));
     }
 
     #[test]

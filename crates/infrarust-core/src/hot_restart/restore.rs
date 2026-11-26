@@ -60,10 +60,6 @@ impl Inherited {
         })
     }
 
-    pub fn take_resumes(&mut self) -> Vec<ResumeRecord> {
-        std::mem::take(&mut self.resumes)
-    }
-
     pub fn from_version(&self) -> &str {
         &self.from_version
     }
@@ -113,6 +109,7 @@ pub struct Prepared {
     dropped: Vec<DroppedSession>,
     stale_listener: Option<TcpListener>,
     held: Vec<Handle>,
+    resumes: Vec<ResumeRecord>,
 }
 
 impl Prepared {
@@ -180,7 +177,7 @@ pub fn prepare(server: &ProxyServer, inherited: Inherited) -> Result<Prepared, P
         sessions,
         dropped,
         held,
-        resumes: _,
+        resumes,
     } = inherited;
     let router = &server.services().domain_router;
     let mut seen = HashSet::with_capacity(sessions.len());
@@ -224,6 +221,7 @@ pub fn prepare(server: &ProxyServer, inherited: Inherited) -> Result<Prepared, P
         dropped,
         stale_listener: listener.map(|listener| listener.socket),
         held,
+        resumes,
     })
 }
 
@@ -238,7 +236,15 @@ pub fn launch(server: &ProxyServer, listener: &Listener, prepared: Prepared) -> 
         dropped,
         stale_listener,
         held,
+        resumes,
     } = prepared;
+    let waiting = server.services().resumes.admit(resumes);
+    if waiting > 0 {
+        tracing::info!(
+            players = waiting,
+            "players sent back by the previous image are expected to reconnect"
+        );
+    }
     reserve_connection_ids(next_player_id);
     drop(stale_listener);
     drop(held);

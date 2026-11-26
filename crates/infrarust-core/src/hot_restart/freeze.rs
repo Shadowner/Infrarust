@@ -5,6 +5,7 @@ use infrarust_api::types::ServerId;
 use infrarust_config::ProxyMode;
 
 use super::state::{ProfileRecord, SessionMeta};
+use super::unix_millis;
 use crate::player::PlayerSession;
 
 pub(crate) fn capture(session: &PlayerSession, server: &ServerId, mode: ProxyMode) -> SessionMeta {
@@ -25,12 +26,6 @@ pub(crate) fn capture(session: &PlayerSession, server: &ServerId, mode: ProxyMod
 
 pub fn connected_at(meta: &SessionMeta) -> SystemTime {
     UNIX_EPOCH + Duration::from_millis(meta.connected_at_ms)
-}
-
-fn unix_millis(at: SystemTime) -> u64 {
-    at.duration_since(UNIX_EPOCH).map_or(0, |since| {
-        u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-    })
 }
 
 #[cfg(test)]

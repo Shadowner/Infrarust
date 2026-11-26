@@ -9,7 +9,6 @@ use infrarust_protocol::version::ProtocolVersion;
 use crate::auth::game_profile::offline_profile;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
-use crate::hot_restart::ResumeRecord;
 use crate::pipeline::types::LoginData;
 use crate::server::ProxyServices;
 use crate::session::client_bridge::ClientBridge;
@@ -21,6 +20,12 @@ pub(crate) enum Authenticated {
         profile: GameProfile,
         online_mode: bool,
     },
+}
+
+enum Resumption<'a> {
+    Plain,
+    Encrypted(&'a MojangAuth),
+    Declined,
 }
 
 pub(crate) enum AuthStrategy {
@@ -123,45 +128,46 @@ impl AuthStrategy {
             }
         }
     }
-}
 
-impl AuthStrategy {
     pub(crate) async fn resume(
         &self,
         client: &mut ClientBridge,
-        record: &ResumeRecord,
+        profile: GameProfile,
+        online_mode: bool,
         services: &ProxyServices,
         remote_addr: std::net::SocketAddr,
         domain: &str,
     ) -> Result<Option<Authenticated>, CoreError> {
-        let mojang = match self {
-            Self::Mojang(auth) => Some(auth),
-            Self::Offline { mojang } => mojang.as_ref(),
+        let reauthenticate = services.config.restart.reauthenticate;
+        let resumption = match (self, online_mode) {
+            (Self::Mojang(auth) | Self::Offline { mojang: Some(auth) }, true)
+                if !reauthenticate =>
+            {
+                Resumption::Encrypted(auth)
+            }
+            (Self::Offline { .. }, false) => Resumption::Plain,
+            _ => Resumption::Declined,
         };
-        let encrypts = match (record.online_mode, mojang) {
-            (true, Some(auth)) if !services.config.restart.reauthenticate => Some(auth),
-            (false, _) if matches!(self, Self::Offline { .. }) => None,
-            _ => return Ok(None),
-        };
-        let profile = record.profile();
-        let version = infrarust_api::types::ProtocolVersion::new(client.protocol_version().0);
-        if let PreLogin::Denied(reason) =
-            pre_login(services, profile.clone(), remote_addr, version, domain).await
-        {
-            return Ok(Some(Authenticated::Denied(reason)));
+        if matches!(resumption, Resumption::Declined) {
+            return Ok(None);
         }
-        if let Some(auth) = encrypts {
+        let version = infrarust_api::types::ProtocolVersion::new(client.protocol_version().0);
+        match pre_login(services, profile.clone(), remote_addr, version, domain).await {
+            PreLogin::Denied(reason) => return Ok(Some(Authenticated::Denied(reason))),
+            PreLogin::Proceed(_) => {}
+        }
+        if let Resumption::Encrypted(auth) = resumption {
             auth.encrypt(client, &services.packet_registry).await?;
         }
         tracing::info!(
             username = %profile.username,
             uuid = %profile.uuid,
-            online_mode = record.online_mode,
+            online_mode,
             "player resumed after the restart"
         );
         Ok(Some(Authenticated::Player {
             profile,
-            online_mode: record.online_mode,
+            online_mode,
         }))
     }
 }

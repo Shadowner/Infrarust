@@ -1,15 +1,14 @@
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use infrarust_transport::{FrozenDirection, FrozenRelay, RelaySide};
 
-use super::HandoverError;
 use super::resume::ResumeRecord;
 use super::state::{
     DirectionRecord, HandleId, HandoverState, ListenerRecord, SessionMeta, SessionRecord,
     SideRecord, SocketRecord, TailBlob, tail,
 };
+use super::{HandoverError, now_ms};
 use crate::binary::HANDOVER_PROTOCOL;
 
 #[derive(Debug)]
@@ -415,14 +414,6 @@ const fn relay_side(side: SideRecord) -> RelaySide {
         SideRecord::Client => RelaySide::Client,
         SideRecord::Backend => RelaySide::Backend,
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 #[cfg(test)]

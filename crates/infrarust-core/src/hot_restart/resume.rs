@@ -1,39 +1,47 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::fmt;
 use std::net::IpAddr;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use infrarust_api::types::GameProfile;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::now_ms;
 use super::state::ProfileRecord;
+use crate::util::sync::lock;
 
 pub const RESUME_COOKIE: &str = "infrarust:resume";
 pub const RESUME_TOKEN_LEN: usize = 32;
-pub const RESUME_TTL: Duration = Duration::from_secs(60);
-pub const MAX_RESUMES: usize = 100_000;
+const RESUME_TTL_MS: u64 = 60_000;
+const MAX_RESUMES: usize = 100_000;
 
 pub type ResumeToken = [u8; RESUME_TOKEN_LEN];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResumeRecord {
-    pub ticket: [u8; 32],
-    pub profile: ProfileRecord,
-    pub online_mode: bool,
-    pub client_ip: IpAddr,
-    pub domain: String,
-    pub server: String,
-    pub protocol_version: i32,
-    pub expires_at_ms: u64,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Ticket([u8; 32]);
+
+impl Ticket {
+    fn of(token: &[u8]) -> Self {
+        Self(Sha256::digest(token).into())
+    }
 }
 
-impl ResumeRecord {
-    pub fn profile(&self) -> GameProfile {
-        self.profile.clone().into()
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeRecord {
+    ticket: Ticket,
+    pub profile: ProfileRecord,
+    pub online_mode: bool,
+    client_ip: IpAddr,
+    domain: String,
+    #[serde(default)]
+    pub server: Option<String>,
+    protocol_version: i32,
+    expires_at_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +50,7 @@ pub struct ResumeHolder {
     pub online_mode: bool,
     pub client_ip: IpAddr,
     pub domain: String,
-    pub server: String,
+    pub server: Option<String>,
     pub protocol_version: i32,
 }
 
@@ -55,57 +63,104 @@ pub struct ResumePresenter<'a> {
     pub protocol_version: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    Expired,
+    OtherAddress,
+    OtherPlayer,
+    OtherProfile,
+    OtherVersion,
+    OtherDomain,
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Expired => "the ticket expired",
+            Self::OtherAddress => "the ticket was issued to another address",
+            Self::OtherPlayer => "the ticket was issued to another player",
+            Self::OtherProfile => "the ticket was issued to another profile",
+            Self::OtherVersion => "the client changed its protocol version",
+            Self::OtherDomain => "the ticket was issued for another domain",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Redeemed {
     Resumed(Box<ResumeRecord>),
-    Refused(&'static str),
+    Refused(Refusal),
     Unknown,
 }
 
 #[derive(Debug, Default)]
 struct Waiting {
-    records: HashMap<[u8; 32], ResumeRecord>,
+    records: HashMap<Ticket, ResumeRecord>,
     slots: HashMap<IpAddr, u32>,
+    earliest_expiry_ms: Option<u64>,
 }
 
 impl Waiting {
+    fn insert(&mut self, record: ResumeRecord) {
+        let client_ip = record.client_ip;
+        let expires_at_ms = record.expires_at_ms;
+        if self.records.insert(record.ticket, record).is_none() {
+            *self.slots.entry(client_ip).or_default() += 1;
+        }
+        self.earliest_expiry_ms = Some(
+            self.earliest_expiry_ms
+                .map_or(expires_at_ms, |earliest| earliest.min(expires_at_ms)),
+        );
+    }
+
     fn purge(&mut self, now_ms: u64) {
         if self
-            .records
-            .values()
-            .all(|record| record.expires_at_ms > now_ms)
+            .earliest_expiry_ms
+            .is_none_or(|earliest| now_ms < earliest)
         {
             return;
         }
-        self.records
-            .retain(|_, record| record.expires_at_ms > now_ms);
-        self.slots.clear();
-        for record in self.records.values() {
-            *self.slots.entry(record.client_ip).or_default() += 1;
-        }
+        let slots = &mut self.slots;
+        let mut earliest: Option<u64> = None;
+        self.records.retain(|_, record| {
+            if record.expires_at_ms > now_ms {
+                earliest = Some(earliest.map_or(record.expires_at_ms, |earliest| {
+                    earliest.min(record.expires_at_ms)
+                }));
+                return true;
+            }
+            if let Entry::Occupied(mut slot) = slots.entry(record.client_ip) {
+                let left = slot.get().saturating_sub(1);
+                if left == 0 {
+                    slot.remove();
+                } else {
+                    slot.insert(left);
+                }
+            }
+            false
+        });
+        self.earliest_expiry_ms = earliest;
     }
 }
 
 #[derive(Debug, Default)]
 pub struct ResumeRegistry {
-    armed: AtomicBool,
-    issued: Mutex<Vec<ResumeRecord>>,
+    issued: Mutex<Option<Vec<ResumeRecord>>>,
     expecting: AtomicBool,
     waiting: Mutex<Waiting>,
 }
 
 impl ResumeRegistry {
     pub fn arm(&self) {
-        self.armed.store(true, Ordering::Release);
+        lock(&self.issued).get_or_insert_with(Vec::new);
     }
 
     pub fn disarm(&self) {
-        self.armed.store(false, Ordering::Release);
-        lock(&self.issued).clear();
+        *lock(&self.issued) = None;
     }
 
     pub fn is_armed(&self) -> bool {
-        self.armed.load(Ordering::Acquire)
+        lock(&self.issued).is_some()
     }
 
     pub fn issue(&self, holder: ResumeHolder) -> Option<ResumeToken> {
@@ -113,30 +168,26 @@ impl ResumeRegistry {
     }
 
     fn issue_at(&self, holder: ResumeHolder, now_ms: u64) -> Option<ResumeToken> {
-        if !self.is_armed() {
-            return None;
-        }
         let mut issued = lock(&self.issued);
-        if issued.len() >= MAX_RESUMES {
-            return None;
-        }
+        let issued = issued
+            .as_mut()
+            .filter(|records| records.len() < MAX_RESUMES)?;
         let token: ResumeToken = rand::random();
         issued.push(ResumeRecord {
-            ticket: ticket_of(&token),
+            ticket: Ticket::of(&token),
             profile: ProfileRecord::from(&holder.profile),
             online_mode: holder.online_mode,
             client_ip: holder.client_ip,
             domain: holder.domain,
             server: holder.server,
             protocol_version: holder.protocol_version,
-            expires_at_ms: now_ms.saturating_add(ttl_ms()),
+            expires_at_ms: now_ms.saturating_add(RESUME_TTL_MS),
         });
         Some(token)
     }
 
     pub fn take_issued(&self) -> Vec<ResumeRecord> {
-        self.armed.store(false, Ordering::Release);
-        std::mem::take(&mut *lock(&self.issued))
+        lock(&self.issued).take().unwrap_or_default()
     }
 
     pub fn admit(&self, records: Vec<ResumeRecord>) -> usize {
@@ -145,13 +196,12 @@ impl ResumeRegistry {
 
     fn admit_at(&self, records: Vec<ResumeRecord>, now_ms: u64) -> usize {
         let mut waiting = lock(&self.waiting);
-        let latest = now_ms.saturating_add(ttl_ms());
+        let latest = now_ms.saturating_add(RESUME_TTL_MS);
         for record in records.into_iter().take(MAX_RESUMES) {
             if record.expires_at_ms <= now_ms || record.expires_at_ms > latest {
                 continue;
             }
-            *waiting.slots.entry(record.client_ip).or_default() += 1;
-            waiting.records.insert(record.ticket, record);
+            waiting.insert(record);
         }
         let admitted = waiting.records.len();
         self.expecting.store(admitted > 0, Ordering::Release);
@@ -202,7 +252,7 @@ impl ResumeRegistry {
         }
         let record = {
             let mut waiting = lock(&self.waiting);
-            let record = waiting.records.remove(&ticket_of(token));
+            let record = waiting.records.remove(&Ticket::of(token));
             if waiting.records.is_empty() {
                 self.expecting.store(false, Ordering::Release);
             }
@@ -212,48 +262,28 @@ impl ResumeRegistry {
             return Redeemed::Unknown;
         };
         if record.expires_at_ms <= now_ms {
-            return Redeemed::Refused("the ticket expired");
+            return Redeemed::Refused(Refusal::Expired);
         }
         if record.client_ip != presenter.client_ip {
-            return Redeemed::Refused("the ticket was issued to another address");
+            return Redeemed::Refused(Refusal::OtherAddress);
         }
         if record.profile.username != presenter.username {
-            return Redeemed::Refused("the ticket was issued to another player");
+            return Redeemed::Refused(Refusal::OtherPlayer);
         }
         if presenter
             .uuid
             .is_some_and(|uuid| uuid != record.profile.uuid)
         {
-            return Redeemed::Refused("the ticket was issued to another profile");
+            return Redeemed::Refused(Refusal::OtherProfile);
         }
         if record.protocol_version != presenter.protocol_version {
-            return Redeemed::Refused("the client changed its protocol version");
+            return Redeemed::Refused(Refusal::OtherVersion);
         }
         if record.domain != presenter.domain {
-            return Redeemed::Refused("the ticket was issued for another domain");
+            return Redeemed::Refused(Refusal::OtherDomain);
         }
         Redeemed::Resumed(Box::new(record))
     }
-}
-
-fn ticket_of(token: &[u8]) -> [u8; 32] {
-    Sha256::digest(token).into()
-}
-
-fn ttl_ms() -> u64 {
-    u64::try_from(RESUME_TTL.as_millis()).unwrap_or(u64::MAX)
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]
@@ -278,7 +308,7 @@ mod tests {
             online_mode: true,
             client_ip: HOME,
             domain: "play.example.com".to_string(),
-            server: "lobby".to_string(),
+            server: Some("lobby".to_string()),
             protocol_version: 769,
         }
     }
@@ -332,7 +362,7 @@ mod tests {
         old.arm();
         let token = old.issue_at(holder("Notch"), NOW).unwrap();
         let records = old.take_issued();
-        assert_eq!(records[0].ticket, ticket_of(&token));
+        assert_eq!(records[0].ticket, Ticket::of(&token));
         let wire = serde_json::to_vec(&records).unwrap();
         assert!(!wire.windows(token.len()).any(|window| window == token));
     }
@@ -345,9 +375,9 @@ mod tests {
         else {
             panic!("the ticket was refused");
         };
-        assert_eq!(record.server, "lobby");
+        assert_eq!(record.server.as_deref(), Some("lobby"));
         assert!(record.online_mode);
-        assert_eq!(record.profile().username, "Notch");
+        assert_eq!(record.profile.username, "Notch");
         assert_eq!(
             registry.redeem_at(&token, &presenter("Notch"), NOW + 2),
             Redeemed::Unknown
@@ -378,32 +408,42 @@ mod tests {
 
     #[test]
     fn a_ticket_presented_by_someone_else_is_refused_and_burnt() {
-        for wrong in [
-            ResumePresenter {
-                client_ip: ELSEWHERE,
-                ..presenter("Notch")
-            },
-            presenter("Herobrine"),
-            ResumePresenter {
-                uuid: Some(Uuid::from_u128(8)),
-                ..presenter("Notch")
-            },
-            ResumePresenter {
-                protocol_version: 774,
-                ..presenter("Notch")
-            },
-            ResumePresenter {
-                domain: "other.example.com",
-                ..presenter("Notch")
-            },
+        for (wrong, reason) in [
+            (
+                ResumePresenter {
+                    client_ip: ELSEWHERE,
+                    ..presenter("Notch")
+                },
+                Refusal::OtherAddress,
+            ),
+            (presenter("Herobrine"), Refusal::OtherPlayer),
+            (
+                ResumePresenter {
+                    uuid: Some(Uuid::from_u128(8)),
+                    ..presenter("Notch")
+                },
+                Refusal::OtherProfile,
+            ),
+            (
+                ResumePresenter {
+                    protocol_version: 774,
+                    ..presenter("Notch")
+                },
+                Refusal::OtherVersion,
+            ),
+            (
+                ResumePresenter {
+                    domain: "other.example.com",
+                    ..presenter("Notch")
+                },
+                Refusal::OtherDomain,
+            ),
         ] {
             let (registry, token) = issued("Notch");
-            assert!(
-                matches!(
-                    registry.redeem_at(&token, &wrong, NOW),
-                    Redeemed::Refused(_)
-                ),
-                "{wrong:?} was accepted"
+            assert_eq!(
+                registry.redeem_at(&token, &wrong, NOW),
+                Redeemed::Refused(reason),
+                "{wrong:?}"
             );
             assert_eq!(
                 registry.redeem_at(&token, &presenter("Notch"), NOW),
@@ -428,7 +468,7 @@ mod tests {
     #[test]
     fn a_ticket_expires() {
         let (registry, token) = issued("Notch");
-        let late = NOW + ttl_ms();
+        let late = NOW + RESUME_TTL_MS;
         assert!(!registry.expects_any_at(late));
         assert_eq!(
             registry.redeem_at(&token, &presenter("Notch"), late),
@@ -440,8 +480,8 @@ mod tests {
     fn a_ticket_redeemed_at_its_deadline_is_refused() {
         let (registry, token) = issued("Notch");
         assert_eq!(
-            registry.redeem_at(&token, &presenter("Notch"), NOW + ttl_ms()),
-            Redeemed::Refused("the ticket expired")
+            registry.redeem_at(&token, &presenter("Notch"), NOW + RESUME_TTL_MS),
+            Redeemed::Refused(Refusal::Expired)
         );
     }
 
@@ -452,13 +492,13 @@ mod tests {
         old.issue_at(holder("Notch"), NOW).unwrap();
         let mut records = old.take_issued();
         let mut forged = records[0].clone();
-        forged.ticket = [1; 32];
-        forged.expires_at_ms = NOW + ttl_ms() * 10;
+        forged.ticket = Ticket([1; 32]);
+        forged.expires_at_ms = NOW + RESUME_TTL_MS * 10;
         records.push(forged);
 
         let late = ResumeRegistry::default();
-        assert_eq!(late.admit_at(records.clone(), NOW + ttl_ms()), 0);
-        assert!(!late.expects_any_at(NOW + ttl_ms()));
+        assert_eq!(late.admit_at(records.clone(), NOW + RESUME_TTL_MS), 0);
+        assert!(!late.expects_any_at(NOW + RESUME_TTL_MS));
 
         let fresh = ResumeRegistry::default();
         assert_eq!(fresh.admit_at(records, NOW), 1);
@@ -481,7 +521,37 @@ mod tests {
     #[test]
     fn slots_disappear_with_their_expired_tickets() {
         let (registry, _token) = issued("Notch");
-        assert!(!registry.claim_slot_at(HOME, NOW + ttl_ms()));
+        assert!(!registry.claim_slot_at(HOME, NOW + RESUME_TTL_MS));
+    }
+
+    #[test]
+    fn a_ticket_admitted_twice_holds_one_slot() {
+        let old = ResumeRegistry::default();
+        old.arm();
+        old.issue_at(holder("Notch"), NOW).unwrap();
+        let mut records = old.take_issued();
+        records.push(records[0].clone());
+
+        let registry = ResumeRegistry::default();
+        assert_eq!(registry.admit_at(records, NOW), 1);
+        assert!(registry.claim_slot_at(HOME, NOW));
+        assert!(!registry.claim_slot_at(HOME, NOW));
+    }
+
+    #[test]
+    fn an_expired_ticket_frees_only_its_own_slot() {
+        let old = ResumeRegistry::default();
+        old.arm();
+        old.issue_at(holder("Notch"), NOW).unwrap();
+        old.issue_at(holder("Jeb"), NOW + 10).unwrap();
+        let registry = ResumeRegistry::default();
+        assert_eq!(registry.admit_at(old.take_issued(), NOW + 10), 2);
+
+        let between = NOW + RESUME_TTL_MS;
+        assert!(registry.expects_any_at(between));
+        assert!(registry.claim_slot_at(HOME, between));
+        assert!(!registry.claim_slot_at(HOME, between));
+        assert!(!registry.expects_any_at(between + 10));
     }
 
     #[test]

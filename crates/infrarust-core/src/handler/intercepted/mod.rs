@@ -17,9 +17,10 @@ use infrarust_transport::BackendConnector;
 use super::helpers::cancelled_cause;
 use crate::auth::mojang::MojangAuth;
 use crate::error::CoreError;
-use crate::forwarding::domain_rewrite::as_login;
+use crate::forwarding::domain_rewrite::rewrite_as_login;
+use crate::hot_restart::ResumeRecord;
 use crate::pipeline::context::ConnectionContext;
-use crate::pipeline::types::{HandshakeData, RoutingData};
+use crate::pipeline::types::{HandshakeData, LoginData, RoutingData};
 use crate::player::commands::CommandInbox;
 use crate::player::{SessionKind, ShutdownKind};
 use crate::server::ProxyServices;
@@ -103,58 +104,9 @@ impl InterceptedHandler {
         let mut client = ClientBridge::new(conn.take_stream(), conn.buffered_data.split(), version);
         client.set_cancel(shutdown.clone());
 
-        let claim = resume::claim(
-            &self.services,
-            &mut client,
-            &handshake,
-            login_data.as_ref(),
-            conn.client_ip(),
-        )
-        .await?;
-        let resumed = match claim {
-            Claim::Absent => None,
-            Claim::Presented => {
-                as_login(&mut handshake)?;
-                None
-            }
-            Claim::Resumed(record) => {
-                as_login(&mut handshake)?;
-                Some(record)
-            }
-        };
-        let recognised = match &resumed {
-            Some(record) => {
-                self.auth_strategy
-                    .resume(
-                        &mut client,
-                        record,
-                        &self.services,
-                        conn.client_addr(),
-                        &handshake.domain,
-                    )
-                    .await?
-            }
-            None => None,
-        };
-        let authenticated = match recognised {
-            Some(authenticated) => authenticated,
-            None => {
-                self.auth_strategy
-                    .authenticate(
-                        &mut client,
-                        login_data.as_ref(),
-                        &self.services,
-                        version,
-                        conn.client_addr(),
-                        &handshake.domain,
-                    )
-                    .await?
-            }
-        };
-        let resumed_server = resumed
-            .map(|record| record.server)
-            .filter(|server| !server.is_empty())
-            .map(ServerId::new);
+        let (authenticated, resumed_server) = self
+            .identify(&mut client, &conn, &mut handshake, login_data.as_ref())
+            .await?;
 
         let (profile, online_mode) = match authenticated {
             Authenticated::Denied(reason) => {
@@ -190,6 +142,65 @@ impl InterceptedHandler {
             resumed_server,
         };
         self.play(conn, &shutdown, client, admitted, entry).await
+    }
+
+    async fn identify(
+        &self,
+        client: &mut ClientBridge,
+        conn: &ConnectionContext,
+        handshake: &mut HandshakeData,
+        login_data: Option<&LoginData>,
+    ) -> Result<(Authenticated, Option<ServerId>), CoreError> {
+        let claim = resume::claim(
+            &self.services,
+            client,
+            handshake,
+            login_data,
+            conn.client_ip(),
+        )
+        .await?;
+        if !matches!(claim, Claim::Absent) {
+            rewrite_as_login(handshake)?;
+        }
+        let (recognised, resumed_server) = match claim {
+            Claim::Resumed(record) => {
+                let ResumeRecord {
+                    profile,
+                    online_mode,
+                    server,
+                    ..
+                } = *record;
+                let recognised = self
+                    .auth_strategy
+                    .resume(
+                        client,
+                        profile.into(),
+                        online_mode,
+                        &self.services,
+                        conn.client_addr(),
+                        &handshake.domain,
+                    )
+                    .await?;
+                (recognised, server.map(ServerId::new))
+            }
+            Claim::Absent | Claim::Presented => (None, None),
+        };
+        let authenticated = match recognised {
+            Some(authenticated) => authenticated,
+            None => {
+                self.auth_strategy
+                    .authenticate(
+                        client,
+                        login_data,
+                        &self.services,
+                        handshake.protocol_version,
+                        conn.client_addr(),
+                        &handshake.domain,
+                    )
+                    .await?
+            }
+        };
+        Ok((authenticated, resumed_server))
     }
 
     async fn play(

@@ -52,6 +52,12 @@ impl Default for AuthLimits {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SessionCheck {
+    Required,
+    Skipped,
+}
+
 /// Handles Mojang authentication for the `ClientOnly` proxy mode.
 ///
 /// A single instance is shared across all connections (via `Arc`).
@@ -146,7 +152,7 @@ impl MojangAuth {
     ) -> Result<(), CoreError> {
         let key = tokio::time::timeout(
             self.authenticate_timeout,
-            self.exchange_keys(client, None, registry, false),
+            self.exchange_keys(client, None, registry, SessionCheck::Skipped),
         )
         .await
         .map_err(|_| CoreError::Timeout("the encryption handshake timed out".to_string()))??;
@@ -161,7 +167,7 @@ impl MojangAuth {
         registry: &PacketRegistry,
     ) -> Result<GameProfile, CoreError> {
         let key = self
-            .exchange_keys(client, profile_key, registry, true)
+            .exchange_keys(client, profile_key, registry, SessionCheck::Required)
             .await?;
 
         let server_hash = minecraft_server_hash("", &key, &self.public_key_der);
@@ -178,7 +184,7 @@ impl MojangAuth {
         client: &mut ClientBridge,
         profile_key: Option<&ProfileKey>,
         registry: &PacketRegistry,
-        should_authenticate: bool,
+        session_check: SessionCheck,
     ) -> Result<[u8; 16], CoreError> {
         let verify_token: [u8; 4] = rand::random();
         let version = client.protocol_version();
@@ -186,7 +192,7 @@ impl MojangAuth {
             server_id: String::new(),
             public_key: self.public_key_der.clone(),
             verify_token: verify_token.to_vec(),
-            should_authenticate,
+            should_authenticate: matches!(session_check, SessionCheck::Required),
         };
         client.send_packet(&enc_request, registry).await?;
 

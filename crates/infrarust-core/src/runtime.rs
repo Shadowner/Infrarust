@@ -470,7 +470,6 @@ impl Takeover {
                 None => return Err(succession.abort(error, inherited)),
             },
         };
-        let resumes = inherited.take_resumes();
         let prepared = match restore::prepare(server, inherited) {
             Ok(prepared) => prepared,
             Err(failure) => {
@@ -479,13 +478,6 @@ impl Takeover {
             }
         };
         succession.commit();
-        let waiting = server.services().resumes.admit(resumes);
-        if waiting > 0 {
-            tracing::info!(
-                players = waiting,
-                "players sent back by the previous image are expected to reconnect"
-            );
-        }
         let restored = restore::launch(server, &listener, prepared);
         Ok((listener, restored))
     }
