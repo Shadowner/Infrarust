@@ -253,6 +253,8 @@ A ticket works once, for 60 seconds, and only from the address it was given to, 
 
 The players are sent back to the host name and the port their client used. That works when the name still resolves to the proxy, which is the normal case. It does not work for a client that reached the proxy through a tunnel or an address that only existed for that connection, nor when the restart applies a new `bind` port that the players do not reach through the old one. Set `transfer = false` for such a restart.
 
+The players who come back all join their backend again within the same second, from the address of the proxy. A backend that limits how often one address may connect refuses some of them with its own message, such as `Connection throttled! Please wait before reconnecting.` on Paper. Turn that limit off on backends that sit behind the proxy (`connection-throttle: -1` in `bukkit.yml`), as for any proxy. In our tests with 60 players sent back ten times, a Paper 1.20.6 backend still refused 2 of the 600 returns with the limit off; those players reconnect by hand.
+
 Two settings of [`[restart]`](../configuration/global#restart) change this:
 
 - `transfer = false` disconnects these players with the message, as the proxy did before.

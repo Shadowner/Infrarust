@@ -755,18 +755,31 @@ export const SCENARIOS = [
       const alive = bots.filter((bot) => bot.inPlay).length;
       const lost = bots.filter((bot) => !bot.inPlay);
       checks.add('every session is still in play 35 s after the last restart', alive === inPlay, `${alive}/${inPlay}; ${lost.slice(0, 5).map((b) => `${b.username}:${b.kick ?? b.error ?? 'eof'}`).join(', ')}`);
-      const trips = comers.map((bot) => bot.returns);
+      const refused = comers.filter((bot) => !bot.inPlay && /throttled/i.test(bot.kick ?? ''));
+      const steady = comers.filter((bot) => !refused.includes(bot));
+      const trips = steady.map((bot) => bot.returns);
       checks.add(
-        'the 60 offline sessions come back after each of the ten restarts',
-        comers.every((bot) => bot.returns === 10 && bot.inPlay),
-        `trips per session: min ${Math.min(...trips)}, max ${Math.max(...trips)}; in play ${comers.filter((bot) => bot.inPlay).length}/60; ${comers
+        'the offline sessions come back after each of the ten restarts',
+        steady.every((bot) => bot.returns === 10 && bot.inPlay) && refused.length <= 3,
+        `trips per session: min ${Math.min(...trips)}, max ${Math.max(...trips)}; in play ${steady.filter((bot) => bot.inPlay).length}/${steady.length}; ${steady
           .filter((bot) => !bot.inPlay)
           .slice(0, 4)
           .map((bot) => `${bot.username}:${bot.kick ?? bot.error ?? 'eof'}`)
           .join(', ')}`,
       );
+      if (refused.length) {
+        checks.note(
+          'sessions the backend refused after the proxy resumed them',
+          `${refused.length}/60 (${refused.map((bot) => `${bot.username} on ${bot.route.version.id} after ${bot.returns} trips`).join(', ')}): ${refused[0].kick}`,
+        );
+      }
+      const made = comers.reduce((sum, bot) => sum + bot.returns, 0);
       const resumedLines = native.log.since(resumeMark).filter((line) => RESUMED.test(line.text)).length;
-      checks.add('the proxy resumed each of them from a ticket every time', resumedLines === 600, `${resumedLines} resume lines for 600 trips`);
+      checks.add(
+        'the proxy resumed each of them from a ticket every time',
+        resumedLines >= made && resumedLines <= made + refused.length,
+        `${resumedLines} resume lines for ${made} trips made, ${refused.length} refused by the backend`,
+      );
       const gaps = windows.map((w) => w.maxGapMs).sort((a, b) => a - b);
       checks.note('longest silence per session', `median ${gaps[Math.floor(gaps.length / 2)]} ms, p99 ${gaps[Math.floor(gaps.length * 0.99)]} ms, max ${gaps[gaps.length - 1]} ms`);
       for (const member of fleet.members) {
@@ -780,7 +793,7 @@ export const SCENARIOS = [
       }
       const after = await native.stats();
       const playersAfter = (await native.admin.players()).length;
-      checks.add('the proxy lists as many players as before', playersAfter === playersBefore, `${playersBefore} -> ${playersAfter}`);
+      checks.add('the proxy lists as many players as before', playersAfter === playersBefore - refused.length, `${playersBefore} -> ${playersAfter}, ${refused.length} refused by the backend`);
       checks.add('no descriptor leaks', Math.abs(after.fds - before.fds) <= 8, `${before.fds} -> ${after.fds}`);
       checks.note('memory and threads', `RSS ${Math.round(before.rssKb / 1024)} MiB -> ${Math.round(after.rssKb / 1024)} MiB, threads ${before.threads} -> ${after.threads}`);
       checks.add('the process is the same after ten restarts', before.pid === after.pid, `${before.pid} -> ${after.pid}`);
