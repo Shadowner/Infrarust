@@ -10,15 +10,13 @@ use infrarust_api::event::{EventPriority, ResultedEvent};
 use infrarust_api::events::lifecycle::{LoginEvent, PermissionsSetupEvent, PermissionsSetupResult};
 use infrarust_api::permissions::PermissionMap;
 use infrarust_api::services::proxy_control::RestartRequestError;
-use infrarust_core::hot_restart::{InheritanceOutcome, RESUME_COOKIE, RestartPhase};
+use infrarust_core::hot_restart::{InheritanceOutcome, RestartPhase};
 use infrarust_core::test_support::FakePreflight;
-use infrarust_protocol::packets::cookie::CStoreCookie;
 use infrarust_protocol::packets::play::chat::SChatMessage;
-use infrarust_protocol::packets::play::transfer::CTransfer;
 use infrarust_server_manager::{ProviderStatus, ServerManagerError, ServerProvider};
 use infrarust_test_harness::{
     BackendConn, ClientSession, DEFAULT_TIMEOUT, EventKind, FakeBackend, FakeClient, HarnessError,
-    ProtocolVersion, ProxyEnd, Recorder, ScriptedPlugin, ServerSpec, TestProxy,
+    ProtocolVersion, ProxyEnd, Recorder, ScriptedPlugin, ServerSpec, TestProxy, wait_until,
 };
 use tokio::sync::Notify;
 
@@ -26,16 +24,6 @@ const T: Duration = DEFAULT_TIMEOUT;
 const RESTART: Duration = Duration::from_secs(20);
 const VERSION: ProtocolVersion = ProtocolVersion(777);
 const GRANTED: &str = "hot.restart.granted";
-
-async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
-    let waited = tokio::time::timeout(T, async {
-        while !done() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await;
-    assert!(waited.is_ok(), "timed out waiting for {what}");
-}
 
 fn held_login(username: &'static str) -> (ScriptedPlugin, Arc<Notify>, Arc<Notify>) {
     let entered = Arc::new(Notify::new());
@@ -136,7 +124,7 @@ async fn forwarding_sessions_survive_a_hot_restart_and_intercepted_ones_reconnec
     let addr = proxy.addr();
     let mut steve = Pipe::join(&proxy, "pipe", &pipe, "Steve").await;
     let mut alex = Pipe::join(&proxy, "splice", &splice, "Alex").await;
-    let mut notch = proxy
+    let notch = proxy
         .client_for("lobby", VERSION)
         .unwrap()
         .login("Notch")
@@ -163,19 +151,15 @@ async fn forwarding_sessions_survive_a_hot_restart_and_intercepted_ones_reconnec
     assert_eq!(hub.request(), Err(RestartRequestError::InProgress));
     steve.send(40..60).await;
     alex.send(40..60).await;
-    wait_until("the grace", || hub.phase() == RestartPhase::Draining).await;
+    wait_until("the grace", T, || hub.phase() == RestartPhase::Draining)
+        .await
+        .unwrap();
     assert_eq!(hub.request(), Err(RestartRequestError::InProgress));
     release.notify_one();
-    let cookie = notch.expect::<CStoreCookie>(T).await.unwrap();
-    assert_eq!(cookie.key, RESUME_COOKIE);
-    let sent_back = notch.expect::<CTransfer>(T).await.unwrap();
+    let sent_back = notch.sent_back(T).await.unwrap();
     assert_eq!(sent_back.port, i32::from(addr.port()));
-    let notch_cookies = notch.cookies();
-    notch.quit().await;
 
-    let ProxyEnd::Restarted(successor) = run.finish(RESTART).await.unwrap() else {
-        panic!("the restart must hand over");
-    };
+    let successor = run.handed_over(RESTART).await.unwrap();
     assert_eq!(successor.handover().package.state.sessions.len(), 3);
     assert_eq!(successor.handover().package.state.resumes.len(), 1);
     let after = Recorder::new();
@@ -248,12 +232,8 @@ async fn forwarding_sessions_survive_a_hot_restart_and_intercepted_ones_reconnec
     let _notch = proxy
         .client_for("lobby", VERSION)
         .unwrap()
-        .transferred()
-        .cookies(notch_cookies)
-        .login("Notch")
+        .come_back("Notch", sent_back.jar)
         .await
-        .unwrap()
-        .joined()
         .expect("the player sent back before the restart comes back on its own");
     assert_eq!(lobby.next_connection(T).await.unwrap().username(), "Notch");
     assert_eq!(after.count(EventKind::PostLogin), 2);
@@ -289,7 +269,9 @@ async fn a_stop_during_the_grace_is_a_normal_stop() {
     let server = Arc::clone(run.server());
     let hub = Arc::clone(run.hub().unwrap());
     hub.request().unwrap();
-    wait_until("the grace", || hub.phase() == RestartPhase::Draining).await;
+    wait_until("the grace", T, || hub.phase() == RestartPhase::Draining)
+        .await
+        .unwrap();
     run.shutdown_token().cancel();
     release.notify_one();
 
@@ -344,7 +326,9 @@ async fn a_refused_preflight_keeps_the_sessions_and_the_listener() {
     let run = proxy.run_to_exit().unwrap();
     let hub = Arc::clone(run.hub().unwrap());
     hub.request().unwrap();
-    wait_until("the preflight to fail", || hub.last_failure().is_some()).await;
+    wait_until("the preflight to fail", T, || hub.last_failure().is_some())
+        .await
+        .unwrap();
 
     assert_eq!(hub.phase(), RestartPhase::Idle);
     assert_eq!(preflight.checks(), 1);
@@ -409,15 +393,20 @@ async fn a_running_child_server_refuses_the_restart_before_any_probe() {
         .await
         .unwrap();
     let manager = Arc::clone(proxy.services().server_manager.as_ref().unwrap());
-    wait_until("the child server to run", || {
+    wait_until("the child server to run", T, || {
         !manager.running_child_processes().is_empty()
     })
-    .await;
+    .await
+    .unwrap();
 
     let run = proxy.run_to_exit().unwrap();
     let hub = Arc::clone(run.hub().unwrap());
     hub.request().unwrap();
-    wait_until("the restart to be refused", || hub.last_failure().is_some()).await;
+    wait_until("the restart to be refused", T, || {
+        hub.last_failure().is_some()
+    })
+    .await
+    .unwrap();
 
     let failure = hub.last_failure().unwrap();
     assert!(failure.contains("survival"), "{failure}");
@@ -450,9 +439,7 @@ async fn a_successor_that_cannot_bind_its_new_address_keeps_the_inherited_listen
         .expect("the proxy runs with hot restart")
         .request()
         .unwrap();
-    let ProxyEnd::Restarted(successor) = run.finish(RESTART).await.unwrap() else {
-        panic!("the restart must hand over");
-    };
+    let successor = run.handed_over(RESTART).await.unwrap();
 
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let config_path = successor.config_path();

@@ -19,6 +19,7 @@ use crate::wire;
 #[derive(Debug, Clone, Default)]
 pub struct CookieJar {
     cookies: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    requested: Arc<Mutex<Vec<String>>>,
 }
 
 impl CookieJar {
@@ -47,6 +48,21 @@ impl CookieJar {
     pub fn snapshot(&self) -> HashMap<String, Vec<u8>> {
         self.lock().clone()
     }
+
+    pub fn requested(&self) -> Vec<String> {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn answer(&self, key: &str) -> Option<Vec<u8>> {
+        self.requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(key.to_string());
+        self.get(key)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -70,7 +86,7 @@ impl ClientReplies {
         match state {
             ConnectionState::Login if wire::is::<CLoginCookieRequest>(frame, version) => {
                 let key = wire::decode::<CLoginCookieRequest>(frame, version)?.key;
-                let payload = self.jar.get(&key);
+                let payload = self.jar.answer(&key);
                 Ok(vec![wire::encode(
                     &SLoginCookieResponse { key, payload },
                     version,
@@ -94,7 +110,7 @@ impl ClientReplies {
         }
         if wire::is::<CConfigCookieRequest>(frame, version) {
             let key = wire::decode::<CConfigCookieRequest>(frame, version)?.key;
-            let payload = self.jar.get(&key);
+            let payload = self.jar.answer(&key);
             return Ok(vec![wire::encode(
                 &SConfigCookieResponse { key, payload },
                 version,
@@ -142,7 +158,7 @@ impl ClientReplies {
         }
         if wire::is::<CCookieRequest>(frame, version) {
             let key = wire::decode::<CCookieRequest>(frame, version)?.key;
-            let payload = self.jar.get(&key);
+            let payload = self.jar.answer(&key);
             return Ok(vec![wire::encode(
                 &SCookieResponse { key, payload },
                 version,

@@ -393,7 +393,7 @@ mod tests {
             Redeemed::Unknown
         );
         assert_eq!(
-            registry.redeem_at(&token[..31], &presenter("Notch"), NOW),
+            registry.redeem_at(&token[..RESUME_TOKEN_LEN - 1], &presenter("Notch"), NOW),
             Redeemed::Unknown
         );
         assert_eq!(
@@ -455,34 +455,43 @@ mod tests {
     #[test]
     fn a_login_start_without_a_uuid_is_matched_by_name() {
         let (registry, token) = issued("Notch");
-        let nameless = ResumePresenter {
+        let without_uuid = ResumePresenter {
             uuid: None,
             ..presenter("Notch")
         };
         assert!(matches!(
-            registry.redeem_at(&token, &nameless, NOW),
+            registry.redeem_at(&token, &without_uuid, NOW),
             Redeemed::Resumed(_)
         ));
     }
 
     #[test]
-    fn a_ticket_expires() {
-        let (registry, token) = issued("Notch");
-        let late = NOW + RESUME_TTL_MS;
-        assert!(!registry.expects_any_at(late));
+    fn an_expired_ticket_is_refused_until_a_purge_forgets_it() {
+        let deadline = NOW + RESUME_TTL_MS;
+
+        let (still_held, token) = issued("Notch");
         assert_eq!(
-            registry.redeem_at(&token, &presenter("Notch"), late),
+            still_held.redeem_at(&token, &presenter("Notch"), deadline),
+            Redeemed::Refused(Refusal::Expired)
+        );
+
+        let (purged, token) = issued("Notch");
+        assert!(!purged.expects_any_at(deadline));
+        assert_eq!(
+            purged.redeem_at(&token, &presenter("Notch"), deadline),
             Redeemed::Unknown
         );
     }
 
     #[test]
-    fn a_ticket_redeemed_at_its_deadline_is_refused() {
+    fn a_ticket_is_good_until_the_millisecond_before_its_deadline() {
         let (registry, token) = issued("Notch");
-        assert_eq!(
-            registry.redeem_at(&token, &presenter("Notch"), NOW + RESUME_TTL_MS),
-            Redeemed::Refused(Refusal::Expired)
-        );
+        let last = NOW + RESUME_TTL_MS - 1;
+        assert!(registry.expects_any_at(last));
+        assert!(matches!(
+            registry.redeem_at(&token, &presenter("Notch"), last),
+            Redeemed::Resumed(_)
+        ));
     }
 
     #[test]

@@ -6,12 +6,15 @@ use infrarust_api::player::Player;
 use infrarust_api::types::Component;
 use infrarust_core::auth::game_profile::offline_uuid;
 use infrarust_core::auth::mojang::minecraft_server_hash;
+use infrarust_core::hot_restart::RESUME_COOKIE;
+use infrarust_core::hot_restart::resume::RESUME_TOKEN_LEN;
 use infrarust_protocol::codec::{McBufReadExt, VarInt};
 use infrarust_protocol::io::PacketFrame;
 use infrarust_protocol::packets::Packet;
 use infrarust_protocol::packets::config::{
     CConfigDisconnect, CFinishConfig, CKnownPacks, SAcknowledgeFinishConfig, SKnownPacks,
 };
+use infrarust_protocol::packets::cookie::{CConfigStoreCookie, CStoreCookie};
 use infrarust_protocol::packets::handshake::SHandshake;
 use infrarust_protocol::packets::login::{
     CEncryptionRequest, CLoginDisconnect, CLoginPluginRequest, CLoginSuccess, CSetCompression,
@@ -26,6 +29,7 @@ use infrarust_protocol::packets::play::keepalive::{CKeepAlive, SKeepAlive};
 use infrarust_protocol::packets::play::start_configuration::{
     CStartConfiguration, SAcknowledgeConfiguration,
 };
+use infrarust_protocol::packets::play::transfer::{CConfigTransfer, CTransfer};
 use infrarust_protocol::packets::resource_pack::ResourcePackResult;
 use infrarust_protocol::packets::status::{
     CPingResponse, CStatusResponse, SPingRequest, SStatusRequest,
@@ -96,6 +100,13 @@ impl LoginOutcome {
             ))),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SentBack {
+    pub jar: CookieJar,
+    pub host: String,
+    pub port: i32,
 }
 
 impl FakeClient {
@@ -260,6 +271,15 @@ impl FakeClient {
             json,
             raw: response.json_response,
         })
+    }
+
+    pub async fn come_back(&self, username: &str, jar: CookieJar) -> HarnessResult<ClientSession> {
+        self.clone()
+            .transferred()
+            .cookies(jar)
+            .login(username)
+            .await?
+            .joined()
     }
 
     pub async fn login(&self, username: &str) -> HarnessResult<LoginOutcome> {
@@ -776,6 +796,51 @@ impl ClientSession {
             _ => None,
         })
         .await
+    }
+
+    pub async fn sent_back(mut self, timeout: Duration) -> HarnessResult<SentBack> {
+        let cookie = self.expect::<CStoreCookie>(timeout).await?;
+        let transfer = self.expect::<CTransfer>(timeout).await?;
+        self.leave_with_ticket(&cookie.key, &cookie.payload, transfer.host, transfer.port)
+            .await
+    }
+
+    pub async fn sent_back_while_configuring(
+        mut self,
+        timeout: Duration,
+    ) -> HarnessResult<SentBack> {
+        let cookie = self.expect_config::<CConfigStoreCookie>(timeout).await?;
+        let transfer = self.expect_config::<CConfigTransfer>(timeout).await?;
+        self.leave_with_ticket(&cookie.key, &cookie.payload, transfer.host, transfer.port)
+            .await
+    }
+
+    async fn leave_with_ticket(
+        self,
+        key: &str,
+        ticket: &[u8],
+        host: String,
+        port: i32,
+    ) -> HarnessResult<SentBack> {
+        if key != RESUME_COOKIE {
+            return Err(HarnessError::Unexpected(format!(
+                "expected the {RESUME_COOKIE} cookie before the transfer, got {key}"
+            )));
+        }
+        if ticket.len() != RESUME_TOKEN_LEN {
+            return Err(HarnessError::Unexpected(format!(
+                "expected a ticket of {RESUME_TOKEN_LEN} bytes, got {}",
+                ticket.len()
+            )));
+        }
+        let jar = self.cookies();
+        if jar.get(RESUME_COOKIE).as_deref() != Some(ticket) {
+            return Err(HarnessError::Unexpected(
+                "the client did not keep the ticket it was sent".to_string(),
+            ));
+        }
+        self.quit().await;
+        Ok(SentBack { jar, host, port })
     }
 
     pub async fn close_write(&self) -> HarnessResult<()> {

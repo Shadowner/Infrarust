@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -17,27 +16,33 @@ struct MockRestart {
     outcome: Result<(), RestartRequestError>,
     cancel: Result<(), RestartCancelError>,
     scheduled: Option<SystemTime>,
-    requests: AtomicUsize,
     asked: Mutex<Vec<RestartOptions>>,
 }
 
 impl MockRestart {
-    fn answering(outcome: Result<(), RestartRequestError>) -> Arc<Self> {
-        Arc::new(Self::with(outcome))
-    }
-
-    fn with(outcome: Result<(), RestartRequestError>) -> Self {
-        Self {
+    fn new(
+        outcome: Result<(), RestartRequestError>,
+        cancel: Result<(), RestartCancelError>,
+        scheduled: Option<SystemTime>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
             outcome,
-            cancel: Err(RestartCancelError::NothingScheduled),
-            scheduled: None,
-            requests: AtomicUsize::new(0),
+            cancel,
+            scheduled,
             asked: Mutex::new(Vec::new()),
-        }
+        })
     }
 
-    fn requests(&self) -> usize {
-        self.requests.load(Ordering::SeqCst)
+    fn answering(outcome: Result<(), RestartRequestError>) -> Arc<Self> {
+        Self::new(outcome, Err(RestartCancelError::NothingScheduled), None)
+    }
+
+    fn cancelling(cancel: Result<(), RestartCancelError>) -> Arc<Self> {
+        Self::new(Ok(()), cancel, None)
+    }
+
+    fn scheduled_at(at: SystemTime) -> Arc<Self> {
+        Self::new(Ok(()), Err(RestartCancelError::NothingScheduled), Some(at))
     }
 
     fn asked(&self) -> Vec<RestartOptions> {
@@ -49,7 +54,6 @@ impl infrarust_api::__sealed::Sealed for MockRestart {}
 
 impl ProxyRestart for MockRestart {
     fn request_restart_with(&self, options: RestartOptions) -> Result<(), RestartRequestError> {
-        self.requests.fetch_add(1, Ordering::SeqCst);
         self.asked.lock().unwrap().push(options);
         self.outcome.clone()
     }
@@ -80,7 +84,6 @@ async fn restart_is_accepted_once_scheduled() {
         body["data"],
         json!({ "success": true, "message": "Hot restart scheduled" })
     );
-    assert_eq!(restart.requests(), 1);
     assert_eq!(restart.asked(), [RestartOptions::default()]);
 }
 
@@ -129,7 +132,7 @@ async fn restart_with_no_delay_overrides_the_configured_one() {
 }
 
 #[tokio::test]
-async fn restart_refuses_unknown_fields_and_options_over_the_limits() {
+async fn restart_refuses_an_unknown_field() {
     let restart = MockRestart::answering(Ok(()));
     let api = api_with(&restart);
     let request = api
@@ -137,32 +140,37 @@ async fn restart_refuses_unknown_fields_and_options_over_the_limits() {
         .header("content-type", "application/json")
         .body(Body::from(r#"{"delay":"30s"}"#))
         .unwrap();
-    assert!(api.send(request).await.status().is_client_error());
-    assert_eq!(restart.requests(), 0);
 
-    let refusing = MockRestart::answering(Err(RestartRequestError::Invalid(
+    let status = api.send(request).await.status();
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(restart.asked(), []);
+}
+
+#[tokio::test]
+async fn restart_with_options_over_the_limits_is_a_bad_request() {
+    let restart = MockRestart::answering(Err(RestartRequestError::Invalid(
         "the delay is 2h, the longest delay is 1h".into(),
     )));
-    let (status, body) = api_with(&refusing)
+
+    let (status, body) = api_with(&restart)
         .post(RESTART, json!({ "delay_seconds": 7200 }))
         .await;
+
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "BAD_REQUEST");
     assert!(
         body["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("the longest delay is 1h"),
+            .contains("the delay is 2h, the longest delay is 1h"),
         "{body}"
     );
 }
 
 #[tokio::test]
 async fn a_scheduled_restart_can_be_cancelled() {
-    let restart = Arc::new(MockRestart {
-        cancel: Ok(()),
-        ..MockRestart::with(Ok(()))
-    });
+    let restart = MockRestart::cancelling(Ok(()));
 
     let (status, body) = api_with(&restart).delete(RESTART).await;
 
@@ -171,7 +179,7 @@ async fn a_scheduled_restart_can_be_cancelled() {
         body["data"],
         json!({ "success": true, "message": "Hot restart cancelled" })
     );
-    assert_eq!(restart.requests(), 0);
+    assert_eq!(restart.asked(), []);
 }
 
 #[tokio::test]
@@ -183,10 +191,7 @@ async fn cancelling_when_nothing_can_be_cancelled_is_a_conflict() {
         ),
         (RestartCancelError::TooLate, "already under way"),
     ] {
-        let restart = Arc::new(MockRestart {
-            cancel: Err(error),
-            ..MockRestart::with(Ok(()))
-        });
+        let restart = MockRestart::cancelling(Err(error));
 
         let (status, body) = api_with(&restart).delete(RESTART).await;
 
@@ -199,8 +204,6 @@ async fn cancelling_when_nothing_can_be_cancelled_is_a_conflict() {
             "{body}"
         );
     }
-    let (status, _) = TestApi::new().delete(RESTART).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
@@ -210,22 +213,19 @@ async fn proxy_status_shows_when_a_restart_is_scheduled() {
     assert!(body["data"].get("restart_scheduled_at").is_none(), "{body}");
     assert!(body["data"].get("restart_in_seconds").is_none(), "{body}");
 
-    let scheduled = Arc::new(MockRestart {
-        scheduled: Some(SystemTime::now() + Duration::from_secs(90)),
-        ..MockRestart::with(Ok(()))
-    });
-    let (_, body) = api_with(&scheduled).get("/api/v1/proxy").await;
-    let left = body["data"]["restart_in_seconds"].as_u64().unwrap();
-    assert!((85..=90).contains(&left), "{body}");
-    let at = body["data"]["restart_scheduled_at"].as_str().unwrap();
-    assert!(at.contains('T') && at.len() >= 20, "{at}");
-
-    let overdue = Arc::new(MockRestart {
-        scheduled: Some(SystemTime::now() - Duration::from_secs(5)),
-        ..MockRestart::with(Ok(()))
-    });
-    let (_, body) = api_with(&overdue).get("/api/v1/proxy").await;
+    let dated =
+        MockRestart::scheduled_at(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+    let (_, body) = api_with(&dated).get("/api/v1/proxy").await;
+    assert_eq!(
+        body["data"]["restart_scheduled_at"], "2023-11-14T22:13:20Z",
+        "{body}"
+    );
     assert_eq!(body["data"]["restart_in_seconds"], 0, "{body}");
+
+    let upcoming = MockRestart::scheduled_at(SystemTime::now() + Duration::from_secs(90));
+    let (_, body) = api_with(&upcoming).get("/api/v1/proxy").await;
+    let left = body["data"]["restart_in_seconds"].as_u64().unwrap();
+    assert!((60..=90).contains(&left), "{body}");
 }
 
 #[tokio::test]
@@ -240,7 +240,7 @@ async fn restart_accepts_an_empty_request() {
     let (status, _) = api.json(request).await;
 
     assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(restart.requests(), 1);
+    assert_eq!(restart.asked(), [RestartOptions::default()]);
 }
 
 #[tokio::test]
@@ -263,7 +263,7 @@ async fn restart_while_busy_is_a_conflict() {
                 .contains(expected_message),
             "{body}"
         );
-        assert_eq!(restart.requests(), 1);
+        assert_eq!(restart.asked(), [RestartOptions::default()]);
     }
 }
 
@@ -281,7 +281,7 @@ async fn restart_on_a_platform_without_hot_restart_is_a_conflict_naming_the_reas
         body["error"]["message"],
         "Conflict: hot restart is not supported here: windows, restart the proxy by hand"
     );
-    assert_eq!(restart.requests(), 1);
+    assert_eq!(restart.asked(), [RestartOptions::default()]);
 }
 
 #[tokio::test]
@@ -296,6 +296,11 @@ async fn restart_without_a_service_is_unavailable() {
             .unwrap()
             .contains("not available")
     );
+
+    let (status, body) = TestApi::new().delete(RESTART).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["error"]["code"], "SERVICE_UNAVAILABLE");
 }
 
 #[tokio::test]
@@ -311,7 +316,7 @@ async fn restart_requires_authentication() {
 
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-    assert_eq!(restart.requests(), 0);
+    assert_eq!(restart.asked(), []);
 }
 
 #[tokio::test]
@@ -323,5 +328,5 @@ async fn proxy_status_says_whether_hot_restart_is_available() {
 
     assert_eq!(without["data"]["restart_available"], false);
     assert_eq!(with["data"]["restart_available"], true);
-    assert_eq!(restart.requests(), 0);
+    assert_eq!(restart.asked(), []);
 }

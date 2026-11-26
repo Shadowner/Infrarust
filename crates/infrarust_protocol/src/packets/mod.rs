@@ -46,10 +46,16 @@ use std::io::Write;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
-pub(crate) fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
+pub(crate) fn wire<P: Packet>(packet: &P, version: ProtocolVersion) -> Vec<u8> {
     let mut buf = Vec::new();
     packet.encode(&mut buf, version).unwrap();
-    P::decode(&mut buf.as_slice(), version).unwrap()
+    buf
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+pub(crate) fn round_trip<P: Packet>(packet: &P, version: ProtocolVersion) -> P {
+    P::decode(&mut wire(packet, version).as_slice(), version).unwrap()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

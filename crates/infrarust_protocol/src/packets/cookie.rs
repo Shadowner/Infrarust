@@ -114,7 +114,7 @@ define_twin_packets! {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::packets::{Packet, round_trip};
+    use crate::packets::{Packet, round_trip, wire};
     use crate::version::ProtocolVersion;
 
     const V: ProtocolVersion = ProtocolVersion::V1_20_5;
@@ -170,20 +170,12 @@ mod tests {
 
     #[test]
     fn oversized_payloads_are_rejected() {
-        let mut buf = Vec::new();
-        SCookieResponse {
+        let oversized = SCookieResponse {
             key: "a:b".into(),
             payload: Some(vec![0; MAX_COOKIE_PAYLOAD + 1]),
-        }
-        .encode(&mut buf, V)
-        .unwrap();
+        };
+        let buf = wire(&oversized, V);
         assert!(SCookieResponse::decode(&mut buf.as_slice(), V).is_err());
-    }
-
-    fn wire<P: Packet>(packet: &P) -> Vec<u8> {
-        let mut buf = Vec::new();
-        packet.encode(&mut buf, V).unwrap();
-        buf
     }
 
     #[test]
@@ -192,21 +184,27 @@ mod tests {
         let key = "infrarust:resume".to_string();
         let payload = vec![0xde, 0xad, 0xbe, 0xef];
         assert_eq!(
-            wire(&CStoreCookie {
-                key: key.clone(),
-                payload: payload.clone()
-            }),
+            wire(
+                &CStoreCookie {
+                    key: key.clone(),
+                    payload: payload.clone()
+                },
+                V
+            ),
             expected
         );
-        assert_eq!(wire(&CConfigStoreCookie { key, payload }), expected);
+        assert_eq!(wire(&CConfigStoreCookie { key, payload }, V), expected);
     }
 
     #[test]
     fn a_payload_longer_than_one_length_byte_gets_a_two_byte_varint() {
-        let bytes = wire(&CStoreCookie {
-            key: "a:b".into(),
-            payload: vec![9; 300],
-        });
+        let bytes = wire(
+            &CStoreCookie {
+                key: "a:b".into(),
+                payload: vec![9; 300],
+            },
+            V,
+        );
         assert_eq!(&bytes[..6], &[3, b'a', b':', b'b', 0xac, 0x02]);
         assert_eq!(bytes.len(), 6 + 300);
     }
@@ -215,9 +213,12 @@ mod tests {
     fn a_cookie_request_is_only_its_key() {
         let expected = [&[16][..], b"infrarust:resume"].concat();
         let key = "infrarust:resume".to_string();
-        assert_eq!(wire(&CLoginCookieRequest { key: key.clone() }), expected);
-        assert_eq!(wire(&CConfigCookieRequest { key: key.clone() }), expected);
-        assert_eq!(wire(&CCookieRequest { key }), expected);
+        assert_eq!(wire(&CLoginCookieRequest { key: key.clone() }, V), expected);
+        assert_eq!(
+            wire(&CConfigCookieRequest { key: key.clone() }, V),
+            expected
+        );
+        assert_eq!(wire(&CCookieRequest { key }, V), expected);
     }
 
     #[test]
@@ -226,12 +227,12 @@ mod tests {
         let decoded = SLoginCookieResponse::decode(&mut with.as_slice(), V).unwrap();
         assert_eq!(decoded.key, "a:b");
         assert_eq!(decoded.payload, Some(vec![0xca, 0xfe]));
-        assert_eq!(wire(&decoded), with);
+        assert_eq!(wire(&decoded, V), with);
 
         let without = [&[3][..], b"a:b", &[0]].concat();
         let decoded = SLoginCookieResponse::decode(&mut without.as_slice(), V).unwrap();
         assert_eq!(decoded.payload, None);
-        assert_eq!(wire(&decoded), without);
+        assert_eq!(wire(&decoded, V), without);
     }
 
     #[test]

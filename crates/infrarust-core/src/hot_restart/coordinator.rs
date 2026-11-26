@@ -290,6 +290,7 @@ mod tests {
     use std::time::Duration;
 
     use infrarust_api::BoxFuture;
+    use infrarust_config::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE};
 
     use super::*;
     use crate::binary::{BuildInfo, ExeSnapshot, HandoverProbe, RunningBinary};
@@ -319,6 +320,25 @@ mod tests {
             target,
         };
         RestartHub::new(plan, Arc::new(Refusing))
+    }
+
+    fn options(delay: u64, message: &str) -> RestartOptions {
+        RestartOptions {
+            delay: Some(Duration::from_secs(delay)),
+            message: Some(message.to_string()),
+        }
+    }
+
+    fn at() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+    }
+
+    fn announcing(options: RestartOptions) -> Arc<RestartHub> {
+        let hub = hub();
+        hub.request_with(options).unwrap();
+        hub.begin_preflight().unwrap();
+        hub.announce_until(at());
+        hub
     }
 
     #[test]
@@ -466,25 +486,6 @@ mod tests {
         assert!(matches!(error, PreflightError::ChildServers(_)));
     }
 
-    fn options(delay: u64, message: &str) -> RestartOptions {
-        RestartOptions {
-            delay: Some(Duration::from_secs(delay)),
-            message: Some(message.to_string()),
-        }
-    }
-
-    fn at() -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
-    }
-
-    fn announcing(options: RestartOptions) -> Arc<RestartHub> {
-        let hub = hub();
-        hub.request_with(options).unwrap();
-        hub.begin_preflight().unwrap();
-        hub.announce_until(at());
-        hub
-    }
-
     #[test]
     fn a_request_hands_its_options_to_the_restart_once() {
         let hub = hub();
@@ -517,8 +518,14 @@ mod tests {
     #[test]
     fn options_over_the_limits_are_refused_before_anything_is_scheduled() {
         let hub = hub();
+        let too_far = MAX_RESTART_DELAY.as_secs() + 1;
         assert!(matches!(
-            hub.request_with(options(7200, "Later")),
+            hub.request_with(options(too_far, "Later")),
+            Err(RestartRequestError::Invalid(_))
+        ));
+        let too_long = "x".repeat(MAX_RESTART_MESSAGE + 1);
+        assert!(matches!(
+            hub.request_with(options(0, &too_long)),
             Err(RestartRequestError::Invalid(_))
         ));
         assert!(!hub.is_pending());

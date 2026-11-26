@@ -640,7 +640,7 @@ impl Packet for SLoginAcknowledged {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::packets::round_trip;
+    use crate::packets::{round_trip, wire};
     use crate::registry::build_default_registry;
 
     #[test]
@@ -818,11 +818,6 @@ mod tests {
             should_authenticate,
         };
         let body = [0, 3, 1, 2, 3, 4, 4, 5, 6, 7];
-        let wire = |packet: &CEncryptionRequest, version| {
-            let mut buf = Vec::new();
-            packet.encode(&mut buf, version).unwrap();
-            buf
-        };
         assert_eq!(
             wire(&request(false), ProtocolVersion::V1_20_5),
             [&body[..], &[0]].concat()

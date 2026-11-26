@@ -277,6 +277,18 @@ impl TestProxyBuilder {
     }
 
     #[must_use]
+    pub fn config_section(self, name: &'static str, body: &'static str) -> Self {
+        self.patch_config(move |config| match toml::from_str::<Table>(body) {
+            Ok(section) => {
+                config.insert(name.to_string(), Value::Table(section));
+            }
+            Err(error) => {
+                panic!("the [{name}] section given to the test proxy is not TOML: {error}")
+            }
+        })
+    }
+
+    #[must_use]
     pub const fn drain_timeout(mut self, timeout: Duration) -> Self {
         self.drain_timeout = timeout;
         self
@@ -712,6 +724,15 @@ impl ProxyRun {
             })),
         })
     }
+
+    pub async fn handed_over(self, timeout: Duration) -> HarnessResult<Successor> {
+        match self.finish(timeout).await? {
+            ProxyEnd::Restarted(successor) => Ok(*successor),
+            ProxyEnd::Stopped => Err(HarnessError::Unexpected(
+                "the proxy stopped instead of handing over to a successor".to_string(),
+            )),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -760,6 +781,14 @@ impl Drop for TestProxy {
     fn drop(&mut self) {
         self.shutdown.cancel();
     }
+}
+
+pub async fn wait_until(
+    what: &str,
+    timeout: Duration,
+    mut done: impl FnMut() -> bool,
+) -> HarnessResult<()> {
+    poll_until(what, timeout, || done().then_some(())).await
 }
 
 async fn poll_until<T>(

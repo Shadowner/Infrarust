@@ -38,7 +38,7 @@ define_twin_packets! {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::packets::Packet;
+    use crate::packets::{round_trip, wire};
     use crate::version::ProtocolVersion;
 
     #[test]
@@ -47,9 +47,7 @@ mod tests {
             host: "play.example.com".to_string(),
             port: 25565,
         };
-        let mut buf = Vec::new();
-        pkt.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
-        let decoded = CTransfer::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
+        let decoded = round_trip(&pkt, ProtocolVersion::V1_21);
         assert_eq!(decoded.host, "play.example.com");
         assert_eq!(decoded.port, 25565);
     }
@@ -60,10 +58,7 @@ mod tests {
             host: "hub.example.com".to_string(),
             port: 25566,
         };
-        let mut buf = Vec::new();
-        pkt.encode(&mut buf, ProtocolVersion::V1_21).unwrap();
-        let decoded = CConfigTransfer::decode(&mut buf.as_slice(), ProtocolVersion::V1_21).unwrap();
-        assert_eq!(decoded, pkt);
+        assert_eq!(round_trip(&pkt, ProtocolVersion::V1_21), pkt);
     }
 
     #[test]
@@ -71,34 +66,28 @@ mod tests {
         let expected = [&[16][..], b"play.example.com", &[0xdd, 0xc7, 0x01]].concat();
         let host = "play.example.com".to_string();
         for version in [ProtocolVersion::V1_20_5, ProtocolVersion::V1_21_11] {
-            let mut play = Vec::new();
-            CTransfer {
+            let play = CTransfer {
                 host: host.clone(),
                 port: 25565,
-            }
-            .encode(&mut play, version)
-            .unwrap();
-            assert_eq!(play, expected);
-            let mut config = Vec::new();
-            CConfigTransfer {
+            };
+            assert_eq!(wire(&play, version), expected);
+            let config = CConfigTransfer {
                 host: host.clone(),
                 port: 25565,
-            }
-            .encode(&mut config, version)
-            .unwrap();
-            assert_eq!(config, expected);
+            };
+            assert_eq!(wire(&config, version), expected);
         }
     }
 
     #[test]
     fn the_highest_port_takes_three_bytes() {
-        let mut buf = Vec::new();
-        CTransfer {
+        let highest = CTransfer {
             host: "h".into(),
             port: 65535,
-        }
-        .encode(&mut buf, ProtocolVersion::V1_21)
-        .unwrap();
-        assert_eq!(buf, [1, b'h', 0xff, 0xff, 0x03]);
+        };
+        assert_eq!(
+            wire(&highest, ProtocolVersion::V1_21),
+            [1, b'h', 0xff, 0xff, 0x03]
+        );
     }
 }

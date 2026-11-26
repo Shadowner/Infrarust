@@ -19,9 +19,12 @@ pub mod wire;
 use std::sync::Once;
 use std::time::Duration;
 
-pub use backend::{BackendConn, FakeBackend, FakeBackendBuilder, LoginBehavior, ObservedHandshake};
+pub use backend::{
+    BackendConn, FakeBackend, FakeBackendBuilder, LOGIN_INTENT, LoginBehavior, ObservedHandshake,
+    STATUS_INTENT, TRANSFER_INTENT,
+};
 pub use chat::{ChatFrame, ChatPacket};
-pub use client::{ClientSession, FakeClient, LoginOutcome, StatusResult};
+pub use client::{ClientSession, FakeClient, LoginOutcome, SentBack, StatusResult};
 pub use client_replies::CookieJar;
 pub use error::{HarnessError, HarnessResult};
 pub use framing::{FrameReader, FrameWriter, FramedConn};
@@ -33,7 +36,9 @@ pub use legacy::{
 };
 pub use limbo::{Hold, Holds, holding_gate, holding_handler, next_hold};
 pub use managed::FakeServerProvider;
-pub use proxy::{ProxyEnd, ProxyRun, ServerSpec, Successor, TestProxy, TestProxyBuilder};
+pub use proxy::{
+    ProxyEnd, ProxyRun, ServerSpec, Successor, TestProxy, TestProxyBuilder, wait_until,
+};
 pub use recorder::{EventKind, RECORDER_PLUGIN_ID, Recorded, Recorder, RecordingPlugin};
 pub use scripted::ScriptedPlugin;
 pub use session::{FakeSessionServer, SessionCall};

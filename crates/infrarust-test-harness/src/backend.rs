@@ -51,6 +51,10 @@ impl LoginBehavior {
     }
 }
 
+pub const STATUS_INTENT: i32 = 1;
+pub const LOGIN_INTENT: i32 = 2;
+pub const TRANSFER_INTENT: i32 = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedHandshake {
     pub protocol_version: i32,
@@ -252,11 +256,11 @@ async fn serve(
     let mut conn = FramedConn::new(stream)?;
     let handshake = ObservedHandshake::parse(&read_required(&mut conn, "handshake").await?)?;
     match handshake.next_state {
-        1 => {
+        STATUS_INTENT => {
             status_requests.fetch_add(1, Ordering::SeqCst);
             serve_status(conn, &handshake, config).await
         }
-        2 | 3 => {
+        LOGIN_INTENT | TRANSFER_INTENT => {
             let backend_conn = serve_login(conn, handshake, config).await?;
             conn_tx
                 .send(backend_conn)

@@ -13,12 +13,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use command_fds::{CommandFdExt, FdMapping};
-use infrarust_core::hot_restart::RESUME_COOKIE;
 use infrarust_core::player::RESTART_REASON;
-use infrarust_protocol::packets::cookie::CStoreCookie;
-use infrarust_protocol::packets::play::transfer::CTransfer;
 use infrarust_test_harness::{
-    BackendConn, ClientSession, CookieJar, FakeBackend, FakeClient, ProtocolVersion,
+    BackendConn, ClientSession, CookieJar, FakeBackend, FakeClient, LOGIN_INTENT, ProtocolVersion,
 };
 use nix::sys::signal::{Signal, kill};
 use nix::sys::stat::Mode;
@@ -65,7 +62,7 @@ fn hello(domain: &str, name: &str) -> Vec<u8> {
     varint(PROTOCOL, &mut handshake);
     string(domain, &mut handshake);
     handshake.extend_from_slice(&25565u16.to_be_bytes());
-    varint(2, &mut handshake);
+    varint(LOGIN_INTENT.cast_unsigned(), &mut handshake);
     let mut login = Vec::new();
     varint(0, &mut login);
     string(name, &mut login);
@@ -536,18 +533,13 @@ async fn offline_player(
     (client, backend)
 }
 
-async fn sent_back(mut session: ClientSession, addr: SocketAddr) -> CookieJar {
-    let cookie = session.expect::<CStoreCookie>(T).await.unwrap();
-    assert_eq!(cookie.key, RESUME_COOKIE);
-    assert_eq!(cookie.payload.len(), 32);
-    let transfer = session.expect::<CTransfer>(T).await.unwrap();
+async fn sent_back(session: ClientSession, addr: SocketAddr) -> CookieJar {
+    let back = session.sent_back(T).await.unwrap();
     assert_eq!(
-        (transfer.host.as_str(), transfer.port),
+        (back.host.as_str(), back.port),
         ("lobby.test", i32::from(addr.port()))
     );
-    let jar = session.cookies();
-    session.quit().await;
-    jar
+    back.jar
 }
 
 async fn resumed(
@@ -558,15 +550,11 @@ async fn resumed(
 ) -> (ClientSession, BackendConn) {
     let client = FakeClient::new(addr, OFFLINE)
         .domain("lobby.test")
-        .transferred()
-        .cookies(jar)
-        .login(name)
+        .come_back(name, jar)
         .await
-        .unwrap()
-        .joined()
         .unwrap();
     let backend = lobby.next_connection(T).await.unwrap();
-    assert_eq!(backend.handshake().next_state, 2);
+    assert_eq!(backend.handshake().next_state, LOGIN_INTENT);
     (client, backend)
 }
 

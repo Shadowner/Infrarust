@@ -12,21 +12,11 @@ use infrarust_core::player::{RESTART_REASON, SHUTDOWN_REASON, ShutdownKind};
 use infrarust_protocol::packets::play::chat::SChatMessage;
 use infrarust_test_harness::{
     ConnectionState, DEFAULT_TIMEOUT, EventKind, FakeBackend, ProtocolVersion, Recorder,
-    ScriptedPlugin, ServerSpec, TestProxy, version_matrix,
+    ScriptedPlugin, ServerSpec, TestProxy, version_matrix, wait_until,
 };
 use tokio::sync::Notify;
 
 const T: Duration = DEFAULT_TIMEOUT;
-
-async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
-    let waited = tokio::time::timeout(T, async {
-        while !done() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await;
-    assert!(waited.is_ok(), "timed out waiting for {what}");
-}
 
 async fn a_forwarding_session_keeps_relaying_through_a_restart_close(mode: ProxyMode) {
     let version = ProtocolVersion(777);
@@ -328,10 +318,11 @@ async fn a_frozen_passthrough_session_is_collected_for_the_successor() {
     relays.begin_freeze();
 
     assert_eq!(relays.drained(tokio::time::Instant::now() + T).await, 0);
-    wait_until("the frozen connection task to end", || {
+    wait_until("the frozen connection task to end", T, || {
         server.active_connections() == 0
     })
-    .await;
+    .await
+    .unwrap();
     let frozen = relays.take_frozen();
     assert_eq!(frozen.len(), 1);
     let meta = &frozen[0].meta;
