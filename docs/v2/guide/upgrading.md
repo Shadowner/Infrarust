@@ -105,7 +105,7 @@ curl -LO "$BASE/manifest.json.minisig"
 curl -LO "$BASE/SHA256SUMS"
 ```
 
-Check the signature of the manifest with [minisign](https://jedisct1.github.io/minisign/). The release public key is in the repository, in [`crates/infrarust-core/src/update/keys/`](https://github.com/Shadowner/Infrarust/tree/main/crates/infrarust-core/src/update/keys): the key is the line after `untrusted comment:` in `release-1.pub`.
+Check the signature of the manifest with [minisign](https://jedisct1.github.io/minisign/). The release public key is in the repository, in [`crates/infrarust-core/src/update/keys/`](https://github.com/Shadowner/Infrarust/tree/main/crates/infrarust-core/src/update/keys): the key is the line after `untrusted comment:` in `release-1.pub`. `release-2.pub` is a spare key kept offline; a release signed with it verifies the same way, with that file.
 
 ```bash
 minisign -Vm manifest.json -P '<public key from release-1.pub>'

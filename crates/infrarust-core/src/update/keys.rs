@@ -3,7 +3,10 @@ use minisign_verify::{Error as MinisignError, PublicKey, Signature};
 use super::error::UpdateError;
 use super::manifest::{ManifestError, VerifiedManifest};
 
-pub const RELEASE_KEYS: &[&str] = &[include_str!("keys/release-1.pub")];
+pub const RELEASE_KEYS: &[&str] = &[
+    include_str!("keys/release-1.pub"),
+    include_str!("keys/release-2.pub"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SignatureError {
@@ -100,6 +103,13 @@ mod tests {
             "2.0.0-beta.6",
             &[("infrarust-linux-x86_64.tar.gz", "infrarust", b"bin")],
         )
+    }
+
+    #[test]
+    fn every_embedded_release_key_is_read() {
+        let keys = TrustedKeys::release().unwrap();
+        assert_eq!(keys.len(), RELEASE_KEYS.len());
+        assert_eq!(keys.len(), 2);
     }
 
     #[test]
