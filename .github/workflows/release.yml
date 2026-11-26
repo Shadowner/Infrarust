@@ -159,12 +159,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Install minisign
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minisign
-          minisign -v
-
       - name: Download release archives
         run: |
           gh release download "$TAG" -D dist -p 'infrarust-*'
@@ -219,42 +213,6 @@ jobs:
             --out out
           cat out/manifest.json out/SHA256SUMS
 
-      - name: Sign manifest.json
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: |
-          if [ -z "$MINISIGN_SECRET_KEY" ]; then
-            echo "::error::the MINISIGN_SECRET_KEY secret is not set"
-            exit 1
-          fi
-          key="$RUNNER_TEMP/minisign.key"
-          trap 'rm -f "$key"' EXIT
-          (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
-          minisign -S -H -s "$key" -m out/manifest.json -t "infrarust $TAG" < /dev/null
-
-      - name: Verify the signature against the repository keys
-        run: |
-          shopt -s nullglob
-          keys=(crates/infrarust-core/src/update/keys/*.pub)
-          if [ "${#keys[@]}" -eq 0 ]; then
-            echo "::error::no public key in crates/infrarust-core/src/update/keys"
-            exit 1
-          fi
-          verified=0
-          for key in "${keys[@]}"; do
-            pubkey=$(grep -v '^untrusted comment:' "$key" | tr -d '[:space:]' || true)
-            if minisign -V -H -P "$pubkey" -m out/manifest.json -x out/manifest.json.minisig < /dev/null; then
-              echo "verified with $key"
-              verified=1
-            else
-              echo "not signed by $key"
-            fi
-          done
-          if [ "$verified" -ne 1 ]; then
-            echo "::error::manifest.json.minisig does not verify against any repository key"
-            exit 1
-          fi
-
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4.2.2
         with:
@@ -263,7 +221,7 @@ jobs:
             out/manifest.json
 
       - name: Upload the manifest to the release
-        run: gh release upload "$TAG" out/manifest.json out/manifest.json.minisig out/SHA256SUMS --clobber
+        run: gh release upload "$TAG" out/manifest.json out/SHA256SUMS --clobber
 
   docker:
     needs: check-release
