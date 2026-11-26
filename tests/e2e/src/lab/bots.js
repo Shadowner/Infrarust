@@ -41,7 +41,8 @@ export class Bot {
     client.on('cookie_request', (packet) => {
       if (client.state !== 'login') return;
       this.cookieRequests++;
-      client.write('cookie_response', { key: packet.key, value: this.cookies.get(packet.key) });
+      const key = packet.cookie ?? packet.key;
+      client.write('cookie_response', { key, value: this.cookies.get(key) });
     });
     client.on('state', (state) => {
       if (state !== 'play') return;
