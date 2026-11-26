@@ -37,7 +37,7 @@ pub use permissions::{PermissionProviderSelection, PermissionsConfig};
 pub use plugin_messaging::PluginMessagingConfig;
 pub use proxy_mode::{IdentityCheck, ProxyMode};
 pub use rate_limit::RateLimitConfig;
-pub use restart::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE, RestartConfig};
+pub use restart::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE, RestartConfig, RestartLimit};
 pub use server_manager::{
     CraftyManagerConfig, LocalManagerConfig, ManagerLifecycle, PterodactylManagerConfig,
     ServerManagerConfig,

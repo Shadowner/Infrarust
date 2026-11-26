@@ -24,8 +24,19 @@ pub(crate) mod args {
     }
 
     pub fn duration_and_reason(args: &[&str]) -> (Option<Duration>, Option<String>) {
+        leading(args, parse_duration_arg)
+    }
+
+    pub fn delay_and_message(args: &[&str]) -> (Option<Duration>, Option<String>) {
+        leading(args, |head| humantime::parse_duration(head).map(Some))
+    }
+
+    fn leading<E>(
+        args: &[&str],
+        parse: impl FnOnce(&str) -> Result<Option<Duration>, E>,
+    ) -> (Option<Duration>, Option<String>) {
         match args.split_first() {
-            Some((head, tail)) => match parse_duration_arg(head) {
+            Some((head, tail)) => match parse(head) {
                 Ok(duration) => (duration, rest(tail)),
                 Err(_) => (None, rest(args)),
             },
@@ -83,6 +94,23 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+
+    #[test]
+    fn delay_and_message_split_on_a_leading_delay() {
+        assert_eq!(args::delay_and_message(&[]), (None, None));
+        assert_eq!(
+            args::delay_and_message(&["30s", "Back", "soon"]),
+            (Some(Duration::from_secs(30)), Some("Back soon".to_string()))
+        );
+        assert_eq!(
+            args::delay_and_message(&["0s"]),
+            (Some(Duration::ZERO), None)
+        );
+        assert_eq!(
+            args::delay_and_message(&["permanent", "bye"]),
+            (None, Some("permanent bye".to_string()))
+        );
+    }
 
     #[test]
     fn duration_and_reason_split_on_a_leading_duration() {

@@ -5,6 +5,7 @@ use infrarust_api::plugin::{PluginHealth, PluginRuntimeStatus};
 
 use crate::commands::{ArgSpec, CommandServices, SubcommandAlias, SubcommandHandler};
 use crate::services::command_manager::DispatchOutcome;
+use crate::util::whole_seconds;
 
 pub(crate) struct PluginSubcommand;
 
@@ -169,7 +170,7 @@ fn health_note(runtime: Option<&PluginRuntimeStatus>) -> String {
         (health, Some(retry_in)) => format!(
             " [{}, next attempt in {}s]",
             health.as_str(),
-            retry_in.as_secs() + u64::from(retry_in.subsec_nanos() > 0)
+            whole_seconds(retry_in).as_secs()
         ),
         (health, None) => format!(" [{}]", health.as_str()),
     }

@@ -62,6 +62,12 @@ pub fn format_duration(d: Duration) -> String {
     parts.join(" ")
 }
 
+pub fn whole_seconds(duration: Duration) -> u64 {
+    duration
+        .as_secs()
+        .saturating_add(u64::from(duration.subsec_nanos() > 0))
+}
+
 pub fn format_system_time(time: SystemTime) -> String {
     time::OffsetDateTime::from(time)
         .format(&time::format_description::well_known::Rfc3339)
@@ -72,6 +78,14 @@ pub fn format_system_time(time: SystemTime) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn a_started_second_counts_as_a_whole_one() {
+        assert_eq!(whole_seconds(Duration::ZERO), 0);
+        assert_eq!(whole_seconds(Duration::from_secs(5)), 5);
+        assert_eq!(whole_seconds(Duration::from_millis(4200)), 5);
+        assert_eq!(whole_seconds(Duration::MAX), u64::MAX);
+    }
 
     #[test]
     fn format_duration_zero() {

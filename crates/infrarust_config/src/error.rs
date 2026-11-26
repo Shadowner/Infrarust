@@ -201,8 +201,12 @@ pub enum ProxyValidationError {
     #[error("update.url must be an http or https URL (got {url:?})")]
     UpdateUrl { url: String },
 
-    #[error("restart.delay is {delay}, the longest delay is {max}")]
-    RestartDelay { delay: String, max: String },
+    #[error(
+        "restart.delay is {}, the longest delay is {}",
+        format_duration(*.delay),
+        format_duration(*.max)
+    )]
+    RestartDelay { delay: Duration, max: Duration },
 
     #[error("restart.message is {length} characters long, the limit is {max}")]
     RestartMessage { length: usize, max: usize },

@@ -25,8 +25,8 @@ use crate::console::output::{
 };
 use crate::console::parser::format_duration_short;
 use crate::console::render::usage_line;
-use crate::hot_restart::announce;
 use crate::terminal::Mark;
+use crate::util::whole_seconds;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const INSTALL_POLL: Duration = Duration::from_millis(200);
@@ -406,7 +406,7 @@ fn restart_output(
         Ok(()) => match delay.filter(|delay| !delay.is_zero()) {
             Some(delay) => CommandOutput::Success(format!(
                 "Hot restart requested in {}, the players are told; 'restart cancel' calls it off",
-                announce::compact(delay)
+                format_duration_short(whole_seconds(delay))
             )),
             None => {
                 CommandOutput::Success("Hot restart requested, follow it in the logs".to_string())
@@ -629,9 +629,11 @@ impl ConsoleCommand for RestartCommand {
                     .into();
             };
             if args == ["cancel"] {
-                tracing::info!(target: "console", "Hot restart cancelled from console");
                 return match restart.cancel_restart() {
-                    Ok(()) => CommandOutput::Success("The restart is cancelled".to_string()),
+                    Ok(()) => {
+                        tracing::info!(target: "console", "Hot restart cancelled from console");
+                        CommandOutput::Success("The restart is cancelled".to_string())
+                    }
                     Err(RestartCancelError::NothingScheduled) => {
                         CommandOutput::Note("No restart is scheduled".to_string())
                     }
@@ -640,13 +642,7 @@ impl ConsoleCommand for RestartCommand {
                     }
                 };
             }
-            let (delay, message) = match args.split_first() {
-                Some((head, tail)) => match humantime::parse_duration(head) {
-                    Ok(delay) => (Some(delay), super::args::rest(tail)),
-                    Err(_) => (None, super::args::rest(args)),
-                },
-                None => (None, None),
-            };
+            let (delay, message) = super::args::delay_and_message(args);
             tracing::info!(target: "console", "Hot restart requested from console");
             restart_output(
                 restart.request_restart_with(RestartOptions { delay, message }),
@@ -786,6 +782,7 @@ mod tests {
     use std::time::Instant;
 
     use infrarust_api::command::CommandSpec;
+    use infrarust_api::services::ScheduledRestart;
     use infrarust_config::PermissionsConfig;
 
     use super::*;
@@ -1036,7 +1033,6 @@ mod tests {
     struct ScriptedRestart {
         answer: Result<(), RestartRequestError>,
         cancel: Result<(), RestartCancelError>,
-        calls: std::sync::atomic::AtomicUsize,
         asked: std::sync::Mutex<Vec<RestartOptions>>,
     }
 
@@ -1044,14 +1040,31 @@ mod tests {
 
     impl ProxyRestart for ScriptedRestart {
         fn request_restart_with(&self, options: RestartOptions) -> Result<(), RestartRequestError> {
-            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.asked.lock().unwrap().push(options);
             self.answer.clone()
         }
 
         fn cancel_restart(&self) -> Result<(), RestartCancelError> {
-            self.cancel.clone()
+            self.cancel
         }
+
+        fn scheduled_restart(&self) -> Option<ScheduledRestart> {
+            None
+        }
+    }
+
+    impl ScriptedRestart {
+        fn asked(&self) -> Vec<RestartOptions> {
+            self.asked.lock().unwrap().clone()
+        }
+
+        fn handle(self: &Arc<Self>) -> Arc<dyn ProxyRestart> {
+            Arc::clone(self) as Arc<dyn ProxyRestart>
+        }
+    }
+
+    fn console_restarting(restart: &Arc<ScriptedRestart>) -> ConsoleServices {
+        console_with(None, Some(restart.handle()))
     }
 
     fn answering(answer: Result<(), RestartRequestError>) -> Arc<ScriptedRestart> {
@@ -1065,7 +1078,6 @@ mod tests {
         Arc::new(ScriptedRestart {
             answer,
             cancel,
-            calls: std::sync::atomic::AtomicUsize::new(0),
             asked: std::sync::Mutex::new(Vec::new()),
         })
     }
@@ -1126,12 +1138,12 @@ mod tests {
             ),
         ] {
             let restart = answering(answer);
-            let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
+            let services = console_restarting(&restart);
             assert_eq!(
                 render(RestartCommand.execute(&[], &services).await),
                 expected
             );
-            assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(restart.asked(), [RestartOptions::default()]);
         }
     }
 
@@ -1149,6 +1161,12 @@ mod tests {
                 Some(Duration::from_secs(120)),
                 None,
                 "ok: Hot restart requested in 2m, the players are told; 'restart cancel' calls it off",
+            ),
+            (
+                &["500ms"][..],
+                Some(Duration::from_millis(500)),
+                None,
+                "ok: Hot restart requested in 1s, the players are told; 'restart cancel' calls it off",
             ),
             (
                 &["0s"][..],
@@ -1170,13 +1188,13 @@ mod tests {
             ),
         ] {
             let restart = answering(Ok(()));
-            let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
+            let services = console_restarting(&restart);
             assert_eq!(
                 render(RestartCommand.execute(args, &services).await),
                 expected
             );
             assert_eq!(
-                *restart.asked.lock().unwrap(),
+                restart.asked(),
                 [RestartOptions {
                     delay,
                     message: message.map(str::to_string)
@@ -1199,12 +1217,12 @@ mod tests {
             ),
         ] {
             let restart = cancelling(Ok(()), cancel);
-            let services = console_with(None, Some(restart.clone() as Arc<dyn ProxyRestart>));
+            let services = console_restarting(&restart);
             assert_eq!(
                 render(RestartCommand.execute(&["cancel"], &services).await),
                 expected
             );
-            assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert!(restart.asked().is_empty());
         }
     }
 
@@ -1226,16 +1244,11 @@ mod tests {
         ))));
         let restart = answering(Ok(()));
         assert_eq!(
-            apply_with(
-                &["apply"],
-                &updates,
-                Some(restart.clone() as Arc<dyn ProxyRestart>)
-            )
-            .await,
+            apply_with(&["apply"], &updates, Some(restart.handle())).await,
             "error: 2.0.0-beta.6 needs a full restart, nothing was installed\n  type update install, then stop the proxy and start it again"
         );
         assert!(updates.requests().is_empty());
-        assert_eq!(restart.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(restart.asked().is_empty());
     }
 
     #[tokio::test]

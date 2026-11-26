@@ -55,7 +55,7 @@ impl ProxyRestart for MockRestart {
     }
 
     fn cancel_restart(&self) -> Result<(), RestartCancelError> {
-        self.cancel.clone()
+        self.cancel
     }
 
     fn scheduled_restart(&self) -> Option<ScheduledRestart> {

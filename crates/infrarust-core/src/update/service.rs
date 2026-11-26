@@ -522,6 +522,14 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+
+        fn cancel_restart(&self) -> Result<(), infrarust_api::services::RestartCancelError> {
+            Err(infrarust_api::services::RestartCancelError::NothingScheduled)
+        }
+
+        fn scheduled_restart(&self) -> Option<infrarust_api::services::ScheduledRestart> {
+            None
+        }
     }
 
     struct Fixture {

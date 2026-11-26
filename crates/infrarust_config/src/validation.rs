@@ -459,22 +459,16 @@ fn validate_update(update: &crate::types::UpdateConfig) -> Result<Vec<String>, C
 }
 
 fn validate_restart(restart: &crate::types::RestartConfig) -> Result<(), ConfigError> {
-    use crate::types::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE};
+    use crate::types::RestartLimit;
 
-    if restart.delay > MAX_RESTART_DELAY {
-        return Err(ConfigError::Proxy(ProxyValidationError::RestartDelay {
-            delay: humantime::format_duration(restart.delay).to_string(),
-            max: humantime::format_duration(MAX_RESTART_DELAY).to_string(),
-        }));
-    }
-    let length = restart.message.chars().count();
-    if length > MAX_RESTART_MESSAGE {
-        return Err(ConfigError::Proxy(ProxyValidationError::RestartMessage {
-            length,
-            max: MAX_RESTART_MESSAGE,
-        }));
-    }
-    Ok(())
+    RestartLimit::check(Some(restart.delay), Some(&restart.message)).map_err(|limit| {
+        ConfigError::Proxy(match limit {
+            RestartLimit::Delay { delay, max } => ProxyValidationError::RestartDelay { delay, max },
+            RestartLimit::Message { length, max } => {
+                ProxyValidationError::RestartMessage { length, max }
+            }
+        })
+    })
 }
 
 fn validate_web_bind(bind: &str, proxy_bind: SocketAddr) -> Result<(), ProxyValidationError> {

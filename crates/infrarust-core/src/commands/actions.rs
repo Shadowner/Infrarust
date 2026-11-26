@@ -128,6 +128,14 @@ pub async fn send_player(
     })
 }
 
+pub(crate) fn deliver(recipients: &[Arc<dyn Player>], message: &str) -> usize {
+    let component = Component::from_legacy(message);
+    recipients
+        .iter()
+        .filter(|player| player.send_message(component.clone()).is_ok())
+        .count()
+}
+
 pub fn broadcast(
     players: &dyn PlayerRegistry,
     configs: &dyn ConfigService,
@@ -142,11 +150,7 @@ pub fn broadcast(
         Some(server) => players.get_players_on_server(server),
         None => players.get_all_players(),
     };
-    let component = Component::from_legacy(message);
-    let delivered = recipients
-        .iter()
-        .filter(|player| player.send_message(component.clone()).is_ok())
-        .count();
+    let delivered = deliver(&recipients, message);
     tracing::info!(
         message,
         recipients = delivered,

@@ -1351,11 +1351,16 @@ fn a_restart_delay_over_an_hour_is_rejected() {
     let config = proxy_from_toml("[restart]\ndelay = \"1h\"\n", dir.path());
     assert!(validate_proxy_config(&config).is_ok());
     let config = proxy_from_toml("[restart]\ndelay = \"1h 1s\"\n", dir.path());
+    let error = validate_proxy_config(&config).unwrap_err();
     assert!(matches!(
-        validate_proxy_config(&config),
-        Err(ConfigError::Proxy(ProxyValidationError::RestartDelay { delay, max }))
-            if delay == "1h 1s" && max == "1h"
+        &error,
+        ConfigError::Proxy(ProxyValidationError::RestartDelay { delay, max })
+            if delay.as_secs() == 3601 && max.as_secs() == 3600
     ));
+    assert_eq!(
+        error.to_string(),
+        "restart.delay is 1h 1s, the longest delay is 1h"
+    );
 }
 
 #[test]

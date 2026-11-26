@@ -1,6 +1,5 @@
 use std::fmt;
 use std::sync::Arc;
-
 use std::time::SystemTime;
 
 use infrarust_api::services::proxy_control::{
@@ -9,7 +8,6 @@ use infrarust_api::services::proxy_control::{
 use tokio::sync::watch;
 
 use super::announce;
-
 use super::platform::RestartPlan;
 use super::preflight::Preflight;
 
@@ -34,6 +32,23 @@ struct HubState {
     options: RestartOptions,
     scheduled: Option<SystemTime>,
     cancelled: bool,
+}
+
+impl HubState {
+    fn clear_request(&mut self) -> bool {
+        self.cancelled = false;
+        self.scheduled = None;
+        self.options = RestartOptions::default();
+        std::mem::take(&mut self.pending)
+    }
+
+    fn drop_pending(&mut self, reason: &str) -> bool {
+        if self.phase != RestartPhase::Idle || !self.clear_request() {
+            return false;
+        }
+        self.last_failure = Some(reason.to_string());
+        true
+    }
 }
 
 pub struct RestartHub {
@@ -115,8 +130,8 @@ impl RestartHub {
                 Ok(())
             };
             if answer.is_ok() {
+                state.clear_request();
                 state.pending = true;
-                state.cancelled = false;
                 state.options = options;
             }
             answer.is_ok()
@@ -124,16 +139,45 @@ impl RestartHub {
         answer
     }
 
-    pub fn options(&self) -> RestartOptions {
-        self.state.borrow().options.clone()
+    pub fn begin_preflight(&self) -> Option<RestartOptions> {
+        let mut options = None;
+        self.state.send_if_modified(|state| {
+            if !state.pending || state.phase != RestartPhase::Idle {
+                return false;
+            }
+            state.phase = RestartPhase::Preflight;
+            state.pending = false;
+            options = Some(std::mem::take(&mut state.options));
+            true
+        });
+        options
     }
 
-    pub fn announce_until(&self, at: SystemTime) -> bool {
-        let entered = self.set_phase(RestartPhase::Announcing);
-        if entered {
-            self.state.send_modify(|state| state.scheduled = Some(at));
-        }
-        entered
+    pub fn announce_until(&self, at: SystemTime) {
+        self.state.send_if_modified(|state| {
+            if state.phase >= RestartPhase::Announcing {
+                return false;
+            }
+            state.phase = RestartPhase::Announcing;
+            state.pending = false;
+            state.scheduled = Some(at);
+            true
+        });
+    }
+
+    pub fn begin_draining(&self) -> bool {
+        self.state.send_if_modified(|state| {
+            let cancellable = matches!(
+                state.phase,
+                RestartPhase::Preflight | RestartPhase::Announcing
+            );
+            if state.cancelled || !cancellable {
+                return false;
+            }
+            state.phase = RestartPhase::Draining;
+            state.clear_request();
+            true
+        })
     }
 
     pub fn scheduled(&self) -> Option<ScheduledRestart> {
@@ -159,10 +203,6 @@ impl RestartHub {
         answer
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.state.borrow().cancelled
-    }
-
     pub async fn cancelled(&self) {
         let mut state = self.state.subscribe();
         let _ = state.wait_for(|state| state.cancelled).await;
@@ -170,21 +210,16 @@ impl RestartHub {
 
     pub fn mark_stopping(&self) {
         self.state.send_if_modified(|state| {
-            if std::mem::take(&mut state.pending) {
-                state.last_failure = Some("the proxy is stopping".to_string());
-            }
-            !std::mem::replace(&mut state.stopping, true)
+            let dropped = state.drop_pending("the proxy is stopping");
+            !std::mem::replace(&mut state.stopping, true) || dropped
         });
     }
 
     pub fn refuse_requests(&self, reason: impl Into<String>) {
         let reason = reason.into();
-        if self.is_pending() {
-            tracing::warn!(%reason, "a pending hot restart request is dropped");
-        }
         self.state.send_modify(|state| {
-            if std::mem::take(&mut state.pending) {
-                state.last_failure = Some(reason.clone());
+            if state.drop_pending(&reason) {
+                tracing::warn!(%reason, "a pending hot restart request is dropped");
             }
             state.refusal = Some(reason);
         });
@@ -203,7 +238,7 @@ impl RestartHub {
             state.phase = phase;
             state.pending = false;
             if phase > RestartPhase::Announcing {
-                state.scheduled = None;
+                state.clear_request();
             }
             true
         })
@@ -214,9 +249,7 @@ impl RestartHub {
         tracing::warn!(phase = ?self.phase(), %reason, "hot restart failed");
         self.state.send_modify(|state| {
             state.phase = RestartPhase::Idle;
-            state.pending = false;
-            state.scheduled = None;
-            state.cancelled = false;
+            state.clear_request();
             state.last_failure = Some(reason);
         });
     }
@@ -440,20 +473,45 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_request_carries_its_options_to_the_restart() {
+    fn at() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+    }
+
+    fn announcing(options: RestartOptions) -> Arc<RestartHub> {
         let hub = hub();
-        assert_eq!(hub.options(), RestartOptions::default());
+        hub.request_with(options).unwrap();
+        hub.begin_preflight().unwrap();
+        hub.announce_until(at());
+        hub
+    }
+
+    #[test]
+    fn a_request_hands_its_options_to_the_restart_once() {
+        let hub = hub();
+        assert_eq!(hub.begin_preflight(), None);
+        assert_eq!(hub.phase(), RestartPhase::Idle);
+
         hub.request_with(options(30, "Back soon")).unwrap();
-        assert_eq!(hub.options(), options(30, "Back soon"));
         assert_eq!(
             hub.request_with(options(5, "Other")),
             Err(RestartRequestError::InProgress)
         );
-        assert_eq!(hub.options(), options(30, "Back soon"));
+
+        assert_eq!(hub.begin_preflight(), Some(options(30, "Back soon")));
+        assert_eq!(hub.phase(), RestartPhase::Preflight);
+        assert!(!hub.is_pending());
+        assert_eq!(hub.begin_preflight(), None);
+    }
+
+    #[test]
+    fn the_options_of_a_failed_request_do_not_reach_the_next_one() {
+        let hub = hub();
+        hub.request_with(options(30, "Back soon")).unwrap();
         hub.fail("refused");
+
         hub.request().unwrap();
-        assert_eq!(hub.options(), RestartOptions::default());
+
+        assert_eq!(hub.begin_preflight(), Some(RestartOptions::default()));
     }
 
     #[test]
@@ -471,42 +529,132 @@ mod tests {
     fn the_schedule_is_known_while_the_restart_is_announced() {
         let hub = hub();
         hub.request().unwrap();
-        hub.set_phase(RestartPhase::Preflight);
+        hub.begin_preflight().unwrap();
         assert_eq!(hub.scheduled(), None);
-        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        assert!(hub.announce_until(at));
+
+        hub.announce_until(at());
+
         assert_eq!(hub.phase(), RestartPhase::Announcing);
-        assert_eq!(hub.scheduled(), Some(ScheduledRestart { at }));
+        assert_eq!(hub.scheduled(), Some(ScheduledRestart { at: at() }));
         assert_eq!(hub.request(), Err(RestartRequestError::InProgress));
-        hub.set_phase(RestartPhase::Draining);
+        assert!(hub.begin_draining());
         assert_eq!(hub.scheduled(), None);
     }
 
+    #[tokio::test]
+    async fn the_announcement_and_its_date_are_published_together() {
+        let hub = hub();
+        hub.request().unwrap();
+        hub.begin_preflight().unwrap();
+        let mut seen = hub.state.subscribe();
+
+        hub.announce_until(at());
+
+        seen.changed().await.unwrap();
+        let state = seen.borrow_and_update().clone();
+        assert_eq!(state.phase, RestartPhase::Announcing);
+        assert_eq!(state.scheduled, Some(at()));
+        assert!(!seen.has_changed().unwrap());
+    }
+
     #[test]
-    fn a_restart_can_be_cancelled_until_the_proxy_stops_accepting() {
+    fn nothing_is_cancelled_while_no_restart_is_requested() {
         let hub = hub();
         assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
-
-        hub.request().unwrap();
-        assert_eq!(hub.cancel(), Ok(()));
-        assert!(hub.is_cancelled());
-        assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
-        hub.fail("the restart was cancelled");
-        assert!(!hub.is_cancelled());
-
-        hub.request().unwrap();
-        hub.set_phase(RestartPhase::Preflight);
-        hub.announce_until(SystemTime::now());
-        assert_eq!(hub.cancel(), Ok(()));
-        hub.fail("the restart was cancelled");
-        assert_eq!(hub.scheduled(), None);
+        assert!(!hub.begin_draining());
         assert_eq!(hub.phase(), RestartPhase::Idle);
+    }
 
+    #[test]
+    fn a_pending_request_is_cancelled_only_once() {
+        let hub = hub();
         hub.request().unwrap();
-        assert!(!hub.is_cancelled(), "a new request starts clean");
-        hub.set_phase(RestartPhase::Draining);
+
+        assert_eq!(hub.cancel(), Ok(()));
+        assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
+
+        hub.fail("the restart was cancelled");
+        assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
+    }
+
+    #[test]
+    fn a_cancelled_announcement_leaves_nothing_behind() {
+        let hub = announcing(options(30, "Back soon"));
+
+        assert_eq!(hub.cancel(), Ok(()));
+        hub.fail("the restart was cancelled");
+
+        assert_eq!(hub.phase(), RestartPhase::Idle);
+        assert_eq!(hub.scheduled(), None);
+        hub.request().unwrap();
+        assert_eq!(hub.begin_preflight(), Some(RestartOptions::default()));
+        assert!(hub.begin_draining(), "a new request starts clean");
+    }
+
+    #[test]
+    fn a_cancel_answered_ok_keeps_the_restart_from_draining() {
+        for hub in [announcing(RestartOptions::default()), {
+            let hub = hub();
+            hub.request().unwrap();
+            hub.begin_preflight().unwrap();
+            hub
+        }] {
+            assert_eq!(hub.cancel(), Ok(()));
+
+            assert!(!hub.begin_draining());
+
+            assert!(hub.phase() < RestartPhase::Draining);
+            hub.fail("the restart was cancelled");
+            assert_eq!(hub.phase(), RestartPhase::Idle);
+        }
+    }
+
+    #[test]
+    fn a_cancel_after_the_proxy_stops_accepting_is_too_late() {
+        let hub = announcing(RestartOptions::default());
+
+        assert!(hub.begin_draining());
+
+        assert_eq!(hub.phase(), RestartPhase::Draining);
         assert_eq!(hub.cancel(), Err(RestartCancelError::TooLate));
-        assert!(!hub.is_cancelled());
+        assert!(!hub.begin_draining());
+        assert!(hub.set_phase(RestartPhase::Closing));
+        assert_eq!(hub.cancel(), Err(RestartCancelError::TooLate));
+    }
+
+    #[test]
+    fn a_stop_or_a_refusal_drops_the_pending_request_with_its_options() {
+        let stopping = hub();
+        stopping.request_with(options(30, "Back soon")).unwrap();
+        stopping.mark_stopping();
+        assert!(!stopping.is_pending());
+        assert_eq!(
+            stopping.last_failure().as_deref(),
+            Some("the proxy is stopping")
+        );
+        assert_eq!(stopping.begin_preflight(), None);
+        assert_eq!(stopping.cancel(), Err(RestartCancelError::NothingScheduled));
+
+        let refusing = hub();
+        refusing.request_with(options(30, "Back soon")).unwrap();
+        refusing.cancel().unwrap();
+        refusing.refuse_requests("no restart loop");
+        assert_eq!(refusing.begin_preflight(), None);
+        assert_eq!(refusing.cancel(), Err(RestartCancelError::NothingScheduled));
+    }
+
+    #[test]
+    fn a_stop_during_a_restart_leaves_its_state_to_the_restart() {
+        let hub = announcing(RestartOptions::default());
+
+        hub.mark_stopping();
+
+        assert_eq!(hub.phase(), RestartPhase::Announcing);
+        assert_eq!(hub.scheduled(), Some(ScheduledRestart { at: at() }));
+        assert_eq!(hub.last_failure(), None);
+        hub.fail("the proxy is stopping");
+        assert_eq!(hub.scheduled(), None);
+        assert_eq!(hub.request(), Err(RestartRequestError::ShuttingDown));
     }
 
     #[tokio::test]
@@ -537,7 +685,12 @@ mod tests {
             Err(RestartCancelError::NothingScheduled)
         );
         handle.request_restart_with(options(10, "Soon")).unwrap();
-        assert_eq!(hub.options(), options(10, "Soon"));
         assert_eq!(handle.cancel_restart(), Ok(()));
+        assert_eq!(hub.begin_preflight(), Some(options(10, "Soon")));
+        hub.announce_until(at());
+        assert_eq!(
+            handle.scheduled_restart(),
+            Some(ScheduledRestart { at: at() })
+        );
     }
 }

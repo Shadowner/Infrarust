@@ -259,6 +259,18 @@ mod tests {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
+
+        fn cancel_restart(
+            &self,
+        ) -> Result<(), infrarust_api::services::proxy_control::RestartCancelError> {
+            Err(infrarust_api::services::proxy_control::RestartCancelError::NothingScheduled)
+        }
+
+        fn scheduled_restart(
+            &self,
+        ) -> Option<infrarust_api::services::proxy_control::ScheduledRestart> {
+            None
+        }
     }
 
     #[test]

@@ -10,6 +10,7 @@ use crate::console::output::{Block, CommandCategory, CommandOutput, Fields, Line
 use crate::console::parser::format_duration_short;
 use crate::plugin::PluginState;
 use crate::terminal::Mark;
+use crate::util::whole_seconds;
 
 pub(crate) type PluginRow<'a> = (
     &'a PluginMetadata,
@@ -35,11 +36,6 @@ fn health_mark(health: &PluginHealth) -> Mark {
         PluginHealth::Quarantined { .. } => Mark::Down,
         _ => Mark::Idle,
     }
-}
-
-fn whole_seconds(duration: Duration) -> Duration {
-    let rounded_up = u64::from(duration.subsec_nanos() > 0);
-    Duration::from_secs(duration.as_secs().saturating_add(rounded_up))
 }
 
 fn health_span(runtime: Option<&PluginRuntimeStatus>) -> Span {

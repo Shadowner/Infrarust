@@ -21,8 +21,9 @@ use infrarust_config::proxy::PluginConfig;
 use infrarust_server_manager::ServerProvider;
 use infrarust_transport::Listener;
 
-use crate::binary::RunningBinary;
+use crate::binary::{HandoverProbe, RunningBinary};
 use crate::console::ConsoleServices;
+use crate::console::parser::format_duration_short;
 use crate::error::CoreError;
 use crate::hot_restart::announce::{self, Announcement};
 use crate::hot_restart::restore::{self, Inherited, Restored};
@@ -44,6 +45,7 @@ use crate::services::config_service::ConfigServiceImpl;
 use crate::services::scheduler::SchedulerImpl;
 use crate::services::server_manager_bridge::{NoopServerManager, ServerManagerBridge};
 use crate::update::UpdateService;
+use crate::util::whole_seconds;
 
 pub struct ProxyRuntime;
 
@@ -656,12 +658,6 @@ enum Next {
     Requested,
 }
 
-enum Announced {
-    Waited,
-    Stopped(Attempt),
-    Cancelled,
-}
-
 enum Attempt {
     Aborted,
     Stop(Result<(), CoreError>),
@@ -796,34 +792,20 @@ impl RunningProxy {
     }
 
     async fn restart(&mut self, hub: &RestartHub) -> Attempt {
-        hub.set_phase(RestartPhase::Preflight);
-        let announcement = Announcement::resolve(&hub.options(), &self.services().config.restart);
+        let Some(options) = hub.begin_preflight() else {
+            return Attempt::Aborted;
+        };
+        let announcement = Announcement::resolve(&options, &self.services().config.restart);
         tracing::info!(
             target_binary = %hub.plan().target.display(),
             "hot restart requested, checking the new binary"
         );
-        let mut probe = match self.checked(hub).await {
+        let probe = match self.cleared(hub, &announcement).await {
             Ok(probe) => probe,
             Err(attempt) => return attempt,
         };
-        if !announcement.is_silent() {
-            match self.announce(hub, &announcement).await {
-                Announced::Waited => {}
-                Announced::Stopped(attempt) => return attempt,
-                Announced::Cancelled => return self.call_off(hub, CANCELLED),
-            }
-            if !announcement.delay.is_zero() {
-                probe = match self.checked(hub).await {
-                    Ok(probe) => probe,
-                    Err(attempt) => {
-                        announce::tell(
-                            &self.services().player_registry,
-                            announce::CANCELLED_MESSAGE,
-                        );
-                        return attempt;
-                    }
-                };
-            }
+        if !hub.begin_draining() {
+            return self.call_off(hub, CANCELLED);
         }
         let requested_at = Instant::now();
         let resumes = Arc::clone(&self.services().resumes);
@@ -841,7 +823,6 @@ impl RunningProxy {
             resumes.arm();
         }
 
-        hub.set_phase(RestartPhase::Draining);
         tracing::info!(
             "hot restart: the proxy stops accepting, new connections wait in the kernel queue"
         );
@@ -948,17 +929,31 @@ impl RunningProxy {
         }))
     }
 
-    async fn checked(&mut self, hub: &RestartHub) -> Result<crate::binary::HandoverProbe, Attempt> {
+    async fn cleared(
+        &mut self,
+        hub: &RestartHub,
+        announcement: &Announcement,
+    ) -> Result<HandoverProbe, Attempt> {
+        let probe = self.checked(hub).await?;
+        if announcement.is_silent() {
+            return Ok(probe);
+        }
+        self.announce(hub, announcement).await?;
+        if announcement.delay.is_zero() {
+            Ok(probe)
+        } else {
+            self.checked(hub).await
+        }
+    }
+
+    async fn checked(&mut self, hub: &RestartHub) -> Result<HandoverProbe, Attempt> {
         let checked = tokio::select! {
             biased;
             () = self.shutdown.cancelled() => return Err(self.stopped(hub).await),
             () = hub.cancelled() => return Err(self.call_off(hub, CANCELLED)),
             checked = self.preflight(hub) => checked,
         };
-        checked.map_err(|error| {
-            hub.fail(error.to_string());
-            Attempt::Aborted
-        })
+        checked.map_err(|error| self.call_off(hub, &error.to_string()))
     }
 
     async fn stopped(&mut self, hub: &RestartHub) -> Attempt {
@@ -970,7 +965,7 @@ impl RunningProxy {
     fn call_off(&self, hub: &RestartHub, reason: &str) -> Attempt {
         if hub.phase() == RestartPhase::Announcing {
             announce::tell(
-                &self.services().player_registry,
+                self.services().player_registry.as_ref(),
                 announce::CANCELLED_MESSAGE,
             );
         }
@@ -978,50 +973,52 @@ impl RunningProxy {
         Attempt::Aborted
     }
 
-    async fn announce(&mut self, hub: &RestartHub, announcement: &Announcement) -> Announced {
+    async fn announce(
+        &mut self,
+        hub: &RestartHub,
+        announcement: &Announcement,
+    ) -> Result<(), Attempt> {
         let delay = announcement.delay;
         let started = tokio::time::Instant::now();
         hub.announce_until(std::time::SystemTime::now() + delay);
         tracing::info!(
-            delay = %announce::compact(delay),
+            delay = %format_duration_short(whole_seconds(delay)),
             message = %announcement.message,
             "hot restart: telling the players before the proxy restarts"
         );
         let players = Arc::clone(&self.services().player_registry);
-        let mut waits: Vec<(tokio::time::Instant, Option<Duration>)> = announcement
-            .marks()
-            .into_iter()
-            .map(|mark| (started + delay.saturating_sub(mark), Some(mark)))
-            .collect();
-        waits.push((started + delay, None));
-        for (at, mark) in waits {
-            tokio::select! {
-                biased;
-                () = self.shutdown.cancelled() => {
-                    return Announced::Stopped(self.stopped(hub).await);
-                }
-                () = hub.cancelled() => return Announced::Cancelled,
-                () = tokio::time::sleep_until(at) => {}
-            }
-            if let Some(mark) = mark {
-                let told = announce::tell(&players, &announcement.text(mark));
-                tracing::debug!(
-                    left = %announce::compact(mark),
-                    told,
-                    "hot restart: notice sent"
-                );
-            }
+        for mark in announcement.marks() {
+            self.wait_until(hub, started + delay.saturating_sub(mark))
+                .await?;
+            let told = announce::tell(players.as_ref(), &announcement.text(mark));
+            tracing::debug!(
+                left = %format_duration_short(mark),
+                told,
+                "hot restart: notice sent"
+            );
         }
-        if delay.is_zero() {
-            tokio::time::sleep(ANNOUNCE_SETTLE).await;
-        }
-        Announced::Waited
+        let pause = if delay.is_zero() {
+            ANNOUNCE_SETTLE
+        } else {
+            delay
+        };
+        self.wait_until(hub, started + pause).await
     }
 
-    async fn preflight(
-        &self,
+    async fn wait_until(
+        &mut self,
         hub: &RestartHub,
-    ) -> Result<crate::binary::HandoverProbe, PreflightError> {
+        at: tokio::time::Instant,
+    ) -> Result<(), Attempt> {
+        tokio::select! {
+            biased;
+            () = self.shutdown.cancelled() => Err(self.stopped(hub).await),
+            () = hub.cancelled() => Err(self.call_off(hub, CANCELLED)),
+            () = tokio::time::sleep_until(at) => Ok(()),
+        }
+    }
+
+    async fn preflight(&self, hub: &RestartHub) -> Result<HandoverProbe, PreflightError> {
         self.without_child_servers()?;
         let probe = hub.preflight().check(hub.plan()).await?;
         self.without_child_servers()?;
@@ -1103,6 +1100,7 @@ mod tests {
     use infrarust_api::event::bus::EventBusExt;
     use infrarust_api::event::{BoxFuture, EventPriority};
     use infrarust_api::plugin::{Plugin, PluginContext, PluginMetadata};
+    use infrarust_api::services::RestartCancelError;
 
     use crate::plugin::{PluginState, StaticPluginLoader};
 
@@ -1552,6 +1550,61 @@ mod tests {
             hub.request(),
             Err(infrarust_api::services::proxy_control::RestartRequestError::ShuttingDown)
         );
+    }
+
+    struct CancellingPreflight {
+        approving: Arc<crate::test_support::FakePreflight>,
+        hub: std::sync::OnceLock<Arc<RestartHub>>,
+        answers: Mutex<Vec<Result<(), RestartCancelError>>>,
+    }
+
+    impl Preflight for CancellingPreflight {
+        fn check<'a>(
+            &'a self,
+            plan: &'a RestartPlan,
+        ) -> BoxFuture<'a, Result<HandoverProbe, PreflightError>> {
+            if let Some(hub) = self.hub.get() {
+                self.answers.lock().unwrap().push(hub.cancel());
+            }
+            self.approving.check(plan)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_accepted_after_the_last_check_keeps_the_proxy_serving() {
+        let dir = tempfile::tempdir().unwrap();
+        let preflight = Arc::new(CancellingPreflight {
+            approving: crate::test_support::FakePreflight::approving(),
+            hub: std::sync::OnceLock::new(),
+            answers: Mutex::new(Vec::new()),
+        });
+        let running = restartable(dir.path(), preflight.clone())
+            .start()
+            .await
+            .unwrap();
+        let addr = running.local_addr();
+        let hub = running.restart_hub().unwrap();
+        let resumes = Arc::clone(&running.services().resumes);
+        let shutdown = running.shutdown_token().clone();
+        preflight.hub.set(Arc::clone(&hub)).unwrap();
+        let run = tokio::spawn(running.run_to_exit());
+
+        hub.request().unwrap();
+
+        eventually("the restart to be called off", || {
+            hub.last_failure().is_some()
+        })
+        .await;
+        assert_eq!(*preflight.answers.lock().unwrap(), [Ok(())]);
+        assert_eq!(hub.last_failure().as_deref(), Some(CANCELLED));
+        assert_eq!(hub.phase(), RestartPhase::Idle);
+        assert_eq!(hub.cancel(), Err(RestartCancelError::NothingScheduled));
+        assert!(!resumes.is_armed());
+        assert!(!run.is_finished());
+        tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        shutdown.cancel();
+        assert!(matches!(run.await.unwrap().unwrap(), ProxyExit::Stopped));
     }
 
     #[tokio::test]

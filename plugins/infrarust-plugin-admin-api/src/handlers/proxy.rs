@@ -4,7 +4,9 @@ use std::time::{Duration, SystemTime};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use infrarust_api::services::{ProxyRestart, RestartOptions, RestartRequestError};
+use infrarust_api::services::{
+    ProxyRestart, RestartCancelError, RestartOptions, RestartRequestError,
+};
 
 use crate::dto::proxy::ProxyStatus;
 use crate::dto::requests::RestartRequest;
@@ -37,9 +39,8 @@ pub async fn status(
         restart_available: state.restart.is_some(),
         restart_scheduled_at: scheduled.map(util::format_system_time),
         restart_in_seconds: scheduled.map(|at| {
-            at.duration_since(SystemTime::now()).map_or(0, |left| {
-                left.as_secs() + u64::from(left.subsec_nanos() > 0)
-            })
+            at.duration_since(SystemTime::now())
+                .map_or(0, util::whole_seconds)
         }),
     }))
 }
@@ -106,9 +107,7 @@ pub async fn cancel_restart(
         "Proxy hot restart cancellation requested via Admin API"
     );
 
-    restart
-        .cancel_restart()
-        .map_err(|error| ApiError::Conflict(error.to_string()))?;
+    restart.cancel_restart().map_err(cancel_error)?;
     Ok(mutation_ok("Hot restart cancelled"))
 }
 
@@ -124,5 +123,13 @@ fn restart_error(error: RestartRequestError) -> ApiError {
         RestartRequestError::InProgress
         | RestartRequestError::ShuttingDown
         | RestartRequestError::Unsupported(_) => ApiError::Conflict(error.to_string()),
+    }
+}
+
+fn cancel_error(error: RestartCancelError) -> ApiError {
+    match error {
+        RestartCancelError::NothingScheduled | RestartCancelError::TooLate => {
+            ApiError::Conflict(error.to_string())
+        }
     }
 }

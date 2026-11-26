@@ -2,18 +2,25 @@ use std::time::Duration;
 
 use infrarust_api::services::PlayerRegistry;
 use infrarust_api::services::proxy_control::{RestartOptions, RestartRequestError};
-use infrarust_api::types::Component;
-use infrarust_config::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE, RestartConfig};
+use infrarust_config::{RestartConfig, RestartLimit};
 
-use crate::player::registry::PlayerRegistryImpl;
+use crate::commands::actions::deliver;
+use crate::console::parser::format_duration_short;
+use crate::util::whole_seconds;
 
 pub const DEFAULT_MESSAGE: &str = "&eThe proxy restarts in {delay}";
-pub const IMMINENT_MESSAGE: &str = "&eThe proxy restarts now";
 pub const CANCELLED_MESSAGE: &str = "&eThe restart is cancelled";
-const REMINDERS: [u64; 6] = [300, 60, 30, 10, 5, 1];
+const REMINDERS: [Duration; 6] = [
+    Duration::from_secs(300),
+    Duration::from_secs(60),
+    Duration::from_secs(30),
+    Duration::from_secs(10),
+    Duration::from_secs(5),
+    Duration::from_secs(1),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Announcement {
+pub(crate) struct Announcement {
     pub delay: Duration,
     pub message: String,
 }
@@ -21,10 +28,7 @@ pub struct Announcement {
 impl Announcement {
     pub fn resolve(options: &RestartOptions, config: &RestartConfig) -> Self {
         let delay = options.delay.unwrap_or(config.delay);
-        let chosen = options
-            .message
-            .as_deref()
-            .map_or(config.message.as_str(), str::trim);
+        let chosen = options.message.as_deref().unwrap_or(&config.message).trim();
         let message = if !chosen.is_empty() {
             chosen.to_string()
         } else if delay.is_zero() {
@@ -43,75 +47,34 @@ impl Announcement {
         render(&self.message, remaining)
     }
 
-    pub fn marks(&self) -> Vec<Duration> {
-        let mut marks = vec![self.delay];
-        marks.extend(
-            REMINDERS
-                .into_iter()
-                .map(Duration::from_secs)
-                .filter(|mark| *mark < self.delay),
-        );
-        marks
+    pub fn marks(&self) -> impl Iterator<Item = Duration> + '_ {
+        std::iter::once(self.delay).chain(REMINDERS.into_iter().filter(|mark| *mark < self.delay))
     }
 }
 
-pub fn validate(options: &RestartOptions) -> Result<(), RestartRequestError> {
-    if let Some(delay) = options.delay
-        && delay > MAX_RESTART_DELAY
-    {
-        return Err(RestartRequestError::Invalid(format!(
-            "the delay is {}, the longest delay is {}",
-            compact(delay),
-            compact(MAX_RESTART_DELAY)
-        )));
-    }
-    if let Some(message) = &options.message {
-        let length = message.chars().count();
-        if length > MAX_RESTART_MESSAGE {
-            return Err(RestartRequestError::Invalid(format!(
-                "the message is {length} characters long, the limit is {MAX_RESTART_MESSAGE}"
-            )));
-        }
-    }
-    Ok(())
+pub(crate) fn validate(options: &RestartOptions) -> Result<(), RestartRequestError> {
+    RestartLimit::check(options.delay, options.message.as_deref())
+        .map_err(|limit| RestartRequestError::Invalid(limit.to_string()))
 }
 
-pub fn render(template: &str, remaining: Duration) -> String {
-    let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0);
+fn render(template: &str, remaining: Duration) -> String {
+    let remaining = whole_seconds(remaining);
     template
-        .replace("{delay}", &compact(Duration::from_secs(seconds)))
-        .replace("{seconds}", &seconds.to_string())
+        .replace("{delay}", &format_duration_short(remaining))
+        .replace("{seconds}", &remaining.as_secs().to_string())
 }
 
-pub fn compact(duration: Duration) -> String {
-    let total = duration.as_secs();
-    let (hours, minutes, seconds) = (total / 3600, total % 3600 / 60, total % 60);
-    let parts: Vec<String> = [(hours, "h"), (minutes, "m"), (seconds, "s")]
-        .into_iter()
-        .filter(|(amount, _)| *amount > 0)
-        .map(|(amount, unit)| format!("{amount}{unit}"))
-        .collect();
-    if parts.is_empty() {
-        "0s".to_string()
-    } else {
-        parts.join(" ")
-    }
-}
-
-pub fn tell(players: &PlayerRegistryImpl, text: &str) -> usize {
+pub(crate) fn tell(players: &dyn PlayerRegistry, text: &str) -> usize {
     if text.trim().is_empty() {
         return 0;
     }
-    let component = Component::from_legacy(text);
-    players
-        .get_all_players()
-        .iter()
-        .filter(|player| player.send_message(component.clone()).is_ok())
-        .count()
+    deliver(&players.get_all_players(), text)
 }
 
 #[cfg(test)]
 mod tests {
+    use infrarust_config::{MAX_RESTART_DELAY, MAX_RESTART_MESSAGE};
+
     use super::*;
 
     const fn secs(seconds: u64) -> Duration {
@@ -167,10 +130,20 @@ mod tests {
     }
 
     #[test]
+    fn a_blank_configured_message_counts_as_none() {
+        let silent = Announcement::resolve(&options(None, None), &config(0, "   "));
+        assert!(silent.is_silent());
+        let delayed = Announcement::resolve(&options(None, None), &config(10, " \t "));
+        assert_eq!(delayed.message, DEFAULT_MESSAGE);
+        let padded = Announcement::resolve(&options(None, None), &config(0, "  &cSoon "));
+        assert_eq!(padded.message, "&cSoon");
+    }
+
+    #[test]
     fn a_message_without_a_delay_is_said_once() {
         let announcement = Announcement::resolve(&options(None, Some("Bye")), &config(0, ""));
         assert!(!announcement.is_silent());
-        assert_eq!(announcement.marks(), [Duration::ZERO]);
+        assert_eq!(announcement.marks().collect::<Vec<_>>(), [Duration::ZERO]);
     }
 
     #[test]
@@ -181,7 +154,6 @@ mod tests {
                 message: "x".into(),
             }
             .marks()
-            .into_iter()
             .map(|mark| mark.as_secs())
             .collect::<Vec<_>>()
         };
@@ -203,11 +175,17 @@ mod tests {
     }
 
     #[test]
-    fn durations_are_written_without_words() {
-        assert_eq!(compact(secs(3600)), "1h");
-        assert_eq!(compact(secs(3725)), "1h 2m 5s");
-        assert_eq!(compact(secs(120)), "2m");
-        assert_eq!(compact(secs(59)), "59s");
+    fn every_delay_within_the_limit_is_written_in_full() {
+        assert_eq!(render("{delay}", MAX_RESTART_DELAY), "1h");
+        assert_eq!(render("{delay}", secs(3599)), "59m 59s");
+        assert_eq!(render("{delay}", secs(120)), "2m");
+        assert_eq!(render("{delay}", secs(59)), "59s");
+        for seconds in 0..=MAX_RESTART_DELAY.as_secs() {
+            assert_eq!(
+                render("{delay}", secs(seconds)),
+                humantime::format_duration(secs(seconds)).to_string()
+            );
+        }
     }
 
     #[test]
@@ -215,14 +193,16 @@ mod tests {
         assert_eq!(validate(&options(Some(3600), None)), Ok(()));
         assert!(matches!(
             validate(&options(Some(3601), None)),
-            Err(RestartRequestError::Invalid(reason)) if reason.contains("1h")
+            Err(RestartRequestError::Invalid(reason))
+                if reason == "the delay is 1h 1s, the longest delay is 1h"
         ));
         let long = "é".repeat(MAX_RESTART_MESSAGE);
         assert_eq!(validate(&options(None, Some(&long))), Ok(()));
         let longer = "é".repeat(MAX_RESTART_MESSAGE + 1);
         assert!(matches!(
             validate(&options(None, Some(&longer))),
-            Err(RestartRequestError::Invalid(reason)) if reason.contains("257")
+            Err(RestartRequestError::Invalid(reason))
+                if reason == "the message is 257 characters long, the limit is 256"
         ));
     }
 }

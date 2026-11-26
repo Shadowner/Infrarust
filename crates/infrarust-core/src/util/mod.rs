@@ -5,6 +5,13 @@ pub mod provider_slot;
 pub mod sync;
 pub mod text;
 
+use std::time::Duration;
+
+pub(crate) fn whole_seconds(duration: Duration) -> Duration {
+    let rounded_up = u64::from(duration.subsec_nanos() > 0);
+    Duration::from_secs(duration.as_secs().saturating_add(rounded_up))
+}
+
 /// Normalizes a handshake `serverAddress` for routing.
 ///
 /// Two things are stripped:
@@ -52,6 +59,24 @@ pub(crate) fn forge_suffix(raw_host: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_started_second_counts_as_a_whole_one() {
+        assert_eq!(whole_seconds(Duration::ZERO), Duration::ZERO);
+        assert_eq!(
+            whole_seconds(Duration::from_secs(5)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            whole_seconds(Duration::from_millis(500)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            whole_seconds(Duration::from_millis(4200)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(whole_seconds(Duration::MAX).as_secs(), u64::MAX);
+    }
 
     #[test]
     fn host_suffix_starts_at_the_first_nul() {

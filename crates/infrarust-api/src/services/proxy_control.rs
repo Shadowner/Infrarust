@@ -77,12 +77,12 @@ pub struct RestartOptions {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduledRestart {
     pub at: SystemTime,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RestartCancelError {
     #[error("no restart is scheduled")]
     NothingScheduled,
@@ -105,11 +105,7 @@ pub trait ProxyRestart: Send + Sync + crate::__sealed::Sealed {
 
     fn request_restart_with(&self, options: RestartOptions) -> Result<(), RestartRequestError>;
 
-    fn cancel_restart(&self) -> Result<(), RestartCancelError> {
-        Err(RestartCancelError::NothingScheduled)
-    }
+    fn cancel_restart(&self) -> Result<(), RestartCancelError>;
 
-    fn scheduled_restart(&self) -> Option<ScheduledRestart> {
-        None
-    }
+    fn scheduled_restart(&self) -> Option<ScheduledRestart>;
 }

@@ -32,36 +32,28 @@ pub struct FakePreflight {
 }
 
 impl FakePreflight {
-    pub fn approving() -> Arc<Self> {
+    fn new(approvals: usize, resumes: bool) -> Arc<Self> {
         Arc::new(Self {
-            approvals: usize::MAX,
-            resumes: true,
+            approvals,
+            resumes,
             checks: AtomicUsize::new(0),
         })
+    }
+
+    pub fn approving() -> Arc<Self> {
+        Self::new(usize::MAX, true)
     }
 
     pub fn approving_without_resume() -> Arc<Self> {
-        Arc::new(Self {
-            approvals: usize::MAX,
-            resumes: false,
-            checks: AtomicUsize::new(0),
-        })
+        Self::new(usize::MAX, false)
     }
 
     pub fn approving_times(approvals: usize) -> Arc<Self> {
-        Arc::new(Self {
-            approvals,
-            resumes: true,
-            checks: AtomicUsize::new(0),
-        })
+        Self::new(approvals, true)
     }
 
     pub fn refusing() -> Arc<Self> {
-        Arc::new(Self {
-            approvals: 0,
-            resumes: false,
-            checks: AtomicUsize::new(0),
-        })
+        Self::new(0, false)
     }
 
     pub fn checks(&self) -> usize {
